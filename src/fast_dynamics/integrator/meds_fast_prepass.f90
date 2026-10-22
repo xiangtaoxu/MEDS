@@ -24,7 +24,7 @@ module meds_fast_prepass
    use meds_state_defaults, only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
-   use meds_biogeochem_types, only : N_SOIL_POOL
+   use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff, EFFAREA_HEAT, EFFAREA_TRANSP
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch

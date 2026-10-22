@@ -27,7 +27,8 @@ module meds_polygon
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth, acclimate_site_leaf_tables
    use meds_fast_config,            only : fast_context_t, build_fast_context
-   use meds_biogeochem_types,       only : litter_input_t, N_SOIL_POOL, soilc_seam_t
+   use meds_biogeochem_types,       only : litter_input_t, soilc_seam_t
+   use meds_biogeochem_params,      only : N_SOIL_POOL
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input, soil_carbon_bad_pool,             &
                                            soil_carbon_pool_name

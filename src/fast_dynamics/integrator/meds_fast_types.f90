@@ -17,8 +17,7 @@ module meds_fast_types
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
    use meds_biophysics_params, only : aero_params_t, snow_params_t
-   use meds_biogeochem_types, only : N_SOIL_POOL
-   use meds_biogeochem_params, only : soil_carbon_params_t
+   use meds_biogeochem_params, only : soil_carbon_params_t, N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : INTEG_ARK, CTRL_I
@@ -204,7 +203,7 @@ module meds_fast_types
       real(wp)       :: drainage_export    = 0.0_wp   !< [kg/m2] over this dt_fast
       !----- Soil-carbon Rh diagnostics (docs/science/soil_carbon.md §7), set by column_prepass when    !
       !      soil carbon is on (else 0). The fast driver accumulates them into the patch's day          !
-      !      integrals xi_accum and rh_fast_accum. ----------------------------------------------------!
+      !      integrals, decomp_xi. -------------------------------------------------------------------!
       real(wp)       :: xi_step(N_SOIL_POOL) = 0.0_wp   !< [-] this sub-step's per-pool env scalar
       real(wp)       :: rh_matrix_step       = 0.0_wp   !< [kgC/m2/day] this sub-step's matrix Rh
       !----- Work counters, the cost axis of a numerics comparison: set per sub-step by the stepper,  !

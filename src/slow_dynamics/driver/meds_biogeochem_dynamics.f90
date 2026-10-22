@@ -4,7 +4,7 @@
 ! meds_vegetation_dynamics under meds_slow_dynamics (docs/science/order_of_processes.md §4).        !
 ! Per patch, it advances the CENTURY soil-carbon matrix ONE daily step: the litter accumulated      !
 ! by the vegetation driver this step (`poly%patch%litter_in`, routed through build_litter_input)    !
-! plus the fast loop's day-integrated environmental scalar (`poly%patch%xi_accum`, accumulated      !
+! plus the fast loop's day-integrated environmental scalar (`poly%patch%decomp_xi`, accumulated     !
 ! once per (patch, sub-step) by the fast loop over the SAME frozen pool the fast loop's             !
 ! heterotrophic_respiration_matrix respired against) drive soil_carbon_step, which commits the      !
 ! pool change once, at day-end (docs/science/soil_carbon.md §6).                                    !
@@ -20,9 +20,8 @@ module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t, N_SOIL_POOL,       &
-                                     IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND,                     &
-                                     IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
+   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_seam_t
+   use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_soil_biogeochem,  only : build_litter_input, soil_carbon_step
    use meds_slow_ledger,      only : slow_ledger_t, slow_ledger_declare
    implicit none
@@ -57,7 +56,7 @@ contains
       !      told to ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air,   !
       !      and BOTH are stores this ledger carries, so it is an internal transfer. ---------------!
       type(slow_ledger_t), optional, intent(inout) :: ledger
-      real(wp)             :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh_today
+      real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
       type(soilc_audit_t)  :: audit
       integer(ik)          :: ip
 
@@ -71,21 +70,14 @@ contains
       end if
       do ip = 1_ik, poly%patch%n
          call build_litter_input(poly%patch%litter_in(ip), u, lignin_in)
-         associate (xa => poly%patch%xi_accum(ip))
-            xi_int(IP_FAST_GRND)   = xa%fast_grnd
-            xi_int(IP_FAST_SOIL)   = xa%fast_soil
-            xi_int(IP_STRUCT_GRND) = xa%struct_grnd
-            xi_int(IP_STRUCT_SOIL) = xa%struct_soil
-            xi_int(IP_MICR)        = xa%microbial
-            xi_int(IP_SLOW)        = xa%slow
-            xi_int(IP_PASSIVE)     = xa%passive
-            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xi_int, cfg%soil_carbon, &
+         associate (xa => poly%patch%decomp_xi(ip))
+            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xa%xi_days, cfg%soil_carbon, &
                                   rh_today, audit)
             !----- The assertion guard (docs/science/soil_carbon.md §7): with the frozen-pool          !
             !      identity, rh_today (the matrix's own pool debit) should equal the fast loop's       !
             !      independently accumulated Rh to within floating-point/adaptive-substep error. ------!
-            audit%rh_fast_accum = xa%rh_fast_accum
-            audit%rh_seam_gap   = rh_today - xa%rh_fast_accum
+            audit%rh_fast_accum = xa%rh_fast
+            audit%rh_seam_gap   = rh_today - xa%rh_fast
             if (present(seam)) then
                seam%worst_rh_gap = max(seam%worst_rh_gap, abs(audit%rh_seam_gap))
                seam%worst_lignin = max(seam%worst_lignin, abs(audit%lignin_resid))

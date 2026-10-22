@@ -129,7 +129,7 @@ mixed from the two by a `blend_*` function (`meds_patch_state_vars`). The weight
 fractions $`w_i = a_i/(a_1+a_2)`$:
 
 - **Per ground area: area-weighted.** Soil water and soil energy per layer, the pond's mass and
-  energy, the snow's mass and energy, the soil-carbon pools, and the day's accumulators (`xi_accum`,
+  energy, the snow's mass and energy, the soil-carbon pools, and the day's accumulators (`decomp_xi`,
   `litter_in`) are all amounts per m² of ground, so $`w_1 v_1 + w_2 v_2`$ keeps the site total.
 - **The canopy air: weighted by air mass.** Its enthalpy, humidity and CO₂ are per kg of air, and a
   patch holds $`\rho\,a\,d`$ of air over depth $d$. The merged depth is area-weighted (the merged volume

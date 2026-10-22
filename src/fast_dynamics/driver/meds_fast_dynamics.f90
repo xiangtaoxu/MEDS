@@ -14,7 +14,6 @@ module meds_fast_dynamics
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
-   use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_temp_to_enthalpy, specific_humidity_to_vpd, precip_phase
    use meds_fast_config, only : fast_context_t, site_column_configs
    use meds_column_view, only : copy_column_cohort
@@ -31,7 +30,7 @@ module meds_fast_dynamics
                                      PY_RHO_AIR, PY_RAINF, N_PY_ROWS, expand_cohort_diag, expand_patch_diag, &
                                      site_diag_block, SI_SW_IN, SI_PAR_BEAM, SI_NIR_BEAM, SI_LWDOWN, SI_TAIR,  &
                                      SI_QAIR, SI_PSURF, SI_RHO_AIR, N_SI_ROWS
-   use meds_patch_state_vars,   only : xi_accum_t, snow_column_t
+   use meds_patch_state_vars,   only : decomp_xi_t, snow_column_t
    use meds_met_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_radiation_lib,    only : slope_beam_factor
    use meds_met,       only : met_advance, met_instant, met_to_cas_top, met_at_site
@@ -179,7 +178,7 @@ contains
          poly%cohort%dmax_psi_leaf(1:poly%cohort%n) = poly%cohort%dmax_psi_leaf_accum(1:poly%cohort%n)
       poly%cohort%dmax_psi_leaf_accum(1:poly%cohort%n) = DMAX_PSI_LEAF_ACCUM_RESET
       !----- Reset the daily soil-carbon accumulator ([soil_carbon].soil_carbon_on). --------------!
-      if (cfg%soil_carbon%soil_carbon_on) poly%patch%xi_accum(1:poly%patch%n) = xi_accum_t()
+      if (cfg%soil_carbon%soil_carbon_on) poly%patch%decomp_xi(1:poly%patch%n) = decomp_xi_t()
       !----- The phenology air-temperature sums, ET and the solver work counters are reset and     !
       !      refilled by the patch-order fold after the patch loop. A site's patches share its air   !
       !      temperature, so the mean over (patch, sub-step) samples is the daily mean. -----------!
@@ -457,22 +456,10 @@ contains
             !      private routine variable: nvfortran rejects a BLOCK here (CLAUDE.md compiler traps). -!
             if (cfg%soil_carbon%soil_carbon_on) then
                dt_fast_days = cfg%dt_fast / day_sec
-               poly%patch%xi_accum(ip)%fast_grnd   = poly%patch%xi_accum(ip)%fast_grnd               &
-                                                     + budget%xi_step(IP_FAST_GRND)   * dt_fast_days
-               poly%patch%xi_accum(ip)%fast_soil   = poly%patch%xi_accum(ip)%fast_soil               &
-                                                     + budget%xi_step(IP_FAST_SOIL)   * dt_fast_days
-               poly%patch%xi_accum(ip)%struct_grnd = poly%patch%xi_accum(ip)%struct_grnd             &
-                                                     + budget%xi_step(IP_STRUCT_GRND) * dt_fast_days
-               poly%patch%xi_accum(ip)%struct_soil = poly%patch%xi_accum(ip)%struct_soil             &
-                                                     + budget%xi_step(IP_STRUCT_SOIL) * dt_fast_days
-               poly%patch%xi_accum(ip)%microbial   = poly%patch%xi_accum(ip)%microbial               &
-                                                     + budget%xi_step(IP_MICR)        * dt_fast_days
-               poly%patch%xi_accum(ip)%slow        = poly%patch%xi_accum(ip)%slow                    &
-                                                     + budget%xi_step(IP_SLOW)        * dt_fast_days
-               poly%patch%xi_accum(ip)%passive     = poly%patch%xi_accum(ip)%passive                 &
-                                                     + budget%xi_step(IP_PASSIVE)     * dt_fast_days
-               poly%patch%xi_accum(ip)%rh_fast_accum = poly%patch%xi_accum(ip)%rh_fast_accum         &
-                                                     + budget%rh_matrix_step * dt_fast_days
+               associate (dx => poly%patch%decomp_xi(ip))
+                  dx%xi_days = dx%xi_days + budget%xi_step * dt_fast_days
+                  dx%rh_fast = dx%rh_fast + budget%rh_matrix_step * dt_fast_days
+               end associate
             end if
             !----- Patch GPP and net absorbed radiation for the patch row. h_flux comes from          !
             !      column_fast_step, as le_flux does: formed here from post-call reads, nvfortran      !

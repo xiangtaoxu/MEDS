@@ -39,7 +39,7 @@ module meds_slow_ledger
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
                                        pack_pool_vector
-   use meds_biogeochem_types,   only : N_SOIL_POOL
+   use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private
 

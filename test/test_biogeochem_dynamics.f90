@@ -85,7 +85,7 @@ program test_biogeochem_dynamics
           + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
           + poly%patch%soil_carbon(1)%passive_carbon
 
-   !=== 1. Run one real slow step: fast loop (accumulates xi_int/rh_fast_accum against the FROZEN !
+   !=== 1. Run one real slow step: fast loop (accumulates decomp_xi against the FROZEN          !
    !    pool seeded above) THEN advance_slow_dynamics (vegetation turnover -> litter, then the       !
    !    daily soil_carbon_step consuming that litter + xi_int). ====================================!
    call fast_dynamics(poly, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
@@ -93,7 +93,7 @@ program test_biogeochem_dynamics
 
    block
       real(wp) :: rh_fast_accum_ref
-      rh_fast_accum_ref = poly%patch%xi_accum(1)%rh_fast_accum
+      rh_fast_accum_ref = poly%patch%decomp_xi(1)%rh_fast
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
       call advance_slow_dynamics(poly, cfg, seam=seam)

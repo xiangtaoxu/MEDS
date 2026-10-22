@@ -2,17 +2,35 @@
 !==========================================================================================!
 ! meds_biogeochem_params -- the [soil_carbon] block (docs/science/soil_carbon.md): the     !
 ! decomposition selectors and their codes, the decay rates, the respired fractions and the !
-! environmental-scalar parameters. A config leaf (meds_kinds only): the soil-carbon kernels!
-! import it without meds_config.                                                           !
+! environmental-scalar parameters; and the pool layout they index, N_SOIL_POOL and IP_*.   !
+! A config leaf (meds_kinds only): the soil-carbon kernels and the patch state import it  !
+! without meds_config.                                                                     !
 !==========================================================================================!
 module meds_biogeochem_params
    use meds_kinds, only : wp, ik
    implicit none
    private
 
+   public :: N_SOIL_POOL
+   public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    public :: DECOMP_STEP_EULER, DECOMP_STEP_EXPM
    public :: DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    public :: soil_carbon_params_t
+
+   !==========================================================================================!
+   !  The soil-carbon matrix's pools: the count and the index of each (the matrix state vector X). !
+   !  Ordered litter -> SOM -> passive so the default-scheme ACTIVE block of A is lower-triangular  !
+   !  (back-substitution / GE solvable). The 7-pool ceiling matches ED2's CENTURY set exactly.      !
+   !==========================================================================================!
+   integer(ik), parameter :: N_SOIL_POOL = 7_ik   !< length of the carbon matrix state vector X
+
+   integer(ik), parameter :: IP_FAST_GRND   = 1_ik   !< metabolic litter, above-ground (flammable)
+   integer(ik), parameter :: IP_FAST_SOIL   = 2_ik   !< metabolic litter, below-ground
+   integer(ik), parameter :: IP_STRUCT_GRND = 3_ik   !< structural litter + CWD, above-ground
+   integer(ik), parameter :: IP_STRUCT_SOIL = 4_ik   !< structural litter + CWD, below-ground
+   integer(ik), parameter :: IP_MICR        = 5_ik   !< microbial SOM        (active only in scheme 5)
+   integer(ik), parameter :: IP_SLOW        = 6_ik   !< slow / humified SOM
+   integer(ik), parameter :: IP_PASSIVE     = 7_ik   !< passive SOM          (active only in scheme 5)
 
    !----- Daily-step solver (docs/science/soil_carbon.md §6). -----------------------------!
    integer(ik), parameter :: DECOMP_STEP_EULER = 1_ik  !< forward Euler (the coupled daily step)

@@ -194,9 +194,9 @@ object: once per day the fast driver copies the patch's pools into the fast stat
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
 sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it, and the fast pre-pass converts
 $`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin;
-the driver integrates $`\xi_j`$ into the per-patch `xi_accum` (the $`\xi^{\mathrm{int}}`$ of eq. (5))
-and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with like, into
-`rh_fast_accum`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
+the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\xi^{\mathrm{int}}`$ of
+eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
+like, into `decomp_xi%rh_fast`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
 writer** of the real pools, debiting them with exactly that $`\xi^{\mathrm{int}}`$.
 
 The day's total fast Rh therefore equals the daily pool debit **by construction**, and
@@ -208,8 +208,8 @@ in the whole model** — one kernel called from both timescales, co-located with
 
 The gap is zero by construction only while the patch composition is fixed. On a day the patch
 structure changes (the annual patch fusion, a termination or a disturbance), the fast loop has
-accumulated `rh_fast_accum` against one composition while the daily step debits another:
-`blend_xi_accum` and `blend_soil_carbon` area-weight the two ends separately, through a matrix that is
+accumulated `rh_fast` against one composition while the daily step debits another:
+`blend_decomp_xi` and `blend_soil_carbon` area-weight the two ends separately, through a matrix that is
 nonlinear in the lignin fraction. The gap is then nonzero and expected (8.4×10⁻⁴ kgC m⁻² at a year
 rollover of a 50-year spin-up). A nonzero gap on an ordinary day is a broken contract; do not widen
 the tolerance to absorb the structural-change days, which would blind the check on every other day.
@@ -315,7 +315,7 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix` |
 | steady state; capacity / potential / residence time | `meds_soil_biogeochem`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
 | pool plausibility | `meds_soil_biogeochem`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; `soil_carbon_t` / `xi_accum_t` / `litter_input_t` in `meds_patch_state_vars` |
+| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_t` / `decomp_xi_t` / `litter_input_t` in `meds_patch_state_vars` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
 | daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
 | litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |

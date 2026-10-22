@@ -412,7 +412,7 @@ contains
          end do
       case (FLD_P_RH)
          do ip = 1_ik, n
-            x(ip) = poly%patch%xi_accum(ip)%rh_fast_accum
+            x(ip) = poly%patch%decomp_xi(ip)%rh_fast
          end do
       case default
          if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PA_ROWS) then
