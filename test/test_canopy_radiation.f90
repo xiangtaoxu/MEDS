@@ -22,10 +22,9 @@ program test_canopy_radiation
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : stefan_boltzmann
    use meds_canopy_types, only : rad_pft_optics_t, rad_forcing_t, rad_flux_t, alloc_rad_forcing, RAD_VIS, RAD_NIR, RAD_LW, &
-                                 N_RAD_BAND_DEFAULT
+                                 N_RAD_BAND_DEFAULT, ground_optics_state_t
    use meds_optics_lib,     only : beta_lidf, leaf_bf, moments_to_beta_params, gfun_direct, N_LEAF_CLASS
-   use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics_state_t,    &
-                                     ground_optics
+   use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics
    implicit none
 
    real(wp), parameter :: TOL = 1.0e-9_wp

@@ -55,7 +55,7 @@ census and is calibrated against the tower's fluxes:
 | Respiration | leaf, stem and fine-root maintenance; growth charged on realized growth | [plant_respiration](docs/science/plant_respiration.md) |
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |
 | Demography | cohort and patch fusion/fission, treefall disturbance, wood-density PFT axis | [ed2_comparison](docs/ed2_comparison.md) |
-| Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the accuracy baseline | [numerical_scheme](docs/science/numerical_scheme.md) |
+| Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the explicit alternative | [numerical_scheme](docs/science/numerical_scheme.md) |
 | Output | 284 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
 | Regional runs | every cell of a box of the ERA5-Land grid as its own polygon, in one process | [configuration](docs/configuration.md#regional-runs) |
 

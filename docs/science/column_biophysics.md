@@ -88,8 +88,9 @@ accumulates the $b$-weighted boundary-flux amounts.
 The name `ark` (additive Runge–Kutta) suggests an IMEX method, but this is **not IMEX**: the biotic
 CO₂ source is folded implicit, so the explicit tableau is empty (`f_E == 0`).
 
-### `rk45` — adaptive Cash–Karp 5(4), the accuracy baseline
+### `rk45` — adaptive Cash–Karp 5(4), the explicit alternative
 
+A full alternative a run can choose, and the explicit reference the tests compare `ark` against.
 Fully explicit over the canopy air and the column's energy, through the whole-column tendency
 `column_derivs` (`meds_fast_time_derivs`); soil and plant water move at the water network's rates,
 as on `ark`. When a step cannot be resolved (stiff cold-canopy nights) the driver discards it and
@@ -105,13 +106,21 @@ machine precision — the invariant that makes the coupled surface model trustwo
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2`, `can_depth` | `can_temp` |
+| Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2` (`can_depth` is set by the slow step) | `can_temp` |
 | Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
 | Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 | Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
 | Leaf / wood tissue | `patch_biophys_t` | `leaf_energy`, `wood_energy` [J m⁻²; on the cohort block, J plant⁻¹] (exact exponential relaxation) | `leaf_temp`, `wood_temp` |
 | Plant water | `patch_biophys_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
 | Canopy surface water | `patch_biophys_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²; on the cohort block, kg plant⁻¹] | — |
+
+`patch_biophys_t` (`meds_fast_types`) is the fast loop's working copy of one patch: the fast driver
+(`meds_fast_dynamics`) gathers it from the persisted patch and cohort state and writes it back after
+the step. Each integrator packs it into a flat `column_state_t`, which it can combine and measure as
+one vector. The copy also carries three inputs from the slow tier, seeded once a day and only read
+by the fast sub-steps: the soil-carbon pools that heterotrophic respiration draws on
+([soil_carbon](soil_carbon.md) §7), the water and enthalpy shed by leaf and root turnover, and the
+slow tier's CO₂ owing from growth respiration ([plant_respiration](plant_respiration.md) §6).
 
 ### Mixing two patches
 

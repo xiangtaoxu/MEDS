@@ -1,19 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_energy -- the stateless soil-thermal-column kernels                            !
-! (docs/science/soil_biophysics.md, "The soil thermal column" and "The bottom thermal      !
-! boundary", eqs. (10)-(12)). Prognostic INTERNAL ENERGY / enthalpy per layer              !
-! (phase-safe); temperature diagnosed via the meds_therm_lib inverter. Exposes the store   !
-! in two forms:                                                                            !
-!   * soil_energy_time_deriv    -- the EXPLICIT RHS dE_k/dt [W/m3] at the current state    !
-!                                  (what the rk45 stepper integrates; commits nothing).    !
-!   * soil_energy_step_implicit -- the IMPLICIT backward-Euler advance over dt, eq. (10)   !
-!                                  (the ark stages' step; mutates the store, re-diagnoses  !
-!                                  temp/fliq, closes the energy budget).                   !
-! Both share the same conductive-face + water-enthalpy-advection physics (evaluated at T^n !
-! for the tendency, at T^{n+1} for the step). The implicit Thomas solve reuses             !
-! meds_numerics + the negative-z geometry. STATELESS: sibling temps arrive as forced       !
-! inputs (the coupled fixed point is the driver's).                                        !
+! meds_soil_energy -- the stateless soil thermal-column kernels, prognostic in internal    !
+! energy per layer, temperature diagnosed by the inverter                                  !
+! (docs/science/soil_biophysics.md, "The soil thermal column", eqs. (10)-(13)). Two forms  !
+! share the conductive and water-enthalpy faces:                                           !
+!   * soil_energy_time_deriv    -- the explicit tendency dE_k/dt [W/m3], faces at T^n;     !
+!   * soil_energy_step_implicit -- the backward-Euler advance over dt, faces at T^{n+1}.   !
 !==========================================================================================!
 module meds_soil_energy
    use meds_kinds,            only : wp, ik
@@ -29,30 +21,14 @@ module meds_soil_energy
    private
 
    public :: soil_energy_step_implicit, soil_energy_time_deriv
-   !----- The water-enthalpy face rule, exposed as ONE seam (see the routine). ----------------!
-   public :: water_enthalpy_faces
-   !----- The bottom thermal boundary, exposed as ONE seam (see the routine). -----------------!
-   public :: bottom_heat_face, deep_conductance
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! water_enthalpy_faces -- the liquid-enthalpy flux carried across every soil face by    !
-   ! moving water [W/m2, positive UP], upwinded on the supplied layer temperatures (the    !
-   ! qwf terms of docs/science/soil_biophysics.md eq. (10)).                               !
-   !                                                                                       !
-   ! ONE RULE, TWO CALLERS: soil_energy_step_implicit (at T^{n+1}) and                     !
-   ! soil_energy_time_deriv (at T^n). Single-sourcing it keeps the two from drifting       !
-   ! apart: a copy with the boundary faces hardcoded to 0 would silently drop an explicit  !
-   ! caller's infiltration enthalpy while the whole-column boundary still charges for it.  !
-   !                                                                                       !
-   ! UPWIND CONVENTION: w_flux is UPWARD-positive, so <= 0 (downward flow) draws the       !
-   ! enthalpy from the layer ABOVE the face (k), and > 0 (upward flow) from the layer      !
-   ! BELOW (k+1). The sign is carried by w_flux itself -- no extra minus -- matching hf    !
-   ! and ED2's rk4_derivs qw_flux_g.                                                       !
-   !                                                                                       !
-   ! Soil EVAPORATION is deliberately NOT a face here: its mass leaves as vapour and its   !
-   ! enthalpy (liquid + latent, one shared datum) already left inside g_top's le_soil.     !
+   ! water_enthalpy_faces -- the liquid enthalpy moving water carries across each soil     !
+   ! face [W/m2, positive up], upwind on the given layer temperatures (the qwf terms of    !
+   ! docs/science/soil_biophysics.md eq. (10)): one rule for the step and the tendency.    !
+   ! Evaporation is not a face: its enthalpy leaves in g_top's latent flux.                !
    !---------------------------------------------------------------------------------------!
    pure subroutine water_enthalpy_faces(forcing, temp, n, qwf)
       type(energy_forcing_t), intent(in)  :: forcing
@@ -60,8 +36,8 @@ contains
       integer(ik),            intent(in)  :: n
       real(wp),               intent(out) :: qwf(0:)   !< [W/m2] face 0 = top ... face n = bottom
       integer(ik) :: k
-      !----- TOP face: flow DOWN (<=0) draws from the water arriving from above (rain / throughfall  !
-      !      / meltwater, at t_water_top); flow UP draws from layer 1. --------------------------!
+      !----- Top face: infiltration (flow down) carries the pond's water at t_water_top; flow up   !
+      !      draws from layer 1. -----------------------------------------------------------------!
       if (forcing%w_flux_top <= 0.0_wp) then
          qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
       else
@@ -74,30 +50,16 @@ contains
             qwf(k) = forcing%w_flux(k) * rho_h2o * internal_energy_liquid(temp(k+1))
          end if
       end do
-      !----- BOTTOM face: drainage out, or aquifer/water-table water in. ----------------------!
-      if (forcing%w_flux_bot <= 0.0_wp) then
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(temp(n))
-      else
-         qwf(n) = forcing%w_flux_bot * rho_h2o * internal_energy_liquid(forcing%t_water_bot)
-      end if
+      !----- Bottom face: no advective term; drainage enthalpy leaves through the bottom layer's   !
+      !      root_heat_sink (assemble_soil_energy_forcing). ---------------------------------------!
+      qwf(n) = 0.0_wp
    end subroutine water_enthalpy_faces
 
    !---------------------------------------------------------------------------------------!
-   ! deep_conductance -- the bottom-boundary conductance [W/m2/K] of the Dirichlet anchor  !
-   ! (docs/science/soil_biophysics.md eq. (12)): the bottom NODE conducts to a plane held  !
-   ! at opts%deep_temp, a distance l_deep = deep_depth - |z_node(n)| below it, through the !
-   ! bottom layer's own thermal conductivity. Returns 0 for the Neumann (geothermal) BC,   !
-   ! which is what makes every caller's bottom face one expression.                        !
-   !                                                                                       !
-   ! WHY A PLANE BELOW THE COLUMN, not a temperature ON the base face (eq. (13), "Why the  !
-   ! anchor sits below the column"). An adiabatic base reflects the annual wave            !
-   ! (reflection coefficient +1); pinning the base face to a fixed temperature reflects it !
-   ! just as hard with the opposite sign (-1). Neither is transparent. A resistive link of !
-   ! length l_deep has impedance kappa/l_deep against the half-space impedance             !
-   ! kappa*(1+i)/d (d = annual damping depth), and |reflection| is least -- 0.41, not 1 -- !
-   ! when l_deep = d/sqrt(2). So the anchor DEPTH is the knob, and it is a real physical   !
-   ! choice. A purely resistive termination cannot do better than 0.41: closing the gap    !
-   ! needs heat CAPACITY below the column, i.e. real layers (see docs/ROADMAP.md).         !
+   ! deep_conductance -- the Dirichlet anchor's conductance [W/m2/K], eq. (12): the bottom !
+   ! node conducts to deep_temp, deep_depth - |z_node(n)| below it, through the bottom     !
+   ! layer's conductivity; 0 for the Neumann (geothermal) boundary. The anchor sits below  !
+   ! the column so the annual wave reflects least (eq. (13)).                              !
    !---------------------------------------------------------------------------------------!
    pure function deep_conductance(opts, soil, kappa_bot, n) result(g_deep)
       type(energy_opts_t), intent(in) :: opts
@@ -114,11 +76,9 @@ contains
    end function deep_conductance
 
    !---------------------------------------------------------------------------------------!
-   ! bottom_heat_face -- the heat flux across the column's bottom face [W/m2, positive     !
-   ! UP], the bottom-boundary twin of the interior -kf*(T_k - T_k+1)/dz_node rule (eq.     !
-   ! (12) for the Dirichlet anchor). ONE expression for both boundary conditions and for   !
-   ! both time levels (T^n for the tendency, T^{n+1} for the step), so the implicit and    !
-   ! explicit paths cannot drift apart.                                                    !
+   ! bottom_heat_face -- the heat flux across the bottom face [W/m2, positive up]: the     !
+   ! Dirichlet anchor, eq. (12), or the prescribed geothermal flux. One expression for     !
+   ! both time levels, so the implicit and explicit paths agree.                           !
    !---------------------------------------------------------------------------------------!
    pure function bottom_heat_face(opts, forcing, g_deep, t_bot) result(hf_bot)
       type(energy_opts_t),    intent(in) :: opts
@@ -156,10 +116,7 @@ contains
       do k = 1_ik, n
          wmass = forcing%soil_water(k) * rho_h2o                          ! [kg/m3] water mass per volume
          call internal_energy_to_temp(col%soil_energy(k), wmass, therm%soil_dry_heat_capacity(k), t_n(k), fl_n(k))
-         !----- Ice-aware conductivity and heat capacity, ALWAYS: the column is prognostic in internal !
-         !      energy, so internal_energy_to_temp inverts through the phase change on every call and  !
-         !      temperature is a read-off of it; kappa and C are evaluated on the same liquid fraction !
-         !      (no option to treat frozen water as liquid).                                           !
+         !----- Ice-aware conductivity and heat capacity, on the liquid fraction the inverter returns. !
          kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), soil%theta_sat(k),      &
                                       therm%soil_solid_conductivity(k), therm%soil_dry_conductivity(k))
          c_eff(k) = soil_volumetric_heat_capacity(forcing%soil_water(k), fl_n(k), therm%soil_dry_heat_capacity(k))
@@ -200,28 +157,20 @@ contains
       end do
 
       !----- Diagnostics + closed energy budget. -------------------------------------------!
-      flux%ground_heat  = forcing%g_top
       flux%bottom_heat  = -hf(n)
-      !----- The column budget carries the boundary WATER enthalpy too; the interior faces        !
+      !----- The column budget carries the boundary water enthalpy too; the interior faces        !
       !      telescope out of the sum exactly, as they must. -------------------------------------!
       flux%energy_resid = (e1 - e0) - dt * (forcing%g_top - flux%bottom_heat                   &
                           - sum(forcing%root_heat_sink(1:n)) + (qwf(n) - qwf(0)))
-      flux%nsub      = 1_ik
-      flux%converged = .true.
       if (opts%debug_error .and. abs(flux%energy_resid) > opts%soil_energy_budget_atol * sum(c_eff(1:n)*soil%dz(1:n))) then
          error stop 'soil_energy_step_implicit: energy budget did not close'
       end if
    end subroutine soil_energy_step_implicit
 
    !---------------------------------------------------------------------------------------!
-   ! soil_energy_time_deriv -- the EXPLICIT soil-heat RHS dE_k/dt [W/m3] at the current    !
-   ! state, the right-hand side the rk45 stepper integrates                                !
-   ! (docs/science/soil_biophysics.md, "The soil thermal column"). Same flux-divergence    !
-   ! form as the implicit step (conductive faces + optional water-enthalpy advection +     !
-   ! root heat sink), but the faces are evaluated at the CURRENT temperature T^n (the step !
-   ! uses the implicit T^{n+1}); as dt -> 0 the committed BE update / dt converges to this !
-   ! tendency. Commits nothing. `bottom_face` returns the bottom face's flux it used, for  !
-   ! the caller's conservation ledger.                                                     !
+   ! soil_energy_time_deriv -- the explicit soil-heat tendency dE_k/dt [W/m3] RK45         !
+   ! integrates: the implicit step's flux divergence with the faces at the current T^n.    !
+   ! Commits nothing; bottom_face returns the bottom face's flux for the caller's ledger.  !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_energy_time_deriv(col, forcing, therm, soil, opts, dedt, bottom_face)
       type(soil_energy_column_t),  intent(in)  :: col
@@ -251,7 +200,7 @@ contains
          kf(k) = (soil%dz(k) + soil%dz(k+1)) / (soil%dz(k) / kappa(k) + soil%dz(k+1) / kappa(k+1))
       end do
 
-      !----- Conductive faces at the CURRENT temperature (explicit) + upwind liquid enthalpy. --!
+      !----- Conductive faces at the current temperature (explicit) + upwind liquid enthalpy. --!
       hf(0)  = -forcing%g_top
       do k = 1_ik, n - 1_ik
          hf(k) = -kf(k) * (t_n(k) - t_n(k+1)) / soil%dz_node(k)
@@ -259,8 +208,7 @@ contains
       g_deep = deep_conductance(opts, soil, kappa(n), n)
       hf(n)  = bottom_heat_face(opts, forcing, g_deep, t_n(n))
       if (present(bottom_face)) bottom_face = hf(n)
-      !----- Water-enthalpy faces at T^n -- the SAME seam the implicit sibling uses at T^{n+1}. The   !
-      !      only difference between the two paths is the temperature handed in. ---------------!
+      !----- Water-enthalpy faces at T^n, the same rule the implicit step applies at T^{n+1}. ------!
       call water_enthalpy_faces(forcing, t_n, n, qwf)
 
       !----- dE_k/dt = flux divergence + source (q_src = -root_heat_sink/dz). ---------------!
@@ -272,9 +220,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Bare-array inner BE solve: implicit conduction (dz-weighted harmonic face kappa) +      !
-   ! explicit source q_src, top Neumann g_top, and a bottom boundary that is EITHER a prescribed  !
-   ! flux `geo` (g_deep = 0) OR conduction to a fixed deep temperature (g_deep > 0). Returns       !
-   ! temperature^{n+1}. (Advection is applied in the conservative energy update, not here.)        !
+   ! explicit source q_src, top Neumann g_top, and a bottom boundary that is either a prescribed  !
+   ! flux `geo` (g_deep = 0) or conduction to a fixed deep temperature (g_deep > 0). Returns       !
+   ! temperature^{n+1}; advection is applied in the conservative energy update.                   !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_heat_be_solve(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new, kf,  &
                                       g_deep, t_deep)

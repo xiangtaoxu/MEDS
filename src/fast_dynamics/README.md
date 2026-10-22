@@ -93,7 +93,7 @@ constitutive relations by physical quantity rather than by caller:
 ## Coupling
 
 The stateless kernels are woven per sub-step by **`meds_fast_ark`** (an L-stable ESDIRK2, the
-default) or **`meds_fast_rk45`** (adaptive Cash-Karp, the accuracy baseline), dispatched by
+default) or **`meds_fast_rk45`** (adaptive Cash-Karp, the explicit alternative), dispatched by
 `meds_fast_step`, which also owns the RK45-to-ARK stiff rescue. Every store closes a
 machine-precision budget residual.
 

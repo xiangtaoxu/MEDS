@@ -188,7 +188,7 @@ page — *conservation is not stability*, and it applies to any model with this 
 | | MEDS v0.3.0 | ED2 (ED-2.2) |
 |---|---|---|
 | **Default** | `ark` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
-| **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, kept as the accuracy baseline and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
+| **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, a run's explicit alternative and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
 | **Soil water** | Advanced once per step by the soil-plant water network, on both schemes; the stages move it at the network's time-mean rates | Inside the RK4 state |
 | **Leaf ↔ canopy-air coupling** | Solved implicitly within every ARK stage by a direct 2×2 Newton | Explicit within the RK stages (except `INTEGRATION_SCHEME = 3`) |
 | **Fallback** | When the explicit RK45 march cannot resolve a step (cold night, closed canopy), the driver discards it and redoes that `dt_fast` on `ark`. A counter reports how often | — |
@@ -462,6 +462,39 @@ defaults take from ED2 and the models ED2 builds on is listed here.
 - **PFT traits** (`meds_config_pft.toml`). `root_to_leaf_ratio` is ED2's `q`, and `nbg_init_density`
   ED2's `init_density`.
 - **The soil column.** Depths are negative downward, interface elevations ≤ 0, as ED2's `slz`.
+
+### 4.9 Where the fast loop's forms come from
+
+The fast-loop kernels in `src/fast_dynamics` state MEDS's own rationale in their comments and their
+science pages. What they take from ED2, beyond the frozen coefficients, the per-stage turbulence and
+the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
+
+- **Leaf gas exchange** (`meds_leaf_gas_exchange`). ED2 sets the C4 initial slope `kp = klowco2·vm`, so
+  it inherits Vcmax's temperature response, high-temperature deactivation included; MEDS gives `kp25`
+  Vcmax's activation and deactivation set, as it does TPU. The leaf water potential that drives the
+  stomata is diagnosed once per `dt_fast` from the step-start leaf water and held through the stages,
+  as ED2 holds it through `DTLSM`.
+- **Roots** (`meds_plant_hydraulics`). The rooting depth `root_depth_b1·H^root_depth_b2` is ED2's
+  height allometry `IALLOM = 1`: 5 m for a 35 m tree.
+- **Maintenance respiration** (`meds_plant_respiration`). The stem term is Chambers et al. (2004)'s
+  surface-area form on the stem (a cylinder plus the branch area from the WAI), scaled by the
+  aboveground structural fraction, as ED2 codes it; the fine-root term is ED2's per-`broot` form, a
+  per-kgC baseline times the layer-summed temperature scale times the fine-root carbon. ED2 references
+  both at 15 °C and MEDS at 25 °C, so a value taken from ED2 or Chambers is converted once, when the PFT
+  parameters are set.
+- **Tissue and soil energy** (`meds_fast_time_derivs`, `meds_fast_frozen`, `meds_soil_energy`). The leaf
+  pays the full vapour enthalpy of what it transpires and the soil the liquid internal energy of what
+  the roots draw, each once, as ED2's `rk4_derivs` charges `tq2enthalpy(T_leaf)` and `uint_water`. The
+  advected-enthalpy names are ED2's: `qwflux_wl` is the sap flow's enthalpy into the leaf,
+  `qloss_frozen` is ED2's `qloss` (the root water's enthalpy leaving the soil), and `q_wood_net` is
+  `qloss − qwflux_wl`. The soil water-enthalpy faces take the upward-positive sign of ED2's
+  `qw_flux_g`.
+- **Soil water** (`meds_soil_water`). The face conductivity is the thickness-weighted geometric mean,
+  ED2's rule for soil layers.
+- **Canopy air** (`meds_fast_be_stage`). Neither model clamps the canopy-air humidity at saturation:
+  transient supersaturation is relaxed by a condensation sink, not cut off.
+- **Carbon bookkeeping** (`meds_fast_dynamics`). Gross GPP and the maintenance losses are summed apart
+  over the day and netted by the daily allocator, as ED2 does.
 
 ---
 

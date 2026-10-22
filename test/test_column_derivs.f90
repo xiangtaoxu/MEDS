@@ -33,7 +33,6 @@ program test_column_derivs
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t, column_config_t
-   use meds_fast_rk4_oracle,  only : rk4_column_step
    use meds_fast_be_stage,    only : column_be_stage, advance_plant_water
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init
@@ -54,7 +53,6 @@ program test_column_derivs
    call test_conservation_march()
    call test_soil_energy_tendency()
    call test_column_assembler()
-   call test_rk4_march()
    call test_be_euler()
    call test_be_coupled()
    call test_arrowhead()
@@ -378,7 +376,7 @@ contains
       !      temperature and the drainage enthalpy at the bottom. Every term is nonzero in this         !
       !      fixture: a check that omits a term is only green while that term is zero. -----------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
+      eforc_chk%g_top = surf_tend%g_top
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
          eforc_chk%root_heat_sink(k) = frozen%roots%root_heat(k)
@@ -389,61 +387,13 @@ contains
                                     + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
       eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
       eforc_chk%t_water_top = frozen%hydrology%t_infil
-      eforc_chk%w_flux_bot  = 0.0_wp
       call soil_energy_time_deriv(se_chk, eforc_chk, col_config%soil_thermal, col_config%soil, col_config%energy, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
    end subroutine test_column_assembler
 
-   !----- 10. march the whole column with explicit RK4 over column_derivs (the reference oracle):   !
-   !          it stays finite + physical, and self-converges (dt vs dt/2 agree to RK4 order). -------!
-   subroutine test_rk4_march()
-      type(column_state_t)  :: y, y1, y2, ytmp
-      type(column_frozen_t) :: frozen
-      real(wp)    :: dt, tcas, tsoil, dcas, dmass
-      integer(ik) :: step, n, nsl, nstep, i, k
-      logical     :: physical
-      n = 2_ik ; nsl = 10_ik
-      print '(a)', 'test_rk4_march:'
-      call make_column(y, frozen, n, nsl)
-
-      !----- (a) coarse march at dt = 10 s (< the ~47 s RK4 limit of the 17 s hydraulic mode). ----!
-      dt = 10.0_wp ; nstep = 180_ik            ! 30 minutes
-      call copy_state(y, y1, n)
-      physical = .true.
-      do step = 1_ik, nstep
-         call rk4_column_step(y1, frozen, col_config, n, nsl, dt, ytmp)
-         call copy_state(ytmp, y1, n)
-         tcas = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
-         physical = physical .and. tcas > 260.0_wp .and. tcas < 330.0_wp .and. y1%cas_shv > 0.0_wp
-         do k = 1_ik, nsl
-            physical = physical .and. y1%theta(k) > 0.0_wp .and. y1%theta(k) < 0.6_wp
-         end do
-         do i = 1_ik, n
-            physical = physical .and. y1%leaf_water_mass(i) > 0.0_wp .and. y1%wood_water_mass(i) > 0.0_wp
-         end do
-      end do
-      call check_true('RK4 march stays finite + physical (30 min @ 10 s)', physical, dt)
-
-      !----- (b) self-convergence: dt = 8 s vs dt = 4 s over the SAME 8 min window agree tightly. --!
-      call copy_state(y, y1, n) ; call copy_state(y, y2, n)
-      do step = 1_ik, 60_ik                    ! 60 * 8 s = 8 min
-         call rk4_column_step(y1, frozen, col_config, n, nsl, 8.0_wp, ytmp) ; call copy_state(ytmp, y1, n)
-      end do
-      do step = 1_ik, 120_ik                   ! 120 * 4 s = 8 min
-         call rk4_column_step(y2, frozen, col_config, n, nsl, 4.0_wp, ytmp) ; call copy_state(ytmp, y2, n)
-      end do
-      tcas  = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
-      tsoil = cas_enthalpy_to_temp(y2%cas_enthalpy, y2%cas_shv)
-      dcas  = abs(tcas - tsoil)
-      dmass = max(maxval(abs(y1%leaf_water_mass(1:n) - y2%leaf_water_mass(1:n))),                 &
-                  maxval(abs(y1%wood_water_mass(1:n) - y2%wood_water_mass(1:n))))
-      call check_true('RK4 self-convergence: CAS temp dt=8 vs dt=4 agree < 1e-3 K', dcas < 1.0e-3_wp, dcas)
-      call check_true('RK4 self-convergence: mass dt=8 vs dt=4 agree < 1e-6 kg/plant', dmass < 1.0e-6_wp, dmass)
-   end subroutine test_rk4_march
-
-   !----- 11. First-order BE (be_euler_step): stable at dt = 900 s where the explicit RK4 blows up,  !
-   !          oracle in the small-dt limit (both integrate the same column_derivs RHS). ------------!
+   !----- 11. First-order BE (be_euler_step): stable at dt = 900 s, where an explicit step blows up,  !
+   !          and close to the explicit RK45 reference at small dt (both integrate the same RHS). -----!
    subroutine test_be_euler()
       type(column_state_t)  :: y, yi, yr, ytmp
       type(column_frozen_t) :: frozen
@@ -477,25 +427,25 @@ contains
       end do
       call check_true('first-order BE stable + physical at dt = 900 s (6 h)', physical, tcas)
 
-      !----- (b) cross-validation: the BE step vs the explicit RK4 oracle at dt = 4 s over 4 min agree   !
-      !          to first order (both solve the same RHS; O(dt) split-vs-coupled difference).            !
-      !          column_be_stage moves soil water at the water network's theta_rate, while the oracle    !
-      !          runs with freeze_theta=.true. and holds theta still; the two match only because         !
-      !          make_column leaves theta_rate at 0, so theta is trivially equal and the CAS/soil-energy !
-      !          core agrees tightly. Plant water moves at constant rates in BOTH (in-vector oracle vs   !
-      !          advance_plant_water) -> a small O(dt) difference. --------------------------------------!
-      call copy_state(y, yi, n) ; call copy_state(y, yr, n)
+      !----- (b) cross-validation: the BE step against the explicit RK45 reference at dt = 4 s over      !
+      !          4 min agrees to first order. RK45 shares only the right-hand side with the BE stage, so   !
+      !          agreement checks the implicit machinery against it. make_column leaves theta_rate at 0,  !
+      !          so theta stays put in both; plant water moves at constant rates in both (in the RK45     !
+      !          stages, and through advance_plant_water), a small O(dt) difference. ---------------------!
+      call copy_state(y, yi, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
-         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, frozen, col_config, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.); call copy_state(ytmp, yr, n)
+         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)
+         call copy_state(ytmp, yi, n)
       end do
+      call march_rk45(y, frozen, n, nsl, 4.0_wp, 60_ik, yr)
       dcas   = abs(cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv) - cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
       dmass  = max(maxval(abs(yi%leaf_water_mass(1:n) - yr%leaf_water_mass(1:n))),                &
                   maxval(abs(yi%wood_water_mass(1:n) - yr%wood_water_mass(1:n))))
-      call check_true('first-order BE ~ RK4 oracle (core, theta frozen): CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('first-order BE ~ RK4 oracle: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, dtheta)
-      call check_true('first-order BE ~ RK4 oracle: mass (operator-split both) agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
+      call check_true('first-order BE ~ RK45 reference: CAS temp agree < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('first-order BE ~ RK45 reference: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, &
+                      dtheta)
+      call check_true('first-order BE ~ RK45 reference: mass agree < 1e-4 kg/plant', dmass < 1.0e-4_wp, dmass)
    end subroutine test_be_euler
 
    !----- 12. the leaf<->CAS Newton coupling (niter>1) removes the large-dt over-humidification that  !
@@ -561,7 +511,7 @@ contains
    end subroutine test_be_coupled
 
    !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !
-   !           faithful to the RK4 oracle at small dt (converges to the coupled surface solution). ----!
+   !           close to the RK45 reference at small dt (converges to the coupled surface solution). ---!
    subroutine test_arrowhead()
       type(column_state_t)  :: y, yi, yr, ytmp
       type(column_frozen_t) :: frozen
@@ -589,19 +539,21 @@ contains
       call check_true('Newton stays sub-saturated from a 99%-saturated start (900 s)', worst_super <= 1.0e-4_wp, worst_super)
       call check_true('Newton stays physical (270-325 K) near saturation', physical, tcas)
 
-      !----- (b) Newton (niter=8) matches the RK4 oracle at small dt (converges to the coupled      !
-      !          soln); theta matches only through the fixture's zero theta_rate, as in             !
+      !----- (b) Newton (niter=8) matches the RK45 reference at small dt (converges to the coupled    !
+      !          solution); theta stays put through the fixture's zero theta_rate, as in             !
       !          test_be_euler (b). ----------------------------------------------------------------!
       call make_column(y, frozen, n, nsl)
-      call copy_state(y, yi, n) ; call copy_state(y, yr, n)
+      call copy_state(y, yi, n)
       do step = 1_ik, 60_ik                     ! 60 * 4 s = 4 min
-         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)   ; call copy_state(ytmp, yi, n)
-         call rk4_column_step(yr, frozen, col_config, n, nsl, 4.0_wp, ytmp, freeze_theta=.true.) ; call copy_state(ytmp, yr, n)
+         call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp, niter=8_ik)
+         call copy_state(ytmp, yi, n)
       end do
+      call march_rk45(y, frozen, n, nsl, 4.0_wp, 60_ik, yr)
       dcas   = abs(cas_enthalpy_to_temp(yi%cas_enthalpy, yi%cas_shv) - cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv))
       dtheta = maxval(abs(yi%theta(1:nsl) - yr%theta(1:nsl)))
-      call check_true('Newton (niter=8) ~ RK4 oracle (core, theta frozen): CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
-      call check_true('Newton (niter=8) ~ RK4 oracle: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, dtheta)
+      call check_true('Newton (niter=8) ~ RK45 reference: CAS temp < 5e-2 K at dt=4 s', dcas < 5.0e-2_wp, dcas)
+      call check_true('Newton (niter=8) ~ RK45 reference: theta unchanged in both (theta_rate = 0)', dtheta < 1.0e-12_wp, &
+                      dtheta)
    end subroutine test_arrowhead
 
    !----- 13. the production adaptive controller (adaptive_ark_march): tighter rtol takes more steps !
@@ -706,8 +658,8 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_be_euler
 
-   !----- march the Cash-Karp RK45 fixed-step (5th-order commit, embedded 4th discarded) -- for the   !
-   !      order-of-accuracy self-convergence study below. ------------------------------------------!
+   !----- march the Cash-Karp RK45 fixed-step (5th-order commit, embedded 4th discarded): the explicit !
+   !      reference the BE checks compare against, and the order-of-accuracy study below. ----------!
    subroutine march_rk45(y0, frozen, n, nsl, dt, nstep, y_out)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
@@ -1003,7 +955,7 @@ contains
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
-      frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
+      frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
@@ -1011,7 +963,7 @@ contains
       frozen%roots%root_share(1:nsl) = exp_root_profile(col_config%soil, nsl)   ! per-layer sink placement
       frozen%plant%nplant = 0.3_wp
       !----- FROZEN sapflow/uptake (docs/science/numerical_scheme.md §2): a representative,             !
-      !      state-independent pair for these RHS/oracle-march tests -- not taken from the water        !
+      !      state-independent pair for these RHS and reference-march tests -- not taken from the water  !
       !      network here (these tests exercise column_derivs/the tableau machinery directly, not       !
       !      build_column_frozen, which has its own coverage via test_column_ark.f90). -----------------!
       frozen%plant%sapflow_frozen = 1.0e-4_wp

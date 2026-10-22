@@ -1,39 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_spac_solver -- one patch's soil and plant water over one fast step, solved together as    !
-! one network (docs/science/soil_plant_water.md).                                                !
-!                                                                                                !
-! THE NETWORK (docs/science/soil_plant_water.md §1). Water sits in stores joined by paths:       !
-!   * the soil nodes: the pond (node 1) and the soil layers (node 1 + k);                        !
-!   * two stores per cohort, its wood and its leaves, which touch only each other and the        !
-!     soil layers its roots reach;                                                               !
-!   * paths: soil water flux between adjacent layers and between the pond and the top layer;     !
-!     root water uptake from each layer into each cohort's wood; sapflow up each cohort's        !
-!     xylem;                                                                                     !
-!   * boundaries: rain into the pond, ground evaporation from the top layer, drainage from       !
-!     the bottom one, and each cohort's transpiration, limited by what its leaves hold           !
-!     (docs/science/soil_plant_water.md eq. (3)).                                                !
-! How much each store holds is meds_soil_hydr_lib's and meds_plant_hydr_lib's (the               !
-! *_water_relations); how fast water moves along each path is meds_plant_hydr_lib's              !
-! (rhizosphere, xylem, transpiration) and meds_soil_water's (soil water flux, evaporation,       !
-! drainage). This module only joins them.                                                        !
-!                                                                                                !
-! THE SOLVE (docs/science/soil_plant_water.md §3, eq. (2)). Implicit Euler on sub-steps. Each    !
-! sub-step is a Newton solve of the water balance of every store at the sub-step's end,          !
-!     (W(tau) - W_start) / h - (net inflow at tau) = 0,                                          !
-! in each store's own unknown tau: a soil layer's saturation (dry) or potential (wet), a         !
-! tissue's relative water content, the pond's head. Its linear systems are block arrowheads --   !
-! the soil nodes bordered by the cohorts -- solved by eliminating each cohort onto the soil      !
-! (meds_linear_algebra). Newton steps are bounded so no store is driven past empty, and         !
-! backtracked until the balance improves. A sub-step's error is the implicit-Euler local         !
-! error, estimated from the change in the inflows across the sub-step and filtered twice         !
-! through the Newton matrix so a stiff exchange that has already settled does not read as        !
-! error; it sets the next sub-step.                                                              !
-!                                                                                                !
-! WHAT IS KEPT EXACT. Each store's water is advanced by the flows themselves, W += h * inflow,   !
-! never re-read from its curve, so every kilogram that leaves one store arrives in another or    !
-! crosses a boundary: the solve conserves water to round-off whatever Newton's residual. The     !
-! amounts each path moved over the step are reported for the energy integrator and the ledgers.  !
+! meds_spac_solver -- one patch's soil and plant water over one fast step, solved as one network  !
+! (docs/science/soil_plant_water.md §1-§3): the pond, the soil layers, and each cohort's wood and !
+! leaves. Implicit Euler on sub-steps, each a Newton solve (eq. (2)) in every store's own unknown, !
+! with a block-arrowhead linear solve (meds_linear_algebra) and a filtered local-error estimate.   !
+! Water moves by the flows themselves, so it is conserved to round-off whatever Newton's residual; !
+! the amounts each path moved are reported for the energy integrator and the ledgers. The stores' !
+! curves and the paths' flows are the process libraries'; this module only joins them.            !
 !==========================================================================================!
 module meds_spac_solver
    use meds_kinds,           only : wp, ik
@@ -54,8 +27,8 @@ module meds_spac_solver
    private
 
    public :: spac_solver_t, spac_allocate, spac_set_state, spac_advance
-   public :: spac_jacobian_error
    public :: POND, WOOD, LEAF
+   public :: spac_jacobian_error   ! used only by the tests
 
    integer(ik), parameter :: POND = 1_ik            !< the pond is soil node 1; soil layer k is node 1 + k
    integer(ik), parameter :: WOOD = 1_ik            !< a cohort's wood, its first store
@@ -111,7 +84,7 @@ module meds_spac_solver
       real(wp) :: rain       = 0.0_wp           !< [kg/m2/s] water reaching the pond
       real(wp) :: t_rain     = 298.15_wp        !< [K] the temperature that values it
       real(wp) :: w_pond_max = 5.0_wp           !< [kg/m2] pond capacity; above it, runoff
-      real(wp) :: rtol = 1.0e-3_wp, atol = 1.0e-4_wp   !< sub-step error tolerances ([soil] rtol, atol)
+      real(wp) :: rtol = 1.0e-3_wp, atol = 1.0e-4_wp   !< sub-step error tolerances ([fast] rtol, water_atol)
       !----- The cohorts. ----------------------------------------------------------------!
       integer(ik), allocatable :: pft(:)        !< (ncoh) PFT, selecting curves and vulnerability
       real(wp), allocatable :: nplant(:)        !< (ncoh) [plants/m2]
@@ -161,7 +134,9 @@ contains
       type(spac_solver_t), intent(inout) :: spac
       integer(ik),         intent(in)    :: nsl, ncoh
       if (.not. allocated(spac%layer) .or. spac%nsl /= nsl .or. spac%ncoh /= ncoh) then
-         spac%nsl = nsl ; spac%ncoh = ncoh ; spac%nsoil = 1_ik + nsl
+         spac%nsl = nsl
+         spac%ncoh = ncoh
+         spac%nsoil = 1_ik + nsl
          if (allocated(spac%layer)) deallocate(spac%layer, spac%z_node, spac%dz_node, spac%face_weight,          &
               spac%t_soil, spac%pft, spac%nplant, spac%bleaf, spac%bwood, spac%grav, spac%k_xylem,               &
               spac%e_demand, spac%r_close, spac%g_rhizo, spac%soil_fixed, spac%tau_soil, spac%tau_coh,           &
@@ -174,10 +149,14 @@ contains
                   spac%water_soil(spac%nsoil), spac%water_coh(COHORT_STORES, ncoh))
          allocate(spac%face(nsl), spac%uptake(nsl, ncoh), spac%sapflow(ncoh), spac%transp(ncoh),                &
                   spac%psi_soil(spac%nsoil), spac%psi_coh(COHORT_STORES, ncoh))
-         call eval_allocate(spac%ev(1), spac) ; call eval_allocate(spac%ev(2), spac)
+         call eval_allocate(spac%ev(1), spac)
+         call eval_allocate(spac%ev(2), spac)
       end if
-      spac%t_soil = 298.15_wp ; spac%soil_fixed = .false. ; spac%g_rhizo = 0.0_wp
-      spac%e_demand = 0.0_wp ; spac%r_close = 0.5_wp
+      spac%t_soil = 298.15_wp
+      spac%soil_fixed = .false.
+      spac%g_rhizo = 0.0_wp
+      spac%e_demand = 0.0_wp
+      spac%r_close = 0.5_wp
    end subroutine spac_allocate
 
    !----- Set the solver's state from the model's: soil water content, the pond's water and       !
@@ -206,11 +185,9 @@ contains
          spac%tau_soil(1_ik + k)   = soil_theta_to_unknown(spac%layer(k), theta(k))
          spac%water_soil(1_ik + k) = rho_h2o * params%dz(k) * theta(k)
       end do
-      !----- The pond starts at its water's head, but no higher than the head at which it would     !
-      !      neither give nor take water from the top layer. Over dry soil the pond face drains tens of !
-      !      millimetres an hour, so a pond holding a trace of water empties within the step: starting !
-      !      it at that trace's head would put the step's first Newton iterate at a flow thousands of   !
-      !      times what the pond holds, far outside the linear model's reach. ----------------------!
+      !----- The pond starts at its water's head, but no higher than the head at which it neither   !
+      !      gives nor takes water from the top layer: over dry soil a trace pond empties within the  !
+      !      step, and its own head would start Newton at a flow thousands of times what it holds. --!
       spac%water_soil(POND) = w_pond
       spac%e_pond = e_pond
       call soil_water_relations(spac%layer(1), spac%tau_soil(2), psi, dpsi, w, dw, kk, dk)
@@ -256,12 +233,16 @@ contains
       call water_scales(spac, hyd, scale_soil, scale_coh)
       spac%start_ready = .false.
 
-      t = 0.0_wp ; h = dt ; h_min = H_MIN_SHARE * dt ; trials = 0_ik
+      t = 0.0_wp
+      h = dt
+      h_min = H_MIN_SHARE * dt
+      trials = 0_ik
       do while (t < dt * (1.0_wp - 1.0e-12_wp))
          h = min(h, dt - t)
          last = (h <= h_min) .or. (trials >= TRIALS_MAX)
          trials = trials + 1_ik
-         tau_soil = spac%tau_soil ; tau_coh = spac%tau_coh
+         tau_soil = spac%tau_soil
+         tau_coh = spac%tau_coh
          call newton_substep(spac, params, opts, forcing, hyd, h, scale_soil, scale_coh, tau_soil, tau_coh,     &
                              converged, iters, i_sol)
          spac%nnewton = spac%nnewton + iters
@@ -295,11 +276,9 @@ contains
       spac%psi_coh  = spac%ev(spac%i_start)%psi_coh
    end subroutine spac_advance
 
-   !----- How far the assembled Jacobian is from the residual's own derivative, at the current     !
-   !      state for a sub-step of h: the largest difference between J v and a central difference   !
-   !      of the residual along v, relative to the largest entry of either, with v a fixed pattern !
-   !      of small changes in every unknown. For the test suite: it checks the whole Jacobian     !
-   !      against the flows it is built from. -----------------------------------------------------!
+   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at   !
+   !      the current state for a sub-step of h -- the largest difference between J v and a central !
+   !      difference of the residual along v, relative to the largest entry of either. -----------!
    real(wp) function spac_jacobian_error(spac, params, opts, forcing, hyd, h) result(err)
       type(spac_solver_t),        intent(inout) :: spac
       type(soil_params_t),        intent(in)    :: params
@@ -327,7 +306,8 @@ contains
       end do
       call evaluate(spac, params, opts, forcing, hyd, spac%tau_soil, spac%tau_coh, ev, .true.)
       call storage_diagonal(spac, h, ev, add_soil, add_coh)
-      jv_soil = matmul(spac%sys%a, v_soil) + add_soil * v_soil ; jv_coh = 0.0_wp
+      jv_soil = matmul(spac%sys%a, v_soil) + add_soil * v_soil
+      jv_coh = 0.0_wp
       do i = 1_ik, spac%ncoh
          jv_soil = jv_soil + spac%sys%b(:, i) * v_coh(WOOD, i)
          do l = 1_ik, COHORT_STORES
@@ -342,7 +322,8 @@ contains
       call evaluate(spac, params, opts, forcing, hyd, spac%tau_soil - eps * v_soil, spac%tau_coh - eps * v_coh,   &
                     ev, .false.)
       call residual(spac, h, ev, rm_soil, rm_coh)
-      rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps) ; rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
+      rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps)
+      rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
       where (spac%soil_fixed) jv_soil = 0.0_wp
       big = max(maxval(abs(jv_soil)), maxval(abs(rp_soil)), tiny_num)
       err = maxval(abs(jv_soil - rp_soil)) / big
@@ -375,10 +356,12 @@ contains
       integer(ik) :: it, ib, i_try
       logical  :: ok
 
-      converged = .false. ; iters = 0_ik
+      converged = .false.
+      iters = 0_ik
       !----- The network at the start, evaluated unless it already is; the iterates are evaluated into  !
       !      the other slot, and the solution is the start until one is taken. ------------------------!
-      i_sol = spac%i_start ; i_try = 3_ik - spac%i_start
+      i_sol = spac%i_start
+      i_try = 3_ik - spac%i_start
       if (.not. spac%start_ready) then
          call evaluate(spac, params, opts, forcing, hyd, tau_soil, tau_coh, spac%ev(i_sol), .true.)
          spac%start_ready = .true.
@@ -398,7 +381,8 @@ contains
          !----- A trial's evaluation replaces the Jacobian sys held, so the start's is gone. ---------!
          spac%start_ready = .false.
          do ib = 1_ik, BACKTRACK_MAX
-            try_soil = tau_soil + lam * step_soil ; try_coh = tau_coh + lam * step_coh
+            try_soil = tau_soil + lam * step_soil
+            try_coh = tau_coh + lam * step_coh
             call evaluate(spac, params, opts, forcing, hyd, try_soil, try_coh, spac%ev(i_try), .true.)
             call residual(spac, h, spac%ev(i_try), res2_soil, res2_coh)
             merit_try = residual_merit(spac, h, res2_soil, res2_coh, scale_soil, scale_coh)
@@ -406,8 +390,12 @@ contains
             lam = 0.5_wp * lam
          end do
          if (merit_try /= merit_try) return
-         tau_soil = try_soil ; tau_coh = try_coh ; res_soil = res2_soil ; res_coh = res2_coh
-         merit = merit_try ; i_sol = i_try
+         tau_soil = try_soil
+         tau_coh = try_coh
+         res_soil = res2_soil
+         res_coh = res2_coh
+         merit = merit_try
+         i_sol = i_try
          worst = residual_worst(spac, h, res_soil, res_coh, scale_soil, scale_coh)
       end do
       !----- Factor the Newton matrix at the solution: the error estimate solves with it. -----------!
@@ -496,7 +484,8 @@ contains
       real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
       real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum, du_dpsi(spac%nsl), du_dk(spac%nsl)
 
-      ev%inflow_soil = 0.0_wp ; ev%inflow_coh = 0.0_wp
+      ev%inflow_soil = 0.0_wp
+      ev%inflow_coh = 0.0_wp
       !----- The Jacobian's entries are written afresh: the soil block's band, which the flows add  !
       !      into, is cleared; every other entry an evaluation touches is set outright below, and the  !
       !      rest stay zero from arrowhead_allocate. ---------------------------------------------------!
@@ -504,7 +493,8 @@ contains
          do c = 1_ik, spac%nsoil
             spac%sys%a(c, c) = 0.0_wp
             if (c < spac%nsoil) then
-               spac%sys%a(c, c + 1_ik) = 0.0_wp ; spac%sys%a(c + 1_ik, c) = 0.0_wp
+               spac%sys%a(c, c + 1_ik) = 0.0_wp
+               spac%sys%a(c + 1_ik, c) = 0.0_wp
             end if
          end do
       end if
@@ -512,7 +502,8 @@ contains
       !----- Storage. ------------------------------------------------------------------!
       call pond_water_relations(tau_soil(POND), ev%psi_soil(1), ev%dpsi_soil(1), ev%water_soil(1),             &
                                 ev%dwater_soil(1))
-      ev%k_soil(1) = params%ksat(1) ; ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
+      ev%k_soil(1) = params%ksat(1)
+      ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
       do k = 1_ik, spac%nsl
          c = 1_ik + k
          call soil_water_relations(spac%layer(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c), ev%water_soil(c), &
@@ -530,7 +521,8 @@ contains
       end do
 
       !----- The pond and the top layer: Darcy, the pond a saturated layer as thick as the top one. !
-      ca = POND ; cb = 2_ik
+      ca = POND
+      cb = 2_ik
       call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), 0.5_wp, ev%psi_soil(ca), ev%psi_soil(cb), -spac%z_node(1),  &
                            -spac%z_node(1), q, dq_pa, dq_pb, dq_ka, dq_kb)
       ev%pond_flux = q
@@ -538,7 +530,8 @@ contains
 
       !----- Between soil layers. --------------------------------------------------------!
       do k = 1_ik, spac%nsl - 1_ik
-         ca = 1_ik + k ; cb = 2_ik + k
+         ca = 1_ik + k
+         cb = 2_ik + k
          call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), spac%face_weight(k), ev%psi_soil(ca), ev%psi_soil(cb), &
                               spac%dz_node(k), spac%dz_node(k), q, dq_pa, dq_pb, dq_ka, dq_kb)
          ev%face_flux(k) = q
@@ -569,16 +562,19 @@ contains
       !      cohort's uptake comes from its whole root profile at once; its own sums are kept in       !
       !      scalars over its layers and written once. ------------------------------------------!
       do i = 1_ik, spac%ncoh
-         psi_w = ev%psi_coh(WOOD, i) ; dpsi_w = ev%dpsi_coh(WOOD, i)
+         psi_w = ev%psi_coh(WOOD, i)
+         dpsi_w = ev%dpsi_coh(WOOD, i)
          call root_water_uptake_profile(spac%nsl, spac%g_rhizo(1:spac%nsl, i), ev%k_soil(2:spac%nsoil),             &
                                         ev%psi_soil(2:spac%nsoil), spac%z_node(1:spac%nsl), psi_w,                &
                                         ev%uptake(1:spac%nsl, i), du_dpsi, du_dk)
-         u_sum = 0.0_wp ; dqb_sum = 0.0_wp
+         u_sum = 0.0_wp
+         dqb_sum = 0.0_wp
          do k = 1_ik, spac%nsl
             c = 1_ik + k
             if (spac%g_rhizo(k, i) <= 0.0_wp) then
                if (with_jacobian) then
-                  spac%sys%b(c, i) = 0.0_wp ; spac%sys%c(c, i) = 0.0_wp
+                  spac%sys%b(c, i) = 0.0_wp
+                  spac%sys%c(c, i) = 0.0_wp
                end if
                cycle
             end if
@@ -657,7 +653,8 @@ contains
       integer(ik) :: c
       do c = 1_ik, spac%nsoil
          if (spac%soil_fixed(c)) then
-            spac%sys%a(c, :) = 0.0_wp ; spac%sys%a(c, c) = 1.0_wp
+            spac%sys%a(c, :) = 0.0_wp
+            spac%sys%a(c, c) = 1.0_wp
             spac%sys%b(c, :) = 0.0_wp
          end if
       end do
@@ -669,14 +666,10 @@ contains
    !     Error, commit, and bookkeeping.                                                    !
    !=======================================================================================!
 
-   !----- The sub-step's local error relative to its tolerance (<= 1 to accept). Implicit Euler's   !
-   !      error is half the change in the inflows across the sub-step, h (F_end - F_start)/2. Taken !
-   !      raw that over-states a stiff exchange that has already settled -- after rain, the 0.4 s   !
-   !      soil-to-wood exchange -- by a factor of its stiffness, so it is filtered twice through    !
-   !      (I - h dF/dW)^-1, which leaves slow modes alone and divides a stiff one's error by its    !
-   !      stiffness squared: what step doubling would measure, at the price of two back-            !
-   !      substitutions with the last Newton factorisation (docs/science/soil_plant_water.md §3).   !
-   !      Each store's error is weighed against atol of its scale plus rtol of its water. ----------!
+   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's   !
+   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that   !
+   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each    !
+   !      store is weighed against atol of its scale plus rtol of its water. --------------------!
    real(wp) function substep_error(spac, h, ev0, ev1, scale_soil, scale_coh) result(err)
       type(spac_solver_t), intent(in) :: spac
       real(wp),            intent(in) :: h
@@ -700,18 +693,11 @@ contains
       if (err /= err) err = huge(1.0_wp)
    end function substep_error
 
-   !----- Accept a sub-step: advance each store's water by the flows themselves, so water is        !
-   !      conserved to round-off; spill the pond above its capacity; carry the pond's enthalpy; and  !
-   !      add what each path moved to the step's amounts.                                             !
-   !                                                                                                   !
-   !      Newton balances every store only to a tolerance, and the flows carry that slack into the     !
-   !      water they move. For a store hanging off the network by one path -- a cohort's leaves on     !
-   !      its xylem, the pond on its face to the top layer -- the slack can be many times what the     !
-   !      store holds (a near-leafless cohort's leaves hold 1e-26 kg/m2, its plant's tolerance is     !
-   !      1e-9). So such a store takes its water from its own curve, and its one path carries the     !
-   !      flow that closes its balance exactly; the store across that path (the wood, the top layer)   !
-   !      absorbs the slack, which is small against what it holds. Every kilogram is still counted     !
-   !      once. -----------------------------------------------------------------------------------!
+   !----- Accept a sub-step: advance each store's water by the flows themselves, spill the pond above !
+   !      its capacity, carry the pond's enthalpy, and add what each path moved to the step's amounts.  !
+   !      A store on one path (the pond, a cohort's leaves) takes its water from its own curve, and its !
+   !      path carries the flow that closes its balance; the store across the path absorbs Newton's    !
+   !      slack (docs/science/soil_plant_water.md §3, "Conservation"). ----------------------------!
    subroutine commit_substep(spac, h, tau_soil, tau_coh, ev, spilled)
       type(spac_solver_t), intent(inout) :: spac
       real(wp),            intent(in)    :: h, tau_soil(:), tau_coh(:,:)
@@ -737,7 +723,8 @@ contains
       u_mix = internal_energy_liquid(t_mix)
       if (pond_flux >= 0.0_wp) then
          amount = h * pond_flux
-         spac%infil = spac%infil + amount ; spac%infil_enth = spac%infil_enth + amount * u_mix
+         spac%infil = spac%infil + amount
+         spac%infil_enth = spac%infil_enth + amount * u_mix
          spac%e_pond = e_mix - amount * u_mix
       else
          amount = -h * pond_flux
@@ -756,7 +743,8 @@ contains
          spac%water_coh(LEAF, i) = ev%water_coh(LEAF, i)
          spac%water_coh(WOOD, i) = spac%water_coh(WOOD, i) - h * (sap(i) - ev%sapflow(i))
       end do
-      spac%tau_soil = tau_soil ; spac%tau_coh = tau_coh
+      spac%tau_soil = tau_soil
+      spac%tau_coh = tau_coh
       do c = 1_ik, spac%nsoil
          if (spac%soil_fixed(c)) spac%water_soil(c) = ev%water_soil(c)
       end do
@@ -810,18 +798,31 @@ contains
 
    subroutine clear_amounts(spac)
       type(spac_solver_t), intent(inout) :: spac
-      spac%face = 0.0_wp ; spac%uptake = 0.0_wp ; spac%sapflow = 0.0_wp ; spac%transp = 0.0_wp
-      spac%infil = 0.0_wp ; spac%infil_enth = 0.0_wp ; spac%exfil = 0.0_wp ; spac%exfil_enth = 0.0_wp
-      spac%drain = 0.0_wp ; spac%evap = 0.0_wp ; spac%spill = 0.0_wp ; spac%spill_enth = 0.0_wp
+      spac%face = 0.0_wp
+      spac%uptake = 0.0_wp
+      spac%sapflow = 0.0_wp
+      spac%transp = 0.0_wp
+      spac%infil = 0.0_wp
+      spac%infil_enth = 0.0_wp
+      spac%exfil = 0.0_wp
+      spac%exfil_enth = 0.0_wp
+      spac%drain = 0.0_wp
+      spac%evap = 0.0_wp
+      spac%spill = 0.0_wp
+      spac%spill_enth = 0.0_wp
       spac%rain_enth = 0.0_wp
-      spac%nsub = 0_ik ; spac%nnewton = 0_ik ; spac%nreject = 0_ik ; spac%nfail = 0_ik
+      spac%nsub = 0_ik
+      spac%nnewton = 0_ik
+      spac%nreject = 0_ik
+      spac%nfail = 0_ik
    end subroutine clear_amounts
 
    subroutine eval_allocate(ev, spac)
       type(spac_eval_t),   intent(inout) :: ev
       type(spac_solver_t), intent(in)    :: spac
       integer(ik) :: ns, nc
-      ns = spac%nsoil ; nc = spac%ncoh
+      ns = spac%nsoil
+      nc = spac%ncoh
       if (allocated(ev%psi_soil)) deallocate(ev%psi_soil, ev%dpsi_soil, ev%water_soil, ev%dwater_soil, ev%k_soil, &
                                              ev%dk_soil, ev%inflow_soil, ev%psi_coh, ev%dpsi_coh, ev%water_coh,   &
                                              ev%dwater_coh, ev%inflow_coh, ev%face_flux, ev%uptake, ev%sapflow,  &

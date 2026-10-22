@@ -305,9 +305,10 @@ meds_fortran_flags(meds_maps)
 #      records, the ARK and RK45 marches, the step controller and the pre-pass) and the         #
 #      driver that walks a slow step in dt_fast sub-steps over the patch axis (driver/).          #
 #                                                                                                  #
-#      meds_fast_prepass sits in numerics/, not driver/, because the marches call it: ark, rk45     #
-#      and the RK4 oracle all invoke column_prepass mid-stage, so filing it under driver/ by its    #
-#      name would make a cycle. It links meds_slow_kernels for the one fast->slow seam              #
+#      meds_fast_prepass sits in numerics/, not driver/, because the step calls it: both schemes   #
+#      build their frozen record through build_column_frozen, which runs column_prepass once per   #
+#      dt_fast, so filing it under driver/ would make a cycle. It links meds_slow_kernels for the  #
+#      one fast->slow seam                                                                          #
 #      (docs/science/soil_carbon.md §7): the sub-daily heterotrophic respiration must respire       #
 #      the SAME CENTURY matrix the daily step debits.                                               #
 file(GLOB FAST_SOURCES CONFIGURE_DEPENDS

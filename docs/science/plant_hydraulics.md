@@ -75,6 +75,13 @@ At full turgor ($R=1$) the turgid branch gives $`dR/d\psi = 1/(\varepsilon+|\pi_
 capacitance equals the pure-elastic (X16-style) linear value
 $`C_{\text{lin}}=(1-a_f)\,W_{sat}/(\varepsilon+|\pi_0|)`$.
 
+**A leafless cohort's leaf node.** A cohort with no leaves has an empty leaf store and no curve to read:
+eq. (4) would put its leaves at the floor of the relative water content, about −15,000 MPa. Its leaf
+node sits instead at the wood potential less the gravity head to the crown,
+$`\psi_L = \psi_W - \rho g\,H`$, the value the leaf node relaxes to with no transpiration and the one
+Xu et al. (2016) give a leafless cohort. A bare cohort's predawn potential, which the stomata and the
+phenology water cue read, therefore follows its stem and roots (`leaf_node_psi`).
+
 ## 3. Xylem vulnerability and the Kirchhoff conductance law
 
 The retained conductance fraction (1 − PLC) is a Weibull-like curve in $r=\psi/\psi_{50}\ge 0$

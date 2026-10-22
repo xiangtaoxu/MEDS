@@ -1,22 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_step -- the fast-loop TIME-INTEGRATOR DISPATCH. One thin routine, `column_fast_step`, !
-! hands a dt_fast sub-step to the chosen scheme (INTEG_ARK, the default; INTEG_RK45 = the adaptive  !
-! Cash-Karp RK45 in meds_fast_rk45) and owns the RK45 -> ARK stiff rescue: when the explicit march !
-! bails or commits a clamp-railed CAS/soil state, the step is rolled back and redone on ARK.       !
-! It also reports the per-cohort psi_leaf for the daily-max accumulator (both schemes) and the      !
-! CAS -> atmosphere LE/H diagnostics. There are TWO schemes and no third: see                       !
-! docs/science/numerical_scheme.md §3 for why there is no operator-split path.                      !
+! meds_fast_step -- the fast-loop integrator dispatch. column_fast_step hands a dt_fast step !
+! to the scheme the run chose: ARK (meds_fast_ark, the default) or RK45 (meds_fast_rk45,   !
+! the explicit Cash-Karp integrator, also the explicit reference the tests compare ARK     !
+! against). It owns the RK45 -> ARK rescue, reports each cohort's psi_leaf for the daily-  !
+! maximum accumulator, and reports H and LE (atm_fluxes). There is no operator-split       !
+! scheme (docs/science/numerical_scheme.md §3).                                            !
 !==========================================================================================!
 module meds_fast_step
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : latent_heat_vap
    use meds_config,           only : meds_config_t
-   use meds_fast_params,      only : INTEG_ARK, INTEG_RK45
+   use meds_fast_params,      only : INTEG_RK45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_fast_types, only : patch_biophys_t
-   use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t, fast_workspace_t
+   use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
+                               column_budget_t, fast_workspace_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
    use meds_plant_hydraulics, only : leaf_node_psi
@@ -28,17 +26,12 @@ module meds_fast_step
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance ONE dt_fast sub-step with the configured scheme.                                       !
-   !                                                                                                !
-   !   time_integrator = "ark"  (DEFAULT) -- the coupled implicit scheme. Despite the `ark` label   !
-   !                                        it is NOT an IMEX method: the biotic CO2 source is      !
-   !                                        folded implicit, so f_E == 0 and the tableau is a       !
-   !                                        clean 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2)        !
-   !                                        (the ARS(2,2,2) value; docs/science/numerical_scheme.md !
-   !                                        eq. (1)). The config value stays "ark" for              !
-   !                                        compatibility; the SCHEME is ESDIRK2.                   !
-   !   time_integrator = "rk45"           -- the fully explicit adaptive Cash-Karp march, kept as   !
-   !                                        the ACCURACY BASELINE. Deliberately not optimised.      !
+   ! Advance one dt_fast with the configured scheme ([fast].time_integrator):                 !
+   !   "ark" (default) -- the 2-solve ESDIRK2, gamma = 1 - 1/sqrt(2); not IMEX, since the     !
+   !                      biotic CO2 source is implicit and the explicit tableau is empty     !
+   !                      (docs/science/numerical_scheme.md eq. (1)).                         !
+   !   "rk45"          -- the adaptive explicit Cash-Karp march, a full alternative a run can  !
+   !                      choose and the explicit reference the tests compare ARK against.    !
    !---------------------------------------------------------------------------------------!
    subroutine column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                                gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
@@ -63,21 +56,16 @@ contains
       integer(ik), optional,   intent(out)   :: iters        !< outer-iteration count taken
       real(wp),    optional,   intent(out)   :: le_flux      !< [W/m2] CAS->atm latent-heat (ET) flux
       real(wp),    optional,   intent(out)   :: h_flux       !< [W/m2] CAS->atm sensible-heat flux
-      !----- OPTIONAL per-cohort diagnostic capture (docs/science/diagnostics.md §1, stage [2]).   !
-      !      Filled by the pre-pass with the leaf gas-exchange + hydraulics quantities it computes !
-      !      every dt_fast anyway. Absent => nothing extra is computed at all. --------------------!
+      !----- Optional per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]), filled by  !
+      !      the pre-pass from what it computes anyway; absent, nothing extra is computed. -------!
       real(wp),    optional,   intent(inout) :: cdiag(:,:)
       integer(ik) :: jcoh
 
       budget%rk45_rescue = 0_ik
 
-      !----- Report this step's per-cohort psi_leaf for the daily-MAX accumulator that drives        !
-      !      beta_stomata on the NEXT day (docs/science/leaf_gas_exchange.md §4.2). Diagnosed from   !
-      !      leaf_water_mass at state^n, which is exactly the value the leaf kernel was handed this  !
-      !      step (column_prepass freezes psi_leaf once per dt_fast), so the accumulator and the     !
-      !      kernel can never disagree. It runs BEFORE the scheme dispatch so that BOTH schemes fill !
-      !      it: the RK45 success path returns early, which would leave the caller's per-thread      !
-      !      buffer with the previous patch's (or uninitialised) values. ----------------------------!
+      !----- Each cohort's psi_leaf for the daily-maximum accumulator behind the next day's stomatal  !
+      !      control (docs/science/leaf_gas_exchange.md §4.2), at state^n, the value the leaf kernel   !
+      !      was handed. Before the dispatch, so both schemes fill it (RK45's success path returns). -!
       if (present(psi_leaf_coh)) then
          do jcoh = 1_ik, col_cohort%n
             psi_leaf_coh(jcoh) = leaf_node_psi(biophys%leaf_water_mass(jcoh), col_cohort%bleaf(jcoh),       &
@@ -88,27 +76,18 @@ contains
       end if
 
       if (col_config%integrator%scheme == INTEG_RK45) then
-         !----- RK45 is FULLY EXPLICIT over the whole column (no implicit canopy-air box). At high LAI  !
-         !      plus cold, the coupled leaf<->CAS exchange is stiff enough that the explicit stages     !
-         !      cannot resolve it even at the sub-step floor: the state rails to the clamp bounds       !
-         !      (CAS/soil pinned at 180 or 350 K) and -- worse -- the 5th- and 4th-order embedded       !
-         !      solutions rail TOGETHER, so the controller sees err~0 and commits the railed garbage,   !
-         !      locking into a cold-dead attractor (GPP -> 0) that never recovers.                      !
-         !                                                                                              !
-         !      HYBRID RESCUE (docs/science/numerical_scheme.md §3, `rk45`): snapshot state^n, take the !
-         !      explicit step, and roll back + REDO this dt_fast on ARK when either trigger fires:      !
-         !        * stiff_bail        -- the march burned its whole work budget without resolving.      !
-         !        * rk45_state_railed -- it finished, but committed a clamp-pinned CAS/soil state.      !
-         !                                                                                              !
-         !      ARK is the rescue target because the thing being rescued from is a COUPLED STIFF        !
-         !      canopy-air problem, and ARK's newton_surface_solve solves exactly that pair implicitly. !
-         !      RK45 keeps its fast explicit path everywhere it is stable; only genuinely stiff steps   !
-         !      pay. -----------------------------------------------------------------------------------!
+         !----- RK45 is explicit over the whole column. On a dense, cold canopy the leaf <-> canopy-air !
+         !      coupling can be too stiff even at the sub-step floor: the state rails, and its 5th- and  !
+         !      4th-order solutions rail together, so the controller would accept it. The rescue        !
+         !      (docs/science/numerical_scheme.md §3, `rk45`): keep state^n, take the explicit step,    !
+         !      and redo the dt_fast on ARK, whose Newton solves that coupled pair, when the march      !
+         !      gave up (stiff_bail) or committed a railed state (rk45_state_railed). -----------------!
          block
             type(patch_biophys_t) :: bio_save
             type(column_budget_t) :: budg_save
             logical               :: rk45_stiff
-            bio_save = biophys ; budg_save = budget
+            bio_save = biophys
+            budg_save = budget
             call column_fast_step_rk45(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                        ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
@@ -117,20 +96,12 @@ contains
                call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return
             end if
-            !----- Whole-dt_fast rollback, not a resume from the point of failure. A resume would        !
-            !      save redoing the sub-steps RK45 had already accepted, but there is no work to save on !
-            !      the reference workload: over a full simulated year at Ithaca on rk45 at dt_fast =     !
-            !      900 s the rescue fires ZERO times (mean_work_rk45_rescue_py = 0, against 70 577          !
-            !      integrator sub-steps on the same run, so the counter is live and the zero is real).   !
-            !                                                                                            !
-            !      A resume is also not free. Retaining part of RK45's boundary-flux accumulation while  !
-            !      ARK finishes the interval means one dt_fast's ledger summing two schemes'             !
-            !      contributions -- the "borrow one solve's numbers, commit another's trajectory" class  !
-            !      (docs/science/numerical_scheme.md §5b). And it is only well-defined for the           !
-            !      stiff_bail trigger: rk45_state_railed tests the FINAL state, so on that path there    !
-            !      is no identified sub-step to resume from. It would pay only on a forcing where        !
-            !      rescues are common. ------------------------------------------------------------------!
-            biophys = bio_save ; budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
+            !----- Roll back the whole dt_fast rather than resume from the failure: rescues are rare, a  !
+            !      resume would sum two schemes' boundary fluxes in one step's ledger                   !
+            !      (docs/science/numerical_scheme.md §5b), and a railed final state has no sub-step to  !
+            !      resume from. -------------------------------------------------------------------------!
+            biophys = bio_save
+            budget = budg_save         ! discard the railed/bailed RK45 step (rollback)
             budget%integ_nrej  = budget%integ_nrej  + 1_ik   ! count the rescue as a rejected integrator step
             budget%rk45_rescue = budget%rk45_rescue + 1_ik   ! ...and as an RK45->ARK rescue (diagnostic)
          end block
@@ -144,20 +115,11 @@ contains
    end subroutine column_fast_step
 
    !---------------------------------------------------------------------------------------!
-   ! atm_fluxes -- the CAS -> atmosphere turbulent fluxes the run REPORTS, from the conservation        !
-   ! ledger's own boundary export over the step: the flux the integrator charged the canopy air         !
-   ! with, b-weighted over the stages at the stage states and (on a live-MO stage) the stage            !
-   ! conductances, so the reported ET IS the conserved vapour export. Recomputing it from the           !
-   ! END-of-step CAS state with the pre-pass conductance (rho*ustar*temp2) would give a different       !
-   ! number.                                                                                            !
-   !                                                                                                    !
-   !   LE = L_v * (net vapour export) / dt   -- the vapour the CAS actually shed, times L_v;            !
-   !   H  = (net sensible export) / dt        -- g_atm_heat*cp_air*(T_cas - theta_atm), b-weighted      !
-   !                                             the same way (stage_bflux_t%atm_heat_out).             !
-   !                                                                                                    !
-   ! H is NOT "enthalpy export minus LE": the CAS enthalpy values vapour at cp_vap*(T - tsupercool_vap) !
-   ! ~ 3.4 MJ/kg, so that difference would carry the water's liquid-datum enthalpy (~40% of LE) inside  !
-   ! the sensible flux.                                                                                 !
+   ! atm_fluxes -- the canopy-air -> atmosphere fluxes the run reports, from the ledger's own  !
+   ! boundary export over the step, so the reported ET is the conserved vapour export:         !
+   ! LE = L_v * vapour export / dt and H = sensible export / dt, the b-weighted              !
+   ! g_atm_heat*cp_air*(T_cas - theta_atm), not the enthalpy export minus LE                   !
+   ! (docs/science/numerical_scheme.md §5b).                                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine atm_fluxes(budget, dt_fast, le_flux, h_flux)
       type(column_budget_t), intent(in)  :: budget

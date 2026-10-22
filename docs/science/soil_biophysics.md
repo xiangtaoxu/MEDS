@@ -69,7 +69,13 @@ $`K(\theta)`$ and a layer drier than the wood gives nothing, so a wilting thresh
 same water twice. **Ground evaporation** combines a Philip pore-space relative humidity with a
 Swenson-Lawrence dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$ from the
 aerodynamics kernel, at the end-of-sub-step state (`ground_evaporation_rate`); as the top layer dries,
-Philip's humidity goes to zero and evaporation stops by itself. It is the **single authority** for the
+Philip's humidity goes to zero and evaporation stops by itself. The DSL resistance grows as the top layer
+dries below `[soil].dsl_theta_init` of saturation, its thickness and tortuosity referenced to the
+air-dry water content at a matric head of −10⁴ m (CLM5's): referenced to the bulk $`\theta_1`$ instead,
+the tortuosity would fall faster than the layer thickens and a wetter soil would evaporate less. The
+tortuosity is Millington–Quirk's, $`\phi_{air}^{10/3}/\phi^2`$, rather than CLM5's form in the
+Clapp–Hornberger $b$; with the air-filled porosity $`\phi_{air}`$ fixed the two differ by a constant
+factor, so the moisture response has the same shape. It is the **single authority** for the
 ground latent flux (it drives both the CAS vapour twin and the ground energy balance's LE, so no
 double-count).
 
@@ -260,7 +266,8 @@ Temperature and liquid fraction are re-diagnosed from the committed energy — s
 internal-energy plateau**, captured for free and unconditionally (ice-aware
 $`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `soil_temp` at the triple
 point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
-$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$. A sibling
+$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$, with the
+infiltrating water's enthalpy, the top face's $`qwf_0`$, among the inputs. A sibling
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 RK45 integrator; ARK's implicit stages take the BE step.
 
@@ -360,16 +367,38 @@ The water and thermal columns are coupled by construction: the thermal step read
 moisture (for $`\kappa,C_{eff}`$), and the water the network moves carries liquid enthalpy: across each
 face at the temperature of the node it leaves, out of each layer by root uptake at that layer's own
 temperature (`root_heat`, per layer), and between the pond and the top layer (`water_heat_out`).
+Infiltration crosses the top face at the pond's temperature. Drainage has no face term: its enthalpy
+leaves with the bottom layer's sink, `root_heat_sink`, beside the root uptake. Soil evaporation is not a
+face either: its water leaves as vapour, and its enthalpy, liquid plus latent, has already left in the
+ground's latent flux inside $`G_{top}`$.
+
+Every face, the top one included, is applied by one upwind rule at the time level of the conduction it
+sits beside ($`T^{n+1}`$ in the step, $`T^n`$ in the tendency). In the supercooled-liquid datum each face
+term is large, about 1 MJ per kg of water moved, so the heat the moving water delivers is a small
+difference of large numbers, and a face valued at another temperature would swamp it.
 
 ## Canopy interception
 
 Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
 `meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
-infiltration boundary sees. A cohort holds its films per plant, as it holds its tissue water, and the
+infiltration boundary sees. A film left above its capacity, when a cohort sheds leaf area under a full
+film, drips the excess to the layer below, so the water stays in the column. A cohort holds its films
+per plant, as it holds its tissue water, and the
 fast loop works with them per m² of ground. So a split, a patch fusion or a disturbance changes a
 cohort's density and leaves its films alone, and the plants that die take their films to the ground
 with their tissue water.
+
+In the fast loop the cascade runs once per `dt_fast`, at the step's start, as capture only; film
+evaporation is the energy stages' own flux. Each cohort holds one combined leaf-and-wood bucket, filled
+tallest first and shared between leaf and wood by capacity, and the update reaches both integrators as
+a constant rate whose Euler step over `dt_fast` reproduces it. Under a snowpack nothing is intercepted:
+the pack takes the rain and the snow, and snowfall below the new-snow threshold forms no pack and
+passes the canopy as liquid throughfall. The films are clamped at their boundary after the march, not
+inside it. A film evaporates at a conductance frozen at the step's start and only roughly rescaled by
+what it holds, so it can overdraw below zero; left negative, it would create water in the next step's
+interception, so it is floored at zero and the shortfall is booked as a negative outflow, while water
+above capacity leaves as outflow.
 
 ## Soil heterotrophic respiration
 

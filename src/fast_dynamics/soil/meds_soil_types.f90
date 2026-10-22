@@ -1,16 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_types -- the argument records of the ground-column kernels: soil hydrology,    !
-! soil thermal energy, and the snow store (docs/science/soil_biophysics.md,                !
-! docs/science/snow_biophysics.md). Pure DATA, no methods, no hidden state.                !
-!                                                                                          !
-! Each domain follows the same shape: a *_forcing_t / *_env_t the kernel reads, and a      !
-! *_flux_t it returns, with the PROGNOSTIC stores themselves in meds_patch_state_vars and  !
-! the run-config selectors in meds_biophysics_params.                                      !
+! meds_soil_types -- the argument records (data only) of the ground-column kernels: the    !
+! boundary ground evaporation reads, the soil thermal column's forcing and outputs, and    !
+! the snow store's (docs/science/soil_biophysics.md, docs/science/snow_biophysics.md).     !
+! The prognostic stores are in meds_patch_state_vars; the soil's parameters and options   !
+! in meds_soil_params, the snow's parameters in meds_biophysics_params.                    !
 !==========================================================================================!
 module meds_soil_types
    use meds_kinds,             only : wp, ik
-   use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
+   use meds_constants,      only : n_soil_layer_max
    implicit none
    private
 
@@ -19,91 +17,50 @@ module meds_soil_types
    public :: snow_env_t, snow_flux_t, snow_melt_t
 
    !=======================================================================================!
-   !  Soil-column water: the boundary the water network's evaporation reads. The soil's       !
-   !  parameters are soil_params_t (meds_soil_params), its options soil_opts_t                !
-   !  (meds_biophysics_params), its retention curves meds_soil_hydr_lib.                       !
+   !  Soil-column water: the boundary ground evaporation reads. The soil's parameters and  !
+   !  options are soil_params_t and soil_opts_t (meds_soil_params).                        !
    !=======================================================================================!
 
-   !----- The soil column's surface boundary for the water network's evaporation (read-only). -----!
+   !----- The surface boundary ground_evaporation_rate reads (read-only). ---------------------------!
    type :: chydro_forcing_t
-      real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] water reaching the ground (post interception)
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
-      !----- Liquid fraction of the top soil layer, so ground evaporation from a FROZEN surface       !
-      !      saturates over ICE rather than over liquid (docs/science/snow_biophysics.md eq. (1)).    !
-      !      Defaults to 1 (all liquid). -------------------------------------------------------------!
+      !----- A frozen surface evaporates over ice (docs/science/snow_biophysics.md eq. (1)). ---------!
       real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
-      !----- The temperature that values precip_ground as it joins the pond. Defaulted to a PHYSICAL   !
-      !      temperature, not 0: internal_energy_liquid is referenced to tsupercool_liq (~57 K), so a 0 K !
-      !      default would value the pond's inflow at a large NEGATIVE enthalpy. ----------------------!
-      real(wp) :: t_pond_inflow = 298.15_wp               !< [K]
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
-      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
-                                                          !<       (1/ggnet) -- NOT snow-inflated; see below.
-      real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free AREA fraction (1-snowfac). Ground
-                                                          !<     evaporation is an AREA-weighted tile flux:
-                                                          !<     E = snow_free_frac * rho*(q_g-q_air)/(r_aero+r_soil).
-                                                          !<     Throttling partial cover by inflating r_aero
-                                                          !<     instead is NOT equivalent whenever the dry-surface
-                                                          !<     -layer resistance r_soil > 0 -- it divides only the
-                                                          !<     aerodynamic leg by (1-snowfac), so it over-predicts
-                                                          !<     bare-soil evaporation at intermediate cover, worst
-                                                          !<     where a dry surface makes r_soil dominant. The two
-                                                          !<     agree exactly at snowfac = 0 and snowfac = 1.
+      real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the bare-soil tile
+                                                          !<       (1/ggnet), not inflated for snow
+      real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free area fraction (1-snowfac) that evaporates,
+                                                          !<     an area-weighted tile flux (snow_biophysics.md)
    end type chydro_forcing_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
    type :: energy_forcing_t
       real(wp) :: g_top      = 0.0_wp                       !< [W/m2] net ground heat flux (Rn-H-LE), top Neumann
-      real(wp) :: geothermal = 0.0_wp                       !< [W/m2] bottom flux (default 0)
+      real(wp) :: geothermal = 0.0_wp                       !< [W/m2] prescribed bottom flux, positive up (held at 0)
       real(wp) :: soil_water(n_soil_layer_max) = 0.0_wp     !< [m3/m3] theta from hydrology (kappa, C_eff)
-      real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux for advective heat,
-                                                            !<        UPWARD-positive (matches the hf face convention;
-                                                            !<        the caller flips the DOWNWARD-positive hydrology
-                                                            !<        flux -- see assemble_soil_energy_forcing:
-                                                            !<        eforc%w_flux = -face_flux). Populating it with
-                                                            !<        the raw downward flux would reverse the advection.
-      real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy removed with root uptake
-      !----- BOUNDARY water fluxes, same UPWARD-positive convention as w_flux above, with the          !
-      !      temperature of water arriving from OUTSIDE the column (docs/science/soil_biophysics.md    !
-      !      eq. (10)). These close the water-enthalpy advection at the boundary faces so ALL of it -- !
-      !      top, interior, bottom -- is applied by ONE upwind rule at ONE time level. Adding the      !
-      !      top/bottom terms to soil_energy directly before the step would evaluate the inflow on     !
-      !      state^n while the interior outflow uses the post-conduction T^{n+1}. With                 !
-      !      internal_energy_liquid ~1.0 MJ/kg (the tsupercool_liq datum), each face term reaches      !
-      !      ~1300 W/m2 for a few mm/h of percolation, so the physical signal is the small DIFFERENCE  !
-      !      of two very large numbers -- and a 5 K time-level inconsistency in one of them is worth   !
-      !      ~30 W/m2, i.e. the entire signal. --------------------------------------------------------!
-      real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the TOP face (<0 = infiltration in)
-      real(wp) :: w_flux_bot = 0.0_wp                       !< [m/s] water across the BOTTOM face (<0 = drainage out)
-      real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of water entering from above
-      real(wp) :: t_water_bot = 0.0_wp                      !< [K] temperature of water entering from below
+      real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux, upward-positive like hf
+                                                            !<        (assemble_soil_energy_forcing flips the network's)
+      real(wp) :: root_heat_sink(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy leaving each layer with water other
+                                                            !<        than across a face (root uptake, drainage)
+      !----- The top face's water, applied by the same upwind rule and time level as the interior      !
+      !      faces (docs/science/soil_biophysics.md, "Water-thermal coupling"); no bottom face term. ---!
+      real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the top face (<0 = infiltration in)
+      real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of the infiltrating pond water
    end type energy_forcing_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!
    type :: energy_flux_t
-      real(wp) :: ground_heat  = 0.0_wp                     !< [W/m2] conductive flux into layer 1
-      real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] advective+geothermal bottom loss
+      real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] heat conducted out through the bottom face
       real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
-      integer(ik) :: nsub = 0_ik
-      logical  :: converged = .true.
    end type energy_flux_t
 
    !=======================================================================================!
-   !  Canopy-air-space CO2 balance: the prognostic third twin is carried in cas_state_t    !
-   !  and advanced by meds_cas_biophysics's cas_column_* kernels. Heterotrophic            !
-   !  respiration is decomposition and lives in meds_soil_biogeochem, with ONE production  !
-   !  authority: the CENTURY matrix.                                                       !
+   !  Snow / temporary-surface-water types (meds_ground_biophysics;                        !
+   !  docs/science/snow_biophysics.md); snow_params_t lives in meds_biophysics_params.     !
    !=======================================================================================!
 
-   !=======================================================================================!
-   !  SNOW / temporary-surface-water types (meds_ground_biophysics;                        !
-   !  docs/science/snow_biophysics.md). STATELESS per-store kernels; forcing arrives as    !
-   !  value types. (snow_params_t -- the physical parameter table -- lives in              !
-   !  meds_biophysics_params.)                                                             !
-   !=======================================================================================!
-
-   !----- Surface boundary conditions for the snow-surface energy balance (read-only, FORCED). --!
+   !----- Surface boundary conditions for the snow-surface energy balance (read-only, forced). --!
    type :: snow_env_t
       real(wp) :: abs_sw   = 0.0_wp, abs_lw = 0.0_wp    !< [W/m2] absorbed SW (snow albedo), NET LW at the snow surface
       real(wp) :: can_temp = 273.16_wp, can_shv = 0.0_wp !< [K],[kg/kg] CAS state (forced sibling)
@@ -114,7 +71,7 @@ module meds_soil_types
       real(wp) :: dz_soil_top = 0.05_wp                 !< [m] top soil node depth |z_node(1)| (interface spacing)
    end type snow_env_t
 
-   !----- Snow-surface energy-balance outputs (all positive UPWARD; per unit ground area). ------!
+   !----- Snow-surface energy-balance outputs (all positive upward; per unit ground area). ------!
    type :: snow_flux_t
       real(wp) :: t_surf  = 273.16_wp, fliq = 0.0_wp    !< [K],[-] diagnosed snow-surface temperature + liquid fraction
       real(wp) :: h_snow  = 0.0_wp, le_snow = 0.0_wp    !< [W/m2] sensible + latent (sublimation/evap) to the CAS

@@ -1,22 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_canopy_radiation -- the canopy radiative-transfer module                            !
-! (docs/science/canopy_radiation_transfer.md): the per-PFT / per-cohort optics ASSEMBLY,   !
-! the unified single-band two-stream SOLVER, and the sealed public SEAM canopy_radiation.  !
-! The pure optical-property kernels (leaf-angle LIDF, single-scatter coefficients) live in !
-! the shared meds_optics_lib; this module `use`s them and adds the RT-specific assembly +  !
-! solve + boundary.                                                                        !
-!                                                                                          !
-!   * derive_rad_optics   -- MU-INDEPENDENT per-PFT optics table, once at setup, eq. (4).  !
-!   * blend_cohort_optics -- per-cohort leaf/wood blend + solar geometry, eqs. (5)-(7).    !
-!   * ground_optics       -- ground reflectance + emission (the lower boundary).           !
-!   * solve_band, layer_rt -- the O(N) adding-method single-band solve, eqs. (8)-(12).     !
-!   * canopy_radiation    -- the seam: loop bands, blend, solve, return per-cohort         !
-!                            absorbed radiation, eqs. (13)-(14).                           !
-!                                                                                          !
-! State-free and device-eligible: plain arrays + value types, no polygon_t. Cohorts are    !
-! ordered BOTTOM (index 1) to TOP (index ncoh). Everything is absolute W m-2 -- no         !
-! normalize-to-one.                                                                        !
+! meds_canopy_radiation -- the canopy two-stream radiative transfer                        !
+! (docs/science/canopy_radiation_transfer.md), state-free on plain arrays, cohorts ordered !
+! bottom (1) to top (ncoh), fluxes in absolute W/m2. derive_rad_optics builds the per-PFT  !
+! optics table (eq. (4)); ground_optics closes the lower boundary (§4); canopy_radiation   !
+! blends each cohort's optics (eqs. (5)-(7)), solves each band by the adding method        !
+! (solve_band, layer_rt; eqs. (8)-(12)) and returns the per-cohort absorbed radiation      !
+! (eqs. (13)-(14)). The optical-property kernels are meds_optics_lib's.                    !
 !==========================================================================================!
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
@@ -27,23 +17,20 @@ module meds_canopy_radiation
    implicit none
    private
 
-   public :: rad_pft_optics_t, rad_forcing_t, rad_flux_t, ground_optics_state_t   ! re-export for callers
-   public :: derive_rad_optics, blend_cohort_optics, ground_optics
-   public :: solve_band, canopy_radiation
+   public :: derive_rad_optics, ground_optics
+   public :: canopy_radiation
 
 contains
 
    !=======================================================================================!
-   !  CANOPY OPTICS ASSEMBLY -- two-stream scattering coefficients from leaf/wood spectra +  !
-   !  the LIDF, following SCOPE / 4SAIL (Verhoef 1984).                                       !
+   !  Canopy optics: two-stream coefficients from leaf/wood spectra and the LIDF           !
+   !  (SCOPE / 4SAIL, Verhoef 1984).                                                       !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
    ! Fill the per-PFT optics table (docs/science/canopy_radiation_transfer.md eqs. (1),    !
-   ! (2) and (4)). Spectral inputs are dimensioned (band, pft): for shortwave bands pass   !
-   ! leaf/wood reflectance & transmittance; for the thermal band pass reflect = 1 -        !
-   ! emissivity and trans = 0. `beta_p`,`beta_q` are the per-PFT Beta-LIDF shape           !
-   ! parameters.                                                                           !
+   ! (2) and (4)) from (band, pft) spectra: reflectance and transmittance for a shortwave  !
+   ! band, 1 - emissivity and 0 for the thermal band; beta_p, beta_q shape the Beta LIDF.  !
    !---------------------------------------------------------------------------------------!
    subroutine derive_rad_optics(n_band, n_pft, reflect_leaf, trans_leaf, reflect_wood,       &
                                 trans_wood, clumping_leaf, clumping_wood, beta_p, beta_q,     &
@@ -76,12 +63,9 @@ contains
    end subroutine derive_rad_optics
 
    !---------------------------------------------------------------------------------------!
-   ! Blend leaf & wood optics for every cohort of a patch, for ONE band, and add the solar !
-   ! geometry (docs/science/canopy_radiation_transfer.md eqs. (5)-(7)). Returns per-cohort !
-   ! omega, beta (diffuse backscatter), beta0 (beam upscatter), k (beam extinction, eq.    !
-   ! (3)) and leaf_frac (leaf share of absorption). `elai`,`ewai` are the                  !
-   ! clumping-corrected leaf and wood area indices (elai = clumping_leaf*lai, ewai =       !
-   ! clumping_wood*wai).                                                                   !
+   ! Blend leaf and wood optics for every cohort, for one band, and add the solar geometry !
+   ! (docs/science/canopy_radiation_transfer.md eqs. (5)-(7)): omega, beta, beta0, k and   !
+   ! leaf_frac, from the clumping-corrected leaf and wood area indices elai, ewai.         !
    !---------------------------------------------------------------------------------------!
    subroutine blend_cohort_optics(optics, band, ncoh, pft, elai, ewai, kdir_in,              &
                                   omega, beta, beta0, kdir, leaf_frac)
@@ -129,17 +113,12 @@ contains
    end subroutine blend_cohort_optics
 
    !=======================================================================================!
-   !  SURFACE OPTICS -- ground reflectance and thermal emission, the lower boundary        !
-   !  condition of the canopy two-stream (docs/science/canopy_radiation_transfer.md §4).   !
-   !  The state is bare soil, which the driver blends toward the snowpack; litter,         !
-   !  standing water and soil moisture do not change it (see docs/ROADMAP.md).             !
+   !  Surface optics: the two-stream's lower boundary (docs/science/                       !
+   !  canopy_radiation_transfer.md §4), bare soil that the driver blends toward the snow.  !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! Fill the per-band ground reflectance and thermal emission. For a shortwave band the      !
-   ! reflectance is the soil albedo and the emission is zero; for a thermal (emission) band    !
-   ! the reflectance is 1 - emissivity and the emission is emissivity * sigma * T_soil^4.       !
-   !---------------------------------------------------------------------------------------!
+   !----- Per-band ground reflectance and emission: the soil albedo and 0 for a shortwave band,      !
+   !      1 - emissivity and emissivity * sigma * T_soil^4 for a thermal band. --------------------!
    subroutine ground_optics(surf, n_band, has_emission, grnd_refl, grnd_emiss)
       type(ground_optics_state_t), intent(in)  :: surf
       integer(ik),           intent(in)  :: n_band
@@ -159,17 +138,14 @@ contains
    end subroutine ground_optics
 
    !=======================================================================================!
-   !  TWO-STREAM SOLVER -- the unified single-band adding-method solve over the cohort stack. !
+   !  Two-stream solver: the single-band adding-method solve over the layer stack.         !
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Solve ONE band (docs/science/canopy_radiation_transfer.md §3, eqs. (10)-(12)). Inputs !
-   ! (per cohort, bottom->top): etai (effective total area index), omega/beta/beta0/kdir   !
-   ! (blended optics), emission (blackbody sigma*T^4, 0 for shortwave). Scalars: incident  !
-   ! beam & diffuse at canopy top, ground reflectance & emission, band flags. Outputs:     !
-   ! absorbed(ncoh) [W/m2 per cohort, beam+diffuse], incident(ncoh) [W/m2, beam + downward !
-   ! diffuse at each layer's top], dn_ground/up_ground [W/m2] and albedo (upward fraction  !
-   ! leaving the top).                                                                     !
+   ! Solve one band over the layers, bottom to top (docs/science/                          !
+   ! canopy_radiation_transfer.md §3, eqs. (10)-(12)). Returns each layer's absorbed flux  !
+   ! and the beam + downward diffuse at its top [W/m2], the ground's downward and upward   !
+   ! fluxes, and the albedo (upward over incident at the top).                             !
    !---------------------------------------------------------------------------------------!
    subroutine solve_band(ncoh, etai, omega, beta, beta0, kdir, emission, incid_beam,         &
                          incid_diff, grnd_refl, grnd_emiss, has_beam, has_emission,           &
@@ -210,9 +186,8 @@ contains
          sdn(i) = (1.0_wp - beta0(i)) * scat + emit_face          ! down-source (bottom of layer)
       end do
 
-      !----- Bottom-up sweep: reflectance & upward source of {ground + layers 1..i}. The       !
-      !      ground's upward source is its thermal emission PLUS the reflection of the direct    !
-      !      beam that reaches it (down0(1)); the diffuse reflection is handled by rbel(0).       !
+      !----- Bottom-up sweep: reflectance and upward source of {ground + layers 1..i}. The ground's !
+      !      source is its emission plus its reflected direct beam; rbel(0) reflects the diffuse. -!
       rbel(0) = grnd_refl
       sbel(0) = grnd_emiss + grnd_refl * down0(1)
       do i = 1_ik, ncoh
@@ -246,12 +221,8 @@ contains
       if (incid_tot > tiny_num) albedo = utop(ncoh) / incid_tot
    end subroutine solve_band
 
-   !---------------------------------------------------------------------------------------!
-   ! Analytic two-stream diffuse reflectance (rdd) and transmittance (tdd) of a            !
-   ! homogeneous layer of effective area index `etai`, single-scatter albedo `omega`,      !
-   ! backscatter `beta`: the classical Stokes formulas with rinf = (att-m)/sigb, e =       !
-   ! exp(-m*etai) (docs/science/canopy_radiation_transfer.md eqs. (8)-(9)).                !
-   !---------------------------------------------------------------------------------------!
+   !----- Diffuse reflectance rdd and transmittance tdd of a homogeneous layer, the Stokes formulas !
+   !      (docs/science/canopy_radiation_transfer.md eqs. (8)-(9)). ------------------------------!
    pure subroutine layer_rt(omega, beta, etai, rdd, tdd)
       real(wp), intent(in)  :: omega, beta, etai
       real(wp), intent(out) :: rdd, tdd
@@ -275,26 +246,23 @@ contains
    end subroutine layer_rt
 
    !=======================================================================================!
-   !  THE SEAM -- solve every band for one patch.                                            !
+   !  The public seam: every band for one patch.                                           !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! Solve every band for one patch. Cohorts are ordered BOTTOM (1) to TOP (ncoh). `lai`,`wai`  !
-   ! are the true (unclumped) leaf & wood area indices; clumping is applied here from the optics. !
-   ! `canopy_temp` [K] drives thermal emission (emission bands only). `flux` is allocated here.   !
-   !---------------------------------------------------------------------------------------!
+   !----- Solve every band for one patch, cohorts bottom (1) to top (ncoh). lai and wai are         !
+   !      unclumped (clumping is applied here); canopy_temp [K] drives the thermal emission. -------!
    subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, canopy_temp, flux)
       type(rad_pft_optics_t), intent(in)  :: optics
       type(rad_forcing_t),    intent(in)  :: forcing
       integer(ik),            intent(in)  :: ncoh
       integer(ik),            intent(in)  :: pft(ncoh)
-      real(wp),               intent(in)  :: height(ncoh)   !< [m] ASCENDING; exact ties are co-dominant
+      real(wp),               intent(in)  :: height(ncoh)   !< [m] ascending; exact ties are co-dominant
       real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)
       type(rad_flux_t),       intent(out) :: flux
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
-      !----- LAYER arrays: one entry per RT layer, which is a GROUP of exactly-tied cohorts. -----!
+      !----- Layer arrays: one entry per RT layer, a group of exactly tied cohorts. -------------!
       real(wp), dimension(max(ncoh,1)) :: etai_l, omega_l, beta_l, beta0_l, kdir_l, emis_l, abs_l
       real(wp), dimension(max(ncoh,1)) :: inc_l
       real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
@@ -324,19 +292,9 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
-      !----- CO-DOMINANT TIED COHORTS share ONE RT layer (docs/science/canopy_radiation_transfer.md !
-      !      §4, eq. (13)), as `update_overtopping_lai` treats them. One RT layer per cohort would  !
-      !      STACK tied cohorts, and with a sorted input whichever sorts first would sit above:     !
-      !      recruits tie BIT-EXACTLY (`apply_recruitment` gives every PFT one `recruit_dbh`, and   !
-      !      height is derived from it) and the sort is stable, so the lower PFT INDEX would win -- !
-      !      nothing about the ecology chooses that. On two optically IDENTICAL tied cohorts,       !
-      !      stacking puts 12.6% less shortwave in the lower slot at zero overstory, 15.1% under    !
-      !      LAI 6, while the canopy total barely moves, so no whole-canopy albedo or GPP check     !
-      !      would notice.                                                                          !
-      !                                                                                             !
-      !      `height` arrives ascending, so ties are consecutive. A one-member layer takes its      !
-      !      cohort's values verbatim, which keeps a canopy with no ties BIT-IDENTICAL to the       !
-      !      per-cohort solve. ---------------------------------------------------------------------!
+      !----- Cohorts of exactly equal height share one RT layer, as update_overtopping_lai treats    !
+      !      them (docs/science/canopy_radiation_transfer.md §4, eq. (13)). Heights arrive ascending, !
+      !      so ties are consecutive; a one-member layer is its cohort, bit for bit. ----------------!
       nlayer = 0_ik
       do i = 1_ik, ncoh
          if (i == 1_ik) then
@@ -347,7 +305,9 @@ contains
          lyr(i) = nlayer
       end do
       nmemb(1:nlayer) = 0_ik
-      do i = 1_ik, ncoh ; nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik ; end do
+      do i = 1_ik, ncoh
+         nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik
+      end do
 
       !----- Ross-G beam extinction is band-independent: compute once per cohort, reuse each band. -!
       kdir_coh(1:ncoh) = 0.0_wp
@@ -369,14 +329,15 @@ contains
             emission(1:ncoh) = 0.0_wp
          end if
 
-         !----- Aggregate cohorts onto their RT layer. Every weight is the AREA INDEX etai, which is !
-         !      the same weight blend_cohort_optics uses to mix leaf against wood inside one cohort:  !
-         !      merging tied cohorts is that operation one level up, not new physics. The asymmetry    !
-         !      gc is recovered exactly from beta = 0.5*(1+gc), averaged, and re-formed -- averaging    !
-         !      beta directly would be the same thing, but going through gc keeps beta0, which divides  !
-         !      gc by kdir, consistent with it. ---------------------------------------------------!
-         etai_l(1:nlayer) = 0.0_wp ; omega_l(1:nlayer) = 0.0_wp ; beta_l(1:nlayer) = 0.0_wp
-         beta0_l(1:nlayer) = 0.0_wp ; kdir_l(1:nlayer) = 0.0_wp ; emis_l(1:nlayer) = 0.0_wp
+         !----- Aggregate cohorts onto their layer by area index etai, the weight blend_cohort_optics  !
+         !      mixes leaf and wood by. gc is recovered from beta = 0.5*(1+gc) and averaged, which   !
+         !      keeps beta0 (gc over kdir) consistent with beta. ---------------------------------!
+         etai_l(1:nlayer) = 0.0_wp
+         omega_l(1:nlayer) = 0.0_wp
+         beta_l(1:nlayer) = 0.0_wp
+         beta0_l(1:nlayer) = 0.0_wp
+         kdir_l(1:nlayer) = 0.0_wp
+         emis_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             il = lyr(i)
             etai_l(il)  = etai_l(il)  + etai(i)
@@ -393,7 +354,10 @@ contains
                kdir_l(il)  = kdir_l(il)  / etai_l(il)
                emis_l(il)  = emis_l(il)  / etai_l(il)
             else
-               omega_l(il) = 0.0_wp ; gc_l = 0.0_wp ; kdir_l(il) = 0.0_wp ; emis_l(il) = 0.0_wp
+               omega_l(il) = 0.0_wp
+               gc_l = 0.0_wp
+               kdir_l(il) = 0.0_wp
+               emis_l(il) = 0.0_wp
             end if
             beta_l(il) = 0.5_wp * (1.0_wp + gc_l)
             if (optics%has_beam(b)) then
@@ -406,8 +370,12 @@ contains
          do i = 1_ik, ncoh
             if (nmemb(lyr(i)) /= 1_ik) cycle
             il = lyr(i)
-            etai_l(il) = etai(i) ; omega_l(il) = omega(i) ; beta_l(il) = beta(i)
-            beta0_l(il) = beta0(i) ; kdir_l(il) = kdir(i) ; emis_l(il) = emission(i)
+            etai_l(il) = etai(i)
+            omega_l(il) = omega(i)
+            beta_l(il) = beta(i)
+            beta0_l(il) = beta0(i)
+            kdir_l(il) = kdir(i)
+            emis_l(il) = emission(i)
          end do
 
          call solve_band(nlayer, etai_l(1:nlayer), omega_l(1:nlayer),                          &
@@ -416,10 +384,8 @@ contains
                          forcing%grnd_emiss(b), optics%has_beam(b), optics%has_emission(b),      &
                          abs_l(1:nlayer), inc_l(1:nlayer), dn_ground, up_ground, albedo)
 
-         !----- Scatter the layer's absorbed flux back to its members by ABSORPTIVITY-WEIGHTED area !
-         !      (eq. (13)). (1-omega_i)*etai_i is exactly aleaf_i + awood_i, the quantity leaf_frac !
-         !      is built from, so the two splits are one weighting applied twice and cannot         !
-         !      disagree. A one-member layer normalises to 1 identically. --------------------------!
+         !----- Scatter the layer's absorbed flux to its members by absorptivity-weighted area         !
+         !      (eq. (13)), (1-omega)*etai, the weight leaf_frac is built from. ------------------!
          wsum_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             wabs(i) = (1.0_wp - omega(i)) * etai(i)
@@ -436,9 +402,8 @@ contains
             end if
          end do
 
-         !----- Split absorbed radiation between leaves and wood by the leaf_frac the optics blend !
-         !      produced (eq. (14)); every member of a layer sees the light reaching that layer's  !
-         !      top. ------------------------------------------------------------------------------!
+         !----- Split absorbed radiation between leaves and wood by leaf_frac (eq. (14)); every      !
+         !      member of a layer sees the light reaching the layer's top. ----------------------!
          do i = 1_ik, ncoh
             flux%abs_leaf(b,i)  = absorbed(i) * leaf_frac(i)
             flux%abs_wood(b,i)  = absorbed(i) * (1.0_wp - leaf_frac(i))

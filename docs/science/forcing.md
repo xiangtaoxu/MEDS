@@ -388,7 +388,7 @@ temperature its enthalpy is valued at. It is a linear ramp across a 1 K half-wid
 triple point (ED2's Jin 1999 form, simplified), mass-conserving by construction, on the *interpolated*
 sub-step temperature rather than the record value — so the phase follows the diurnal cycle within an
 interval straddling freezing. The forcing outputs report the split the patches received, area-weighted
-(`mean_rainf_py`, `mean_snowfall_py`, `mean_snowfall_py`), beside the total (`mean_precip_py`, `mean_precip_py`).
+(`mean_rainf_py`, `mean_snowfall_py`), beside the total (`mean_precip_py`).
 
 ```math
 f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qquad

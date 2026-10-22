@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**35.5 k lines, 91 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
+**37.5 k lines, 105 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,7 +13,7 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    35.5 k lines · 90 modules · 21 CMake libraries
+src/                                    37.5 k lines · 105 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
@@ -48,17 +48,16 @@ src/                                    35.5 k lines · 90 modules · 21 CMake l
 │                  a field holds before it has a real one                    2 758
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                     11 632
+├── fast_dynamics/       sub-daily, one dt_fast per step                      9 581
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
-│   │              canopy-air box                                            1 092
+│   │              canopy-air box                                            1 028
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
-│   │              respiration, tissue energy                                1 686
+│   │              respiration, tissue energy                                1 097
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
-│   │              the snow store                                            1 573
+│   │              the snow store                                              752
 │   ├── numerics/  the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass,
-│   │              and a test-only RK4 oracle                                5 567
-│   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 714
+│   │              work record, ARK and RK45, error control, the pre-pass    5 166
+│   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 538
 │
 ├── slow_dynamics/       daily to annual                                      4 826
 │   ├── plant/     phenology, carbon allocation, trait plasticity               601

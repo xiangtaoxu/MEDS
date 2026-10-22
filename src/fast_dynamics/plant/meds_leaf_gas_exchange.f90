@@ -1,29 +1,24 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_leaf_gas_exchange -- leaf-level gas-exchange COMPUTE kernels (photosynthesis +      !
-! stomata + coupled Ci solver), docs/science/leaf_gas_exchange.md eqs. (1)-(10): FvCB C3 / !
-! Collatz C4 demand, the electron-transport hyperbola, the Leuning / Medlyn / Katul        !
-! stomatal models, the two water-stress controls, and the bracketed Ci root-find           !
-! (solve_leaf_gas_exchange, bisecting with the private bisect_ci). The config-flattening   !
-! wrapper leaf_gas_exchange lives in meds_fast_config; the raw kernels here are also       !
-! called directly by meds_c_api_leaf.                                                      !
+! meds_leaf_gas_exchange -- leaf photosynthesis, stomatal conductance and the coupled Ci   !
+! solve, docs/science/leaf_gas_exchange.md §1-§5, eqs. (1)-(10): FvCB C3 / Collatz C4      !
+! demand, the Leuning / Medlyn / Katul stomatal models, the two water-stress controls, and !
+! solve_leaf_gas_exchange (bracketed bisection on Ci). leaf_gas_exchange_batch runs it     !
+! over n leaves; the config wrapper leaf_gas_exchange lives in meds_fast_config.           !
 !==========================================================================================!
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : p_std, tiny_num, gsw_2_gsc, gbw_2_gbc, mol_2_umol
-   use meds_leaf_params,   only : COLIM_MIN, COLIM_QUADRATIC, SM_LEUNING, SM_MEDLYN, SM_KATUL
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, PATH_C3, PATH_C4,   &
-                                LIM_NONE, LIM_RUBISCO, &
-                                LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
+   use meds_leaf_params,   only : COLIM_QUADRATIC, SM_LEUNING, SM_KATUL
+   use meds_pft_params,    only : PATH_C4
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t,          &
+                                LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_therm_lib,     only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root
    implicit none
 
-   !----- The O2 mole fraction and the pressure the shipped gstar25 is stated at: Bernacchi et al. !
-   !      (2001)'s 42.75 umol/mol at 21 % O2, as a partial pressure at 100 kPa (4.275 Pa).         !
-   !      Gamma* is proportional to O2, so o2_mol_frac is scaled against O2_REF_GSTAR; as a mole   !
-   !      fraction it does not depend on pressure, so gstar25 is divided by P_REF_GSTAR, never by  !
-   !      the local pressure (docs/science/leaf_gas_exchange.md eq. (3)). -------------------------!
+   !----- The O2 mole fraction and pressure gstar25 is stated at (Bernacchi et al. 2001); Gamma* scales !
+   !      with O2 and not with pressure (docs/science/leaf_gas_exchange.md eq. (3)). --------------------!
    real(wp), parameter :: O2_REF_GSTAR = 0.209_wp   !< [mol/mol]
    real(wp), parameter :: P_REF_GSTAR  = 1.0e5_wp   !< [Pa]
    private
@@ -32,7 +27,7 @@ module meds_leaf_gas_exchange
    public :: assimilation_demand_c3, assimilation_demand_c4, electron_transport_j
 
    !----- Stomatal conductance. ----------------------------------------------------------!
-   public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
+   public :: stomata_gs_leuning, stomata_gs_medlyn
 
    real(wp), parameter :: BETA_FLOOR   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
@@ -48,11 +43,8 @@ module meds_leaf_gas_exchange
    integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
    integer(ik), parameter :: GS_CUTICULAR  = 2_ik      !< the cuticular floor g0 (the fallback)
 
-   !----- Everything the Ci residual reads: the leaf's biochemistry at its temperature, its air,  !
-   !      its stomatal model, and the conductance rule of the current pass. It is passed to the   !
-   !      residual explicitly, so the residual is an ordinary module function: under ifx, handing !
-   !      a contained function to a solver costs a lock-guarded allocation on every call, which   !
-   !      would make more than four threads slower than four. ------------------------------------!
+   !----- Everything the Ci residual reads, passed explicitly so the residual is a module function    !
+   !      (compiler trap: no contained function handed to a solver, docs/building.md). -------------!
    type :: ci_problem_t
       integer(ik) :: pathway, colimitation, stomatal_model
       integer(ik) :: gs_rule = GS_FROM_MODEL
@@ -74,9 +66,8 @@ contains
    !========== Photosynthetic demand (docs/science/leaf_gas_exchange.md §2) ===============!
 
    !---------------------------------------------------------------------------------------!
-   ! Actual electron transport rate J from absorbed PAR via the non-rectangular hyperbola  !
-   ! theta J^2 - (I2 + Jmax) J + I2 Jmax = 0 (smaller root). I2 = 0.5 phi_psii absorptance !
-   ! PAR (§2).                                                                             !
+   ! Electron transport J: the smaller root of the non-rectangular hyperbola in absorbed   !
+   ! PAR, I2 = 0.5 phi_psii absorptance PAR (§2).                                          !
    !---------------------------------------------------------------------------------------!
    elemental pure function electron_transport_j(par, absorptance, phi_psii, jmax, theta) result(j)
       real(wp), intent(in) :: par         !< [umol photon/m2/s] incident PAR
@@ -90,8 +81,7 @@ contains
    end function electron_transport_j
 
    !---------------------------------------------------------------------------------------!
-   ! C3 demand: gross assimilation A_gross and the three raw limitation rates (Ac/Aj/Ap),  !
-   ! eq. (2).                                                                              !
+   ! C3 demand: gross assimilation and the three raw limitation rates Ac/Aj/Ap, eq. (2).   !
    !---------------------------------------------------------------------------------------!
    pure subroutine assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim,               &
                                    theta_cj, theta_ip, A_gross, Ac, Aj, Ap)
@@ -105,9 +95,8 @@ contains
    end subroutine assimilation_demand_c3
 
    !---------------------------------------------------------------------------------------!
-   ! C4 demand (Collatz 1992): Ac = Vcmax, Aj = light-limited slope (passed in), Ap =      !
-   ! PEPcase CO2 limitation kp_eff*Ci. Gamma* ~ 0 (CO2-concentrating mechanism suppresses  !
-   ! photoresp). The curvatures are C4's own pair.                                         !
+   ! C4 demand (Collatz 1992): Ac = Vcmax, Aj = the light-limited rate, Ap = kp_eff*Ci     !
+   ! (PEPcase); Gamma* ~ 0. The co-limitation curvatures are C4's own pair.                !
    !---------------------------------------------------------------------------------------!
    pure subroutine assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, theta_cj, theta_ic,    &
                                    A_gross, Ac, Aj, Ap)
@@ -127,16 +116,9 @@ contains
    end subroutine assimilation_demand_c4
 
    !---------------------------------------------------------------------------------------!
-   ! Combine the three C3 limitation rates: sharp min, or two nested smoothing quadratics. !
-   ! (The smaller root of the co-limitation quadratic is the shared                        !
-   ! meds_numerics%quadratic_smaller_root.)                                                !
-   !                                                                                       !
-   ! TWO CURVATURES, ONE PER TRANSITION, and neither of them is theta_j: a co-limitation   !
-   ! curvature says how sharply the leaf switches between two LIMITING PROCESSES, theta_j  !
-   ! is the curvature of the electron-transport hyperbola. Using theta_j here costs        !
-   ! assimilation exactly where Ac and Aj sit close together, at ambient CO2               !
-   ! (docs/science/leaf_gas_exchange.md §2, "The co-limitation curvatures are not          !
-   ! theta_J").                                                                            !
+   ! Combine the three C3 rates: sharp min, or two nested smoothing quadratics with one    !
+   ! curvature per transition, neither of them theta_j (docs/science/leaf_gas_exchange.md  !
+   ! §2, "The co-limitation curvatures are not theta_J").                                  !
    !---------------------------------------------------------------------------------------!
    pure function combine_limits(Ac, Aj, Ap, colim, theta_cj, theta_ip) result(A)
       real(wp),    intent(in) :: Ac, Aj, Ap, theta_cj, theta_ip
@@ -191,10 +173,8 @@ contains
    end function stomata_gs_medlyn
 
    !---------------------------------------------------------------------------------------!
-   ! Katul marginal water-use efficiency lambda [umol CO2/mol H2O], scaled by the          !
-   ! water-stress factor beta in (0,1]: drier leaves carry a larger marginal water cost,   !
-   ! so lambda rises (lambda = lambda25 * beta^(-exp), §4.2) and the optimal stomata       !
-   ! close. exp = 0 disables.                                                              !
+   ! Katul marginal water-use efficiency lambda = lambda25 * beta^(-exp) (§4.2): a drier   !
+   ! leaf pays more for water, so its optimal stomata close. exp = 0 disables it.          !
    !---------------------------------------------------------------------------------------!
    pure function katul_lambda(lambda25, beta, lambda_psi_exp) result(lambda)
       real(wp), intent(in) :: lambda25        !< [umol CO2/mol H2O] well-watered marginal WUE
@@ -206,15 +186,9 @@ contains
 
 
    !---------------------------------------------------------------------------------------!
-   ! The C3 Rubisco kinetics at the leaf's temperature, as mole fractions [umol/mol], the  !
-   ! units of the demand (docs/science/leaf_gas_exchange.md eqs. (2)-(3)). Kc and Ko are   !
-   ! Michaelis constants of dissolved CO2 and O2, so they are partial pressures: divided   !
-   ! by the local pressure, and O/Ko is the ratio of the two partial pressures. Gamma* is  !
-   ! set by Rubisco's CO2/O2 specificity, Gamma* = 0.5*O/S_(c/o), proportional to the O2   !
-   ! partial pressure, so as a mole fraction it depends on the O2 mole fraction and not on !
-   ! pressure: gstar25 is divided by the pressure it is stated at. o2_mol_frac thereby     !
-   ! reaches both places O2 enters the C3 demand, Kc(1+O/Ko) and the compensation point;   !
-   ! at the shipped 0.209 the O2 factor is exactly 1.                                      !
+   ! C3 Rubisco kinetics at leaf temperature, as mole fractions [umol/mol]. Kc and Ko are  !
+   ! partial pressures, divided by the local pressure; Gamma* scales with the O2 mole      !
+   ! fraction and not with pressure (docs/science/leaf_gas_exchange.md eqs. (2)-(3)).      !
    !---------------------------------------------------------------------------------------!
    pure subroutine rubisco_kinetics(p, t_leaf, pressure, kc, ko, gstar, o2)
       type(leaf_photo_args_t),   intent(in)  :: p
@@ -232,15 +206,10 @@ contains
    !========== The coupled Ci solver (docs/science/leaf_gas_exchange.md §5) ===============!
 
    !---------------------------------------------------------------------------------------!
-   ! Solve the leaf A-gs-Ci system (docs/science/leaf_gas_exchange.md §1, §5). The         !
-   ! selectors (sm, temp_response_form, colim, use_boundary_layer) come from the run       !
-   ! config; p carries every per-PFT and shared parameter so this routine is               !
-   ! self-contained and unit-testable without a full meds_config_t.                        !
-   !   use_boundary_layer -- account for the leaf boundary layer (env%gb). When .true. (and !
-   !     gb > 0), leaf-surface CO2 is drawn down from ambient (Cs = Ca - 1.4*A/gb, eq. (1)) !
-   !     and transpiration puts stomata gs in SERIES with gb; when .false. the leaf is     !
-   !     well-coupled (Cs = Ca, E = gs*VPD/pressure). The 1.4 / 1.6 factors are the        !
-   !     boundary-layer / stomatal H2O:CO2 diffusivity ratios.                             !
+   ! Solve the leaf A-gs-Ci system (docs/science/leaf_gas_exchange.md §1, §5). p carries   !
+   ! every parameter, so the routine is testable without a meds_config_t. With            !
+   ! use_boundary_layer (and gb > 0) the boundary layer draws Cs down from Ca (eq. (1))    !
+   ! and sits in series with gs for transpiration; without it Cs = Ca.                     !
    !---------------------------------------------------------------------------------------!
    subroutine solve_leaf_gas_exchange(env, p, sm, temp_response_form, colim, use_boundary_layer, flux)
       type(leaf_env_t),          intent(in)  :: env
@@ -269,27 +238,15 @@ contains
       tpu   = temp_response(temp_response_form, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       rd    = temp_response(temp_response_form, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
-      !----- Water stress: two controls on two time scales (docs/science/leaf_gas_exchange.md §4;   !
-      !      Sabot 2022 / Zhou 2013; Xu et al. 2016 likewise has a fast leaf-potential term and a   !
-      !      slow daily one).                                                                       !
-      !   beta_nonstomata -- the FAST control, eq. (9): the leaf's own current water potential      !
-      !     (env%psi_leaf, the step-start value) scales Vcmax/Jmax/TPU, 1 at psi_open and falling   !
-      !     linearly to 0 at psi_close (by default the PFT's turgor-loss point and twice it). Every !
-      !     stomatal model ties gs to A, so a leaf losing turgor closes within the day: at beta = 0 !
-      !     gross A is 0, net A is -Rd, and gs falls to the cuticular g0. Rd is not scaled.         !
-      !   beta_stomata    -- the SLOW control, eq. (10): 1 above the onset potential psi_onset and  !
-      !     exp(sref*(psi - psi_onset)) below it, on the previous day's predawn leaf potential      !
-      !     (env%psi), downregulating the Leuning/Medlyn slope g1 and the Katul marginal WUE lambda !
-      !     (lambda ~ beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's           !
-      !     g1<->lambda). --------------------------------------------------------------------------!
+      !----- Water stress, two controls on two time scales (docs/science/leaf_gas_exchange.md §4). The fast !
+      !      one, eq. (9), ramps Vcmax/Jmax/TPU on the step-start leaf potential (Rd is not scaled); the     !
+      !      slow one, eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. ---!
       beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
       beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
       vcmax = vcmax * beta_nonstomata
       jmax  = jmax  * beta_nonstomata
       tpu   = tpu   * beta_nonstomata
-      !----- No stress above the onset (Sabot et al. 2022 Eq. 5 has none while the soil is at field     !
-      !      capacity), so a tall tree in wet soil, whose predawn potential is its gravity head, keeps   !
-      !      its full g1. Below the onset the decline is exponential, at the rate sref. ---------------!
+      !----- No stress above the onset, so a tall tree in wet soil keeps its full g1 (§4.2). ---------------!
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * (env%psi - p%psi_onset)))
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
@@ -298,11 +255,7 @@ contains
       if (p%pathway == PATH_C4) then
          gstar_ppm = 0.0_wp
          Aj_light  = p%quantum_yield * p%absorptance * env%par
-         !----- C4 PEP/CO2-limited slope: temperature-scale kp like every other C4 term. ED2 sets  !
-         !      kp = klowco2*vm, so kp inherits Vcmax's temperature response (and, under the       !
-         !      peaked form, its high-T deactivation) -- reuse the Vcmax Ea/Hd/dS set, exactly as  !
-         !      the tpu term above does. temp_response == 1 at 25 degC, so kp25 is the 25 degC     !
-         !      value. ----------------------------------------------------------------------------!
+         !----- The PEPcase slope kp takes Vcmax's temperature response, as tpu does (§2). ------!
          kp_eff    = temp_response(temp_response_form, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
                      * pressure / p_std
          jrate     = 0.0_wp
@@ -339,12 +292,8 @@ contains
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual to CI_TOL_PPM. If the chosen    !
-      !       stomatal model yields no consistent open solution (no sign change -- e.g. Katul      !
-      !       under strong water stress where lambda -> large), fall back to the cuticular floor   !
-      !       g0 (closed stomata), which always brackets when net A(Ca) > 0. The explicit-gs       !
-      !       residual serves Leuning/Medlyn and the g0 fallback; Katul's own pass uses the        !
-      !       optimality residual (ci_residual). --------------------------------------------------!
+      !----- Bracket Ci in (Gamma*, Ca] and bisect. With no sign change (Katul under strong stress) !
+      !       fall back to the cuticular g0, which always brackets when net A(Ca) > 0 (§5). ---------!
       lo0 = gstar_ppm + LO_EPS_PPM
       hi0 = ca_ppm
       prob%gs_rule = GS_FROM_MODEL
@@ -410,9 +359,8 @@ contains
          flux%gs      = gs
          flux%ci      = ci
          flux%cs      = cs
-         !----- Transpiration uses the TOTAL leaf-to-air water conductance: stomata gs in SERIES    !
-         !      with the boundary layer gb (env%gb), consistent with the CO2 solve (which puts       !
-         !      1.4*gb in series). Without gb the water flux is overestimated; gated by use_boundary_layer.  ----!
+         !----- Transpiration on the total leaf-to-air conductance, gs in series with gb, as the  !
+         !      CO2 solve does. ------------------------------------------------------------------!
          if (do_boundary_layer) then
             flux%transpiration = gs * env%gb / (gs + env%gb) * env%vpd / pressure
          else
@@ -486,16 +434,14 @@ contains
             gs = stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1, prob%vpd_min)
          end if
       end select
-      !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so     !
+      !----- Ci predicted by CO2 diffusion through the stomata (gs is a water conductance, so     !
       !       the CO2 conductance is gs / gsw_2_gsc); residual = trial Ci minus predicted Ci. ---!
       ci_pred = cs_surf - gsw_2_gsc * An_loc / max(gs, tiny_num)
       r       = ci - ci_pred
    end function residual_explicit_gs
 
-   !----- Katul optimality residual (no explicit gs), eqs. (7)-(8). Stomata maximize A -         !
-   !       lambda*E; the first-order condition dA/dCi = lambda * dE/dCi, with CO2 supply A =     !
-   !       gs/gsw_2_gsc * (Cs - Ci) and water loss E = gs * D (D = VPD/P), rearranges to the     !
-   !       residual below, whose root is the optimal Ci. ----------------------------------------!
+   !----- Katul optimality residual (no explicit gs), eqs. (7)-(8): the first-order condition of    !
+   !       max(A - lambda*E) in Ci-space, whose root is the optimal Ci. --------------------------!
    pure real(wp) function residual_optimality(prob, ci) result(r)
       type(ci_problem_t), intent(in) :: prob
       real(wp),           intent(in) :: ci
@@ -523,16 +469,26 @@ contains
       logical,            intent(out) :: converged
       real(wp)    :: a, b, flo, fhi, mid, fmid
       integer(ik) :: it
-      a = lo ; b = hi
-      flo = ci_residual(prob, a) ; fhi = ci_residual(prob, b)
-      converged = .false. ; ci = 0.5_wp * (a + b)
+      a = lo
+      b = hi
+      flo = ci_residual(prob, a)
+      fhi = ci_residual(prob, b)
+      converged = .false.
+      ci = 0.5_wp * (a + b)
       if (flo * fhi <= 0.0_wp) then
          do it = 1_ik, MAX_ITER
-            mid = 0.5_wp * (a + b) ; fmid = ci_residual(prob, mid)
-            if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
+            mid = 0.5_wp * (a + b)
+            fmid = ci_residual(prob, mid)
+            if (flo * fmid <= 0.0_wp) then
+               b = mid
+            else
+               a = mid
+               flo = fmid
+            end if
             if (b - a < CI_TOL_PPM) exit
          end do
-         ci = 0.5_wp * (a + b) ; converged = (b - a < CI_TOL_PPM)
+         ci = 0.5_wp * (a + b)
+         converged = (b - a < CI_TOL_PPM)
       end if
    end subroutine bisect_ci
 
@@ -552,22 +508,10 @@ contains
    end function leaf_params_at_capacity
 
    !---------------------------------------------------------------------------------------!
-   ! leaf_gas_exchange_batch -- BARE-ARRAY entry point over n leaves                       !
-   ! (MEDS_NUMERICS_SCOPING.md §11, the bare-array process-kernel convention): one call    !
-   ! solves a whole array of leaf environments, so the per-cohort fast-loop driver loops   !
-   ! need not thread the leaf_env_t/leaf_flux_t derived types, and a Python/ctypes wrapper !
-   ! (meds_c_api_leaf) can vectorise over numpy arrays instead of calling one leaf at a    !
-   ! time. The per-leaf PHYSICS is the scalar solve's: this loops `do i=1,n` calling       !
-   ! solve_leaf_gas_exchange, so it is bit-identical to an inline caller loop.             !
-   !                                                                                       !
-   ! CONVENTION (shared by every *_batch kernel): genuinely PER-ELEMENT quantities are     !
-   ! bare arrays of length n; PATCH/RUN-UNIFORM quantities (here ca, pressure, and the     !
-   ! per-PFT leaf table) are passed as scalars/one table (broadcast to every element);     !
-   ! outputs are bare arrays. psi is OPTIONAL (absent => 0, the leaf_env_t default: the    !
-   ! slow stomatal limb inert); the fast loop passes each cohort's predawn potential.      !
-   ! A_gross / gs / rd are what the fast loop CONSUMES and are mandatory; the remaining    !
-   ! leaf_flux_t fields are OPTIONAL outputs for DIAGNOSTICS only -- absent means the      !
-   ! caller does not report per-cohort ecophysiology, and nothing extra is copied.         !
+   ! leaf_gas_exchange_batch -- solve_leaf_gas_exchange over n leaves on bare arrays (the  !
+   ! fast-loop prepass). Per-leaf inputs are arrays; ca, pressure and the leaf table are   !
+   ! shared. psi absent means 0 (the slow stomatal control inert). A_gross, gs and rd are  !
+   ! what the fast loop reads; the optional outputs are diagnostics.                       !
    !---------------------------------------------------------------------------------------!
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
                                       table, pft, vcmax25, rd25, a_gross, gs, rd, psi,        &
@@ -580,7 +524,7 @@ contains
       real(wp),            intent(in)  :: vcmax25(n), rd25(n)                               !< per-leaf plastic capacities
       real(wp),            intent(out) :: a_gross(n), gs(n), rd(n)
       real(wp), optional,  intent(in)  :: psi(n)                                       !< absent => 0 (well-watered)
-      !----- DIAGNOSTIC-only outputs (the per-cohort ecophysiology block). --------------------!
+      !----- Diagnostic-only outputs (the per-cohort ecophysiology block). --------------------!
       real(wp),    optional, intent(out) :: a_net(n), ci(n), cs(n), transp(n)
       real(wp),    optional, intent(out) :: beta_stom(n), beta_nonstom(n)
       integer(ik), optional, intent(out) :: limitation(n)
@@ -589,13 +533,24 @@ contains
       type(leaf_photo_args_t)   :: p
       integer(ik) :: i
       do i = 1_ik, n
-         env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
-         env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
-         if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
+         env%par = par(i)
+         env%leaf_temp = leaf_temp(i)
+         env%vpd = vpd(i)
+         env%ca = ca
+         env%pressure = pressure
+         env%psi_leaf = psi_leaf(i)
+         env%gb = gb(i)
+         if (present(psi)) then
+            env%psi = psi(i)
+         else
+            env%psi = 0.0_wp
+         end if
          p = leaf_params_at_capacity(table, pft(i), vcmax25(i), rd25(i))
          call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
                                       table%colimitation, table%use_boundary_layer, flux)
-         a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
+         a_gross(i) = flux%A_gross
+         gs(i) = flux%gs
+         rd(i) = flux%rd
          if (present(a_net))        a_net(i)        = flux%A_net
          if (present(ci))           ci(i)           = flux%ci
          if (present(cs))           cs(i)           = flux%cs

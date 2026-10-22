@@ -248,7 +248,7 @@ continuous run's.
 #### The skin temperature
 
 `mean_skin_temp_py` is the skin temperature in the land-model sense, as in CLM's `TSKIN`. It also comes
-per patch (`mean_skin_temp_pa`), sub-daily (`mean_skin_temp_py`) and both (`mean_skin_temp_pa`).
+per patch (`mean_skin_temp_pa`), and both are written sub-daily as well as daily.
 
 - **What it is.** The black-body temperature of the longwave leaving the canopy top, $`(L^\uparrow /
   \sigma)^{1/4}`$, taken per patch and sub-step and then averaged. It is what an infrared thermometer
@@ -310,6 +310,24 @@ a state among them has a snapshot, the last sub-step's value, on any tier. The s
 and the fast loop's per-slow-step totals have only the second. A tier a variable has no source for would write `_FillValue` for the whole run,
 so the registry checks every default and every override at start-up and refuses to start, naming the
 variable: a diagnostic that quietly reports nothing is worse than one that refuses to start.
+
+### The patch row
+
+Each sub-step the fast loop fills one row of the patch block per patch (`patch_diag_row`) with the
+numbers the physics used in that sub-step, none recomputed. Every entry is a rate or a state, so the
+patch accumulator weights the whole row by the sub-step and the FAST tier stages it as it is. A few
+entries are formed there for a reason:
+
+- **The canopy-air VPD** is formed from each sub-step's temperature and humidity. It is nonlinear in
+  temperature, so the VPD of the mean state is not the mean VPD (as for the skin temperature above).
+- **NEE** is the flux that drives the canopy air's CO₂ box, positive to the atmosphere, so the
+  reported flux and the CO₂ it changes cannot disagree. Ecosystem respiration is formed from it,
+  $`R_{eco} = \mathrm{NEE} + \mathrm{GPP}`$, not summed a second way.
+- **NPP** is GPP net of the maintenance respiration of leaves, stems and roots, on every tier. The
+  slow allocator charges growth respiration once a day, and it is not in NPP.
+- **The budget residuals** (`mean_resid_energy_py`, `mean_resid_water_py`) are each sub-step's signed
+  whole-column imbalance over the sub-step: a leak rate in W m⁻² or kg m⁻² s⁻¹, positive when a store
+  appears from nowhere.
 
 ---
 
