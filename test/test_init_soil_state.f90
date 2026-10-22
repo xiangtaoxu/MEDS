@@ -15,7 +15,8 @@ program test_init_soil_state
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_constants,        only : n_soil_layer_max
-   use meds_fast_dynamics,    only : fast_context_t, build_fast_context, init_fast_reservoirs
+   use meds_fast_config,      only : fast_context_t, build_fast_context
+   use meds_fast_dynamics,    only : init_fast_reservoirs
    use meds_test_support,     only : banner, build_test_config, check, check_close
    implicit none
    type(meds_config_t)  :: cfg

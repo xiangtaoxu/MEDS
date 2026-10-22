@@ -17,7 +17,7 @@ program test_pft_optics_config
    use meds_config,         only : meds_config_t, pft_leaf_psi_tlp, soil_column_params
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_args_table_t
-   use meds_fast_types,     only : apply_hydraulics_config
+   use meds_fast_config,    only : apply_hydraulics_config, fast_context_t, build_fast_context
    use meds_plant_hydr_lib, only : conductance_retained_fraction, tissue_psi_tlp,  &
                                    tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
@@ -25,7 +25,6 @@ program test_pft_optics_config
    use meds_soil_params,    only : soil_params_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
-   use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none

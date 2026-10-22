@@ -1,34 +1,129 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_fast_config -- builds the fast loop's option records from meds_config_t, once per   !
-! run from build_fast_context: the per-PFT leaf-photosynthesis table                       !
-! (build_leaf_photo_table; acclimate_leaf_photo_table refreshes it each slow step), the    !
-! canopy optics table (build_rad_optics) and the integrator options with their tolerance   !
-! set (build_integrator_opts). The kernels take these records; column_fast_step and the    !
-! numerics below it also take cfg, for the PFT leaf and wood emissivities, the stomatal    !
-! closing potential and the [soil_carbon] settings.                                        !
+! meds_fast_config -- the fast loop's setup from meds_config_t. build_fast_context builds  !
+! the run's fast_context_t: the column configuration (the soil column, the per-PFT        !
+! hydraulics, film and leaf-photosynthesis tables, the integrator options) and the canopy !
+! optics table. site_column_configs gives each site its copy, with its own soil and its   !
+! leaf table, which acclimate_leaf_photo_table refreshes each slow step. column_fast_step  !
+! and the numerics below it also take cfg, for the PFT leaf and wood emissivities, the    !
+! stomatal closing potential and the [soil_carbon] settings.                              !
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,           &
+   use meds_config,      only : meds_config_t, soil_column_params, pft_stomata_psi_onset, pft_wstress_psi_open,  &
                                 pft_wstress_psi_close
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t
+   use meds_pft_params,  only : pft_table_t
+   use meds_polygon_state_vars, only : polygon_t
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_args_t, leaf_photo_table_t, hydro_args_table_t
+   use meds_plant_hydr_lib, only : build_hydro_table
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_therm_lib,     only : kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
+   use meds_fast_types,  only : column_config_t, tol_set_t, error_control_t, integrator_opts_t, GRP_THETA
    use meds_canopy_types,     only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : derive_rad_optics
    use meds_optics_lib,       only : moments_to_beta_params
    implicit none
    private
 
+   public :: fast_context_t, build_fast_context, site_column_configs
    public :: build_leaf_photo_table
    public :: acclimate_leaf_photo_table
    public :: build_rad_optics
    public :: build_integrator_opts
+   public :: apply_hydraulics_config, apply_canopy_film_config
    public :: leaf_photo_params_for_pft, leaf_gas_exchange, build_tol_set   ! used only by the tests
 
+   !----- What the fast loop needs beyond the polygon and cfg (build_fast_context): the column      !
+   !      configuration, and the constant reference climate a run without a forcing source uses. ---!
+   type :: fast_context_t
+      !----- The polygon's column configuration; each site runs on a copy with its own soil. ------!
+      type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
+      !----- Each site's leaf table, acclimated to its growth temperature; until then col_config's. -!
+      type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
+      real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
+      real(wp) :: press   = 101325.0_wp             !< [Pa]
+      real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
+      real(wp) :: air_temp = 288.0_wp               !< [K]        reference-level air temperature
+      real(wp) :: shv_atm  = 0.008_wp               !< [kg/kg]    reference-level specific humidity
+      real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
+      real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
+      real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
+      real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
+      real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
+      !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
+      integer(ik) :: patch_threads = 1_ik
+      real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
+      !----- Canopy-RT optics and ground surface, built once from the [pft] table and [soil]. -----!
+      type(rad_pft_optics_t) :: rad_opt             !< per-PFT, per-band leaf/wood scattering + LIDF
+      real(wp) :: soil_albedo(3) = [0.15_wp, 0.30_wp, 0.0_wp]  !< [VIS,NIR,LW] ground albedo (LW=0)
+      real(wp) :: soil_emiss     = 0.95_wp          !< [-] ground longwave emissivity
+   end type fast_context_t
+
 contains
+
+   !=======================================================================================!
+   !  Build the fast-loop context from the run configuration: the soil column, the per-PFT !
+   !  hydraulics, leaf and optics tables, and the solver options. The reference climate    !
+   !  keeps the fast_context_t defaults.                                                   !
+   !=======================================================================================!
+   subroutine build_fast_context(cfg, ctx)
+      type(meds_config_t),  intent(in)  :: cfg
+      type(fast_context_t), intent(out) :: ctx
+      !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
+      call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
+      !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
+      call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
+      call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
+      call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
+      !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
+      ctx%col_config%canopy_water_on    = cfg%canopy_water_on
+      !----- The [soil], [snow], [aerodynamics] and [fast] options, copied as they are. -----------!
+      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
+      ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
+      ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
+      ctx%soil_emiss     = cfg%soil%ground_emissivity
+      ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
+      !----- The initial soil temperature from [init]; the initial water is each site's theta_start. -!
+      ctx%soil_temp_init = cfg%init%soil_temp
+      ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
+      ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
+
+      !----- One tolerance set for the whole fast loop (build_tol_set); the water network takes the   !
+      !      GRP_THETA pair (docs/science/soil_plant_water.md §3). --------------------------------!
+      ctx%col_config%integrator = build_integrator_opts(cfg)
+      associate (tols => ctx%col_config%integrator%error_control%tols)
+         ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
+         ctx%col_config%soil_water_opts%water_atol   = tols%atol(GRP_THETA)
+         !----- A budget-closure threshold, not a tolerance group: atol_scale scales it directly. -!
+         ctx%col_config%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
+      end associate
+
+      ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
+
+      !----- The canopy-RT optics table, built once and read-only downstream. --------------------!
+      call build_rad_optics(cfg, ctx%rad_opt)
+   end subroutine build_fast_context
+
+   !----- Each site's column configuration: the polygon's, with the site's soil column, bottom and    !
+   !      acclimated leaf table. Made every slow step, so each copy has the current table. ---------!
+   subroutine site_column_configs(ctx, poly, site_col)
+      type(fast_context_t),  intent(in)  :: ctx
+      type(polygon_t),       intent(in)  :: poly
+      type(column_config_t), intent(out) :: site_col(:)
+      integer(ik) :: is
+      do is = 1_ik, poly%site%n
+         site_col(is) = ctx%col_config
+         associate (col => site_col(is), surf => poly%site%surface(is))
+            col%soil                         = surf%soil
+            col%soil_thermal                 = surf%soil_thermal
+            col%soil_water_opts%water_bottom_bc    = surf%water_bottom_bc
+            col%soil_water_opts%drain_factor = surf%drain_factor
+            col%energy%deep_temp             = surf%deep_temp
+            col%energy%deep_depth            = surf%deep_depth
+            if (allocated(ctx%site_leaf_photo)) col%leaf_photo = ctx%site_leaf_photo(is)
+         end associate
+      end do
+   end subroutine site_column_configs
 
    !----- PFT ipft's leaf-photosynthesis parameters, with the table's Vcmax25/Jmax25/TPU25/Rd25: the  !
    !      one place the configuration is flattened into the kernel's record. leaf_gas_exchange       !
@@ -161,6 +256,29 @@ contains
       call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, optics)
    end subroutine build_rad_optics
 
+   !----- The per-PFT hydraulics table: each PFT's [hydraulics] traits and the Kirchhoff lookup     !
+   !      built from its own wood_kexp (docs/science/plant_hydraulics.md eq. (8)), which makes a   !
+   !      non-integer vulnerability exponent affordable on the hot path. ------------------------!
+   subroutine apply_hydraulics_config(pft, table)
+      type(pft_table_t),          intent(in)  :: pft
+      type(hydro_args_table_t),   intent(out) :: table
+      integer(ik) :: i
+      table%n_pft = pft%n
+      allocate(table%pft(max(pft%n, 1_ik)))
+      do i = 1_ik, pft%n
+         table%pft(i)%plant_hydraulics_t = pft%hydro(i)
+         call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
+      end do
+   end subroutine apply_hydraulics_config
+
+   !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
+   subroutine apply_canopy_film_config(pft, leaf_max, wood_max)
+      type(pft_table_t),     intent(in)  :: pft
+      real(wp), allocatable, intent(out) :: leaf_max(:), wood_max(:)
+      leaf_max = pft%leaf_surf_water_max(1:pft%n)
+      wood_max = pft%wood_surf_water_max(1:pft%n)
+   end subroutine apply_canopy_film_config
+
    !----- One leaf's gas exchange for PFT ipft, with a cohort's optional plastic overrides. -------!
    subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
       type(leaf_env_t),    intent(in)  :: env
@@ -181,7 +299,6 @@ contains
                                    cfg%colimitation, cfg%use_boundary_layer, flux)
    end subroutine leaf_gas_exchange
 
-
    !---------------------------------------------------------------------------------------!
    ! The single tolerance set of the fast loop, the per-group tolerances of its error norm !
    ! (docs/science/numerical_scheme.md eq. (3)): [fast].rtol for every group, each group's !
@@ -198,7 +315,6 @@ contains
       tols%atol = tols%atol * cfg%atol_scale
    end function build_tol_set
 
-
    !----- The error-control bundle: the tolerance set, the step controller and the strictness. -------!
    pure function build_error_control(cfg) result(ec)
       type(meds_config_t), intent(in) :: cfg
@@ -207,7 +323,6 @@ contains
       ec%controller = cfg%step_controller
       ec%level      = cfg%error_level
    end function build_error_control
-
 
    !----- The integrator's whole configuration, once per run (carried on column_config_t%integrator). -!
    pure function build_integrator_opts(cfg) result(opts)

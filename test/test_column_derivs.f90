@@ -31,8 +31,8 @@ program test_column_derivs
    use meds_plant_types, only : hydro_args_t, hydro_opts_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
-   use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
-                                   column_state_t, column_frozen_t, column_tend_t, column_config_t
+   use meds_fast_types,       only : surface_state_t, surface_tend_t, column_state_t, column_frozen_t,            &
+                                     column_tend_t, column_config_t
    use meds_fast_be_stage,    only : column_be_stage, advance_plant_water
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init

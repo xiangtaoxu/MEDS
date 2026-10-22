@@ -12,13 +12,12 @@ module meds_fast_dynamics
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgc, latent_heat_vap, day_sec, p_std,              &
                                      par_w_2_umol, stefan_boltzmann, n_soil_layer_max
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, soil_column_params, top_soil_psi
+   use meds_config,           only : meds_config_t, top_soil_psi
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_temp_to_enthalpy, temp_to_internal_energy,                            &
                                         specific_humidity_to_vpd, precip_phase
-   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
-   use meds_plant_types, only : leaf_photo_table_t
+   use meds_fast_config, only : fast_context_t, site_column_configs
    use meds_column_view, only : copy_column_cohort
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string, seconds_into_day,         &
                                      slope_incidence_cosz
@@ -48,8 +47,8 @@ module meds_fast_dynamics
                                  N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, set_aero_env_atm,                  &
                                  set_aero_env_canopy, ground_optics_state_t
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, fast_workspace_t,                  &
-                               column_config_t, column_cohort_t, column_forcing_t, GRP_THETA, column_budget_t,    &
-                               ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
+                               column_config_t, column_cohort_t, column_forcing_t, column_budget_t,               &
+                               ensure_column_cohort_capacity
    use meds_biophysics_params, only : snow_params_t
    use meds_canopy_radiation, only : canopy_radiation, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
@@ -58,7 +57,7 @@ module meds_fast_dynamics
    implicit none
    private
 
-   public :: fast_context_t, init_fast_reservoirs, fast_dynamics, build_fast_context
+   public :: init_fast_reservoirs, fast_dynamics
 
    !----- Slots of the reduction staging: each (patch, sub-step) writes its own cells, folded in patch !
    !      order after the loop, so the sums do not move with the thread count                       !
@@ -82,76 +81,7 @@ module meds_fast_dynamics
    !----- [K] round-off allowed between a cohort's stored tissue temperatures and those its energy gives. !
    real(wp),    parameter :: TISSUE_TEMP_TOL   = 1.0e-6_wp
 
-   !----- What the fast loop needs beyond the polygon and cfg (build_fast_context): the column      !
-   !      configuration, and the constant reference climate a run without a forcing source uses. ---!
-   type :: fast_context_t
-      !----- The polygon's column configuration; each site runs on a copy with its own soil. ------!
-      type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
-      !----- Each site's leaf table, acclimated to its growth temperature; until then col_config's. -!
-      type(leaf_photo_table_t), allocatable :: site_leaf_photo(:)
-      real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
-      real(wp) :: press   = 101325.0_wp             !< [Pa]
-      real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
-      real(wp) :: air_temp = 288.0_wp               !< [K]        reference-level air temperature
-      real(wp) :: shv_atm  = 0.008_wp               !< [kg/kg]    reference-level specific humidity
-      real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
-      real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
-      real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
-      real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
-      !----- Patch-loop threads: [run].n_threads in a one-polygon run, else 1 (polygon_prepare). --!
-      integer(ik) :: patch_threads = 1_ik
-      real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
-      !----- Canopy-RT optics and ground surface, built once from the [pft] table and [soil]. -----!
-      type(rad_pft_optics_t) :: rad_opt             !< per-PFT, per-band leaf/wood scattering + LIDF
-      real(wp) :: soil_albedo(3) = [0.15_wp, 0.30_wp, 0.0_wp]  !< [VIS,NIR,LW] ground albedo (LW=0)
-      real(wp) :: soil_emiss     = 0.95_wp          !< [-] ground longwave emissivity
-   end type fast_context_t
-
 contains
-
-   !=======================================================================================!
-   !  Build the fast-loop context from the run configuration: the soil column, the per-PFT !
-   !  hydraulics, leaf and optics tables, and the solver options. The reference climate    !
-   !  keeps the fast_context_t defaults.                                                   !
-   !=======================================================================================!
-   subroutine build_fast_context(cfg, ctx)
-      type(meds_config_t),  intent(in)  :: cfg
-      type(fast_context_t), intent(out) :: ctx
-      !----- The soil column from [soil]: one texture for the column or one per layer (soil maps). -!
-      call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
-      !----- Per-PFT plant hydraulics from each PFT's [hydraulics] record. ------------------------!
-      call apply_hydraulics_config(cfg%pft, ctx%col_config%hydraulics_table)
-      call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-      call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
-      !----- The canopy interception film (+ film evaporation, dew) on/off, [fast] block. --------!
-      ctx%col_config%canopy_water_on    = cfg%canopy_water_on
-      !----- The [soil], [snow], [aerodynamics] and [fast] options, copied as they are. -----------!
-      ctx%col_config%soil_water_opts  = cfg%soil        ! [soil], [fast] -> soil water and the water network
-      ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
-      ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
-      ctx%soil_emiss     = cfg%soil%ground_emissivity
-      ctx%col_config%energy = cfg%energy      ! [soil], [fast] -> soil-thermal solver opts
-      !----- The initial soil temperature from [init]; the initial water is each site's theta_start. -!
-      ctx%soil_temp_init = cfg%init%soil_temp
-      ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
-      ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
-
-      !----- One tolerance set for the whole fast loop (build_tol_set); the water network takes the   !
-      !      GRP_THETA pair (docs/science/soil_plant_water.md §3). --------------------------------!
-      ctx%col_config%integrator = build_integrator_opts(cfg)
-      associate (tols => ctx%col_config%integrator%error_control%tols)
-         ctx%col_config%soil_water_opts%rtol   = tols%rtol(GRP_THETA)
-         ctx%col_config%soil_water_opts%water_atol   = tols%atol(GRP_THETA)
-         !----- A budget-closure threshold, not a tolerance group: atol_scale scales it directly. -!
-         ctx%col_config%energy%soil_energy_budget_atol  = cfg%energy%soil_energy_budget_atol * cfg%atol_scale
-      end associate
-
-      ctx%col_config%mask   = cfg%mask        ! [fast].mask    -> the stores that evolve (all on: the column)
-
-      !----- The canopy-RT optics table, built once and read-only downstream. --------------------!
-      call build_rad_optics(cfg, ctx%rad_opt)
-   end subroutine build_fast_context
 
    !----- Seed every patch's fast stores to a horizontally uniform equilibrium, and its cohorts with  !
    !      them as a recruit is born: at the canopy-air temperature, holding the water their tissues  !
@@ -794,27 +724,6 @@ contains
       end if
       if (do_fast) out_bufs%fast_ready = .true.   ! signal main: the staging holds this slow step
    end subroutine fast_dynamics
-
-   !----- Each site's column configuration: the polygon's, with the site's soil column, bottom and    !
-   !      acclimated leaf table. Made every slow step, so each copy has the current table. ---------!
-   subroutine site_column_configs(ctx, poly, site_col)
-      type(fast_context_t),  intent(in)  :: ctx
-      type(polygon_t),       intent(in)  :: poly
-      type(column_config_t), intent(out) :: site_col(:)
-      integer(ik) :: is
-      do is = 1_ik, poly%site%n
-         site_col(is) = ctx%col_config
-         associate (col => site_col(is), surf => poly%site%surface(is))
-            col%soil                         = surf%soil
-            col%soil_thermal                 = surf%soil_thermal
-            col%soil_water_opts%water_bottom_bc    = surf%water_bottom_bc
-            col%soil_water_opts%drain_factor = surf%drain_factor
-            col%energy%deep_temp             = surf%deep_temp
-            col%energy%deep_depth            = surf%deep_depth
-            if (allocated(ctx%site_leaf_photo)) col%leaf_photo = ctx%site_leaf_photo(is)
-         end associate
-      end do
-   end subroutine site_column_configs
 
    !----- The opt-in sub-daily probe ([fast].fast_probe): one CSV row per (patch, sub-step), flushed  !
    !      as written, from a saved unit opened on first use. The FAST tier is the supported sub-daily  !

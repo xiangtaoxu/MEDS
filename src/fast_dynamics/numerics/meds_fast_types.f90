@@ -21,8 +21,6 @@ module meds_fast_types
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I, process_mask_t
-   use meds_plant_hydr_lib, only : build_hydro_table
-   use meds_pft_params, only : pft_table_t
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
    private
@@ -31,7 +29,7 @@ module meds_fast_types
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: mask_is_full
-   public :: ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
+   public :: ensure_column_cohort_capacity
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, ensure_patch_biophys_capacity
    public :: snow_stage_t
@@ -639,29 +637,6 @@ contains
          col_cohort%n = n
       end if
    end subroutine ensure_column_cohort_capacity
-
-   !----- The per-PFT hydraulics table: each PFT's [hydraulics] traits and the Kirchhoff lookup     !
-   !      built from its own wood_kexp (docs/science/plant_hydraulics.md eq. (8)), which makes a   !
-   !      non-integer vulnerability exponent affordable on the hot path. ------------------------!
-   subroutine apply_hydraulics_config(pft, table)
-      type(pft_table_t),          intent(in)  :: pft
-      type(hydro_args_table_t),   intent(out) :: table
-      integer(ik) :: i
-      table%n_pft = pft%n
-      allocate(table%pft(max(pft%n, 1_ik)))
-      do i = 1_ik, pft%n
-         table%pft(i)%plant_hydraulics_t = pft%hydro(i)
-         call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
-      end do
-   end subroutine apply_hydraulics_config
-
-   !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
-   subroutine apply_canopy_film_config(pft, leaf_max, wood_max)
-      type(pft_table_t),     intent(in)  :: pft
-      real(wp), allocatable, intent(out) :: leaf_max(:), wood_max(:)
-      leaf_max = pft%leaf_surf_water_max(1:pft%n)
-      wood_max = pft%wood_surf_water_max(1:pft%n)
-   end subroutine apply_canopy_film_config
 
    !----- Allocate a patch_biophys_t and seed it from an initial canopy-air state. --------------!
    subroutine alloc_patch_biophys(biophys, n_coh, can_temp0, can_shv0, can_co2, leaf_temp0)

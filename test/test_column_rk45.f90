@@ -30,9 +30,10 @@ program test_column_rk45
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,         only : soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
-   use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
-   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t,      &
+                                        alloc_column_cohort
+   use meds_fast_config,         only : apply_hydraulics_config, apply_canopy_film_config,                        &
+                                        build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_fast_types,         only : fast_workspace_t
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water

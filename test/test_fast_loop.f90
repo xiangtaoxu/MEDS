@@ -21,10 +21,9 @@ program test_fast_loop
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
    use meds_slow_dynamics,   only : settle_tissue_water
-   use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
-                                        build_fast_context
-   use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
-   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_fast_config,         only : fast_context_t, build_fast_context, apply_hydraulics_config,              &
+                                        apply_canopy_film_config, build_leaf_photo_table, build_integrator_opts
+   use meds_fast_dynamics,       only : init_fast_reservoirs, fast_dynamics
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds

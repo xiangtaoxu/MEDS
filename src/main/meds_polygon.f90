@@ -28,8 +28,8 @@ module meds_polygon
    use meds_polygon_state_vars,     only : polygon_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth
-   use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
-   use meds_fast_config,            only : acclimate_leaf_photo_table
+   use meds_fast_config,            only : fast_context_t, build_fast_context, acclimate_leaf_photo_table
+   use meds_fast_dynamics,          only : init_fast_reservoirs
    use meds_biogeochem_types,       only : litter_input_t, N_SOIL_POOL, soilc_seam_t
    use meds_patch_state_vars,       only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
