@@ -3,7 +3,7 @@
 ! meds_output_params -- the [output] block (docs/science/diagnostics.md) and the codes it  !
 ! uses: temporal tiers (FREQ_*), variable groups (GRP_*), file chunks (FC_*) and sync      !
 ! (SYNC_*). A config leaf (meds_kinds only), so meds_config carries                        !
-! output_config_t with no edge back to the io layer; the io-only codes (AGG_*, DIM_*) are  !
+! output_params_t with no edge back to the io layer; the io-only codes (AGG_*, DIM_*) are  !
 ! in meds_output_types.                                                                    !
 !==========================================================================================!
 module meds_output_params
@@ -11,7 +11,7 @@ module meds_output_params
    implicit none
    private
 
-   public :: output_config_t
+   public :: output_params_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
    public :: TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
@@ -69,7 +69,7 @@ module meds_output_params
    !  The [output] block: plain scalars and fixed arrays. What is written is the registry's !
    !  defaults and the lines of [output].io_config (docs/science/diagnostics.md §5).        !
    !=======================================================================================!
-   type :: output_config_t
+   type :: output_params_t
       logical            :: enabled     = .false.               !< master switch
       character(len=256) :: dir         = '.'                   !< output directory
       character(len=256) :: prefix      = 'meds'                !< filename stem
@@ -91,7 +91,7 @@ module meds_output_params
       !----- DBH class edges [cm]; empty here, setup_output_files installs the default. --------!
       integer(ik)        :: n_dbh_class = 0_ik
       real(wp)           :: dbh_class_edges(MAX_DBH_EDGE) = 0.0_wp
-   end type output_config_t
+   end type output_params_t
 
    !----- Default DBH class edges [cm], the common tropical forest-inventory set: 0-10,    !
    !      10-20, 20-30, 30-50, 50-70 and 70+, the last open at the top (dbh_class_index;   !

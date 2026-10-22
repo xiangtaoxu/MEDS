@@ -215,11 +215,11 @@ contains
          out_bufs%fast_soil_patch_live = .false.
          do is = 1_ik, poly%site%n
             ks = (is - 1_ik) * nl
-            out_bufs%fast_soil_live(ks + 1_ik:ks + poly%site%surface(is)%soil%n_active) = .true.
+            out_bufs%fast_soil_live(ks + 1_ik:ks + poly%site%surface(is)%soil_profile%n_active) = .true.
          end do
          do ip = 1_ik, npatch
             ks = (ip - 1_ik) * nl
-            out_bufs%fast_soil_patch_live(ks + 1_ik:ks + poly%site%surface(poly%patch%owner_site(ip))%soil%n_active) &
+            out_bufs%fast_soil_patch_live(ks + 1_ik:ks + poly%site%surface(poly%patch%owner_site(ip))%soil_profile%n_active) &
                = .true.
          end do
          out_bufs%fast_n_cohort = poly%cohort%n

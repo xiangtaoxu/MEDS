@@ -12,7 +12,7 @@ module meds_biogeochem_params
 
    public :: DECOMP_STEP_EULER, DECOMP_STEP_EXPM
    public :: DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
-   public :: decomp_opts_t
+   public :: soil_carbon_params_t
 
    !----- Daily-step solver (docs/science/soil_carbon.md §6). -----------------------------!
    integer(ik), parameter :: DECOMP_STEP_EULER = 1_ik  !< forward Euler (the coupled daily step)
@@ -29,7 +29,7 @@ module meds_biogeochem_params
    !  parameters serves the sub-daily Rh and the daily step, so the two reconcile          !
    !  (docs/science/soil_carbon.md §4, §7).                                                !
    !=======================================================================================!
-   type :: decomp_opts_t
+   type :: soil_carbon_params_t
       logical     :: soil_carbon_on = .true.              !< .false.: no soil carbon at all
       integer(ik) :: decomp_scheme = DECOMP_SCHEME_ED2    !< DECOMP_SCHEME_ED2 (3-active) or DECOMP_SCHEME_CENTURY5 (5-active)
       integer(ik) :: step_solver   = DECOMP_STEP_EULER    !< {EULER, EXPM}
@@ -67,6 +67,6 @@ module meds_biogeochem_params
       real(wp)    :: spinup_labile_soil = 0.0_wp
       real(wp)    :: spinup_struct_grnd = 0.0_wp
       real(wp)    :: spinup_struct_soil = 0.0_wp
-   end type decomp_opts_t
+   end type soil_carbon_params_t
 
 end module meds_biogeochem_params

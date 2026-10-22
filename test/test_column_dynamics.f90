@@ -17,8 +17,8 @@ program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max, tissue_c_leaf, &
                                         tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
@@ -115,9 +115,9 @@ program test_column_dynamics
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_thermal)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
@@ -308,13 +308,13 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
-   col_site%soil_water_opts%drain_factor = 0.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
+   col_site%soil%drain_factor = 0.0_wp
    call integrate_day()
    call check_true('SATURATED: the column reached theta_sat (saturation path is live)',                               &
            theta_peak_col >= 0.43_wp - 1.0e-12_wp, theta_peak_col)
    call check_true('SATURATED: ponding store filled and overflowed (runoff path is live)',                            &
-           pond_peak >= col_site%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+           pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
    call check_true('SATURATED: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,                  &
            real(budget%whole_water%n_fail, wp))
    call check_true('SATURATED: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,                 &
@@ -349,7 +349,7 @@ program test_column_dynamics
    !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
    theta_seed = THETA0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
    !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
    !      energy rather than the wiring. A surviving pack lets the schemes be compared on melt     !
@@ -466,7 +466,7 @@ program test_column_dynamics
    !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
-   col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+   col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    snowf_total = 2.0e-5_wp * real(NSTEP, wp) * DT_FAST     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)
@@ -518,7 +518,7 @@ program test_column_dynamics
    snow_seed = 0.0_wp ; rain_pulse = 0.0_wp ; theta_seed = THETA0
    snowfall_on = .true. ; snowf_rate = 5.0e-6_wp          ! 7.5e-4 kg/m2 per 150 s step < min_new_snow_mass (1e-3)
    call integrate_day()
-   e_col_snow = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
+   e_col_snow = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil_profile%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    call check_true('RUN 9b: sub-threshold snowfall never started a pack', biophys%snow%nlayer == 0_ik,                &
            real(biophys%snow%nlayer, wp))
    call check_true('RUN 9b snow: whole-column energy closes to round-off', budget%whole_energy%worst < 1.0e-3_wp,     &
@@ -526,7 +526,7 @@ program test_column_dynamics
    snow_mass_total = snowf_rate * real(NSTEP, wp) * DT_FAST
    snowfall_on = .false. ; cold_air = .true. ; rain_rate = snowf_rate
    call integrate_day()
-   e_col_rain = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil%dz(1:NSL)) + biophys%soil_water%w_surface_energy
+   e_col_rain = sum(biophys%soil_energy%soil_energy(1:NSL) * col_site%soil_profile%dz(1:NSL)) + biophys%soil_water%w_surface_energy
    cold_air = .false. ; rain_rate = 0.0_wp ; snowf_rate = 2.0e-5_wp
    fusion_expect = latent_heat_fusion * snow_mass_total
    !----- ~0.56 L_f on this fixture: the colder, wetter surface loses less to the air over the day and    !
@@ -582,7 +582,7 @@ contains
       snow_physical = .true.
       biophys%soil_water%theta(1:NSL) = theta_seed
       do k = 1_ik, NSL
-         biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_site%soil_thermal%soil_dry_heat_capacity(k),    &
+         biophys%soil_energy%soil_energy(k) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(k),    &
                                      theta_seed * rho_h2o, T0, 1.0_wp)
          biophys%soil_energy%soil_temp(k)   = T0
       end do
@@ -669,7 +669,7 @@ contains
       !      must land in if it lands anywhere at all. -----------------------------------------------!
       col_water_end = biophys%soil_water%w_surface + biophys%snow%swe(1)
       do k = 1_ik, NSL
-         col_water_end = col_water_end + biophys%soil_water%theta(k) * col_site%soil%dz(k) * rho_h2o
+         col_water_end = col_water_end + biophys%soil_water%theta(k) * col_site%soil_profile%dz(k) * rho_h2o
       end do
    end subroutine integrate_day
 
@@ -764,27 +764,28 @@ contains
       !----- (a) DEFAULT: each group is seeded from the config key that governs it. -------------------!
       t = build_tol_set(c)
       call check_true('tol: every group takes [fast].rtol', all(t%rtol == c%rtol), maxval(abs(t%rtol - c%rtol)))
-      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%soil%water_atol,           &
+      call check_true('tol: theta group seeded from [fast].water_atol', t%atol(GRP_THETA)  == c%water_atol,                &
               t%atol(GRP_THETA))
       !----- (b) THE DIALS: rtol sets every group; atol_scale multiplies every atol. ------------------!
       c%rtol       = 1.0e-7_wp
       c%atol_scale = 1.0e-2_wp
       t = build_tol_set(c)
       call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
-      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
+      call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
       !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
-              fx%col_site%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_site%soil_water_opts%rtol)
+              fx%col_config%integrator%error_control%tols%rtol(GRP_THETA) == 1.0e-7_wp,                            &
+              fx%col_config%integrator%error_control%tols%rtol(GRP_THETA))
       !----- The soil heat has NO integrator tolerance to push into: the soil-thermal solve is one      !
       !      unconditionally-stable BE step, and the accuracy of the integrated soil energy belongs to   !
       !      GRP_SE. What the dial must still reach is [fast].soil_energy_budget_atol, the               !
       !      BUDGET-CLOSURE threshold, which atol_scale scales directly, outside the tolerance groups.    !
       !      This assertion catches a dropped path.                                                      !
       call check_true('tol: atol_scale reaches the soil-energy BUDGET threshold',                                     &
-              fx%col_site%energy%soil_energy_budget_atol == c%energy%soil_energy_budget_atol * 1.0e-2_wp,            &
-              fx%col_site%energy%soil_energy_budget_atol)
+              fx%col_site%soil_energy_budget_atol == c%soil_energy_budget_atol * 1.0e-2_wp,                          &
+              fx%col_site%soil_energy_budget_atol)
    end subroutine test_tolerance_unification
 
 end program test_column_dynamics

@@ -18,7 +18,7 @@ module meds_met
                               dry_adiabat_temperature, sat_specific_humidity, rh_to_specific_humidity
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc,     &
                          mean_solar_cosz
-   use meds_forcing_params, only : forcing_config_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
+   use meds_forcing_params, only : forcing_params_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
                                    METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
                                    CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
    use meds_radiation_lib,  only : COSZ_MIN, SWPART_PASSTHROUGH, lapse_longwave, partition_shortwave, clearness_index,      &
@@ -54,7 +54,7 @@ contains
    !=======================================================================================!
    subroutine met_open(src, fcfg, stat, run_start, run_end, cells)
       type(met_source_t),     intent(inout)  :: src
-      type(forcing_config_t), intent(in)    :: fcfg
+      type(forcing_params_t), intent(in)    :: fcfg
       integer(ik), optional,  intent(out)   :: stat
       type(meds_time_t), optional, intent(in) :: run_start, run_end
       type(met_cells_t), optional, intent(in) :: cells   !< a region's cells (archive only); absent: the site's
@@ -386,7 +386,7 @@ contains
    !=======================================================================================!
    pure function met_at_site(met, f, month, dz, beam_factor) result(site)
       type(met_forcing_t),    intent(in) :: met
-      type(forcing_config_t), intent(in) :: f
+      type(forcing_params_t), intent(in) :: f
       integer(ik),            intent(in) :: month
       real(wp),               intent(in) :: dz            !< [m] site above polygon
       real(wp),               intent(in) :: beam_factor   !< [-] slope_beam_factor
@@ -414,7 +414,7 @@ contains
    !      displacement d: an open-terrain wind is first returned to its blending height z_b, then  !
    !      the patch's neutral log profile carries it to z_top, heights above d floored at 2 z0. ---!
    pure real(wp) function cas_top_wind_factor(f, z_top, displace, rough) result(factor)
-      type(forcing_config_t), intent(in) :: f
+      type(forcing_params_t), intent(in) :: f
       real(wp),               intent(in) :: z_top      !< [m] canopy-air top, above the ground
       real(wp),               intent(in) :: displace   !< [m] zero-plane displacement
       real(wp),               intent(in) :: rough      !< [m] roughness length (> 0)
@@ -440,7 +440,7 @@ contains
    !      filled (fill_forcing).                                                                     !
    pure function met_to_cas_top(met, f, z_top, displace, rough) result(top)
       type(met_forcing_t),    intent(in) :: met
-      type(forcing_config_t), intent(in) :: f
+      type(forcing_params_t), intent(in) :: f
       real(wp),               intent(in) :: z_top      !< [m] canopy-air top, above the ground
       real(wp),               intent(in) :: displace   !< [m] zero-plane displacement
       real(wp),               intent(in) :: rough      !< [m] roughness length (> 0)

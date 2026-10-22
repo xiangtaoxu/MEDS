@@ -14,7 +14,8 @@
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp, soil_column_params
+   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp
+   use meds_soil_derive,    only : build_soil_profile
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_args_table_t
    use meds_fast_config,    only : apply_hydraulics_config, fast_context_t, build_fast_context
@@ -22,7 +23,7 @@ program test_pft_optics_config
                                    tissue_psi_to_water
    use meds_polygon_state_vars, only : polygon_t
    use meds_patch_state_vars, only : patch_physical_state
-   use meds_soil_params,    only : soil_params_t
+   use meds_soil_params,    only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_vegetation_dynamics, only : shed_excess_tissue_water
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
@@ -132,7 +133,7 @@ program test_pft_optics_config
       type(polygon_t) :: poly
       real(wp) :: w_expect, w_shed, t_birth, psi_birth
       integer(ik) :: i2
-      type(soil_params_t) :: soil
+      type(soil_profile_t) :: soil
       cfg%pft%hydro(2)%leaf_curve%water_sat = 3.0_wp   ! vs PFT 1's 2.0
       call apply_hydraulics_config(cfg, tab)
       call init_bare_ground(poly, cfg, 1_ik)

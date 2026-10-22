@@ -451,7 +451,7 @@ defaults take from ED2 and the models ED2 builds on is listed here.
   `vh2dh`; the Monin–Obukhov constants and the convective velocity scale `wc` are CLM5's, and the
   dense-canopy ground conductance (`cs_dense`, `gamma_g`) CLM4's
   ([canopy_aerodynamics](science/canopy_aerodynamics.md)). The flat-plate (leaf) and cylinder (wood)
-  Nusselt coefficients keep ED2's and CLM's values in `aero_cfg_t`, with no key.
+  Nusselt coefficients keep ED2's and CLM's values in `aero_params_t`, with no key.
 - **Soil carbon** (`[soil_carbon]`). Every default is ED2's (`decomp_coms.f90`, `ed_params.f90`), from
   its schemes 0–4: the decay rates `k_fast` … `k_pass` are `decay_rate_fsc`, `_stsc`, `_msc`, `_ssc`
   and `_psc` (ED2's `decay_rate_ssc` depends on the scheme; MEDS takes 0.2), the respired fractions

@@ -33,9 +33,9 @@ program test_column_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_patch_state_vars,   only : soil_energy_column_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_params,      only : soil_thermal_params_t, soil_params_t, energy_opts_t,             &
+   use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
-   use meds_config,             only : build_soil_hydr_params, build_soil_therm_params
+   use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_therm_lib,           only : soil_thermal_conductivity, soil_volumetric_heat_capacity,              &
                                         temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,  &
@@ -122,19 +122,18 @@ contains
       integer(ik), intent(in)  :: nl, nyr
       real(wp),    intent(in)  :: period, omega, dts, q0, theta, tmean, ddeep
       real(wp),    intent(out) :: amp(:), z(:), dd
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: therm
+      type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: eflux
       type(soil_energy_column_t)  :: col
       real(wp)    :: tmin(n_soil_layer_max), tmax(n_soil_layer_max), tnow, kap, cef
       integer(ik) :: k, istep, nstep_yr, iyr
 
       call geometric_layer_bottoms(2.0_wp, nl, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(nl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,       &
+      call build_profile_hydraulics(nl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
-      call build_soil_therm_params(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_profile_thermal(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
       forcing%soil_water(1:nl) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
       forcing%w_flux_top = 0.0_wp
@@ -142,12 +141,12 @@ contains
          opts%thermal_bottom_bc = ENERGY_BC_DIRICHLET ; opts%deep_temp = tmean ; opts%deep_depth = ddeep
       end if
       do k = 1_ik, nl
-         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),            &
+         col%soil_energy(k) = temp_to_internal_energy(soil%dry_heat_capacity(k),            &
                                  theta * rho_h2o, tmean, 1.0_wp)
       end do
       kap = soil_thermal_conductivity(theta, 1.0_wp, soil%theta_sat(1),                                   &
-                              therm%soil_solid_conductivity(1), therm%soil_dry_conductivity(1))
-      cef = soil_volumetric_heat_capacity(theta, 1.0_wp, therm%soil_dry_heat_capacity(1))
+                              soil%solid_conductivity(1), soil%dry_conductivity(1))
+      cef = soil_volumetric_heat_capacity(theta, 1.0_wp, soil%dry_heat_capacity(1))
       dd  = sqrt(2.0_wp * (kap / cef) / omega)
 
       nstep_yr = int(period / dts, ik)
@@ -156,7 +155,7 @@ contains
          do istep = 1_ik, nstep_yr
             tnow = real(istep, wp) * dts
             forcing%g_top = q0 * sin(omega * tnow)
-            call soil_energy_step_implicit(col, forcing, therm, soil, opts, dts, eflux)
+            call soil_energy_step_implicit(col, forcing, soil, opts, dts, eflux)
             if (iyr == nyr) then
                do k = 1_ik, nl
                   tmin(k) = min(tmin(k), col%soil_temp(k)) ; tmax(k) = max(tmax(k), col%soil_temp(k))
@@ -260,74 +259,71 @@ contains
                       sat_vapor_pressure_temp_deriv(253.15_wp, 1.0_wp), 0.0_wp)
    end subroutine test_ice_saturation
 
-   subroutine soil_setup(soil, therm, forcing)
-      type(soil_params_t),         intent(out) :: soil
-      type(soil_thermal_params_t), intent(out) :: therm
+   subroutine soil_setup(soil, forcing)
+      type(soil_profile_t),        intent(out) :: soil
       type(energy_forcing_t),      intent(out) :: forcing
       call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,    &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
-      call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
    end subroutine soil_setup
 
-   subroutine init_col(col, therm, forcing, t_init)
+   subroutine init_col(col, soil, forcing, t_init)
       type(soil_energy_column_t),  intent(out) :: col
-      type(soil_thermal_params_t), intent(in)  :: therm
+      type(soil_profile_t),        intent(in)  :: soil
       type(energy_forcing_t),      intent(in)  :: forcing
       real(wp),                    intent(in)  :: t_init
       integer(ik) :: k
       do k = 1_ik, 10_ik
-         col%soil_energy(k) = temp_to_internal_energy(therm%soil_dry_heat_capacity(k),                    &
+         col%soil_energy(k) = temp_to_internal_energy(soil%dry_heat_capacity(k),                    &
                               forcing%soil_water(k) * rho_h2o, t_init, 1.0_wp)
       end do
    end subroutine init_col
 
    subroutine test_soil_conserve()
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: therm
+      type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step
       real(wp)    :: worst, worst_adv
       print '(a)', 'test_soil_conserve:'
-      call soil_setup(soil, therm, forcing) ; call init_col(col, therm, forcing, 285.0_wp)
+      call soil_setup(soil, forcing) ; call init_col(col, soil, forcing, 285.0_wp)
       forcing%g_top = 100.0_wp                                    ! W/m2 surface warming
       worst = 0.0_wp
       do step = 1_ik, 20_ik
-         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
          worst = max(worst, abs(flux%energy_resid))
       end do
       call check_true('soil energy residual ~ 0', worst < 1.0e-4_wp, worst)
       call check_true('top layer warmed by G_top', col%soil_temp(1) > 285.0_wp, col%soil_temp(1))
       !----- With inter-layer advective water flux (energy still conserves). --------------!
-      call init_col(col, therm, forcing, 285.0_wp)
+      call init_col(col, soil, forcing, 285.0_wp)
       forcing%w_flux(1:9) = -1.0e-7_wp                            ! gentle downward flow
       worst_adv = 0.0_wp
       do step = 1_ik, 20_ik
-         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
          worst_adv = max(worst_adv, abs(flux%energy_resid))
       end do
       call check_true('soil energy residual ~ 0 (advective)', worst_adv < 1.0e-4_wp, worst_adv)
    end subroutine test_soil_conserve
 
    subroutine test_soil_steady()
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: therm
+      type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step, k
       real(wp)    :: drift
       print '(a)', 'test_soil_steady:'
-      call soil_setup(soil, therm, forcing) ; call init_col(col, therm, forcing, 285.0_wp)
+      call soil_setup(soil, forcing) ; call init_col(col, soil, forcing, 285.0_wp)
       ! g_top = geothermal = sink = w_flux = 0  =>  isothermal column must not drift
       do step = 1_ik, 10_ik
-         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
       end do
       drift = 0.0_wp
       do k = 1_ik, 10_ik
@@ -356,40 +352,38 @@ contains
 
    !----- Single wet control volume, sealed bottom; the top Neumann G_top is the ONLY flux, so !
    !      energy removed per step is exactly |G_top|*dt regardless of the BE predictor.         !
-   subroutine setup_1layer(soil, therm, forcing, theta, depth)
-      type(soil_params_t),         intent(out) :: soil
-      type(soil_thermal_params_t), intent(out) :: therm
+   subroutine setup_1layer(soil, forcing, theta, depth)
+      type(soil_profile_t),        intent(out) :: soil
       type(energy_forcing_t),      intent(out) :: forcing
       real(wp),                    intent(in)  :: theta, depth
       call geometric_layer_bottoms(depth, 1_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(1_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
+      call build_profile_hydraulics(1_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
-      call build_soil_therm_params(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
+      call build_profile_thermal(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
       forcing%soil_water(1) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
    end subroutine setup_1layer
 
    subroutine test_freeze_plateau()
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: therm
+      type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: latent_expect, e_enter, e_exit, worst_pin, worst_res, fl_prev, fl, tp, e_col
       integer(ik) :: step
       logical :: got_enter, got_exit
       print '(a)', 'test_freeze_plateau:'
-      call setup_1layer(soil, therm, forcing, THETA, DEPTH)
-      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), THETA * rho_h2o,       &
+      call setup_1layer(soil, forcing, THETA, DEPTH)
+      col%soil_energy(1) = temp_to_internal_energy(soil%dry_heat_capacity(1), THETA * rho_h2o,       &
                                         t_3ple + 0.2_wp, 1.0_wp)               ! all-liquid, just above 0 C
       forcing%g_top = -100.0_wp                                               ! steady surface cooling
       latent_expect = THETA * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
       worst_pin = 0.0_wp ; worst_res = 0.0_wp ; fl_prev = 1.0_wp
       e_enter = 0.0_wp ; e_exit = 0.0_wp ; got_enter = .false. ; got_exit = .false.
       do step = 1_ik, 100_ik
-         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
          worst_res = max(worst_res, abs(flux%energy_resid))
          fl = col%soil_fliq(1) ; tp = col%soil_temp(1) ; e_col = col%soil_energy(1) * soil%dz(1)
          if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
@@ -406,24 +400,23 @@ contains
    end subroutine test_freeze_plateau
 
    subroutine test_thaw_plateau()
-      type(soil_params_t)         :: soil
-      type(soil_thermal_params_t) :: therm
+      type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_energy_column_t)  :: col
-      type(energy_opts_t)         :: opts
+      type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
       real(wp) :: worst_pin, fl, tp
       integer(ik) :: step
       logical :: melted
       print '(a)', 'test_thaw_plateau:'
-      call setup_1layer(soil, therm, forcing, THETA, DEPTH)
-      col%soil_energy(1) = temp_to_internal_energy(therm%soil_dry_heat_capacity(1), THETA * rho_h2o,       &
+      call setup_1layer(soil, forcing, THETA, DEPTH)
+      col%soil_energy(1) = temp_to_internal_energy(soil%dry_heat_capacity(1), THETA * rho_h2o,       &
                                         t_3ple - 0.2_wp, 0.0_wp)              ! all-ice, just below 0 C
       forcing%g_top = 100.0_wp                                               ! steady surface warming
       worst_pin = 0.0_wp ; melted = .false.
       do step = 1_ik, 100_ik
-         call soil_energy_step_implicit(col, forcing, therm, soil, opts, 1800.0_wp, flux)
+         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
          fl = col%soil_fliq(1) ; tp = col%soil_temp(1)
          if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
          if (fl > 1.0_wp - 1.0e-3_wp) melted = .true.

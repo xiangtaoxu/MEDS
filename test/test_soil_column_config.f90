@@ -15,16 +15,14 @@
 program test_soil_column_config
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : n_soil_layer_max
-   use meds_soil_params,   only : soil_column_config_t, soil_params_t, soil_thermal_params_t
-   use meds_config,             only : soil_column_layers, build_soil_hydr_params,                    &
-                                       build_soil_therm_params
+   use meds_soil_params,   only : soil_params_t, soil_profile_t
+   use meds_soil_derive,        only : soil_layers, build_profile_hydraulics, build_profile_thermal
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_test_support, only : banner, check, check_close
    implicit none
 
-   type(soil_column_config_t)  :: sc
-   type(soil_params_t)         :: p, p2
-   type(soil_thermal_params_t) :: th
+   type(soil_params_t)         :: sc
+   type(soil_profile_t)        :: p, p2, th
    real(wp)                    :: bottoms(n_soil_layer_max)
    integer(ik)                 :: n_layer, k
    real(wp), parameter         :: SOILGRIDS_BOTTOMS(5) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp]
@@ -64,11 +62,11 @@ program test_soil_column_config
    !=== 4. A remainder under half of the list layer it falls in joins the layer above: 0.65 m !
    !       ends in a 30-65 cm layer, while 0.85 m keeps a 60-85 cm layer of its own. ==========!
    sc%depth = 0.65_wp
-   call soil_column_layers(sc, bottoms, n_layer)
+   call soil_layers(sc, bottoms, n_layer)
    call check(n_layer == 4_ik .and. abs(bottoms(4) - 0.65_wp) < 1.0e-12_wp .and.                    &
               abs(bottoms(3) - 0.30_wp) < 1.0e-12_wp, 'a 5 cm remainder was not merged upward')
    sc%depth = 0.85_wp
-   call soil_column_layers(sc, bottoms, n_layer)
+   call soil_layers(sc, bottoms, n_layer)
    call check(n_layer == 5_ik .and. abs(bottoms(5) - 0.85_wp) < 1.0e-12_wp,                         &
               'a 25 cm remainder was merged although it is over half its layer')
 
@@ -103,15 +101,15 @@ program test_soil_column_config
    sc%retention = SOIL_RETENTION_VG
    sc%curve_par_a = 3.6_wp ; sc%curve_par_n = 1.56_wp                  ! the van Genuchten defaults
 
-   !=== 8. The thermal keys reach the thermal column, on the same layers. ====================!
+   !=== 8. The thermal keys reach the profile's thermal texture, on the same layers. =========!
    sc%solid_conductivity = 2.5_wp ; sc%dry_conductivity = 0.20_wp ; sc%dry_heat_capacity = 1.5e6_wp
-   call soil_column_layers(sc, bottoms, n_layer)
-   call build_soil_therm_params(n_layer, sc%solid_conductivity, sc%dry_conductivity,                &
+   call soil_layers(sc, bottoms, n_layer)
+   call build_profile_thermal(n_layer, sc%solid_conductivity, sc%dry_conductivity,                  &
                                 sc%dry_heat_capacity, th)
-   call check(th%nzg_active == n_layer,                  'the layer count did not reach the thermal column')
-   call check_close(th%soil_solid_conductivity(1), 2.5_wp,  1.0e-14_wp, 'solid_conductivity did not reach it')
-   call check_close(th%soil_dry_conductivity(1),   0.20_wp, 1.0e-14_wp, 'dry_conductivity did not reach it')
-   call check_close(th%soil_dry_heat_capacity(1),  1.5e6_wp, 1.0e-8_wp, 'dry_heat_capacity did not reach it')
+   call check_close(th%dry_heat_capacity(n_layer), 1.5e6_wp, 1.0e-8_wp, 'the thermal texture did not reach the bottom layer')
+   call check_close(th%solid_conductivity(1), 2.5_wp,   1.0e-14_wp, 'solid_conductivity did not reach it')
+   call check_close(th%dry_conductivity(1),   0.20_wp,  1.0e-14_wp, 'dry_conductivity did not reach it')
+   call check_close(th%dry_heat_capacity(1),  1.5e6_wp, 1.0e-8_wp,  'dry_heat_capacity did not reach it')
 
    print '(a)', 'test_soil_column_config: all checks passed'
 
@@ -119,12 +117,12 @@ contains
 
    !----- Exactly the call build_fast_context makes, so the test cannot drift from it. -------!
    subroutine build_column(c, out)
-      type(soil_column_config_t), intent(in)  :: c
-      type(soil_params_t),        intent(out) :: out
+      type(soil_params_t),  intent(in)  :: c
+      type(soil_profile_t), intent(out) :: out
       real(wp)    :: column_bottoms(n_soil_layer_max)
       integer(ik) :: n_column
-      call soil_column_layers(c, column_bottoms, n_column)
-      call build_soil_hydr_params(n_column, c%retention, column_bottoms, c%theta_sat, c%theta_res, &
+      call soil_layers(c, column_bottoms, n_column)
+      call build_profile_hydraulics(n_column, c%retention, column_bottoms, c%theta_sat, c%theta_res, &
                                   c%ksat, c%curve_par_a, c%curve_par_n, c%psi_fc, out)
    end subroutine build_column
 

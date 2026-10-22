@@ -13,12 +13,12 @@ module meds_fast_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max
    use meds_plant_types, only : hydro_args_table_t, leaf_photo_table_t
-   use meds_soil_params, only : soil_params_t, soil_thermal_params_t, soil_opts_t, energy_opts_t
+   use meds_soil_params, only : soil_profile_t, soil_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy
-   use meds_biophysics_params, only : aero_cfg_t, snow_params_t
+   use meds_biophysics_params, only : aero_params_t, snow_params_t
    use meds_biogeochem_types, only : N_SOIL_POOL
-   use meds_biogeochem_params, only : decomp_opts_t
+   use meds_biogeochem_params, only : soil_carbon_params_t
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
    use meds_fast_params, only : INTEG_ARK, CTRL_I
@@ -59,7 +59,7 @@ module meds_fast_types
    real(wp), parameter :: ATOL_SE_DEF     = 1.0e3_wp    !< [J/m3]
    real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
-   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== soil_opts_t's own default)
+   real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== [fast].water_atol's default)
    !----- Default PI gains for a first-order embedded pair (Gustafsson 1988; Soderlind), eq. (4). --!
    real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
    real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
@@ -96,7 +96,7 @@ module meds_fast_types
    !----- The run part of the column's configuration, built once per run (build_fast_context) and  !
    !      shared by every site: what the run's configuration and the PFT table set. ---------------!
    type :: column_config_t
-      type(aero_cfg_t)            :: aero            !< aerodynamics constants
+      type(aero_params_t)         :: aero            !< aerodynamics constants
       !----- Stem and fine-root maintenance respiration's peaked temperature response: leaf Rd's,     !
       !      [leaf_physiology] ea_rd, hd_rd, ds_rd (docs/science/plant_respiration.md §4). ----------!
       real(wp)                    :: ea_rd, hd_rd, ds_rd
@@ -109,22 +109,26 @@ module meds_fast_types
       !      films in its stages, ARK advances them once per step. Off, the wetted fraction stays 0  !
       !      and every film term vanishes. ----------------------------------------------------------!
       logical                     :: canopy_water_on  = .false.
+      real(wp)                    :: intercept_alpha  = 1.0_wp    !< [-] Beer interception efficiency ([fast])
+      real(wp)                    :: intercept_k      = 0.5_wp    !< [1/PAI] Beer interception extinction ([fast])
       !----- The films' capacities per PFT [kg/m2 leaf], [kg/m2 wood]: a cohort holds              !
       !      leaf_max*LAI + wood_max*WAI. Built by apply_canopy_film_config. ----------------------!
       real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
-      type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
-      type(decomp_opts_t) :: soil_carbon             !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
+      type(snow_params_t)         :: snow            !< snow parameters (density, albedo, thresholds, conductivity)
+      type(soil_carbon_params_t)  :: soil_carbon     !< [soil_carbon]: the switch and the CENTURY parameters (Rh)
       !----- The ARK's Newton iteration cap is NEWT_MAX in meds_fast_be_stage, not a config field. ---!
    end type column_config_t
 
    !----- The site part: what differs from site to site, made for each site every slow step       !
-   !      (site_column_configs): its soil column, the water and heat solvers' options with its     !
+   !      (site_column_configs): its soil profile, the water and heat solvers' options with its    !
    !      bottom boundary, and its leaf table, acclimated to its own air. ------------------------!
    type :: column_site_t
-      type(soil_params_t)         :: soil            !< soil geometry + texture (n_active layers)
-      type(soil_thermal_params_t) :: soil_thermal    !< soil thermal texture
-      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options, the bottom boundary
-      type(energy_opts_t)         :: energy          !< soil-thermal solver options, the deep temperature
+      type(soil_profile_t)        :: soil_profile    !< layers, hydraulic and thermal texture (n_active layers)
+      type(soil_params_t)         :: soil            !< its [soil]: surface and bottom boundaries
+      !----- [fast]'s budget stop: debug_error and the soil heat's closure threshold [K], scaled  !
+      !      by atol_scale, which the soil heat step checks. -----------------------------------!
+      logical                     :: debug_error = .false.
+      real(wp)                    :: soil_energy_budget_atol = 1.0e-2_wp
       type(leaf_photo_table_t)    :: leaf_photo      !< per-PFT leaf-photosynthesis parameters
    end type column_site_t
 
@@ -255,7 +259,7 @@ module meds_fast_types
       !      unset roughness and wind would not converge), true from build_column_frozen, and false   !
       !      again in ARK's stage copy once refreshed, so the Newton's repeated evaluations reuse it.  !
       logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
-      type(aero_cfg_t) :: aero_cfg            !< MO constants (copy; POD)
+      type(aero_params_t) :: aero_cfg         !< MO constants (copy; POD)
       real(wp) :: mo_u_ref      = 0.0_wp      !< [m/s]  wind at the reference height
       real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
       real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)

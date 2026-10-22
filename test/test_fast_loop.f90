@@ -12,8 +12,8 @@
 !==========================================================================================!
 program test_fast_loop
    use meds_kinds,               only : wp, ik
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params, top_soil_psi
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal, top_soil_psi
    use meds_cohort_state_vars,   only : set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
@@ -60,9 +60,9 @@ program test_fast_loop
 
    !----- Build the column config + reference met inside the fast context. -----------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_thermal)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_site%soil_profile)
    call apply_hydraulics_config(cfg, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_site%leaf_photo)
@@ -100,7 +100,7 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(poly%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_site%soil, theta0_1),             &
+   call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(ctx%col_site%soil_profile, theta0_1),             &
                     ctx%col_config%hydraulics_table%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),     &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
    !----- To round-off: the temperatures are what the energies the cohort was born with give. ------!
@@ -275,10 +275,10 @@ program test_fast_loop
                     'the fast tier stages each sub-step''s forcing sample exactly')
          !----- The soil slabs fold the ACTIVE layers only, so the inactive tail reads back as the   !
          !      fill value, as on the coarse tiers. The fixture needs such a tail. ------------------!
-         call check(ctx%col_site%soil%n_active < n_soil_layer_max,                                 &
+         call check(ctx%col_site%soil_profile%n_active < n_soil_layer_max,                                 &
                     'fixture has an inactive soil tail to be worth anything')
          call check(ob%fast_n_site == 1_ik .and. count(ob%fast_soil_live(1:n_soil_layer_max))       &
-                    == ctx%col_site%soil%n_active, 'the fast tier folds only the active soil layers')
+                    == ctx%col_site%soil_profile%n_active, 'the fast tier folds only the active soil layers')
          !----- The patch axis: each patch's staged row is its own, unweighted -- the last           !
          !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
          !      weighted sum, in patch order (docs/science/diagnostics.md §4, The FAST tier by       !
@@ -287,7 +287,7 @@ program test_fast_loop
             integer(ik) :: ip, nsub, na, kb
             real(wp)    :: site_cas
             logical     :: own, folded, skin
-            nsub = cfg%n_fast_per_slow ; na = ctx%col_site%soil%n_active
+            nsub = cfg%n_fast_per_slow ; na = ctx%col_site%soil_profile%n_active
             own = ob%fast_n_patch == poly%patch%n ; site_cas = 0.0_wp ; skin = .true.
             do ip = 1_ik, poly%patch%n
                kb = (ip - 1_ik) * n_soil_layer_max
@@ -664,8 +664,7 @@ contains
    !      at 0.30 in every layer. ------------------------------------------------------------!
    subroutine use_test_column(p)
       type(polygon_t), intent(inout) :: p
-      p%site%surface(1)%soil         = ctx%col_site%soil
-      p%site%surface(1)%soil_thermal = ctx%col_site%soil_thermal
+      p%site%surface(1)%soil_profile = ctx%col_site%soil_profile
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
 

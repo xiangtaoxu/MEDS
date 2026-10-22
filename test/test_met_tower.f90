@@ -20,7 +20,7 @@ program test_met_tower
    use meds_time,            only : meds_time_t, time_advance_seconds, solar_cosz_utc
    use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd, rh_to_specific_humidity,        &
                                     sat_specific_humidity
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
+   use meds_forcing_params,  only : forcing_params_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
                                     HEIGHT_ABOVE_GROUND, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL,            &
                                     LW_SYNTHESIZE
    use meds_radiation_lib,   only : SWPART_CLEARIDX, clearness_index
@@ -56,7 +56,7 @@ contains
    !      ground, a wind measured over this canopy. --------------------------------------------!
    function tower_config(convention) result(fc)
       integer(ik), intent(in) :: convention
-      type(forcing_config_t)  :: fc
+      type(forcing_params_t)  :: fc
       fc%format = MET_BACKEND_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
       fc%timestep = DT ; fc%avg_convention = convention ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude = 9.1568_wp ; fc%longitude = -79.8486_wp ; fc%elevation = 150.0_wp
@@ -190,7 +190,7 @@ contains
    subroutine test_humidity_forms()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       integer(ik) :: st
       integer, parameter :: K = 40
@@ -242,7 +242,7 @@ contains
    !----- 2. MEDS runs in UTC: a file that does not say time_zone = "UTC" is refused. -----------!
    subroutine test_utc_required()
       type(met_source_t)     :: src
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       integer(ik) :: st
       print '(a)', '-- test 2: the UTC requirement --'
       fc = tower_config(METAVG_BEGIN)
@@ -263,7 +263,7 @@ contains
    !----- 3. The heights a file states must be the ones [forcing] moves the forcing from. ---------!
    subroutine test_stated_heights()
       type(met_source_t)     :: src
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       integer(ik) :: st
       print '(a)', '-- test 3: the stated heights --'
       call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
@@ -300,7 +300,7 @@ contains
       integer(ik), intent(in) :: convention
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       real(wp) :: t0, sw_mean
       integer  :: i, k_sw
@@ -355,7 +355,7 @@ contains
    subroutine test_tower_round_trip()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met, top
       real(wp) :: vpd, rh_model, worst, z_top, displace, rough, factor
       integer  :: k

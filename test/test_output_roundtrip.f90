@@ -34,7 +34,8 @@ end module test_ro_support
 program test_output_roundtrip
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
-   use meds_config,           only : meds_config_t, build_soil_hydr_params
+   use meds_config,           only : meds_config_t
+   use meds_soil_derive,      only : build_profile_hydraulics
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon, free_polygon, rebuild_patch_map
    use meds_output_params,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
@@ -47,7 +48,7 @@ program test_output_roundtrip
    use meds_netcdf_c
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_constants,        only : n_soil_layer_max, kgc_2_umol, day_sec
-   use meds_soil_params,      only : soil_params_t
+   use meds_soil_params,      only : soil_profile_t
    use meds_soil_hydr_lib,    only : SOIL_RETENTION_VG
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close, test_pft_table
@@ -62,7 +63,7 @@ program test_output_roundtrip
    type(meds_time_t)      :: prev, now
    integer(ik)            :: iday
    real(wp)               :: dt
-   type(soil_params_t)    :: soilp
+   type(soil_profile_t)   :: soilp
    integer(ik), parameter :: N_ACTIVE = 6_ik
 
    call banner('output_roundtrip')
@@ -100,11 +101,11 @@ program test_output_roundtrip
    !      soil column on a real run -- and soil_matric_potential evaluated on padding whose       !
    !      theta_sat is 0 aborts a -fpe0 build. ---------------------------------------------------!
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
+   call build_profile_hydraulics(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,   &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
    !----- The site's soil column gives the extraction its layers and curve; the polygon's row of  !
    !      the file set gives the files their layer depths, as attach_output does in a run. -------!
-   poly%site%surface(1)%soil = soilp
+   poly%site%surface(1)%soil_profile = soilp
    bufs(1)%diag%soil_ready = .true.
    files%site_n_soil(1, 1)       = soilp%n_active
    files%site_soil_z(:, 1, 1)    = soilp%z_node

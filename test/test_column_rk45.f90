@@ -15,8 +15,8 @@
 program test_column_rk45
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, grav_head, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
-   use meds_config,              only : meds_config_t, build_soil_hydr_params,                        &
-                                        build_soil_therm_params
+   use meds_config,              only : meds_config_t
+   use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_fast_params,         only : INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
@@ -28,7 +28,7 @@ program test_column_rk45
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_params,         only : soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_params,         only : soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t,      &
                                         alloc_column_cohort
@@ -79,9 +79,9 @@ program test_column_rk45
    !      mutually consistent. -------------------------------------------------------------------!
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_soil_hydr_params(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil)
-   call build_soil_therm_params(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_thermal)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)
    call apply_hydraulics_config(cfg, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_site%leaf_photo)
@@ -258,7 +258,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 0.0_wp
+      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
@@ -274,9 +274,9 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_AQUIFER
-      biophys%soil_water%theta(1:col_site%soil%n_active) = 0.15_wp
-      theta_bot0 = biophys%soil_water%theta(col_site%soil%n_active)
+      col_site%soil%water_bottom_bc = SOIL_BC_AQUIFER
+      biophys%soil_water%theta(1:col_site%soil_profile%n_active) = 0.15_wp
+      theta_bot0 = biophys%soil_water%theta(col_site%soil_profile%n_active)
       do istep = 1_ik, 12_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
@@ -287,13 +287,13 @@ contains
       call check_true('AQUIFER/RK45: whole_energy closes', budget%whole_energy%n_fail == 0_ik,                        &
               real(budget%whole_energy%n_fail, wp))
       call check_true('AQUIFER/RK45: dry column wets from below',                                                     &
-              biophys%soil_water%theta(col_site%soil%n_active) > theta_bot0,                                              &
-              biophys%soil_water%theta(col_site%soil%n_active) - theta_bot0)
+              biophys%soil_water%theta(col_site%soil_profile%n_active) > theta_bot0,                                              &
+              biophys%soil_water%theta(col_site%soil_profile%n_active) - theta_bot0)
       !----- K_bot/Delta with Delta = dz(n)/2 is a fast boundary term the implicit paths absorb and   !
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_site%soil_water_opts%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil_water_opts%drain_factor = 1.0_wp
+      col_site%soil%water_bottom_bc = SOIL_BC_DRAIN ; col_site%soil%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
@@ -532,7 +532,7 @@ contains
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       theta_min = 1.0e9_wp
-      res_min   = minval(col_site%soil%theta_res(1:NSL))
+      res_min   = minval(col_site%soil_profile%theta_res(1:NSL))
       do istep = 1_ik, 48_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)
          forc%rainfall = 0.0_wp
@@ -588,7 +588,7 @@ contains
       call check_true('RK45 saturated: column reached theta_sat (saturation path is live)',                           &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
-              pond_peak >= col_site%soil_water_opts%w_pond_max - 1.0e-9_wp, pond_peak)
+              pond_peak >= col_site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
       !----- ENERGY is asserted as a BOUND, not exact closure. Nothing clamps the committed state, but   !
       !      whether a stage clamp bites is trajectory- and compiler-dependent. A clamp that rebuilt the !
       !      COMMITTED soil_energy at a clamped temperature with no ledger term would show here (1.5e5   !
@@ -655,9 +655,9 @@ contains
                                gpp_coh=gpp_coh)
       end do
       w_worst = budget%whole_water%worst
-      psi_top = soil_theta_to_head(col_site%soil%retention, biophys%soil_water%theta(1), col_site%soil%theta_sat(1), &
-                                    col_site%soil%theta_res(1), col_site%soil%curve_par_a(1),              &
-                                    col_site%soil%curve_par_n(1))
+      psi_top = soil_theta_to_head(col_site%soil_profile%retention, biophys%soil_water%theta(1),                  &
+                                    col_site%soil_profile%theta_sat(1), col_site%soil_profile%theta_res(1),      &
+                                    col_site%soil_profile%curve_par_a(1), col_site%soil_profile%curve_par_n(1))
       theta_seed = THETA0
       call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
               psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
@@ -669,12 +669,13 @@ contains
 
 
    subroutine test_campbell_predawn_seed()
-      real(wp), parameter :: THETA_SAT = 0.43_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
-      type(soil_params_t) :: vg_soil
+      real(wp), parameter  :: THETA_SAT = 0.43_wp, THETA_RES = 0.0_wp, PSI_SAT = -0.26_wp, B = 5.65_wp
+      type(soil_profile_t) :: vg_soil
       real(wp) :: cdiag(N_CO_FAST_ROWS, N), seed
-      vg_soil = col_site%soil
-      call build_soil_hydr_params(NSL, SOIL_RETENTION_CAMPBELL, test_bottoms, THETA_SAT, THETA_RES,     &
-                                  2.89e-6_wp, PSI_SAT, B, -3.37_wp, col_site%soil)
+      vg_soil = col_site%soil_profile
+      call build_profile_hydraulics(NSL, SOIL_RETENTION_CAMPBELL, test_bottoms, THETA_SAT, THETA_RES,   &
+                                  2.89e-6_wp, PSI_SAT, B, -3.37_wp, col_site%soil_profile)
+      call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, col_site%soil_profile)   ! the fixture's thermal texture
       call set_noon_forcing()
       call reset_state()
       cfg%time_integrator = INTEG_RK45
@@ -682,7 +683,7 @@ contains
       cdiag = 0.0_wp
       call column_fast_step(DT_FAST, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
                             gpp_coh=gpp_coh, cdiag=cdiag)
-      col_site%soil = vg_soil
+      col_site%soil_profile = vg_soil
       seed = grav_head * soil_theta_to_head(SOIL_RETENTION_CAMPBELL, theta_seed, THETA_SAT, THETA_RES, PSI_SAT, B)
       call check_true('Campbell seed: the cohort has no predawn potential of its own yet',                            &
               col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
@@ -709,7 +710,7 @@ contains
       budget = column_budget_t()
       biophys%soil_water%theta(1:NSL) = theta_seed
       do kk = 1_ik, NSL
-         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_site%soil_thermal%soil_dry_heat_capacity(kk), &
+         biophys%soil_energy%soil_energy(kk) = temp_to_internal_energy(col_site%soil_profile%dry_heat_capacity(kk), &
                                       theta_seed * rho_h2o, T0, 1.0_wp)
          biophys%soil_energy%soil_temp(kk)   = T0
       end do

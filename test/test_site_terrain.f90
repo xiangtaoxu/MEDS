@@ -17,7 +17,7 @@ program test_site_terrain
    use meds_kinds,           only : wp
    use meds_time,            only : meds_time_t, seconds_into_day, solar_cosz_utc, slope_incidence_cosz
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
-   use meds_forcing_params,  only : forcing_config_t
+   use meds_forcing_params,  only : forcing_params_t
    use meds_met_types,   only : met_forcing_t
    use meds_radiation_lib,   only : slope_beam_factor
    use meds_met,             only : met_at_site
@@ -25,7 +25,7 @@ program test_site_terrain
 
    real(wp), parameter :: LAT = 45.0_wp, LON = 0.0_wp, S0 = 1361.0_wp
    type(meds_time_t)      :: noon, morning, afternoon
-   type(forcing_config_t) :: f
+   type(forcing_params_t) :: f
    type(met_forcing_t)    :: met, site
    real(wp) :: cosz, flat, south, north, east_am, east_pm
 

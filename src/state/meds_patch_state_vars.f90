@@ -21,7 +21,8 @@ module meds_patch_state_vars
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
-   use meds_config,           only : meds_config_t, top_soil_psi
+   use meds_config,           only : meds_config_t
+   use meds_soil_derive,      only : top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
    implicit none
    private
@@ -530,10 +531,10 @@ contains
       real(wp),                  intent(out) :: temp, psi
       if (.not. is_unset_positive(cas%can_temp)) then
          temp = cas%can_temp
-         psi  = top_soil_psi(surf%soil, soil_water%theta(1))
+         psi  = top_soil_psi(surf%soil_profile, soil_water%theta(1))
       else
          temp = cfg%init%soil_temp
-         psi  = top_soil_psi(surf%soil, surf%theta_start(1))
+         psi  = top_soil_psi(surf%soil_profile, surf%theta_start(1))
       end if
    end subroutine patch_physical_state
 

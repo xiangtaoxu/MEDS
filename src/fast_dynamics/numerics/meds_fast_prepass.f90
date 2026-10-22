@@ -10,7 +10,7 @@
 module meds_fast_prepass
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, cp_air, r_gas, kgcday_2_umols
-   use meds_config,           only : top_soil_psi
+   use meds_soil_derive,      only : top_soil_psi
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM, CO_BETA_NONSTOM, &
                                      CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF, CO_ABS_PAR, CO_ABS_SW, CO_ABS_LW, &
                                      CO_WIND, CO_LEAF_WATER, CO_WOOD_WATER, CO_GPP_RATE, CO_LEAF_PAR, CO_GB_MOL, CO_PSI_PREDAWN, &
@@ -20,9 +20,9 @@ module meds_fast_prepass
    use meds_plant_types, only : leaf_photo_table_t, hydro_args_table_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
                                column_budget_t, column_site_t
-   use meds_soil_params,      only : soil_params_t
+   use meds_soil_params,      only : soil_profile_t
    use meds_state_defaults, only : is_unset_negative
-   use meds_biophysics_params, only : aero_cfg_t
+   use meds_biophysics_params, only : aero_params_t
    use meds_patch_state_vars,   only : cas_state_t, soil_carbon_t
    use meds_biogeochem_types, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
@@ -79,17 +79,17 @@ contains
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_site%soil, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
+      call root_zone_environment(col_site%soil_profile, root_frac, biophys%soil_energy%soil_temp, biophys%soil_water%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table, col_site%soil,       &
+      call canopy_leaf_gas_exchange(col_site%leaf_photo, col_config%hydraulics_table, col_site%soil_profile,       &
                                     col_cohort, forc, aero, biophys,                                       &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%ea_rd, col_config%hd_rd, col_config%ds_rd, col_site%soil,   &
+      call canopy_maintenance_respiration(col_config%ea_rd, col_config%hd_rd, col_config%ds_rd, col_site%soil_profile,   &
                                           root_frac, col_cohort,                                                 &
                                           biophys%wood_temp, biophys%soil_energy%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
@@ -118,7 +118,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine refresh_canopy_aerodynamics(aero_cfg, aenv, ageom, col_cohort, cas, soil_temp_top,      &
                                           leaf_temp, wood_temp, aero, tcas, qcas, press, rho, t_ground)
-      type(aero_cfg_t),      intent(in)    :: aero_cfg
+      type(aero_params_t),   intent(in)    :: aero_cfg
       type(aero_env_t),      intent(inout) :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
       type(column_cohort_t), intent(in)    :: col_cohort
@@ -147,12 +147,12 @@ contains
    ! that drive fine-root and heterotrophic respiration.                                             !
    !---------------------------------------------------------------------------------------!
    pure subroutine root_zone_environment(soil, root_frac, soil_temp, theta, soil_temp_root, theta_mean)
-      type(soil_params_t), intent(in)  :: soil
-      real(wp),            intent(in)  :: root_frac(:)      !< [-]     the patch's fine roots by layer
-      real(wp),            intent(in)  :: soil_temp(:)      !< [K]     per-layer soil temperature
-      real(wp),            intent(in)  :: theta(:)          !< [m3/m3] per-layer soil moisture
-      real(wp),            intent(out) :: soil_temp_root    !< [K]     root-fraction-weighted mean
-      real(wp),            intent(out) :: theta_mean        !< [m3/m3] depth-weighted column mean
+      type(soil_profile_t), intent(in)  :: soil
+      real(wp),             intent(in)  :: root_frac(:)      !< [-]     the patch's fine roots by layer
+      real(wp),             intent(in)  :: soil_temp(:)      !< [K]     per-layer soil temperature
+      real(wp),             intent(in)  :: theta(:)          !< [m3/m3] per-layer soil moisture
+      real(wp),             intent(out) :: soil_temp_root    !< [K]     root-fraction-weighted mean
+      real(wp),             intent(out) :: theta_mean        !< [m3/m3] depth-weighted column mean
       integer(ik) :: k, nsl
       nsl = soil%n_active
       soil_temp_root = weighted_mean(soil_temp(1:nsl), root_frac, nsl)
@@ -177,7 +177,7 @@ contains
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
       type(hydro_args_table_t),   intent(in)  :: hyd_table              !< per-PFT leaf PV curve
-      type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
+      type(soil_profile_t),       intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
       type(column_forcing_t),     intent(in)  :: forc         !< absorbed PAR per cohort
       type(aero_out_t),           intent(in)  :: aero         !< leaf boundary-layer conductances, wind
@@ -296,7 +296,7 @@ contains
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
       real(wp),              intent(in)  :: ea_rd, hd_rd, ds_rd !< leaf Rd's peaked response (stem and roots)
       real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
-      type(soil_params_t),   intent(in)  :: soil                !< active layer count
+      type(soil_profile_t),  intent(in)  :: soil                !< active layer count
       type(column_cohort_t), intent(in)  :: col_cohort
       real(wp),              intent(in)  :: wood_temp(:)        !< [K] per-cohort wood temperature
       real(wp),              intent(in)  :: soil_temp(:)        !< [K] PER-LAYER soil temperature
@@ -345,8 +345,8 @@ contains
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
       if (col_config%soil_carbon%soil_carbon_on) then
-         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_site%soil%theta_res(1),        &
-                                  col_site%soil%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
+         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, col_site%soil_profile%theta_res(1),        &
+                                  col_site%soil_profile%theta_sat(1), soil_carbon, col_config%soil_carbon, xi)
          call assemble_transfer_matrix(soil_carbon, col_config%soil_carbon, a_mat, k_diag, er)
          !----- The matrix returns kgC/m2/day, the pools' currency, which budget%rh_matrix_step keeps for  !
          !      the seam check; the canopy air gets umol/m2/s (docs/science/soil_carbon.md §7). ----------!
@@ -386,7 +386,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, leaf_width, branch_diam,           &
                                  leaf_temp, wood_temp, aero)
-      type(aero_cfg_t),      intent(in)    :: acfg
+      type(aero_params_t),   intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
       integer(ik),           intent(in)    :: n

@@ -204,7 +204,7 @@ contains
             f_out = bw_face(kf)      * rho_h2o * dt
             uptk  = frozen%roots%uptake * frozen%roots%root_share(kf) * dt
             face_resid = face_resid                                                                &
-               + abs((y_out%theta(kf) - y%theta(kf)) * col_site%soil%dz(kf) * rho_h2o           &
+               + abs((y_out%theta(kf) - y%theta(kf)) * col_site%soil_profile%dz(kf) * rho_h2o           &
                      - (f_in - f_out - uptk))
          end do
          face_resid_out = face_resid
@@ -329,8 +329,8 @@ contains
          !----- Record how far the step's starting theta lies outside its domain (never clamped). ----!
          if (present(ood_max)) then
             do kood = 1_ik, nsl
-               ood_max = max(ood_max, y%theta(kood) - col_site%soil%theta_sat(kood),                         &
-                             col_site%soil%theta_res(kood) - y%theta(kood))
+               ood_max = max(ood_max, y%theta(kood) - col_site%soil_profile%theta_sat(kood),                         &
+                             col_site%soil_profile%theta_res(kood) - y%theta(kood))
             end do
          end if
          call rk45_column_step(y, frozen, col_site, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
@@ -435,7 +435,7 @@ contains
       integer(ik) :: n, nsl, nsteps, nrej
 
       n = col_cohort%n
-      nsl = col_site%soil%n_active
+      nsl = col_site%soil_profile%n_active
       !----- The stage-clamp count accumulates down the call chain, so this step's tally starts here. !
       budget%clamp_stage_n = 0_ik
       budget%theta_ood_max = 0.0_wp
@@ -500,11 +500,11 @@ contains
       !----- Deposit the condensate into soil layer 1, as on ARK (docs/science/numerical_scheme.md §7, !
       !      item 4), at the b-weighted stage enthalpy the canopy air was debited. --------------------!
       if (cond_dep > 0.0_wp) then
-         call deposit_condensate(y_out, col_site%soil%dz(1), cond_dep, cond_dep_enth)
+         call deposit_condensate(y_out, col_site%soil_profile%dz(1), cond_dep, cond_dep_enth)
          biophys%soil_energy%soil_energy(1) = y_out%soil_energy(1)
          biophys%soil_water%theta(1) = y_out%theta(1)
       end if
-      call diagnose_soil_temps(y_out, col_site%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
+      call diagnose_soil_temps(y_out, col_site%soil_profile%dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
       !----- The pond, its runoff and their enthalpy are the water network's, as theta is            !
       !      (docs/science/soil_plant_water.md). ---------------------------------------------------!
@@ -529,10 +529,10 @@ contains
       shv0 = y%cas_shv
       enth1 = y_out%cas_enthalpy
       shv1 = y_out%cas_shv
-      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil%dz, nsl)
-      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil%dz, nsl)
-      w_soil0 = soil_water_store(y%theta,     col_site%soil%dz, nsl)
-      w_soil1 = soil_water_store(y_out%theta, col_site%soil%dz, nsl)
+      e_soil0 = soil_energy_store(y%soil_energy,     col_site%soil_profile%dz, nsl)
+      e_soil1 = soil_energy_store(y_out%soil_energy, col_site%soil_profile%dz, nsl)
+      w_soil0 = soil_water_store(y%theta,     col_site%soil_profile%dz, nsl)
+      w_soil1 = soil_water_store(y_out%theta, col_site%soil_profile%dz, nsl)
       w_plant0 = plant_water_store(col_cohort%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(col_cohort%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
       !----- The films, valued as on ARK. -------------------------------------------------------------!
@@ -586,7 +586,7 @@ contains
       real(wp),              intent(in) :: dt_fast
       type(column_config_t), intent(in) :: col_config
       type(column_site_t),   intent(in) :: col_site
-      if (.not. col_site%energy%debug_error) return
+      if (.not. col_site%debug_error) return
       if (.not. last_check_closed(budget%whole_water, dt_fast, BUDGET_WATER_RATE_FLOOR)) then
          write(*, '(a,es13.5)') 'meds_fast_rk45: whole_water (rk45) did not close, resid = ',               &
                                 budget%whole_water%resid

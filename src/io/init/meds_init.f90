@@ -11,7 +11,8 @@ module meds_init
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o
    use meds_time,                only : meds_time_t, time_to_string
-   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART, top_soil_psi
+   use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART
+   use meds_soil_derive,         only : top_soil_psi
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, cas_temp_to_enthalpy
    use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
@@ -134,12 +135,12 @@ contains
       do ip = 1_ik, poly%patch%n
          associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
-            nsl = surf%soil%n_active
+            nsl = surf%soil_profile%n_active
             sw%theta(1:nsl)  = surf%theta_start(1:nsl)
             sw%w_surface = 0.0_wp
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_internal_energy(surf%soil_thermal%soil_dry_heat_capacity(k),             &
+               se%soil_energy(k) = temp_to_internal_energy(surf%soil_profile%dry_heat_capacity(k),             &
                                    surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, 1.0_wp)
                se%soil_temp(k)   = cfg%init%soil_temp
                se%soil_fliq(k) = 1.0_wp
@@ -148,7 +149,7 @@ contains
             cas%can_co2 = CAS_CO2_START
             cas%can_enthalpy = cas_temp_to_enthalpy(CAS_TEMP_START, CAS_SHV_START)
             cas%can_temp     = CAS_TEMP_START
-            psi = top_soil_psi(surf%soil, sw%theta(1))
+            psi = top_soil_psi(surf%soil_profile, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
                poly%cohort%leaf_temp(i) = cas%can_temp
                poly%cohort%wood_temp(i) = cas%can_temp

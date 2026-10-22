@@ -3,26 +3,28 @@
 ! test_biophysics_params_config -- unit tests for the TOML wiring of the fast-loop         !
 ! biophysics run-config: the [soil], [fast], [snow] and [aerodynamics] loaders             !
 ! (meds_config_io load_* helpers) that fill the meds_soil_params and                       !
-! meds_biophysics_params records. Writes a small TOML fixture, parses it, and checks:      !
+! meds_biophysics_params records and the [fast] fields of meds_config_t. Writes a small    !
+! TOML fixture, parses it, and checks:                                                     !
 ! (1) string selectors map to the right enum codes, (2) scalar keys override the           !
 ! defaults, (3) keys absent from the block keep their type default (opt-in, no clobber).   !
 !==========================================================================================!
 program test_biophysics_params_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_biophysics_params, only : snow_params_t, aero_cfg_t
-   use meds_soil_params,     only : soil_opts_t, energy_opts_t, SOIL_BC_AQUIFER, SOIL_BC_DRAIN,       &
+   use meds_biophysics_params, only : snow_params_t, aero_params_t
+   use meds_soil_params,     only : soil_params_t, SOIL_BC_AQUIFER, SOIL_BC_DRAIN,                    &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
+   use meds_config,          only : meds_config_t
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
-   use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
+   use meds_config_io,       only : load_fast_params, load_soil, load_snow_params, load_aero_params
    implicit none
 
    character(len=*), parameter :: TOMLFILE = 'test_biophysics_params_tmp.toml'
-   type(toml_table_t) :: tm
-   type(soil_opts_t)    :: s
-   type(energy_opts_t)  :: e
+   type(toml_table_t)   :: tm
+   type(soil_params_t)  :: s
+   type(meds_config_t)  :: c
    type(snow_params_t)  :: sn
-   type(aero_cfg_t)     :: a
+   type(aero_params_t)  :: a
    integer(ik) :: u
    logical     :: ok
 
@@ -53,17 +55,17 @@ program test_biophysics_params_config
    call toml_parse_file(TOMLFILE, tm, ok)
    call check_true('TOML fixture parsed', ok, 0.0_wp)
 
-   call load_soil_opts(tm, s)
-   call load_energy_opts(tm, e)
+   call load_fast_params(tm, c)
+   call load_soil(tm, s)
    call load_snow_params(tm, sn)
-   call load_aero_cfg(tm, a)
+   call load_aero_params(tm, a)
 
    print '(a)', 'test_biophysics_params_config:'
 
    !----- [soil] and [fast]: string selectors -> enums, scalar overrides, and absent-keeps-default. -!
    call check_true('soil.water_bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%water_bottom_bc == SOIL_BC_AQUIFER,   &
                    real(s%water_bottom_bc, wp))
-   call check('fast.water_atol overridden', s%water_atol,     2.5e-5_wp, 1.0e-12_wp)
+   call check('fast.water_atol overridden', c%water_atol,     2.5e-5_wp, 1.0e-12_wp)
    call check('soil.w_pond_max overridden', s%w_pond_max, 9.0_wp, 0.0_wp)
    call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
    call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
@@ -72,13 +74,13 @@ program test_biophysics_params_config
 
    !----- The soil heat's budget-closure threshold, for the debug halt. The soil-thermal solve is   !
    !      one backward-Euler step, so there are no substep keys. ---------------------------------------!
-   call check('fast.soil_energy_budget_atol overridden', e%soil_energy_budget_atol, 0.05_wp, 1.0e-12_wp)
+   call check('fast.soil_energy_budget_atol overridden', c%soil_energy_budget_atol, 0.05_wp, 1.0e-12_wp)
    !----- The [soil] thermal bottom BC: selector -> enum, anchor temperature read, and the         !
    !      anchor DEPTH left at its derived default when the key is absent. -------------------------!
    call check_true('soil.thermal_bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                    &
-                   e%thermal_bottom_bc == ENERGY_BC_DIRICHLET, real(e%thermal_bottom_bc, wp))
-   call check('soil.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
-   call check('soil.deep_depth absent -> derived default 3.145', e%deep_depth, 3.145_wp, 1.0e-12_wp)
+                   s%thermal_bottom_bc == ENERGY_BC_DIRICHLET, real(s%thermal_bottom_bc, wp))
+   call check('soil.deep_temp overridden', s%deep_temp, 283.24_wp, 1.0e-9_wp)
+   call check('soil.deep_depth absent -> derived default 3.145', s%deep_depth, 3.145_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)
@@ -92,19 +94,17 @@ program test_biophysics_params_config
 
    !----- Opt-in no-op: loading on a table WITHOUT the blocks leaves a fresh struct at defaults. !
    block
-      type(soil_opts_t) :: s0
-      type(energy_opts_t) :: e0
-      call load_soil_opts(tm, s0)     ! same table, fresh struct: same result as s (idempotent)
-      call check('reload fast.water_atol matches', s0%water_atol, s%water_atol, 0.0_wp)
-      call load_energy_opts(tm, e0)
-      call check_true('reload soil.thermal_bottom_bc matches', e0%thermal_bottom_bc == e%thermal_bottom_bc,  &
-                      real(e0%thermal_bottom_bc, wp))
+      type(soil_params_t) :: s0
+      call load_soil(tm, s0)          ! same table, fresh struct: same result as s (idempotent)
+      call check('reload soil.w_pond_max matches', s0%w_pond_max, s%w_pond_max, 0.0_wp)
+      call check_true('reload soil.thermal_bottom_bc matches', s0%thermal_bottom_bc == s%thermal_bottom_bc,  &
+                      real(s0%thermal_bottom_bc, wp))
    end block
 
    !----- A table with NO [soil] block keeps the compiled default bottom boundary, geothermal. -----!
    block
       type(toml_table_t)  :: tm2
-      type(energy_opts_t) :: e2
+      type(soil_params_t) :: s2
       logical             :: ok2
       open(newunit=u, file='test_biophysics_params_empty.toml', status='replace', action='write')
       write(u,'(a)') '[run]'
@@ -112,9 +112,9 @@ program test_biophysics_params_config
       close(u)
       call toml_parse_file('test_biophysics_params_empty.toml', tm2, ok2)
       call check_true('empty-block TOML parsed', ok2, 0.0_wp)
-      call load_energy_opts(tm2, e2)
+      call load_soil(tm2, s2)
       call check_true('no [soil] block -> default ENERGY_BC_GEOTHERMAL',                           &
-                      e2%thermal_bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%thermal_bottom_bc, wp))
+                      s2%thermal_bottom_bc == ENERGY_BC_GEOTHERMAL, real(s2%thermal_bottom_bc, wp))
       open(newunit=u, file='test_biophysics_params_empty.toml', status='old', action='write')
       close(u, status='delete')
    end block
@@ -122,9 +122,9 @@ program test_biophysics_params_config
    !----- The drainage boundary's two named ends (docs/science/soil_biophysics.md §Boundary         !
    !      conditions): free_drain is drainage at f = 1, the default, and bedrock at f = 0. ------------!
    block
-      type(toml_table_t) :: tb
-      type(soil_opts_t)  :: s_free, s_rock, s_default
-      logical            :: okb
+      type(toml_table_t)  :: tb
+      type(soil_params_t) :: s_free, s_rock, s_default
+      logical             :: okb
       character(len=*), parameter :: NAMES(2) = [character(len=10) :: 'free_drain', 'bedrock']
       integer(ik) :: i
       do i = 1_ik, 2_ik
@@ -133,8 +133,8 @@ program test_biophysics_params_config
          write(u,'(3a)') 'water_bottom_bc = "', trim(NAMES(i)), '"'
          close(u)
          call toml_parse_file('test_biophysics_params_bc.toml', tb, okb)
-         if (i == 1_ik) call load_soil_opts(tb, s_free)
-         if (i == 2_ik) call load_soil_opts(tb, s_rock)
+         if (i == 1_ik) call load_soil(tb, s_free)
+         if (i == 2_ik) call load_soil(tb, s_rock)
       end do
       open(newunit=u, file='test_biophysics_params_bc.toml', status='old', action='write')
       close(u, status='delete')

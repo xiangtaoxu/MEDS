@@ -212,7 +212,7 @@ $`g_{bh,min}=`$ `gbhmos_min`. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$
 $g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas-exchange seam
 forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{leaf})`$ the molar density of air at the leaf temperature [mol m⁻³].
 
-## Parameters (config names, `[aerodynamics]` / `aero_cfg_t`)
+## Parameters (config names, `[aerodynamics]` / `aero_params_t`)
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -231,8 +231,8 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | — | `gbh_2_gbw` | boundary-layer heat:vapour ratio (1.075) |
 | $`g_{bh,min}`$ | `gbhmos_min` | boundary-layer conductance floor [m s⁻¹] |
 | — | `kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air` | linear-in-T air viscosity and diffusivity |
-| — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients (`aero_cfg_t` only, no TOML key) |
-| — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients (`aero_cfg_t` only, no TOML key) |
+| — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients (`aero_params_t` only, no TOML key) |
+| — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients (`aero_params_t` only, no TOML key) |
 | — | `min_canopy_depth` | CAS-depth floor [m] |
 | — | `canopy_freeboard` | CAS depth above the tallest cohort [m] |
 
@@ -261,5 +261,5 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
 | per-stage re-solve of eq. (5) | `meds_fast_time_derivs`: `refresh_cas_conductances` |
-| types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_cfg_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
+| types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
 | bottom→top cohort reversal | `meds_fast_prepass`: `aero_bottom_to_top` |

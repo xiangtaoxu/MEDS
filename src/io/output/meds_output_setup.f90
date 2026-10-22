@@ -77,14 +77,14 @@ contains
             files%site_elevation(is, p)    = surf%elevation_m
             files%site_slope(is, p)        = surf%slope_deg
             files%site_aspect(is, p)       = surf%aspect_deg
-            files%site_n_soil(is, p)       = surf%soil%n_active
-            files%site_soil_z(:, is, p)    = surf%soil%z_node
-            files%site_soil_face(:, is, p) = surf%soil%soil_layer_z
-            files%site_soil_depth(is, p)   = surf%soil_column%depth
-            files%site_bottom_bc(is, p)    = surf%water_bottom_bc
-            files%site_drain_factor(is, p) = merge(MISSING_VALUE, surf%drain_factor,                &
-                                                   surf%water_bottom_bc == SOIL_BC_AQUIFER)
-            files%site_deep_temp(is, p)    = surf%deep_temp
+            files%site_n_soil(is, p)       = surf%soil_profile%n_active
+            files%site_soil_z(:, is, p)    = surf%soil_profile%z_node
+            files%site_soil_face(:, is, p) = surf%soil_profile%soil_layer_z
+            files%site_soil_depth(is, p)   = surf%soil%depth
+            files%site_bottom_bc(is, p)    = surf%soil%water_bottom_bc
+            files%site_drain_factor(is, p) = merge(MISSING_VALUE, surf%soil%drain_factor,           &
+                                                   surf%soil%water_bottom_bc == SOIL_BC_AQUIFER)
+            files%site_deep_temp(is, p)    = surf%soil%deep_temp
          end associate
       end do
       !----- E is the polygon's, the same in every PFT's record. -----------------------------!

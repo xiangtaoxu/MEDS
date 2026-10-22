@@ -264,7 +264,7 @@ contains
       integer(ik) :: n, k, nlayer
       call build_fixture(poly)
       nlayer = 5_ik                                     ! ACTIVE layers < the ceiling, on purpose
-      poly%site%surface(1)%soil%n_active = nlayer
+      poly%site%surface(1)%soil_profile%n_active = nlayer
       do k = 1_ik, nlayer
          col(k, 1) = 0.10_wp * real(k, wp)              ! patch 1 profile
          col(k, 2) = 0.50_wp * real(k, wp)              ! patch 2 profile (deliberately different)
@@ -300,8 +300,8 @@ contains
       !      patch's, at the site's own stride, whatever the sites' areas. -----------------------!
       call alloc_polygon(two, 3_ik, 4_ik, 4_ik, 4_ik, test_pft_table(), n_site=2_ik)
       two%site%area(1:2) = [0.75_wp, 0.25_wp]
-      two%site%surface(1)%soil%n_active = 5_ik
-      two%site%surface(2)%soil%n_active = 3_ik
+      two%site%surface(1)%soil_profile%n_active = 5_ik
+      two%site%surface(2)%soil_profile%n_active = 3_ik
       two%patch%n = 2_ik
       two%patch%area(1:2) = 1.0_wp
       two%patch%owner_site(1:2) = [1_ik, 2_ik]

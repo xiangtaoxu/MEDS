@@ -12,19 +12,19 @@ module meds_maps_params
    implicit none
    private
 
-   public :: maps_opts_t, soil_maps_on, MAPS_PATH_LEN
+   public :: maps_params_t, soil_maps_on, MAPS_PATH_LEN
    public :: map_inputs_t, MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, MAP_BC_SEALED, MAP_BC_AQUIFER
 
    integer, parameter :: MAPS_PATH_LEN = 512
 
-   type :: maps_opts_t
+   type :: maps_params_t
       !----- The three soil maps (docs/configuration.md, "Input maps"). -------------------!
       character(len=MAPS_PATH_LEN) :: soil_depth_map     = ''
       character(len=MAPS_PATH_LEN) :: soil_texture_map   = ''
       character(len=MAPS_PATH_LEN) :: soil_chemistry_map = ''
       !----- Chave et al. (2014)'s stress index E, for height_allometry = "chave2014". ----!
       character(len=MAPS_PATH_LEN) :: chave_e_map        = ''
-   end type maps_opts_t
+   end type maps_params_t
 
    !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
    integer(ik), parameter :: MAP_BC_FREE_DRAIN = 1_ik   !< q = K(theta)
@@ -49,7 +49,7 @@ contains
 
    !----- Whether the soil comes from the maps (the loader sets all three or none). -------!
    pure logical function soil_maps_on(s)
-      type(maps_opts_t), intent(in) :: s
+      type(maps_params_t), intent(in) :: s
       soil_maps_on = len_trim(s%soil_depth_map) > 0
    end function soil_maps_on
 

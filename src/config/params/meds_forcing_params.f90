@@ -3,7 +3,7 @@
 ! meds_forcing_params -- the [forcing] and [site] blocks (docs/science/forcing.md) and the !
 ! selector codes the config and the reader share; the shortwave partition's and the        !
 ! clear-sky emissivity's are meds_radiation_lib's. A config leaf (share only), so          !
-! meds_config carries forcing_config_t with no edge back to the forcing layer. The         !
+! meds_config carries forcing_params_t with no edge back to the forcing layer. The         !
 ! defaults are an Ithaca NY / ERA5-Land reference site.                                    !
 !==========================================================================================!
 module meds_forcing_params
@@ -13,7 +13,7 @@ module meds_forcing_params
    implicit none
    private
 
-   public :: forcing_config_t
+   public :: forcing_params_t
    public :: MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND
    public :: MET_PATH_LEN, ARCHIVE_DT_SEC, MAX_RECYCLE_YEARS
    public :: METAVG_END, METAVG_BEGIN, METAVG_CENTER
@@ -68,7 +68,7 @@ module meds_forcing_params
    !  The [forcing] and [site] blocks, plain scalars. MEDS never gap-fills: a missing      !
    !  required value stops the run (docs/science/forcing.md §10).                          !
    !=======================================================================================!
-   type :: forcing_config_t
+   type :: forcing_params_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
       integer(ik)        :: format       = MET_BACKEND_DEFAULT !< MET_BACKEND_*: "default" | "ERA5land"
       character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "default")
@@ -109,6 +109,6 @@ module meds_forcing_params
       logical            :: apply_elevation_lapse = .false.      !< lapse T, P, q, LW from the grid-cell elevation to the site
       real(wp)           :: lapse_rate_tair(12) = 0.0065_wp      !< [K/m] monthly environmental lapse (> 0: cooling upward)
       real(wp)           :: grid_elevation    = 320.0_wp         !< [m] elevation of the forcing source grid cell
-   end type forcing_config_t
+   end type forcing_params_t
 
 end module meds_forcing_params

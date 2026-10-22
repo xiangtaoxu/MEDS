@@ -89,7 +89,7 @@ contains
             call column_fast_step_rk45(dt_fast, col_config, col_site, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                        ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
-            if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_site%soil%n_active)) then
+            if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_site%soil_profile%n_active)) then
                call rk45_ledgers_stop(budget, dt_fast, col_config, col_site)   ! kept, so a breach may now stop the run
                call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return

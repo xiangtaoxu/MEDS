@@ -22,12 +22,13 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t, build_soil_hydr_params, soil_column_layers,     &
-                                       soil_column_params, soil_column_start_theta, top_soil_psi
+   use meds_config,             only : meds_config_t
+   use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
+                                       soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
    use meds_state_defaults,     only : UNSET_POSITIVE
-   use meds_soil_params,        only : soil_params_t
+   use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
@@ -46,13 +47,13 @@ program test_slow_ledger
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
    integer(ik) :: n_soil_layer
 
-   real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
-   type(meds_config_t) :: cfg
-   type(polygon_t)     :: poly
-   type(soil_params_t) :: soil
-   type(slow_store_t)  :: s0, s1
-   type(slow_ledger_t) :: led
-   real(wp)            :: de, dw, dc, expect, hand
+   real(wp), parameter  :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
+   type(meds_config_t)  :: cfg
+   type(polygon_t)      :: poly
+   type(soil_profile_t) :: soil
+   type(slow_store_t)   :: s0, s1
+   type(slow_ledger_t)  :: led
+   real(wp)             :: de, dw, dc, expect, hand
 
    call banner('slow ledger: store coverage and declaration arithmetic')
 
@@ -63,9 +64,9 @@ program test_slow_ledger
    call finalize_init(poly)
    call check(poly%cohort%n == 2_ik .and. poly%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
 
-   associate (sc => cfg%soil_column)
-      call soil_column_layers(sc, soil_bottoms, n_soil_layer)
-      call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
+   associate (sc => cfg%soil)
+      call soil_layers(sc, soil_bottoms, n_soil_layer)
+      call build_profile_hydraulics(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
                                   sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
    end associate
 
@@ -204,7 +205,7 @@ contains
       type(water_curve_t) :: leaf_curve, wood_curve
       real(wp) :: shed0, excess, n_new, tol, theta_start(n_soil_layer_max)
       integer(ik) :: p, ph(3)
-      type(soil_params_t) :: sp
+      type(soil_profile_t) :: sp
 
       c = build_test_config()
       tol = 1.0e-12_wp
@@ -225,8 +226,8 @@ contains
                  'tissue water (a): the recruit phase''s water residual is zero')
       leaf_curve = c%pft%hydro(2_ik)%leaf_curve
       wood_curve = c%pft%hydro(2_ik)%wood_curve
-      call soil_column_params(c%soil_column, sp)
-      call soil_column_start_theta(c%soil_column, sp, c%init%soil_theta, theta_start)
+      call build_soil_profile(c%soil, sp)
+      call soil_start_theta(c%soil, sp, c%init%soil_theta, theta_start)
       call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')
@@ -767,7 +768,7 @@ contains
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
                                 t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%patch%soil_water(1)%theta(1)), &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%patch%soil_water(1)%theta(1)), &
                        1.0e-12_wp,                                                                        &
                        'birth: a seeded patch gives its top soil layer''s potential')
       call init_cohort(poly%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, t_birth, psi_birth)
@@ -783,7 +784,7 @@ contains
       call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
                                 t_birth, psi_birth)
       call check_close(t_birth, cfg%init%soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil, poly%site%surface(1)%theta_start(1)), &
+      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%site%surface(1)%theta_start(1)), &
                        1.0e-12_wp,                                                                        &
                        'birth: unseeded, the starting soil water''s potential')
       poly%patch%cas(1)%can_temp = t_save

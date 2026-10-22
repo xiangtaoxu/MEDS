@@ -47,7 +47,7 @@ program test_several_sites
    ctx4 = ctx
    ctx4%patch_threads = 4_ik
    cfg_shallow = cfg
-   cfg_shallow%soil_column%depth = 0.6_wp
+   cfg_shallow%soil%depth = 0.6_wp
 
    !=== 1. Two identical sites, 0.3 and 0.7 of the polygon. ================================!
    call stand(one, cfg, [cfg], [1.0_wp])
@@ -92,7 +92,7 @@ program test_several_sites
    call stand(mixed, cfg, [cfg, cfg_shallow], [0.5_wp, 0.5_wp])
    call run(one_shallow, ctx)
    call run(mixed, ctx)
-   call check(mixed%site%surface(1)%soil%n_active /= mixed%site%surface(2)%soil%n_active,           &
+   call check(mixed%site%surface(1)%soil_profile%n_active /= mixed%site%surface(2)%soil_profile%n_active,           &
               'the two sites have different soil columns')
    call check(abs(site_water(mixed, 1_ik) - site_water(mixed, 2_ik)) > 1.0_wp,                      &
               'the two soils hold different water')
@@ -110,7 +110,7 @@ program test_several_sites
                       polygon=1_ik, site_cfg=[cfg, cfg_shallow])
    call check(found .and. back%site%n == 2_ik, 'the state file holds the two sites')
    call check(all(back%site%area(1:2) == mixed%site%area(1:2)), 'each site keeps its area')
-   call check(back%site%surface(2)%soil%n_active == mixed%site%surface(2)%soil%n_active,        &
+   call check(back%site%surface(2)%soil_profile%n_active == mixed%site%surface(2)%soil_profile%n_active,        &
               'the shallow site keeps its soil column')
    call check(all(back%patch%owner_site(1:back%patch%n) == mixed%patch%owner_site(1:mixed%patch%n)), &
               'each patch keeps its site')
@@ -187,7 +187,7 @@ contains
       integer(ik),     intent(in) :: is
       integer(ik) :: ip, k
       w = 0.0_wp
-      associate (soil => poly%site%surface(is)%soil)
+      associate (soil => poly%site%surface(is)%soil_profile)
          do ip = poly%site%patch_offset(is), poly%site%patch_offset(is) + poly%site%patch_count(is) - 1_ik
             do k = 1_ik, soil%n_active
                w = w + poly%patch%area(ip) * poly%patch%soil_water(ip)%theta(k) * soil%dz(k) * rho_h2o

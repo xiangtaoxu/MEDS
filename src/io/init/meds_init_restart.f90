@@ -432,11 +432,11 @@ contains
             elev(is, 1)   = surf%elevation_m
             slope(is, 1)  = surf%slope_deg
             aspect(is, 1) = surf%aspect_deg
-            nsoil(is, 1)  = surf%soil%n_active
-            depth(is, 1)  = surf%soil_column%depth
-            bc(is, 1)     = surf%water_bottom_bc
-            drain(is, 1)  = merge(real(NC_FILL_DOUBLE, wp), surf%drain_factor, surf%water_bottom_bc == SOIL_BC_AQUIFER)
-            tdeep(is, 1)  = surf%deep_temp
+            nsoil(is, 1)  = surf%soil_profile%n_active
+            depth(is, 1)  = surf%soil%depth
+            bc(is, 1)     = surf%soil%water_bottom_bc
+            drain(is, 1)  = merge(real(NC_FILL_DOUBLE, wp), surf%soil%drain_factor, surf%soil%water_bottom_bc == SOIL_BC_AQUIFER)
+            tdeep(is, 1)  = surf%soil%deep_temp
          end associate
       end do
       call write_site_statics(r%ncid, r%row - 1_ik, area, elev, slope, aspect, nsoil, depth, bc, drain, tdeep)
@@ -501,9 +501,9 @@ contains
          integer(ik) :: nsoil(ns)
          call get_int(r, 'n_soil_si', nsoil)
          do is = 1_ik, ns
-            if (nsoil(is) /= poly%site%surface(is)%soil%n_active) then
+            if (nsoil(is) /= poly%site%surface(is)%soil_profile%n_active) then
                write(msg, '(a,i0,a,i0,a,i0)') 'has ', nsoil(is), ' soil layers at site ', is,                &
-                     ' and the configuration ', poly%site%surface(is)%soil%n_active
+                     ' and the configuration ', poly%site%surface(is)%soil_profile%n_active
                why = trim(msg)
                return
             end if

@@ -17,7 +17,7 @@ program test_met_driver
    use meds_radiation_lib,   only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                     SWPART_PASSTHROUGH, partition_shortwave, clearness_index,                     &
                                     clear_sky_emissivity, synthesize_lwdown, lapse_longwave
-   use meds_forcing_params,  only : forcing_config_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
+   use meds_forcing_params,  only : forcing_params_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
                                     CLAMP_HOLD, CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,                  &
                                     HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,     &
                                     WIND_EXPOSURE_LOCAL
@@ -67,7 +67,7 @@ contains
    subroutine site_cursor(src, cur, fc)
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
-      type(forcing_config_t), intent(in)  :: fc
+      type(forcing_params_t), intent(in)  :: fc
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude,                   &
                            fc%elevation)
    end subroutine site_cursor
@@ -242,7 +242,7 @@ contains
    subroutine test_netcdf_roundtrip()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met_noon, met_night, met_g2
       type(meds_time_t)      :: base, now
       real(wp) :: sw_g1
@@ -307,7 +307,7 @@ contains
    subroutine test_sunrise_interval()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: base, now
       real(wp), parameter    :: SW = 30.0_wp, LAT = 42.44_wp
@@ -350,7 +350,7 @@ contains
    !      mis-partitioned -- no later check can see either, because both produce a plausible run.    !
    subroutine test_file_config_agreement()
       type(met_source_t)     :: src
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(meds_time_t)      :: base
       integer(ik)            :: st
       print '(a)', '-- test 13: the forcing file must agree with [forcing] --'
@@ -398,7 +398,7 @@ contains
       type(meds_time_t), intent(in) :: base
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: now
       integer(ik) :: st
@@ -461,7 +461,7 @@ contains
       character(len=*), parameter :: YF = 'test_met_anchorfile_tmp.nc'
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: m_ref, m_map
       integer(ik) :: st
       print '(a)', '-- test: recycle anchor + sub-daily phase --'
@@ -604,7 +604,7 @@ contains
    subroutine test_nearest_grid()
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       real(wp)    :: lon(3), lat(3), d
       integer(ik) :: idx
       print '(a)', '-- test: nearest-grid match --'
@@ -666,7 +666,7 @@ contains
    !      d = 15.75 m, z0 = 3.25 m, top z_c = 30 m.                                                !
    subroutine test_cas_top()
       real(wp), parameter :: ZC = 30.0_wp, D = 15.75_wp, Z0 = 3.25_wp, GC = grav / cp_air
-      type(forcing_config_t) :: f
+      type(forcing_params_t) :: f
       type(met_forcing_t)    :: m, top
       real(wp) :: fac, rain_top, snow_top, rain_ref, snow_ref
       print '(a)', '-- test: forcing to the canopy-air top --'
@@ -724,7 +724,7 @@ contains
       character(len=*), parameter :: YF = 'test_met_yearfile_tmp.nc'
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: m_ref, m_map
       print '(a)', '-- test: multi-year cycling + Feb-29 --'
       call write_yearfile(YF, 2021_ik)                             ! 365 daily records, Jan-1 2021 aligned
@@ -758,7 +758,7 @@ contains
       character(len=*), parameter :: CF = 'test_met_co2_tmp.txt'
       type(met_source_t)     :: src
       type(met_cursor_t)     :: cur
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       type(met_forcing_t)    :: met, m_ref, m_map
       integer(ik)            :: st
       print '(a)', '-- test 15: prescribed CO2 --'
@@ -884,7 +884,7 @@ contains
 
       !----- A met file that carries CO2air is rejected: nothing would read it. ---------------!
       call write_synthetic_forcing(NCFILE, meds_time_t(year=2020_ik, month=7_ik, day=1_ik), with_co2air=.true.)
-      fc = forcing_config_t()
+      fc = forcing_params_t()
       fc%format = MET_BACKEND_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .false.
@@ -920,7 +920,7 @@ contains
       type(met_source_t), intent(inout) :: src
       type(met_cursor_t), intent(out)   :: cur
       integer(ik),        intent(out)   :: st
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       fc = co2_test_forcing()
       fc%co2_source = CO2_SOURCE_FILE
       fc%co2_file = path
@@ -931,7 +931,7 @@ contains
    !----- The CO2 tests' [forcing]: CO2_MET_FILE, read whole, not recycled. The CO2 is read on model !
    !      time, so the file's year need not be the run's. ---------------------------------------!
    function co2_test_forcing() result(fc)
-      type(forcing_config_t) :: fc
+      type(forcing_params_t) :: fc
       fc%format = MET_BACKEND_DEFAULT
       fc%path = CO2_MET_FILE
       fc%grid_index = 1_ik

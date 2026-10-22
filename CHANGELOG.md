@@ -61,7 +61,10 @@ statement per line and keeps its longer explanations on the science pages, with 
 (#478). The fast loop's setup is one module, nothing below it reads `meds_config_t`, its configuration has
 a run part and a site part, three constants no key set become one source each, and its starting stores
 are set in `io/init` (#479). Six `[fast]` options no shipped run changes retire, and a run without forcing
-gets the same canopy radiation as a forced one (#480).
+gets the same canopy radiation as a forced one (#480). Each configuration block is read into one record,
+`<block>_params_t`: `[soil]` is one `soil_params_t` per site, its `[fast]` keys back in `[fast]`, and the
+soil kernels read one profile per site, `soil_profile_t`, derived in `src/config/meds_soil_derive`, with
+no change to any result (#482).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -485,9 +488,43 @@ gets the same canopy radiation as a forced one (#480).
   `co2_atm`, `rad_sw_top`, `rad_sw_ground` and `precip` are gone. A run without forcing reads
   `met_forcing_t`'s defaults, or the record a caller passes to `fast_dynamics` as `met_fixed`.
   `ensure_patch_biophys_capacity` takes no seed values.
+- **Fortran names in the configuration** (#482), for code built against MEDS's modules:
+  - `soil_column_config_t`, `soil_opts_t` and `energy_opts_t` (`cfg%soil_column`, `cfg%soil`,
+    `cfg%energy`) are one `soil_params_t` (`cfg%soil`). Its `water_atol`, `intercept_alpha`,
+    `intercept_k`, `soil_energy_budget_atol` and `debug_error` are `meds_config_t`'s, read by
+    `load_fast_params`; the copy of `rtol` is gone;
+  - the old `soil_params_t` and `soil_thermal_params_t` are one `soil_profile_t`
+    (`site_surface_t%soil_profile`, `column_site_t%soil_profile`), with no `nzg_active` and its thermal
+    fields without the `soil_` prefix. `site_surface_t%soil` is the site's `soil_params_t`, which holds
+    the `water_bottom_bc`, `drain_factor`, `deep_temp` and `deep_depth` the site surface held;
+    `column_site_t`'s `soil_water_opts` and `energy` are `soil`, `debug_error` and
+    `soil_energy_budget_atol`, and `column_config_t` gains `intercept_alpha` and `intercept_k`;
+  - `init_opts_t`, `maps_opts_t`, `region_opts_t`, `aero_cfg_t`, `forcing_config_t`, `output_config_t`
+    and `decomp_opts_t` are `init_params_t`, `maps_params_t`, `region_params_t`, `aero_params_t`,
+    `forcing_params_t`, `output_params_t` and `soil_carbon_params_t`. Their loaders are
+    `load_aero_params`, `load_soil_carbon_params`, `load_forcing_params`, `load_output_params`,
+    `load_region_params` and `load_maps_params`; `load_soil` and `load_soil_ground` replace
+    `load_soil_column`, `load_soil_opts` and `load_energy_opts`;
+  - `soil_column_layers`, `soil_column_texture`, `soil_column_params`, `soil_column_start_theta`,
+    `layer_texture`, `build_soil_hydr_params(_layers)` and `build_soil_therm_params(_layers)` are
+    `meds_soil_derive`'s `soil_layers`, `soil_layer_textures`, `build_soil_profile`, `soil_start_theta`,
+    `map_layer_texture`, `build_profile_hydraulics(_layers)` and `build_profile_thermal(_layers)`. The
+    hydraulic builder starts the whole profile, so the thermal builder is called after it;
+  - `soil_energy_time_deriv`, `soil_energy_step_implicit`, `deep_conductance`, `bottom_flux` and
+    `ground_evaporation_rate` take the profile and the site's `soil_params_t`, and `bottom_heat_face`
+    the `soil_params_t` alone; `energy_flux_t` gains `heat_capacity`, and the soil heat's budget stop
+    is `column_be_stage`'s.
+
+  No netCDF variable name, TOML key or C API changes.
 
 ### Changed
 
+- **One record per configuration block** (#482). `[soil]` was read into three records, two of which
+  also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its
+  `[[sites]]` table's ground keys or its cell's soil maps in it. The soil kernels read one profile per
+  site, `soil_profile_t` (layers, hydraulic and thermal texture), where they read two records that
+  repeated the layer count; `src/config/meds_soil_derive` derives it. Every other block's record is
+  `<block>_params_t`. Shipped results do not change.
 - **A run without forcing runs the canopy radiation** (#480). It was a different model: the shortwave
   split by LAI share with all of it taken as PAR, a fixed 15% at the ground, and no longwave. It now
   runs the two-stream on one fixed record, the reference climate (`met_forcing_t`'s defaults: 288 K,
