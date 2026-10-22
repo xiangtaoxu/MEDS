@@ -123,11 +123,11 @@ contains
          !      stays 0. -----------------------------------------------------------------------------!
          out%report%work(WORK_CLAMP_STAGE) = 0_ik
          out%report%theta_ood_max = 0.0_wp
-         if (cfg%ark_adaptive) then
+         if (cfg%esdirk2_adaptive) then
             call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, work, nsteps, nrej,    &
                                 acc=acc, dt_warm_out=dt_warm, clamp_n=out%report%work(WORK_CLAMP_STAGE))
          else
-            nsteps = max(1_ik, cfg%ark_fixed_substep)
+            nsteps = max(1_ik, cfg%esdirk2_fixed_substep)
             nrej   = 0_ik
             call fixed_march(y, frozen, site, n, nsl, dt_fast, nsteps, ec, work, y_out, acc,                    &
                              out%report%work(WORK_CLAMP_STAGE))
@@ -259,7 +259,7 @@ contains
    end subroutine adaptive_march
 
    !----- ESDIRK2 in nsub equal steps without error control, the fixed-sub-step path            !
-   !      ([fast].ark_adaptive = false): acc sums their boundary-flux amounts. -------------------!
+   !      ([fast].esdirk2_adaptive = false): acc sums their boundary-flux amounts. ---------------!
    subroutine fixed_march(y0, frozen, site, n, nsl, t_end, nsub, ec, work, y_out, acc, clamp_n)
       type(march_state_t),   intent(in)    :: y0
       type(frozen_t),  intent(in)    :: frozen

@@ -50,7 +50,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! explicit_stage_bflux -- one explicit stage's boundary-flux rates, the counterpart of     !
-   ! column_be_stage's: the state is the stage input y_stage, and k and surf_tend are          !
+   ! backward_euler_stage's: the state is the stage input y_stage, and k and surf_tend are     !
    ! march_derivs' tendency and surface diagnostic there, condensation included at the       !
    ! stage's own canopy-air temperature. The canopy air is charged at the conductances the    !
    ! tendency used, re-solved at the stage's state (docs/science/numerical_scheme.md §5b);     !

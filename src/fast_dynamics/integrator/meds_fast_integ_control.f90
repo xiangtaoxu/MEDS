@@ -34,8 +34,8 @@ contains
    ! The single tolerance set of the fast loop, the per-group tolerances of its error norm !
    ! (docs/science/numerical_scheme.md eq. (3)): [fast].rtol for every group, each group's !
    ! default atol, and [fast].water_atol for GRP_THETA, which the water network's own       !
-   ! sub-step control takes too (docs/science/soil_plant_water.md §3). ARK advances plant  !
-   ! water outside its stages, so GRP_LEAF_W and GRP_WOOD_W act only under RK45.          !
+   ! sub-step control takes too (docs/science/soil_plant_water.md §3). ESDIRK2 advances    !
+   ! plant water outside its stages, so GRP_LEAF_W and GRP_WOOD_W act only under RK45.     !
    !---------------------------------------------------------------------------------------!
    pure function build_tol_set(cfg) result(tols)
       type(meds_config_t), intent(in) :: cfg
@@ -79,7 +79,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Grouped WRMS norm of (a - b), each entry scaled by its group's atol + rtol*|y_ref|:        !
    ! docs/science/numerical_scheme.md eq. (3). One norm over the whole column state with no    !
-   ! per-scheme opt-outs, so no scheme can leave a state it integrates unmeasured. On ARK,     !
+   ! per-scheme opt-outs, so no scheme can leave a state it integrates unmeasured. On ESDIRK2, !
    ! theta and plant water ride outside the tableau, so their terms are exact zeros that       !
    ! loosen the norm slightly (§3 `esdirk2`, §7 item 3). Soil moisture is error-controlled on every !
    ! path anyway: the water network's own sub-step control uses the same GRP_THETA tolerances. !

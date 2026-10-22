@@ -77,7 +77,7 @@ program test_column_dynamics
    real(wp) :: snowf_rate = 2.0e-5_wp, col_water_end
    real(wp) :: cw_on, cw_off, cw_split_gain, cw_gain, snowf_total
    integer(ik) :: isch
-   character(len=9) :: schnm
+   character(len=16) :: schnm
    type(meds_config_t)    :: cfg
    type(site_surface_t)       :: site      !< the column's soil and its boundaries
    type(fast_static_state_t)  :: static    !< the cohorts, the canopy geometry and its top
@@ -137,7 +137,7 @@ program test_column_dynamics
    !  RUN 1 -- the full physical-sanity suite. The soil thermal column is coupled to the water  !
    !  column by interior-face liquid-enthalpy advection, unconditionally: it is a conservation  !
    !  requirement, not an accuracy knob. The RUN numbers stay fixed (RUN 2 is an empty slot)    !
-   !  because test_column_ark and test_column_rk45 cite them. ----------------------------------!
+   !  because test_column_esdirk2 and test_column_rk45 cite them. ------------------------------!
    !=====================================================================================!
    call integrate_day()
    psileaf_single = psileaf_noon                 ! RUN 1's midday leaf psi (recorded, not compared)
@@ -235,7 +235,7 @@ program test_column_dynamics
    iso_dark = .true.
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'ISO ARK  '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'ISO ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45 ; schnm = 'ISO RK45 '
       end if
@@ -315,7 +315,7 @@ program test_column_dynamics
    !      budgets above stay at 0 fails through that error, even when it takes the soil surface to      !
    !      345 K, because a misplacement between LAYERS still sums correctly against the boundary.       !
    !                                                                                                    !
-   !      This run is on the ARK path, which commits the water network's theta -- so its faces          !
+   !      This run is on the ESDIRK2 path, which commits the water network's theta -- so its faces      !
    !      ARE this column's own and the invariant holds by construction. What is asserted               !
    !      here is that construction: the network's own per-layer face closure, at the saturated        !
    !      corner where its pond and runoff paths are live. The RK45 statement of the same invariant is  !
@@ -365,19 +365,20 @@ program test_column_dynamics
            out%report%ledgers%whole_energy%worst < 1.0e-3_wp, out%report%ledgers%whole_energy%worst)
    call test_report('test_column_dynamics')
 
-   !----- The SAME scenario under ARK and RK45 explicitly. A scheme that imports the snow kernels  !
-   !      but never calls them runs silently snow-free, and these assertions catch that; snow-off  !
-   !      bit-identity (which the rest of the suite covers) only proves the OFF path, which is the !
-   !      half that cannot break. -----------------------------------------------------------------!
+   !----- The SAME scenario under ESDIRK2 and RK45 explicitly. A scheme that imports the snow      !
+   !      kernels but never calls them runs silently snow-free, and these assertions catch that;   !
+   !      snow-off bit-identity (which the rest of the suite covers) only proves the OFF path,     !
+   !      which is the half that cannot break. ----------------------------------------------------!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SNOW ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SNOW ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SNOW RK45'
       end if
       !----- re-arm the scenario: the block above switches snow back OFF when it finishes, so         !
-      !      without this the ARK/RK45 runs are silently snow-FREE -- which looks like success (their !
-      !      ledgers close trivially) and is the exact failure mode these assertions exist to catch.  !
+      !      without this the ESDIRK2/RK45 runs are silently snow-FREE -- which looks like success    !
+      !      (their ledgers close trivially) and is the exact failure mode these assertions exist to  !
+      !      catch.                                                                                   !
       snow_seed = 60.0_wp ; snowfall_on = .true.
       call integrate_day()
       call check_true(trim(schnm)//': pack + soil stay physical with a pack', snow_physical, snow_temp_end)
@@ -412,7 +413,7 @@ program test_column_dynamics
    !  pass the tolerance, so closure is asked at round-off, on both schemes. =====================!
    do isch = 1_ik, 2_ik
       if (isch == 1_ik) then
-         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SHED ARK '
+         cfg%time_integrator = INTEG_ESDIRK2  ; schnm = 'SHED ESDIRK2'
       else
          cfg%time_integrator = INTEG_RK45  ; schnm = 'SHED RK45'
       end if
@@ -456,7 +457,7 @@ program test_column_dynamics
    do isch = 1_ik, 3_ik
       select case (isch)
       case (1_ik) ; cfg%time_integrator = INTEG_ESDIRK2 ; schnm = 'SNOWF ref'
-      case (2_ik) ; cfg%time_integrator = INTEG_ESDIRK2   ; schnm = 'SNOWF ark'
+      case (2_ik) ; cfg%time_integrator = INTEG_ESDIRK2   ; schnm = 'SNOWF esdirk2'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
       !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
@@ -729,7 +730,7 @@ contains
       call check_true('reference level: equal canopy and reference air is neutral', a3%zeta == 0.0_wp, a3%zeta)
    end subroutine test_reference_level
 
-   !----- One tolerance set for every adaptive error estimate in the fast loop (the ARK march plus       !
+   !----- One tolerance set for every adaptive error estimate in the fast loop (the ESDIRK2 march plus   !
    !      the nested sub-solvers). build_tol_set is the single authority: the schemes build their error  !
    !      control from it (build_error_control) and the water network takes its GRP_THETA pair, so no   !
    !      solver carries a tolerance config cannot reach.                                                !
@@ -753,7 +754,7 @@ contains
       t = build_tol_set(c)
       call check_true('tol: rtol sets ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
       call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%water_atol * 1.0e-2_wp, t%atol(GRP_THETA))
-      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
+      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ESDIRK2 march: the !
       !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       ec = build_error_control(c)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &

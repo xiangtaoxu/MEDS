@@ -228,8 +228,8 @@ contains
       cas_src%surface_vapor_source    = f%src_vap
       cas_src%biotic_co2_source       = cas%nee_biotic
       !----- The CAS <-> atmosphere conductances follow the live canopy-air state: RK45 re-solves them   !
-      !      here. ARK arrives with mo_live cleared on its stage copy, having solved once for the stage,  !
-      !      so its Newton's residual evaluations reuse that value. -----------------------------------!
+      !      here. ESDIRK2 arrives with mo_live cleared on its stage copy, having solved once for the    !
+      !      stage, so its Newton's residual evaluations reuse that value. ------------------------------!
       cas_col = cas%box
       call cas_conductances(cas, y%cas_enthalpy, y%cas_shv, gah_l, gaw_l, gac_l)
       cas_col%atm_conductance_enthalpy = gah_l
@@ -271,7 +271,7 @@ contains
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
       type(march_tend_t),   intent(out) :: f
       !----- This stage's own surface tendencies, for RK45's whole-column boundary-flux ledger (as   !
-      !      column_be_stage's surf_tend serves ARK's). ----------------------------------------------!
+      !      backward_euler_stage's surf_tend serves ESDIRK2's). -------------------------------------!
       type(surface_tend_t),  intent(out), optional :: sf_out
 
       type(surface_state_t)      :: y_stage
@@ -307,7 +307,7 @@ contains
       f%uptake_rate      = frozen%roots%uptake
 
       !----- 3. Soil heat: g_top from the surface, and the enthalpy of the network's flows, the numbers !
-      !      the ARK stage uses (docs/science/numerical_scheme.md §5b, soil_plant_water.md §5). The   !
+      !      the ESDIRK2 stage uses (docs/science/numerical_scheme.md §5b, soil_plant_water.md §5). The !
       !      leaf pays its transpiration's full vapour enthalpy in surface_derivs. ------------------!
       soil_energy%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
@@ -565,7 +565,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! assemble_soil_energy_forcing -- the soil-heat column's forcing from the ground heat flux and the  !
-   ! water network's flows, for the ARK stage and march_derivs alike                                  !
+   ! water network's flows, for the ESDIRK2 stage and march_derivs alike                              !
    ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). face_flux is down-   !
    ! positive (the kernel wants up, hence the flip); water_heat_out is the enthalpy leaving each layer !
    ! other than across a face, plus the drainage's in the bottom layer, whose face is therefore 0; the !

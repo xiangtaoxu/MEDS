@@ -288,7 +288,7 @@ contains
       !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
       call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'esdirk2', 'rk45'],          &
                       [INTEG_ESDIRK2, INTEG_RK45], cfg%time_integrator, m)
-      cfg%ark_adaptive      = toml_logical(tm, 'fast.ark_adaptive',      .true.)
+      cfg%esdirk2_adaptive  = toml_logical(tm, 'fast.esdirk2_adaptive',  .true.)
       cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
       !----- Optional error-control settings. -------------------------------------------------!
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
@@ -296,7 +296,7 @@ contains
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
       call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
                       [CTRL_I, CTRL_PI], cfg%step_controller, m)
-      cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
+      cfg%esdirk2_fixed_substep = toml_int    (tm, 'fast.esdirk2_fixed_substep', 4_ik)
       cfg%soil_energy_budget_atol = toml_real(tm, 'fast.soil_energy_budget_atol', cfg%soil_energy_budget_atol)
       !----- fast.debug_error: true stops the run on a budget that does not close (the               !
       !      integrators' budget checks and the soil heat's closure check), false reports the        !

@@ -5,8 +5,9 @@
 ! prognostic twins (specific enthalpy, specific humidity, CO2 mixing ratio) sharing one    !
 ! capacity and the atm<->CAS conductance. cas_box_time_deriv is the explicit right-hand !
 ! side of eq. (1), which rk45 integrates; cas_box_step_implicit is the backward-Euler   !
-! update of eq. (2), the box commit of each ark stage. The driver assembles the sources    !
-! (cas_source_t) and the capacities, conductances and atmospheric state (cas_box_t).    !
+! update of eq. (2), the box commit of each ESDIRK2 stage. The driver assembles the        !
+! sources (cas_source_t) and the capacities, conductances and atmospheric state            !
+! (cas_box_t).                                                                             !
 !==========================================================================================!
 module meds_cas_biophysics
    use meds_kinds,            only : wp, ik
@@ -58,7 +59,8 @@ contains
    end subroutine cas_box_time_deriv
 
    !----- One backward-Euler CAS-box step over dt, implicit in the atmospheric exchange (L-stable;  !
-   !      docs/science/canopy_air_space_biophysics.md eq. (2)): the box commit of an ark stage. ----!
+   !      docs/science/canopy_air_space_biophysics.md eq. (2)): the box commit of an ESDIRK2        !
+   !      stage. -----------------------------------------------------------------------------------!
    pure subroutine cas_box_step_implicit(cas_enthalpy, cas_shv, cas_co2, source, column, dt, &
                                             enthalpy_new, shv_new, co2_new)
       real(wp),           intent(in)  :: cas_enthalpy, cas_shv, cas_co2

@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**37.2 k lines, 108 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
+**37.0 k lines, 106 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,7 +13,7 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    37.2 k lines · 108 modules · 21 CMake libraries
+src/                                    37.0 k lines · 106 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
@@ -31,11 +31,11 @@ src/                                    37.2 k lines · 108 modules · 21 CMake 
 ├── config/        meds_config_t (one field per key) and the routines that
 │   │              derive what the parameters imply (the PFT table's arrays;
 │   │              a site's soil profile, meds_soil_derive), the TOML reader,
-│   │              the loader, and the checks of the keys and their values   3 484
+│   │              the loader, and the checks of the keys and their values   3 493
 │   └── params/    the run's parameters, one leaf per TOML block: the types
 │                  and codes a kernel imports without meds_config (the PFT
 │                  table, the soil, forcing, output, the fast loop, snow and
-│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   940
+│                  aerodynamics, leaf, biogeochemistry, sites, region, maps)   945
 │
 │  ── STATE, one file per level of the hierarchy, each in sections ────────────
 ├── state/         meds_cohort_state_vars: the flat cohort structure-of-arrays
@@ -48,18 +48,19 @@ src/                                    37.2 k lines · 108 modules · 21 CMake 
 │                  a field holds before it has a real one                    2 754
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                      8 966
+├── fast_dynamics/       sub-daily, one dt_fast per step                      8 732
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
-│   │              canopy-air box                                              941
+│   │              canopy-air box                                              943
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
 │   │              respiration, tissue energy                                  998
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
-│   │              the snow store                                              749
+│   │              the snow store                                              744
 │   ├── integrator/ the integrator machinery: the state vector, the frozen
-│   │              work record, ARK and RK45, error control, the pre-pass    5 077
+│   │              work record, ESDIRK2 and RK45, error control, the water
+│   │              network                                                   4 779
 │   └── driver/    the walk of one slow step in dt_fast sub-steps over the
 │                  patches: the gather and scatter, the forcing, and what
-│                  the output reads                                          1 201
+│                  the output reads                                          1 268
 │
 ├── slow_dynamics/       daily to annual                                      5 075
 │   ├── plant/     phenology, carbon allocation, trait plasticity               695

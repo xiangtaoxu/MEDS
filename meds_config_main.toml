@@ -29,8 +29,8 @@ dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is t
                                #   (docs/science/numerical_scheme.md §5a, §6)
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). ----
 # time_integrator     = "esdirk2"    # "esdirk2" (default) | "rk45" (explicit, for comparison)
-# ark_adaptive        = true         # adaptive sub-steps; false: ark_fixed_substep of them
-# ark_fixed_substep   = 4            # [-]  sub-steps per dt_fast when not adaptive
+# esdirk2_adaptive    = true         # adaptive sub-steps; false: esdirk2_fixed_substep of them
+# esdirk2_fixed_substep   = 4            # [-]  sub-steps per dt_fast when not adaptive
 # rtol                = 1.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
 #                                    #   and the soil-plant water network's
 # atol_scale          = 1.0          # [-]  multiplier on every absolute tolerance (rtol alone saturates)

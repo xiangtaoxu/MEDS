@@ -2,8 +2,8 @@
 !==========================================================================================!
 ! test_column_rk45 -- the INTEG_RK45 wiring of the ED2-faithful adaptive Cash-Karp integrator    !
 ! into fast_step (docs/science/numerical_scheme.md §3, `rk45`).                                  !
-!   A. GPP PARITY: build_frozen (shared with ARK) runs the SAME frozen pre-pass under     !
-!      both schemes, so gpp_coh from the RK45 path is bit-identical to ARK's on step 1.          !
+!   A. GPP PARITY: build_frozen (shared with ESDIRK2) runs the SAME frozen pre-pass under !
+!      both schemes, so gpp_coh from the RK45 path is bit-identical to ESDIRK2's on step 1.      !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_RK45 keeps the CAS / soil / leaf / plant    !
 !      water-mass state finite, bounded, and sub-saturated.                                        !
 !   C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry          !
@@ -63,7 +63,7 @@ program test_column_rk45
 
    sim_date = meds_time_t(2001_ik, 6_ik, 21_ik)
 
-   !----- column setup (mirrors test_column_ark). ---------------------------------------------!
+   !----- column setup (mirrors test_column_esdirk2). -----------------------------------------!
    cfg = build_test_config()
    !----- The soil column, which the fixture's roots are laid out on. -----------------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
@@ -83,7 +83,7 @@ program test_column_rk45
 
    print '(a)', '[test_column_rk45]'
 
-   !=== A. GPP parity on step 1 (identical initial state; RK45 pre-pass == ARK pre-pass). ======!
+   !=== A. GPP parity on step 1 (identical initial state; one frozen build for both). ==========!
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_ESDIRK2
@@ -93,7 +93,7 @@ program test_column_rk45
    cfg%time_integrator = INTEG_RK45
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_rk45 = out%gpp_coh(1:N)
-   call check_true('RK45 pre-pass gpp bit-identical to the ARK pre-pass (build_frozen)',                       &
+   call check_true('RK45 gpp bit-identical to ESDIRK2 on step 1 (one shared build_frozen)',                      &
            abs(gpp_rk45(1) - gpp_split(1)) < 1.0e-12_wp, abs(gpp_rk45(1) - gpp_split(1)))
    call check_true('RK45 midday gpp > 0', gpp_rk45(1) > 0.0_wp, gpp_rk45(1))
 
@@ -134,8 +134,8 @@ program test_column_rk45
    !=== E. CANOPY-SURFACE WATER (opt-in): a diurnal march with a morning rain pulse actually gets        !
    !       intercepted; whole_water closes exactly, whole_energy stays BOUNDED (the film has no thermal  !
    !       state of its own, so its sensible heat at the tissue temperature offset is not counted; see   !
-   !       docs/ROADMAP.md; mirrors test_column_dynamics.f90's RUN 6 and test_column_ark.f90's           !
-   !       test_ark_canopy_water). Proves the WIRING end to end for RK45's integrated surf_water ODE     !
+   !       docs/ROADMAP.md; mirrors test_column_dynamics.f90's RUN 6 and test_column_esdirk2.f90's       !
+   !       test_esdirk2_canopy_water). Proves the WIRING end to end for RK45's integrated surf_water ODE !
    !       (not the wetted-fraction algebra itself, unit-tested in test_surface_energy.f90). ============!
    call test_rk45_canopy_water()
 
@@ -166,9 +166,9 @@ program test_column_rk45
    !=== H. DENSE COLD CANOPY: a very dense canopy (LAI=8) under a hard cold snap makes the diagnostic    !
    !       leaf<->CAS coupling stiff enough that the FULLY-EXPLICIT RK45 surface can oscillate and rail  !
    !       the CAS/soil to the clamp bounds within one DT_FAST. The dispatcher's hybrid rescue detects   !
-   !       the railed commit and REDOES the step on ARK (docs/science/numerical_scheme.md §3, `rk45`),   !
-   !       keeping the state physical. Asserts that CAS/soil/leaf stay in [250,340] K with GPP finite    !
-   !       throughout; the rescue count is reported, not asserted (see the routine). ====================!
+   !       the railed commit and REDOES the step on ESDIRK2 (docs/science/numerical_scheme.md §3,        !
+   !       `rk45`), keeping the state physical. Asserts that CAS/soil/leaf stay in [250,340] K with GPP  !
+   !       finite throughout; the rescue count is reported, not asserted (see the routine). =============!
    call test_rk45_dense_cold_canopy()
    call test_rk45_bedrock_and_aquifer()
    call test_rk45_prognostic_wood()
@@ -177,7 +177,7 @@ program test_column_rk45
    !       the RK45 block, whose success branch returns early, the daily-max accumulator would read   !
    !       whatever the caller's per-thread buffer held (another patch, or uninitialised memory) and  !
    !       compute beta_stomata from it. Seed the buffer with an impossible POSITIVE potential and    !
-   !       assert the step overwrote it with a physical (<= 0) value without an ARK rescue having     !
+   !       assert the step overwrote it with a physical (<= 0) value without an ESDIRK2 rescue having !
    !       run. ======================================================================================!
    call test_rk45_reports_psi_leaf()
 
@@ -197,8 +197,8 @@ program test_column_rk45
 
 contains
 
-   !----- Prognostic WOOD on RK45, via the SAME exact tissue-store relaxation the ARK uses          !
-   !      (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4); test_column_ark's               !
+   !----- Prognostic WOOD on RK45, via the SAME exact tissue-store relaxation the ESDIRK2 uses      !
+   !      (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4); test_column_esdirk2's           !
    !      test_wood_prognostic carries the rationale). Both adaptive schemes run one wood model. ---!
    subroutine test_rk45_prognostic_wood()
       integer(ik) :: istep
@@ -302,8 +302,8 @@ contains
    end subroutine test_rk45_budgets
 
    !----- march 24 h of INTEG_RK45 over free-draining soil WITH continuous rain                        !
-   !      (rainfall>0), mirroring test_column_ark's test_ark_budgets_wet. Asserts the run completes,   !
-   !      the soil wets, and BOTH whole-column budgets close at the tight tolerance.                   !
+   !      (rainfall>0), mirroring test_column_esdirk2's test_esdirk2_budgets_wet. Asserts the run      !
+   !      completes, the soil wets, and BOTH whole-column budgets close at the tight tolerance.        !
    subroutine test_rk45_budgets_wet()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
@@ -334,7 +334,7 @@ contains
 
    !----- march 24 h of INTEG_RK45 with canopy_water_on and a morning rain pulse                         !
    !      (04:45-06:00); assert some of it was intercepted and the budgets close (mirrors                !
-   !      test_column_dynamics.f90's RUN 6 / test_column_ark.f90's test_ark_canopy_water). --------------!
+   !      test_column_dynamics.f90's RUN 6 / test_column_esdirk2.f90's test_esdirk2_canopy_water). ------!
    subroutine test_rk45_canopy_water()
       integer(ik) :: istep
       real(wp)    :: surf_water_peak
@@ -362,8 +362,8 @@ contains
    !----- march 24 h of INTEG_RK45 with a constant leaf/root-turnover shed-water rate                        !
    !      (static%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
    !      forcing, so it is frozen on dynamic for the whole day rather than living on forcing; distinct from    !
-   !      rainfall, which stays 0 throughout), mirroring test_column_ark's test_ark_shed_water: the soil    !
-   !      must wet from THIS input alone, and both whole_water AND whole_energy must still close at        !
+   !      rainfall, which stays 0 throughout), mirroring test_column_esdirk2's test_esdirk2_shed_water: the  !
+   !      soil must wet from THIS input alone, and both whole_water AND whole_energy must still close at     !
    !      RK45's own tight tolerance -- energy closing needs no separate wiring (the shed water rides        !
    !      the SAME infiltration-enthalpy treatment, e_infil, every other infiltrating input gets). ----------!
    subroutine test_rk45_shed_water()
@@ -482,7 +482,7 @@ contains
       end do
       call check_true('RK45 dense cold-snap canopy stays physical (surface stability)', physical,                     &
               dynamic%cas%can_temp)
-      print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->ARK rescues over 24 h)'
+      print '(a,i0,a)', '   (dense cold-snap: ', total_rescue, ' RK45->ESDIRK2 rescues over 24 h)'
       static%lai(1) = lai0 ; static%wai(1) = wai0 ; static%leaf_area(1) = la0
    end subroutine test_rk45_dense_cold_canopy
 
@@ -520,9 +520,9 @@ contains
             res_min, ')'
    end subroutine test_rk45_drydown
 
-   !----- SATURATED sealed column: the ARK/RK45 twin of test_column_dynamics RUN 7. A bedrock bottom    !
-   !      seeded just below theta_sat under heavy rain both SATURATES (the water network raises the     !
-   !      layer's potential and drives the excess to the pond and the next layer) and OVERFLOWS the     !
+   !----- SATURATED sealed column: the ESDIRK2/RK45 twin of test_column_dynamics RUN 7. A bedrock       !
+   !      bottom seeded just below theta_sat under heavy rain both SATURATES (the water network raises  !
+   !      the layer's potential and drives the excess to the pond and the next layer) and OVERFLOWS the !
    !      ponding store (surface runoff). None of the other RK45 runs reach either state -- they are    !
    !      free-draining at theta = 0.30. Both paths move mass and enthalpy as a pair: the pond holds    !
    !      its own enthalpy and runoff leaves at the pond's temperature, so no soil layer is debited     !
@@ -599,7 +599,7 @@ contains
       psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
       call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       psi_leaf_probe = out%psi_leaf_coh(1:size(psi_leaf_probe))
-      call check_true('RK45 psi report: the RK45 path itself ran (no ARK rescue)',                                   &
+      call check_true('RK45 psi report: the RK45 path itself ran (no ESDIRK2 rescue)',                               &
               out%report%work(WORK_RK45_RESCUE) == 0_ik,                                                         &
               real(out%report%work(WORK_RK45_RESCUE), wp))
       call check_true('RK45 psi report: psi_leaf_coh is filled on the RK45 success path',                             &
@@ -624,7 +624,7 @@ contains
       theta_seed = THETA0
       call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
               psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
-      call check_true('RK45 dry seam: the RK45 path itself ran (no ARK rescue)',                                     &
+      call check_true('RK45 dry seam: the RK45 path itself ran (no ESDIRK2 rescue)',                                 &
               out%report%work(WORK_RK45_RESCUE) == 0_ik,                                                         &
               real(out%report%work(WORK_RK45_RESCUE), wp))
       call check_true('RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)',            &

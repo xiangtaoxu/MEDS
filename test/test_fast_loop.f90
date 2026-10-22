@@ -578,7 +578,7 @@ program test_fast_loop
    !=== 9. SPLIT INVARIANCE and the LEAFLESS LEAF (docs/science/vegetation_energy_dynamics.md, "A      !
    !    thin tissue is a small tissue" and "A tissue with no area"). A thin stand -- 20 stems per      !
    !    hectare of a 20 cm tree, wood area index ~0.01 -- as one cohort and as two cohorts at half the !
-   !    density, through the whole fast loop (two-stream, aerodynamics, water network, ARK) over a     !
+   !    density, through the whole fast loop (two-stream, aerodynamics, water network, ESDIRK2) over a !
    !    forced day window: the tissue temperatures, the canopy air and the per-plant GPP must agree.   !
    !    A floor in ground units on a tissue's coupling or heat capacity, which only the half-density   !
    !    pair would cross, fails this. The step controller is held off (rtol and atol_scale large)      !

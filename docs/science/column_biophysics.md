@@ -80,7 +80,7 @@ numerical_scheme §5a gives the measured errors and §6 the choice.
 
 `esdirk2_step` (`meds_fast_integ_esdirk2`) advances the coupled column with a two-stage L-stable implicit
 stepper (γ = 1 − 1/√2, the ARS(2,2,2) value). Each stage is a backward-Euler solve
-(`column_be_stage`, `meds_fast_integ_backward_euler`) that calls the stores' own implicit kernels —
+(`backward_euler_stage`, `meds_fast_integ_backward_euler`) that calls the stores' own implicit kernels —
 `cas_box_step_implicit` for the CAS twins, `soil_energy_step_implicit` for the soil heat — over
 the side-effect-free surface tendencies of `meds_fast_integ_derivs` (`surface_derivs`). Within every
 stage the leaf↔CAS block is solved implicitly by a direct 2×2 Newton (`newton_surface_solve`). Soil
@@ -186,7 +186,7 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | the frozen record | `meds_fast_integ_frozen`: `build_frozen`, `record_water_flows` |
 | the update + ledgers | `meds_fast_integ_update`: `update_dynamic_state`, `close_ledgers` |
 | ESDIRK2 step (config `esdirk2`) | `meds_fast_integ_esdirk2`: `esdirk2_step` |
-| one ESDIRK2 stage | `meds_fast_integ_backward_euler`: `column_be_stage`, `newton_surface_solve` |
+| one ESDIRK2 stage | `meds_fast_integ_backward_euler`: `backward_euler_stage`, `newton_surface_solve` |
 | Cash–Karp step (config `rk45`) | `meds_fast_integ_rk45`: `rk45_step`, `rk45_state_railed` |
 | whole-column tendency RHS | `meds_fast_integ_derivs`: `march_derivs` (`rk45`), `surface_derivs` (both) |
 | explicit tendency siblings | `meds_soil_energy`: `soil_energy_time_deriv`; the soil and plant water tendencies are the water network's rates, set in `march_derivs` |

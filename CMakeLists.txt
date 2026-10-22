@@ -827,11 +827,11 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_derivs)
    add_test(NAME march_derivs COMMAND test_column_derivs)
 
-   #----- INTEG_ARK wiring test: the coupled ARK (ESDIRK2) path through fast_step. ----------#
-   add_executable(test_column_ark test/test_column_ark.f90)
-   target_link_libraries(test_column_ark PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_column_ark)
-   add_test(NAME column_ark COMMAND test_column_ark)
+   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 (ESDIRK2) path through fast_step. ----------#
+   add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)
+   target_link_libraries(test_column_esdirk2 PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_column_esdirk2)
+   add_test(NAME column_esdirk2 COMMAND test_column_esdirk2)
 
    #----- INTEG_RK45 wiring test: the ED2-faithful adaptive Cash-Karp RK45 path. --------------#
    add_executable(test_column_rk45 test/test_column_rk45.f90)

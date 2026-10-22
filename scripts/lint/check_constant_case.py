@@ -5,7 +5,7 @@
   * The physical, mathematical and unit-conversion constants and the kinds, in meds_constants and
     meds_kinds, are lower case: they read as symbols in a formula (grav, rho_h2o, day_sec, wp).
   * Every other named constant is UPPER case: a selector code, an index or a flag (SOIL_RETENTION_VG,
-    INTEG_ARK), and a number chosen in the code -- a tolerance, a floor, a table size or a fitted
+    INTEG_ESDIRK2), and a number chosen in the code -- a tolerance, a floor, a table size or a fitted
     coefficient (RWC_FLOOR, HYDRO_TABLE_NTAB) -- public or private, module-level or local.
 
 A constant keeps its name when another module starts to use it. Fortran ignores case, so the

@@ -304,7 +304,7 @@ contains
          error stop TAG//'forcing_sample_frac outside [0,1]'
       if (cfg%step_controller /= CTRL_I .and. cfg%step_controller /= CTRL_PI)                          &
          error stop TAG//'step_controller out of range (I|PI)'
-      if (cfg%ark_fixed_substep < 1_ik) error stop TAG//'ark_fixed_substep < 1'
+      if (cfg%esdirk2_fixed_substep < 1_ik) error stop TAG//'esdirk2_fixed_substep < 1'
    end subroutine check_fast
 
    !----- [soil]: the ground's optics, its column and its thermal bottom. Each column fault     !

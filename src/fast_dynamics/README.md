@@ -104,5 +104,5 @@ integration itself in [`numerical_scheme.md`](../../docs/science/numerical_schem
 
 **Tests.** Individual kernels: `test_canopy_radiation`, `test_aerodynamics`, `test_water_processes`,
 `test_water_network`, `test_column_hydrology`, `test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
-`test_column_dynamics`, `test_column_derivs`, `test_column_ark`, `test_column_rk45`,
+`test_column_dynamics`, `test_column_derivs`, `test_column_esdirk2`, `test_column_rk45`,
 `test_fast_loop`.

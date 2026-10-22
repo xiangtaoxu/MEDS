@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_ark -- the INTEG_ESDIRK2 wiring of the coupled ESDIRK2 integrator (config name `esdirk2`)    !
-! into fast_step (docs/science/numerical_scheme.md §3).                                                !
+! test_column_esdirk2 -- the INTEG_ESDIRK2 wiring of the coupled ESDIRK2 integrator (config name       !
+! `esdirk2`) into fast_step (docs/science/numerical_scheme.md §3).                                     !
 !   A. GPP PARITY: build_frozen runs the SAME frozen pre-pass under both schemes, so gpp_coh    !
-!      from the ARK path is bit-identical to RK45's on step 1 (identical initial state).               !
+!      from the ESDIRK2 path is bit-identical to RK45's on step 1 (identical initial state).           !
 !   B. PHYSICAL: a 24-step dry-window march under INTEG_ESDIRK2 keeps the CAS / soil / leaf / psi state    !
 !      finite, bounded, and sub-saturated (the integrator + unpack are correct end to end).            !
 !   C-E. the fixed-substep path, the leaf<->CAS Newton switch, psi_leaf convergence in dt_fast, and    !
@@ -11,7 +11,7 @@
 !   F. PRECIP>0: a wet march runs, wets the soil, and closes the budgets (ENERGY to machine            !
 !      precision through the boundary water-enthalpy advection, WATER at the ledger tolerance).        !
 !==========================================================================================!
-program test_column_ark
+program test_column_esdirk2
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : rho_h2o, cp_liq, n_soil_layer_max, tissue_c_leaf, tissue_c_wood_dry
    use meds_config,              only : meds_config_t
@@ -56,7 +56,7 @@ program test_column_ark
    type(fast_output_t)        :: out
    type(fast_workspace_t)     :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
-   real(wp)    :: gpp_rk45(N), gpp_ark(N), tcas, qsat, worst_super
+   real(wp)    :: gpp_rk45(N), gpp_esdirk2(N), tcas, qsat, worst_super
    real(wp)    :: psi_leaf_diag
    integer(ik) :: is, k
    logical     :: physical
@@ -86,21 +86,21 @@ program test_column_ark
    call ensure_forcing_capacity(forcing, N)
    forcing%abs_sw_wood = 0.0_wp ; forcing%abs_lw_wood = 0.0_wp
 
-   print '(a)', '[test_column_ark]'
+   print '(a)', '[test_column_esdirk2]'
 
-   !=== A. GPP parity on step 1 (identical initial state; ARK pre-pass == RK45 pre-pass). ======!
+   !=== A. GPP parity on step 1 (identical initial state; one frozen build for both). ==========!
    call set_noon_forcing()
    call reset_state()
    cfg%time_integrator = INTEG_RK45
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    gpp_rk45 = out%gpp_coh(1:N)
    call reset_state()
-   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
-   gpp_ark = out%gpp_coh(1:N)
-   call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_frozen)',                         &
-           abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp, abs(gpp_ark(1) - gpp_rk45(1)))
-   call check_true('ARK midday gpp > 0', gpp_ark(1) > 0.0_wp, gpp_ark(1))
+   gpp_esdirk2 = out%gpp_coh(1:N)
+   call check_true('ESDIRK2 gpp bit-identical to RK45 on step 1 (one shared build_frozen)',                       &
+           abs(gpp_esdirk2(1) - gpp_rk45(1)) < 1.0e-12_wp, abs(gpp_esdirk2(1) - gpp_rk45(1)))
+   call check_true('ESDIRK2 midday gpp > 0', gpp_esdirk2(1) > 0.0_wp, gpp_esdirk2(1))
 
    !=== Emissivity. The energy balance's emission slope 4*eps*sigma*T^3 takes each cohort's PFT     !
    !    leaf_emissivity and wood_emissivity, gathered into the view, the values the radiation       !
@@ -123,7 +123,7 @@ program test_column_ark
 
    !=== B. A dry-window march under INTEG_ESDIRK2 stays physical + bounded + sub-saturated. ========!
    call reset_state()
-   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
    physical = .true. ; worst_super = -1.0_wp
    do is = 1_ik, 6_ik * STEPS_PER_HOUR
       call set_diurnal_forcing(is)
@@ -148,7 +148,7 @@ program test_column_ark
 
    !=== C. Fixed-substep (GPU-lockstep) path also runs + stays physical. =======================!
    call reset_state()
-   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .false. ; cfg%ark_fixed_substep = 4_ik
+   cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .false. ; cfg%esdirk2_fixed_substep = 4_ik
    call set_noon_forcing()
    call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
    call check_true('INTEG_ESDIRK2 fixed-substep path physical',                                                           &
@@ -158,13 +158,13 @@ program test_column_ark
    call test_psi_dt_convergence()
 
    !=== E. WHOLE-COLUMN CONSERVATION LEDGER: the 7 budgets close over a 24 h dry diurnal march. ==!
-   call test_ark_budgets(.true.)      ! adaptive path (accept/reject accumulation)
-   call test_ark_budgets(.false.)     ! fixed-substep path (uniform accumulation)
+   call test_esdirk2_budgets(.true.)      ! adaptive path (accept/reject accumulation)
+   call test_esdirk2_budgets(.false.)     ! fixed-substep path (uniform accumulation)
 
    !=== F. PRECIP>0: a WET diurnal march runs, wets the soil, and still closes the budgets -- ENERGY   !
    !       to machine precision (the rain/runoff/drainage advection is a frozen fixed source), WATER   !
    !       at the ledger tolerance. ===================================================================!
-   call test_ark_budgets_wet()
+   call test_esdirk2_budgets_wet()
 
    !=== G. CANOPY-SURFACE WATER (opt-in): a diurnal march with a morning rain pulse actually gets         !
    !       intercepted; whole_water closes exactly, whole_energy stays BOUNDED (the store is valued at    !
@@ -173,18 +173,18 @@ program test_column_ark
    !       mirrors RUN 6 in test_column_dynamics.f90, same bound). Proves the WIRING (interception->      !
    !       film->CAS->ledgers), not the wetted-fraction algebra itself (unit-tested in                    !
    !       test_surface_energy.f90). =====================================================================!
-   call test_ark_canopy_water()
+   call test_esdirk2_canopy_water()
 
    !=== H. LEAF/ROOT-TURNOVER SHED WATER: a constant shed_water_rate                                     !
    !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
-   call test_ark_shed_water()
-   call test_ark_saturated()
-   call test_ark_aquifer()
-   call test_wood_prognostic(INTEG_ESDIRK2, 'ARK ')
+   call test_esdirk2_shed_water()
+   call test_esdirk2_saturated()
+   call test_esdirk2_aquifer()
+   call test_wood_prognostic(INTEG_ESDIRK2, 'ESDIRK2')
    call test_refilling_wood_isothermal()
    call test_wood_capacity_follows_store()
 
-   call test_report('test_column_ark')
+   call test_report('test_column_esdirk2')
 
 contains
 
@@ -200,7 +200,7 @@ contains
    end subroutine frozen_record
 
    !----- Prognostic WOOD: veg_energy_balance relaxes the wood's heat store (store_hcap_per_dt > 0)     !
-   !      exactly (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4)), on ARK and RK45.           !
+   !      exactly (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4)), on ESDIRK2 and RK45.       !
    !      Two assertions:                                                                               !
    !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !
    !            radiation both enter it, since surface_derivs does not fold wood into                   !
@@ -208,7 +208,7 @@ contains
    !        (b) wood LAGS the canopy air through the diel cycle, which is the feature.                  !
    subroutine test_wood_prognostic(integ, tag)
       integer(ik),      intent(in) :: integ
-      character(len=4), intent(in) :: tag
+      character(len=*), intent(in) :: tag
       integer(ik) :: istep
       real(wp)    :: dmax_lag
       call reset_state()
@@ -282,13 +282,13 @@ contains
    end subroutine test_wood_capacity_follows_store
 
    !----- The aquifer bottom BC is a head-driven, two-way boundary with no prognostic state, and the   !
-   !      ARK commits the water network's theta, so it takes the aquifer like any other face. A column !
-   !      started DRY must wet from below with both ledgers closed. -----------------------------------!
-   subroutine test_ark_aquifer()
+   !      ESDIRK2 commits the water network's theta, so it takes the aquifer like any other face. A    !
+   !      column started DRY must wet from below with both ledgers closed. ----------------------------!
+   subroutine test_esdirk2_aquifer()
       integer(ik) :: istep
       real(wp)    :: theta_bot0
       call reset_state()
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
       site%soil%water_bottom_bc = SOIL_BC_AQUIFER
       dynamic%soil_water%theta(1:site%soil_profile%n_active) = 0.15_wp
       theta_bot0 = dynamic%soil_water%theta(site%soil_profile%n_active)
@@ -296,52 +296,52 @@ contains
          call set_diurnal_forcing(istep)
          call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('AQUIFER/ARK: whole_water closes', out%report%ledgers%whole_water%n_fail == 0_ik,                           &
+      call check_true('AQUIFER/ESDIRK2: whole_water closes', out%report%ledgers%whole_water%n_fail == 0_ik,                       &
               real(out%report%ledgers%whole_water%n_fail, wp))
-      call check_true('AQUIFER/ARK: whole_energy closes', out%report%ledgers%whole_energy%n_fail == 0_ik,                         &
+      call check_true('AQUIFER/ESDIRK2: whole_energy closes', out%report%ledgers%whole_energy%n_fail == 0_ik,                     &
               real(out%report%ledgers%whole_energy%n_fail, wp))
-      call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
+      call check_true('AQUIFER/ESDIRK2: dry column wets from below',                                                  &
               dynamic%soil_water%theta(site%soil_profile%n_active) > theta_bot0,                                              &
               dynamic%soil_water%theta(site%soil_profile%n_active) - theta_bot0)
       site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 1.0_wp
-   end subroutine test_ark_aquifer
+   end subroutine test_esdirk2_aquifer
 
    !----- march 24 h of INTEG_ESDIRK2 over MOIST free-draining soil (rainfall==0) and                   !
    !       assert the 7 conservation budgets close. ------------------------------------------------!
-   subroutine test_ark_budgets(adaptive)
+   subroutine test_esdirk2_budgets(adaptive)
       logical, intent(in) :: adaptive
       integer(ik) :: istep
       character(len=6) :: tag
       tag = merge('adapt ', 'fixed ', adaptive)
       call reset_state()                               ! theta0=0.30 (moist), budget zeroed
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = adaptive
-      cfg%rtol = 1.0e-4_wp ; cfg%ark_fixed_substep = 4_ik
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = adaptive
+      cfg%rtol = 1.0e-4_wp ; cfg%esdirk2_fixed_substep = 4_ik
       do istep = 1_ik, 24_ik * STEPS_PER_HOUR
          call set_diurnal_forcing(istep)               ! rainfall==0 always (dry); diurnal SW
          call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('ARK '//trim(tag)//': all 7 budgets close (n_fail==0)',                                         &
+      call check_true('ESDIRK2 '//trim(tag)//': all 7 budgets close (n_fail==0)',                                     &
               out%report%ledgers%cas_energy%n_fail == 0_ik .and. out%report%ledgers%cas_water%n_fail == 0_ik         &
               .and. out%report%ledgers%cas_co2%n_fail == 0_ik .and. out%report%ledgers%soil_energy%n_fail == 0_ik          &
               .and. out%report%ledgers%soil_water%n_fail == 0_ik .and. out%report%ledgers%whole_energy%n_fail == 0_ik      &
               .and. out%report%ledgers%whole_water%n_fail == 0_ik, real(out%report%ledgers%whole_energy%n_fail, wp))
-      call check_true('ARK '//trim(tag)//': ledger fired every dispatched dt_fast',                                   &
+      call check_true('ESDIRK2 '//trim(tag)//': ledger fired every dispatched dt_fast',                               &
               out%report%ledgers%cas_energy%n_check == 24_ik * STEPS_PER_HOUR, real(out%report%ledgers%cas_energy%n_check, wp))
-      call check_true('ARK '//trim(tag)//': CAS energy machine-precision closure',                                    &
+      call check_true('ESDIRK2 '//trim(tag)//': CAS energy machine-precision closure',                                &
               out%report%ledgers%cas_energy%worst < 1.0e-3_wp, out%report%ledgers%cas_energy%worst)
-      call check_true('ARK '//trim(tag)//': whole-energy closes < 1 J', out%report%ledgers%whole_energy%worst < 1.0_wp,           &
+      call check_true('ESDIRK2 '//trim(tag)//': whole-energy closes < 1 J', out%report%ledgers%whole_energy%worst < 1.0_wp,       &
               out%report%ledgers%whole_energy%worst)
-   end subroutine test_ark_budgets
+   end subroutine test_esdirk2_budgets
 
    !----- march 24 h of INTEG_ESDIRK2 over free-draining soil WITH continuous rain                         !
    !       (rainfall>0: boundary water-enthalpy advection + the pond). Assert the run completes, the   !
    !       soil wets, and the budgets close (ENERGY to machine precision, WATER at the ledger          !
    !       tolerance). --------------------------------------------------------------------------------!
-   subroutine test_ark_budgets_wet()
+   subroutine test_esdirk2_budgets_wet()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       call march_dry_day(theta_dry)                       ! the same day without the rain
       call reset_state()
@@ -351,29 +351,29 @@ contains
          call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
       theta_col1 = sum(dynamic%soil_water%theta(1:NSL))
-      call check_true('ARK wet: ran a full day of wet steps (no guard error stop)', &
+      call check_true('ESDIRK2 wet: ran a full day of wet steps (no guard error stop)', &
             out%report%ledgers%cas_energy%n_check == 24_ik * STEPS_PER_HOUR, &
               real(out%report%ledgers%cas_energy%n_check, wp))
-      call check_true('ARK wet: rain wetted the soil column (wetter than the day without rain)',   &
+      call check_true('ESDIRK2 wet: rain wetted the soil column (wetter than the day without rain)',   &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
-      call check_true('ARK wet: ENERGY budgets close (incl. advection)',                                              &
+      call check_true('ESDIRK2 wet: ENERGY budgets close (incl. advection)',                                          &
               out%report%ledgers%cas_energy%n_fail == 0_ik .and. out%report%ledgers%soil_energy%n_fail == 0_ik       &
               .and. out%report%ledgers%whole_energy%n_fail == 0_ik, out%report%ledgers%whole_energy%worst)
-      call check_true('ARK wet: WATER budgets close (soil and whole-column)',                                         &
+      call check_true('ESDIRK2 wet: WATER budgets close (soil and whole-column)',                                     &
               out%report%ledgers%soil_water%n_fail == 0_ik .and. out%report%ledgers%whole_water%n_fail == 0_ik,      &
               out%report%ledgers%whole_water%worst)
-      call check_true('ARK wet: soil energy machine-precision closure', out%report%ledgers%soil_energy%worst < 1.0e-3_wp,         &
+      call check_true('ESDIRK2 wet: soil energy machine-precision closure', out%report%ledgers%soil_energy%worst < 1.0e-3_wp,     &
               out%report%ledgers%soil_energy%worst)
-   end subroutine test_ark_budgets_wet
+   end subroutine test_esdirk2_budgets_wet
 
    !----- march 24 h of INTEG_ESDIRK2 with canopy_water_on and a morning rain pulse                         !
    !      (04:45-06:00); assert some of it was intercepted and the budgets close (mirrors               !
    !      test_column_dynamics.f90's RUN 6). -----------------------------------------------------------!
-   subroutine test_ark_canopy_water()
+   subroutine test_esdirk2_canopy_water()
       integer(ik) :: istep
       real(wp)    :: surf_water_peak
       call reset_state()
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       cfg%canopy_water_on = .true.
       surf_water_peak = 0.0_wp
@@ -385,14 +385,14 @@ contains
          surf_water_peak = max(surf_water_peak, dynamic%leaf_surf_water(1) + dynamic%wood_surf_water(1))
       end do
       cfg%canopy_water_on = .false.   ! restore default for any test added after this
-      call check_true('ARK canopy water: whole-column water still closes', out%report%ledgers%whole_water%n_fail == 0_ik,         &
+      call check_true('ESDIRK2 canopy water: whole-column water still closes', out%report%ledgers%whole_water%n_fail == 0_ik,     &
               real(out%report%ledgers%whole_water%n_fail, wp))
-      call check_true('ARK canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,             &
+      call check_true('ESDIRK2 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,         &
               surf_water_peak)
-      call check_true('ARK canopy water: whole-column energy stays BOUNDED (film sensible heat not counted)',         &
+      call check_true('ESDIRK2 canopy water: whole-column energy stays BOUNDED (film sensible heat not counted)',     &
               out%report%ledgers%whole_energy%worst < 5.0e6_wp, out%report%ledgers%whole_energy%worst)
-      print '(a,es10.3,a)', '   (ARK canopy water peak film=', surf_water_peak, ' kg/m2)'
-   end subroutine test_ark_canopy_water
+      print '(a,es10.3,a)', '   (ESDIRK2 canopy water peak film=', surf_water_peak, ' kg/m2)'
+   end subroutine test_esdirk2_canopy_water
 
    !----- march 24 h of INTEG_ESDIRK2 with a constant leaf/root-turnover shed-water rate                         !
    !      (static%shed_water_rate -- a PATCH-level input, not atmospheric                                   !
@@ -402,11 +402,11 @@ contains
    !      its own: the shed water's enthalpy rides the SAME infiltration-enthalpy treatment (e_infil)        !
    !      every other infiltrating input gets, once mixed into the pond's inflow                             !
    !      by build_frozen. ---------------------------------------------------------------------------!
-   subroutine test_ark_shed_water()
+   subroutine test_esdirk2_shed_water()
       integer(ik) :: istep
       real(wp)    :: theta_dry, theta_col1
       call reset_state()
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
       cfg%rtol = 1.0e-4_wp
       call march_dry_day(theta_dry)                       ! the same day without the shed water
       call reset_state()
@@ -419,27 +419,27 @@ contains
       theta_col1 = sum(dynamic%soil_water%theta(1:NSL))
       static%shed_water_rate = 0.0_wp   ! restore default for any test added after this
       static%shed_water_enth = 0.0_wp
-      call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
+      call check_true('ESDIRK2 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
               theta_col1 > theta_dry, theta_col1 - theta_dry)
-      call check_true('ARK shed water: whole-column WATER still closes with shed_water_rate active',                  &
+      call check_true('ESDIRK2 shed water: whole-column WATER still closes with shed_water_rate active',              &
               out%report%ledgers%whole_water%n_fail == 0_ik, real(out%report%ledgers%whole_water%n_fail, wp))
-      call check_true('ARK shed water: whole-column ENERGY still closes (no separate energy wiring needed)',          &
+      call check_true('ESDIRK2 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',      &
               out%report%ledgers%whole_energy%n_fail == 0_ik, real(out%report%ledgers%whole_energy%n_fail, wp))
-   end subroutine test_ark_shed_water
+   end subroutine test_esdirk2_shed_water
 
 
-   !----- SATURATED column: the ARK twin of test_column_dynamics RUN 7. A column seeded just below       !
+   !----- SATURATED column: the ESDIRK2 twin of test_column_dynamics RUN 7. A column seeded just below   !
    !      theta_sat under heavy rain both SATURATES (the water network raises the layer's potential      !
    !      and drives the excess to the pond and the next layer) and OVERFLOWS the ponding store          !
-   !      (surface runoff). None of the other ARK runs reach either state -- they are free-draining at   !
-   !      theta = 0.30. Both paths move mass and enthalpy as a pair: the pond holds its own enthalpy     !
+   !      (surface runoff). None of the other ESDIRK2 runs reach either state -- they are free-draining  !
+   !      at theta = 0.30. Both paths move mass and enthalpy as a pair: the pond holds its own enthalpy  !
    !      and runoff leaves at the pond's temperature, so no soil layer is debited for water it never    !
    !      received (docs/science/numerical_scheme.md §5b).                                               !
    !      whole_energy closing is the assertion that both are booked with the right sign; the            !
    !      temperature bound is the assertion that the INTERIOR advective faces actually connect the      !
    !      boundary faces -- without them layer 1 accumulates the full infiltration enthalpy while a      !
    !      deeper layer sheds it, and the ledger cannot see it. ------------------------------------------!
-   subroutine test_ark_saturated()
+   subroutine test_esdirk2_saturated()
       integer(ik) :: istep
       real(wp)    :: pond_peak, theta_peak, ss_min, ss_max
       !----- FREE-DRAIN, not bedrock (test_column_rk45 covers the sealed column): the route to         !
@@ -459,17 +459,17 @@ contains
          ss_min = min(ss_min, dynamic%soil_energy%soil_temp(1)) ; ss_max = max(ss_max, dynamic%soil_energy%soil_temp(1))
       end do
       theta_seed = THETA0                                 ! restore for any test added after this
-      call check_true('ARK saturated: column reached theta_sat (saturation path is live)',                            &
+      call check_true('ESDIRK2 saturated: column reached theta_sat (saturation path is live)',                        &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
-      call check_true('ARK saturated: ponding store overflowed (runoff path is live)',                                &
+      call check_true('ESDIRK2 saturated: ponding store overflowed (runoff path is live)',                            &
               pond_peak >= site%soil%w_pond_max - 1.0e-9_wp, pond_peak)
-      call check_true('ARK saturated: whole-column ENERGY still closes through saturation + runoff',                  &
+      call check_true('ESDIRK2 saturated: whole-column ENERGY still closes through saturation + runoff',              &
               out%report%ledgers%whole_energy%n_fail == 0_ik, out%report%ledgers%whole_energy%worst)
-      call check_true('ARK saturated: whole-column WATER still closes', out%report%ledgers%whole_water%n_fail == 0_ik,            &
+      call check_true('ESDIRK2 saturated: whole-column WATER still closes', out%report%ledgers%whole_water%n_fail == 0_ik,        &
               out%report%ledgers%whole_water%worst)
-      call check_true('ARK saturated: soil surface temp stays physical (interior faces connected)',                   &
+      call check_true('ESDIRK2 saturated: soil surface temp stays physical (interior faces connected)',               &
               ss_min > 250.0_wp .and. ss_max < 340.0_wp, ss_max)
-   end subroutine test_ark_saturated
+   end subroutine test_esdirk2_saturated
 
    !=======================================================================================!
    ! psi_leaf must be CONVERGED IN DT_FAST, and the plant total must still conserve.
@@ -516,7 +516,7 @@ contains
       real(wp)    :: t
       integer(ik) :: istep
       call reset_state()
-      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%ark_adaptive = .true.
+      cfg%time_integrator = INTEG_ESDIRK2 ; cfg%esdirk2_adaptive = .true.
       t = 0.0_wp ; istep = 0_ik
       do while (t < t_len - 1.0e-6_wp)
          istep = istep + 1_ik
@@ -611,4 +611,4 @@ contains
       theta_sum = sum(dynamic%soil_water%theta(1:NSL))
    end subroutine march_dry_day
 
-end program test_column_ark
+end program test_column_esdirk2

@@ -11,7 +11,7 @@ module meds_fast_integ_esdirk2
    use meds_site_state_vars, only : site_surface_t
    use meds_fast_integ_types, only : march_state_t, frozen_t, stage_bflux_t, boundary_flux_t, error_control_t,   &
                                esdirk2_stages_t, state_init, state_extrap, state_err_diff, bflux_bweight, clamp_cas
-   use meds_fast_integ_backward_euler, only : column_be_stage, advance_plant_water, advance_surf_water_full
+   use meds_fast_integ_backward_euler, only : backward_euler_stage, advance_plant_water, advance_surf_water_full
    implicit none
    private
 
@@ -22,14 +22,14 @@ contains
    !---------------------------------------------------------------------------------------!
    ! esdirk2_step -- one ESDIRK2 step, docs/science/numerical_scheme.md eqs. (1)-(2): the  !
    ! ARS(2,2,2) tableau (Ascher, Ruuth & Spiteri 1997), two backward-Euler stages over gamma*dt !
-   ! (column_be_stage), stiffly accurate, so Y3 is the step. Soil water moves at the network's  !
-   ! rate in the stages; plant water and the films are advanced once over dt on the stages'    !
-   ! b-weighted fluxes, so neither adds to the embedded error y_err. --------------------------!
+   ! (backward_euler_stage), stiffly accurate, so Y3 is the step. Soil water moves at the  !
+   ! network's rate in the stages; plant water and the films are advanced once over dt on  !
+   ! the stages' b-weighted fluxes, so neither adds to the embedded error y_err. ----------!
    subroutine esdirk2_step(y, frozen, site, ec, n, nsl, dt, y_out, y_err, stages, bf, clamp_n)
       type(march_state_t),  intent(in)  :: y
       type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
-      type(error_control_t), intent(in)  :: ec     !< its budget stop (column_be_stage)
+      type(error_control_t), intent(in)  :: ec     !< its budget stop (backward_euler_stage)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(march_state_t),  intent(inout) :: y_out, y_err   !< filled in place
@@ -44,14 +44,14 @@ contains
       real(wp)              :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
       associate (Y2 => stages%y2, base3 => stages%base3, Y3 => stages%y3, sf2 => stages%sf2, sf3 => stages%sf3)
          !----- Stage 2: a gamma*dt backward-Euler stage from y_n. --------------------------------------!
-         call column_be_stage(y, frozen, site, ec, n, nsl, GAMMA*dt, Y2, sf2, bf=bf2)
+         call backward_euler_stage(y, frozen, site, ec, n, nsl, GAMMA*dt, Y2, sf2, bf=bf2)
          !----- Stage 3 from the extrapolated base. Extrapolating by BETA can carry the canopy-air      !
          !      enthalpy to a temperature where qsat overflows, so the base's canopy air is clamped to a  !
          !      physical range: an identity in range, and an oversized step is rejected anyway. Soil     !
          !      water needs no clamp: it moves at a steady rate, so the base stays between its ends. ----!
          call state_extrap(y, BETA, Y2, n, nsl, base3)
          call clamp_cas(base3, nfire=clamp_n)
-         call column_be_stage(base3, frozen, site, ec, n, nsl, GAMMA*dt, Y3, sf3, bf=bf3)
+         call backward_euler_stage(base3, frozen, site, ec, n, nsl, GAMMA*dt, Y3, sf3, bf=bf3)
          call state_init(Y3, n, nsl, y_out)
          !----- Plant water over the full dt at the network's rates, debited the same b-weighted         !
          !      transpiration the canopy air's vapour balance was credited. -----------------------------!

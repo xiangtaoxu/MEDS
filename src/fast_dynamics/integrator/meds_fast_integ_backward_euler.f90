@@ -3,12 +3,13 @@
 ! meds_fast_integ_backward_euler -- the fast loop's backward-Euler solves, two systems     !
 ! side by side. One ESDIRK2 stage (docs/science/numerical_scheme.md §3 `esdirk2`, eq. (1))     !
 ! solves the canopy air against the leaf, wood and ground temperatures by a small Newton   !
-! on a forward-difference Jacobian: column_be_stage is the stage, newton_surface_solve and !
-! jac_surface its inner solve, cas_box_commit the box commit; advance_plant_water and      !
-! advance_surf_water_full move plant and film water once per step. The soil-plant water    !
-! network's step is implicit Euler on adaptive sub-steps (docs/science/soil_plant_water.md !
-! §3): water_step, its Newton sub-step, the Newton matrix and the sub-step's commit. The   !
-! two Newton solves share only the line search and the step bound of meds_numerics.        !
+! on a forward-difference Jacobian: backward_euler_stage is the stage,                     !
+! newton_surface_solve and jac_surface its inner solve, cas_box_commit the box commit;     !
+! advance_plant_water and advance_surf_water_full move plant and film water once per step. !
+! The soil-plant water network's step is implicit Euler on adaptive sub-steps              !
+! (docs/science/soil_plant_water.md §3): water_step, its Newton sub-step, the Newton       !
+! matrix and the sub-step's commit. The two Newton solves share only the line search and   !
+! the step bound of meds_numerics.                                                         !
 !==========================================================================================!
 module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
@@ -35,7 +36,7 @@ module meds_fast_integ_backward_euler
    implicit none
    private
 
-   public :: column_be_stage, advance_plant_water, advance_surf_water_full
+   public :: backward_euler_stage, advance_plant_water, advance_surf_water_full
    public :: water_step
    public :: water_jacobian_error   ! used only by the tests
 
@@ -62,12 +63,13 @@ module meds_fast_integ_backward_euler
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! column_be_stage -- one backward-Euler stage Y = base + dt*f(Y) of the stiff block (each ESDIRK2   !
-   ! stage, dt = gamma*h, is one call): the CAS twins, implicit in the atmospheric exchange through the  !
-   ! coupled 2x2 Newton, and soil heat (implicit, Thomas). Soil water moves at the water network's      !
-   ! steady rate; plant water is passed through and advanced once (advance_plant_water).               !
+   ! backward_euler_stage -- one backward-Euler stage Y = base + dt*f(Y) of the stiff      !
+   ! block (each ESDIRK2 stage, dt = gamma*h, is one call): the CAS twins, implicit in the !
+   ! atmospheric exchange through the coupled 2x2 Newton, and soil heat (implicit,         !
+   ! Thomas). Soil water moves at the water network's steady rate; plant water is passed   !
+   ! through and advanced once (advance_plant_water).                                      !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, frozen, site, ec, n, nsl, dt, y_out, surf_tend, bf)
+   subroutine backward_euler_stage(y, frozen, site, ec, n, nsl, dt, y_out, surf_tend, bf)
       type(march_state_t),  intent(in)  :: y
       type(frozen_t), intent(in)  :: frozen
       type(site_surface_t),  intent(in)  :: site
@@ -79,7 +81,7 @@ contains
       !      air's vapour credit agree (docs/science/numerical_scheme.md §5a). Both filled in place. -----!
       type(march_state_t),  intent(inout) :: y_out
       type(surface_tend_t),  intent(inout) :: surf_tend
-      type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux rates for the ARK ledger
+      type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux rates for the ESDIRK2 ledger
 
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with this stage's conductances
@@ -193,7 +195,7 @@ contains
             bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%box%atm_specific_humidity)
       end if
-   end subroutine column_be_stage
+   end subroutine backward_euler_stage
 
    !---------------------------------------------------------------------------------------!
    ! newton_surface_solve -- a direct 2x2 Newton solve of the coupled backward-Euler canopy-air block   !
@@ -201,7 +203,7 @@ contains
    ! qcas and qsat; robust near saturation, where a leaf <-> CAS Picard iteration is not. The forward- !
    ! difference Jacobian (jac_surface) captures the strong VPD self-limiting d src_vap/dq. A singular- !
    ! Jacobian fallback, a line search and an evaluation cap; it never stops the run. Returns surf_tend !
-   ! at the solution, from which column_be_stage commits the box.                                      !
+   ! at the solution, from which backward_euler_stage commits the box.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
                                    surf_tend, nfeval, ok)
@@ -342,7 +344,7 @@ contains
    end subroutine jac_surface
 
    !---------------------------------------------------------------------------------------!
-   ! advance_plant_water -- each cohort's leaf and wood water over an ARK step at the network's      !
+   ! advance_plant_water -- each cohort's leaf and wood water over an ESDIRK2 step at the network's  !
    ! time-mean rates: sapflow and uptake in; sapflow and the b-weighted transpiration the stages     !
    ! charged the canopy air out. The stages hold transpiration at the network's, so a dt_fast step  !
    ! ends where the network did. Nothing is floored: the network keeps every store inside its curve. !

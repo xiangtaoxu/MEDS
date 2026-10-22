@@ -557,7 +557,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 
 | topic | MEDS | ED2 |
 |---|---|---|
-| Time integration | `src/fast_dynamics/integrator/meds_fast_{step,ark,rk45,time_derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
+| Time integration | `src/fast_dynamics/integrator/meds_fast_integ_{stepper,esdirk2,rk45,derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
 | Photosynthesis | `src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
 | Radiation | `src/fast_dynamics/canopy/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
 | Turbulence | `src/fast_dynamics/canopy/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |

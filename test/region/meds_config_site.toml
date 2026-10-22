@@ -13,7 +13,7 @@ end_time   = "2074-08-01"
 fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "esdirk2"
-ark_adaptive        = true
+esdirk2_adaptive    = true
 rtol                = 1.0e-3
 
 [demography]

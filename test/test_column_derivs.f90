@@ -33,7 +33,7 @@ program test_column_derivs
    use meds_fast_integ_types,       only : surface_state_t, surface_tend_t, march_state_t, frozen_t,            &
                                      march_tend_t
    use meds_site_state_vars,  only : site_surface_t
-   use meds_fast_integ_backward_euler,    only : column_be_stage, advance_plant_water
+   use meds_fast_integ_backward_euler,    only : backward_euler_stage, advance_plant_water
    use meds_fast_integ_esdirk2,         only : esdirk2_step
    use meds_fast_integ_stepper,        only : adaptive_march
    use meds_fast_integ_rk45,        only : rk45_step
@@ -58,7 +58,7 @@ program test_column_derivs
    call test_be_coupled()
    call test_arrowhead()
    call test_adaptive_march()
-   call test_ark2()
+   call test_esdirk2()
    call test_rk45_order()
 
    !----- 16. CONSTITUTIVE-DOMAIN SAFETY of the explicit RHS. ---------------------------------------!
@@ -549,20 +549,22 @@ contains
       call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
       call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
-      !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
-      call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
+      !----- fine fixed reference: ESDIRK2 at dt = 2 s, 900 steps. ----------------------------------!
+      call march_esdirk2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
       tc2 = cas_enthalpy_to_temp(y2%cas_enthalpy, y2%cas_shv)
       tcr = cas_enthalpy_to_temp(yr%cas_enthalpy, yr%cas_shv)
-      print '(a,i0,a,i0,a)', '   adaptive-ARK steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-6 -> ', ns2, ' ; fixed dt=2s -> 900'
-      call check_true('adaptive-ARK rtol=1e-3 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
-      call check_true('adaptive-ARK rtol=1e-6 agrees with the fine ARK2 reference (< 0.5 K)', abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
+      print '(a,i0,a,i0,a)', '   adaptive-ESDIRK2 steps: rtol=1e-3 -> ', ns1, ' , rtol=1e-6 -> ', ns2, ' ; fixed dt=2s -> 900'
+      call check_true('adaptive-ESDIRK2 rtol=1e-3 agrees with the fine ESDIRK2 reference (< 0.5 K)',                 &
+                      abs(tc1 - tcr) < 0.5_wp, tc1 - tcr)
+      call check_true('adaptive-ESDIRK2 rtol=1e-6 agrees with the fine ESDIRK2 reference (< 0.5 K)',                 &
+                      abs(tc2 - tcr) < 0.5_wp, tc2 - tcr)
       call check_true('tighter rtol takes more steps (the production controller responds to tol)', ns2 > ns1, real(ns2 - ns1, wp))
       call check_true('adaptive is cheaper than the fixed fine march (steps < 900)', ns1 < 900_ik, real(ns1, wp))
       call check_true('the march made real progress (steps > 0)', ns1 > 0_ik, real(ns1, wp))
    end subroutine test_adaptive_march
 
-   !----- soil-top temperature diagnosed from a march_state_t (helper for the ARK2 order test). ---!
+   !----- soil-top temperature diagnosed from a march_state_t (for the ESDIRK2 order test). -------!
    function soil_top_temp(y, frozen) result(t)
       type(march_state_t),  intent(in) :: y
       type(frozen_t), intent(in) :: frozen
@@ -570,8 +572,8 @@ contains
       call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, site%soil_profile%dry_heat_capacity(1), t, fl)
    end function soil_top_temp
 
-   !----- march the ARK2 fixed-step from y for nstep steps of dt (embedded error discarded). --------!
-   subroutine march_ark2(y0, frozen, n, nsl, dt, nstep, y_out)
+   !----- march the ESDIRK2 fixed-step from y for nstep steps of dt (embedded error discarded). -----!
+   subroutine march_esdirk2(y0, frozen, n, nsl, dt, nstep, y_out)
       type(march_state_t),  intent(in)  :: y0
       type(frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl, nstep
@@ -585,17 +587,17 @@ contains
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
-   end subroutine march_ark2
+   end subroutine march_esdirk2
 
 
    !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !
    !      production ESDIRK2, built from the same two kernels esdirk2_step composes -- one         !
-   !      column_be_stage, then the closed-form mass split over the full dt on that stage's own        !
+   !      backward_euler_stage, then the closed-form mass split over the full dt on that stage's own   !
    !      transp_c (weight 1.0, because at gamma = 1 there is only one stage).                          !
    !                                                                                          !
    !      It is a probe, not an oracle: it returns no reference trajectory, and it shares              !
-   !      column_be_stage with the scheme it degrades, so it is independent in the tableau only, not   !
-   !      in the machinery. What it IS good for is exactly what the tests below use it for --          !
+   !      backward_euler_stage with the scheme it degrades, so it is independent in the tableau only,  !
+   !      not in the machinery. What it IS good for is exactly what the tests below use it for --      !
    !      deliberately breaking the production scheme in ONE known way (drop to first order) and       !
    !      watching what fails. A degraded-configuration                                                !
    !      probe belongs in the test that degrades it, not in the shipped source.                       !
@@ -606,11 +608,11 @@ contains
       real(wp),              intent(in)  :: dt
       type(march_state_t),  intent(out) :: y_out
       type(surface_tend_t) :: surf_tend
-      call column_be_stage(y, frozen, site, ec_default, n, nsl, dt, y_out, surf_tend)
+      call backward_euler_stage(y, frozen, site, ec_default, n, nsl, dt, y_out, surf_tend)
       call advance_plant_water(y, frozen, n, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine be_euler_step
 
-   !----- march the first-order BE step fixed-step (for the ARK2-vs-1st-order comparison). -----------!
+   !----- march the first-order BE step fixed-step (for the ESDIRK2-vs-1st-order comparison). --------!
    subroutine march_be_euler(y0, frozen, n, nsl, dt, nstep, y_out)
       type(march_state_t),  intent(in)  :: y0
       type(frozen_t), intent(in)  :: frozen
@@ -645,11 +647,11 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_rk45
 
-   !----- 14. ARK2 (ARS(2,2,2) gamma): 2nd order on the decoupled CO2 twin; beats first-order BE on  !
-   !          the coupled soil-top temperature; plant water mass stays physical at production dt;    !
+   !----- 14. ESDIRK2 (ARS(2,2,2) gamma): 2nd order on the decoupled CO2 twin; beats first-order BE  !
+   !          on the coupled soil-top temperature; plant water mass stays physical at production dt; !
    !          embedded estimate bounded; stiff-stable (docs/science/numerical_scheme.md              !
    !          eqs. (1)-(2)). ------------------------------------------------------------------------!
-   subroutine test_ark2()
+   subroutine test_esdirk2()
       type(march_state_t)  :: y, yref, y1, y2, y4, ynew, yerr, ytmp
       type(frozen_t) :: frozen
       type(error_control_t) :: ec
@@ -657,30 +659,30 @@ contains
       integer(ik) :: n, nsl, step, ns, nr, ns2, nr2
       logical     :: physical
       n = 2_ik ; nsl = 10_ik
-      print '(a)', 'test_ark2:'
+      print '(a)', 'test_esdirk2:'
       call make_column(y, frozen, n, nsl)
 
       !----- (a) ORDER-2 self-convergence on a CLEANLY-integrated tableau variable: CAS CO2 (a         !
       !          decoupled affine scalar ODE -- no operator split, so the ARS(2,2,2) order is exposed).!
-      !          reference = ARK2 at dt = 1800/64; solutions at dt = 450, 225, 112.5. ----------------!
-      call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = yref%cas_co2
-      call march_ark2(y, frozen, n, nsl, 450.0_wp,   4_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
-      call march_ark2(y, frozen, n, nsl, 225.0_wp,   8_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
-      call march_ark2(y, frozen, n, nsl, 112.5_wp,  16_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
+      !          reference = ESDIRK2 at dt = 1800/64; solutions at dt = 450, 225, 112.5. -------------!
+      call march_esdirk2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = yref%cas_co2
+      call march_esdirk2(y, frozen, n, nsl, 450.0_wp,   4_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
+      call march_esdirk2(y, frozen, n, nsl, 225.0_wp,   8_ik,  y2) ; e2 = abs(y2%cas_co2 - tref)
+      call march_esdirk2(y, frozen, n, nsl, 112.5_wp,  16_ik,  y4) ; e4 = abs(y4%cas_co2 - tref)
       p_lo = log(e1/max(e2, tiny_num)) / log(2.0_wp)
       p_hi = log(e2/max(e4, tiny_num)) / log(2.0_wp)
       print '(a,es10.3,a,es10.3,a,es10.3,a,f5.2,a,f5.2)', '   CAS CO2 errors: ', e1, ' / ', e2, &
             ' / ', e4, ' ; observed order p = ', p_lo, ' , ', p_hi
-      call check_true('ARK2 tableau is 2nd order on the decoupled CO2 twin (p >= 1.9)', &
+      call check_true('ESDIRK2 tableau is 2nd order on the decoupled CO2 twin (p >= 1.9)', &
                       p_lo >= 1.9_wp .and. p_hi >= 1.9_wp, p_hi)
 
       !----- (a2) On the operator-split-COUPLED soil-top temperature (soil water and plant water mass  !
       !           are split out of the ESDIRK stages; see docs/ROADMAP.md) the effective order is      !
-      !           ~1.2, but ARK2 is still MORE ACCURATE than the 1st-order BE step at the same dt. ----!
-      call march_ark2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, frozen)
-      call march_ark2(y, frozen, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
+      !           ~1.2, but ESDIRK2 is still MORE ACCURATE than the 1st-order BE step at the same dt. -!
+      call march_esdirk2(y, frozen, n, nsl, 1800.0_wp/64.0_wp, 64_ik, yref) ; tref = soil_top_temp(yref, frozen)
+      call march_esdirk2(y, frozen, n, nsl, 225.0_wp,  8_ik, y1) ; e1 = abs(soil_top_temp(y1, frozen) - tref)
       call march_be_euler(y, frozen, n, nsl, 225.0_wp,  8_ik, y2) ; e2 = abs(soil_top_temp(y2, frozen) - tref)
-      call check_true('ARK2 beats the first-order BE step on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
+      call check_true('ESDIRK2 beats the first-order BE step on the coupled soil-top temperature (same dt)', e1 < e2, e2 - e1)
 
       !----- (b) plant water mass stays physical (finite, positive) at production dt=900. ------------!
       call copy_state(y, y1, n) ; physical = .true.
@@ -691,20 +693,20 @@ contains
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
                     minval(y1%leaf_water_mass(1:n)) > 0.0_wp .and. minval(y1%wood_water_mass(1:n)) > 0.0_wp
       end do
-      call check_true('ARK2 mass stays physical at dt=900 (split-out plant water)', physical,       &
+      call check_true('ESDIRK2 mass stays physical at dt=900 (split-out plant water)', physical,    &
                       minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating). ---------------------------------!
       call esdirk2_step(y, frozen, site, ec_default, n, nsl, 900.0_wp, ynew, yerr, ws%stages)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
-      call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
+      call check_true('ESDIRK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 
-      !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
+      !----- (d) stiffness: 24 h adaptive-ESDIRK2 march stays physical + bounded. -------------------!
       ec = default_error_control(1.0e-3_wp)
       call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
-      print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
-      call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
+      print '(a,i0,a,i0)', '   adaptive-ESDIRK2 24 h: steps = ', ns, ' , rejects = ', nr
+      call check_true('adaptive-ESDIRK2 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
 
       !----- (e) ERROR-CONTROL: the PI controller marches the SAME stiff window and stays               !
       !      physical -- proves the meds_fast_integ_control PI path is wired + functional. On a multi-substep !
@@ -713,15 +715,15 @@ contains
       call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
-      call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
-   end subroutine test_ark2
+      call check_true('PI-controller ESDIRK2 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
+   end subroutine test_esdirk2
 
    !----- 15. RK45 (Cash-Karp 5(4)): order-of-accuracy self-convergence.                                    !
-   !          Unlike ARK2's split-degraded ~1.2 order on the coupled soil-top temperature (test_ark2's    !
-   !          part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 carries         !
-   !          every store in its tableau (docs/science/numerical_scheme.md §3), so the FULL 5th-order       !
-   !          should show up on a genuinely-coupled variable too, not just a decoupled scalar. Same         !
-   !          reference-vs-halvings technique as test_ark2's part (a): observed order                       !
+   !          Unlike ESDIRK2's split-degraded ~1.2 order on the coupled soil-top temperature                !
+   !          (test_esdirk2's part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 !
+   !          carries every store in its tableau (docs/science/numerical_scheme.md §3), so the FULL         !
+   !          5th-order should show up on a genuinely-coupled variable too, not just a decoupled scalar.    !
+   !          Same reference-vs-halvings technique as test_esdirk2's part (a): observed order               !
    !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
    !          effects: p >= 4.5). ---------------------------------------------------------------------!
    subroutine test_rk45_order()
@@ -740,7 +742,7 @@ contains
       !      the ~360 s explicit limit the CAS's ~130 s timescale sets -- this is a short fixed-step      !
       !      accuracy comparison, not a stability march), reference dt=2400/1024 s (>=32x finer than the  !
       !      finest test point). -------------------------------------------------------------------------!
-      !----- (a) CLEAN scalar: CAS CO2 (decoupled affine ODE, mirrors test_ark2's part a) -- baseline   !
+      !----- (a) CLEAN scalar: CAS CO2 (decoupled affine ODE, mirrors test_esdirk2's part a) -- baseline  !
       !          proof the Cash-Karp tableau itself is 5th order on this RHS. ------------------------!
       call march_rk45(y, frozen, n, nsl, 2400.0_wp/1024.0_wp, 1024_ik, yref) ; tref = yref%cas_co2
       call march_rk45(y, frozen, n, nsl, 300.0_wp,   8_ik,  y1) ; e1 = abs(y1%cas_co2 - tref)
@@ -753,8 +755,8 @@ contains
       call check_true('RK45 tableau is 5th order on the decoupled CO2 twin (p >= 4.5)', &
                       p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
 
-      !----- (b) COUPLED: soil-top temperature (the SAME variable test_ark2 part a2 shows degraded to  !
-      !          ~1.2 order under ARK's operator split). RK45 integrates soil energy/water/mass ALL      !
+      !----- (b) COUPLED: soil-top temperature (the SAME variable test_esdirk2 part a2 shows degraded to !
+      !          ~1.2 order under ESDIRK2's operator split). RK45 integrates soil energy/water/mass ALL  !
       !          in its stages (no split), so this should ALSO be ~5th order. ---------------------------!
       !----- FOUR test points here, not three, and the assertion is on the two FINEST pairs. The soil-  !
       !      top temperature is the most strongly coupled variable in the column, so its coarse-h error  !
@@ -932,7 +934,7 @@ contains
       !----- FROZEN sapflow/uptake (docs/science/numerical_scheme.md §2): a representative,             !
       !      state-independent pair for these RHS and reference-march tests -- not taken from the water  !
       !      network here (these tests exercise march_derivs/the tableau machinery directly, not       !
-      !      build_frozen, which has its own coverage via test_column_ark.f90). -----------------!
+      !      build_frozen, which has its own coverage via test_column_esdirk2.f90). -------------!
       frozen%plant%sapflow_frozen = 1.0e-4_wp
       frozen%plant%uptake_frozen = 1.0e-4_wp
       !----- The stages hold each cohort's transpiration at the water network's, as in the model      !

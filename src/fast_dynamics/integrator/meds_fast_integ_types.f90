@@ -104,7 +104,8 @@ module meds_fast_integ_types
       real(wp)         :: fmax       = 5.0_wp
       real(wp)         :: pi_alpha   = PI_ALPHA_DEF
       real(wp)         :: pi_beta    = PI_BETA_DEF
-      !----- p of docs/science/numerical_scheme.md eq. (4), the embedded estimate's order: 1 ARK, 4 RK45. !
+      !----- p of docs/science/numerical_scheme.md eq. (4), the embedded estimate's order: 1 ESDIRK2, 4 !
+      !      RK45.                                                                                      !
       integer(ik)      :: p_order    = 1_ik
       type(tol_set_t)  :: tols
       !----- [fast].debug_error's budget stops: a breached ledger stops the run, and so does a soil     !
@@ -239,9 +240,9 @@ module meds_fast_integ_types
    integer(ik), parameter :: WORK_WATER_NEWTON = 4_ik   !< its Newton iterations
    integer(ik), parameter :: WORK_WATER_REJECT = 5_ik   !< its rejected sub-steps (too large an error, or Newton failed)
    integer(ik), parameter :: WORK_WATER_NFAIL  = 6_ik   !< its sub-steps taken at the shortest length although unconverged
-   !----- dt_fast steps whose RK45 step bailed or committed a railed state and were redone on ARK  !
-   !      (docs/science/numerical_scheme.md §3, `rk45`); a persistently high count flags a stiff   !
-   !      regime. ---------------------------------------------------------------------------------!
+   !----- dt_fast steps whose RK45 step bailed or committed a railed state and were redone on      !
+   !      ESDIRK2 (docs/science/numerical_scheme.md §3, `rk45`); a persistently high count flags a !
+   !      stiff regime. ---------------------------------------------------------------------------!
    integer(ik), parameter :: WORK_RK45_RESCUE  = 7_ik
    !----- Stage-clamp activations: how often clamp_cas bounded a throwaway stage input's canopy air !
    !      so the right-hand side stays evaluable. A rising count means the trial step is too big;   !
@@ -285,7 +286,8 @@ module meds_fast_integ_types
       type(step_exports_t) :: exports
       integer(ik)          :: work(N_WORK) = 0_ik   !< WORK_*
       !----- How far theta lay outside its constitutive domain at an RK45 stage-1 input, which no     !
-      !      clamp sees; telemetry, not a correction (docs/science/numerical_scheme.md §5b). 0 on ARK. !
+      !      clamp sees; telemetry, not a correction (docs/science/numerical_scheme.md §5b). 0 on     !
+      !      ESDIRK2.                                                                                 !
       real(wp)             :: theta_ood_max = 0.0_wp   !< [m3/m3] max excursion outside [theta_res, theta_sat]
    end type step_report_t
 
@@ -331,7 +333,8 @@ module meds_fast_integ_types
       !      docs/science/canopy_aerodynamics.md §2). mo_live says the mo_* inputs below are set: it  !
       !      is false for a hand-built record, which supplies its own conductances (a re-solve from    !
       !      unset roughness and wind would not converge), true from build_frozen, and false   !
-      !      again in ARK's stage copy once refreshed, so the Newton's repeated evaluations reuse it.  !
+      !      again in ESDIRK2's stage copy once refreshed, so the Newton's repeated evaluations reuse !
+      !      it.                                                                                      !
       logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
       type(aero_params_t) :: aero_cfg         !< MO constants (copy; POD)
       real(wp) :: mo_u_ref      = 0.0_wp      !< [m/s]  wind at the reference height
@@ -477,7 +480,8 @@ module meds_fast_integ_types
       !----- The network's end-of-step soil moisture, which every scheme commits. -------------------!
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
       !----- (theta1 - theta^n) / dt_fast: the steady rate at which the stages move soil water, so the   !
-      !      water a layer holds keeps pace with the enthalpy its faces carry in (see column_be_stage).  !
+      !      water a layer holds keeps pace with the enthalpy its faces carry in (see                !
+      !      backward_euler_stage).                                                                  !
       real(wp) :: theta_rate(n_soil_layer_max) = 0.0_wp   !< [1/s]
    end type soil_hydrology_t
 
@@ -607,7 +611,7 @@ module meds_fast_integ_types
    end type frozen_t
 
    !----- Storage one thread's fast step reuses from step to step: the aerodynamic environment, the  !
-   !      soil-plant water network and the ARK march's states and stages, filled in place and          !
+   !      soil-plant water network and the ESDIRK2 march's states and stages, filled in place and      !
    !      reallocated only when the cohort count changes. The stages are their own record so the     !
    !      march passes them beside its states. ------------------------------------------------------!
    type :: esdirk2_stages_t
@@ -618,8 +622,8 @@ module meds_fast_integ_types
    type :: fast_workspace_t
       type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(water_work_t)    :: water                         !< the soil-plant water network
-      type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
-      type(esdirk2_stages_t)    :: stages                        !< the ARK step's stages
+      type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ESDIRK2 march's state and trial step
+      type(esdirk2_stages_t)    :: stages                        !< the ESDIRK2 step's stages
    end type fast_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
@@ -639,9 +643,9 @@ module meds_fast_integ_types
       real(wp), allocatable :: leaf_temp(:)
    end type march_tend_t
 
-   !----- ARK conservation ledger: per-stage boundary-flux rates (from column_be_stage), and their    !
-   !      b-weighted amounts summed over the accepted sub-steps (boundary_flux_t). Since Y3 - y =      !
-   !      (1-gamma)*h*K2 + gamma*h*K3 (docs/science/numerical_scheme.md eq. (1)), the amounts         !
+   !----- ESDIRK2 conservation ledger: per-stage boundary-flux rates (from backward_euler_stage), and  !
+   !      their b-weighted amounts summed over the accepted sub-steps (boundary_flux_t). Since Y3 - y  !
+   !      = (1-gamma)*h*K2 + gamma*h*K3 (docs/science/numerical_scheme.md eq. (1)), the amounts        !
    !      telescope against the committed store change to machine precision. ----------------------!
    type :: stage_bflux_t                                    !< per-stage RATES
       real(wp) :: cas_enth_in = 0.0_wp, cas_enth_out = 0.0_wp    !< [W/m2]

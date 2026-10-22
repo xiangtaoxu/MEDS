@@ -77,8 +77,8 @@ module meds_config
       logical     :: fast_biophysics_on                   !< the sub-daily loop
       real(wp)    :: dt_fast                              !< [s] sub-daily step
       integer(ik) :: time_integrator     = INTEG_ESDIRK2  !< INTEG_ESDIRK2 | INTEG_RK45
-      logical     :: ark_adaptive        = .true.         !< adaptive sub-steps; .false.: ark_fixed_substep
-      integer(ik) :: ark_fixed_substep   = 4_ik           !< sub-steps per dt_fast when not adaptive
+      logical     :: esdirk2_adaptive    = .true.         !< adaptive sub-steps; .false.: esdirk2_fixed_substep
+      integer(ik) :: esdirk2_fixed_substep = 4_ik         !< sub-steps per dt_fast when not adaptive
       real(wp)    :: rtol                = 1.0e-3_wp      !< [-] relative tolerance of every group
       real(wp)    :: atol_scale          = 1.0_wp         !< [-] multiplier on every group's atol
       integer(ik) :: step_controller     = CTRL_I         !< CTRL_I | CTRL_PI

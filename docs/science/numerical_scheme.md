@@ -141,7 +141,7 @@ sub-stepping inside each `dt_fast`.
 > **Naming, stated once because it propagates.** The ARS(2,2,2) tableau is usually presented as an
 > IMEX (additive Runge–Kutta) pair, but this is **not an IMEX method.** The biotic CO₂ source is folded
 > implicit, so the explicit tableau is empty (`f_E == 0`) and the scheme reduces to a clean 2-solve
-> ESDIRK2, which is what the config string says (`"esdirk2"`; it was `"ark"`). Do not call it
+> ESDIRK2, which is what the config string says (`"esdirk2"`). Do not call it
 > "IMEX-ARK" — that asserts a property the implementation does not have.
 
 *Analogy:* a group ride with a pace-setter. Everyone moves together, and the pace is adjusted from
@@ -246,7 +246,7 @@ Three categories, because they demand different responses. A *physics* differenc
 solve different equations and no refinement will reconcile them; a *numerics* difference shrinks as
 you refine; a *bookkeeping* difference is a conservation defect.
 
-| difference | ark | rk45 | kind |
+| difference | esdirk2 | rk45 | kind |
 |---|---|---|---|
 | snow | shared stage, always active | same | unified |
 | canopy surface water | present | present | unified |
@@ -323,7 +323,7 @@ and the canopy air's vapour credit is the leaves' water debit. Measured on BCI's
 −0.2 W m⁻² and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (refreshing transpiration at
 every stage instead gives +0.3 and 2.9 W m⁻²; at 150 s the two agree to 0.1 W m⁻² in the mean and 0.6
 in any hour). The 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s
-(`test_column_ark`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
+(`test_column_esdirk2`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
 2013-05, 900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
 daily leaf and wood potentials by at most 0.004 MPa.
 
@@ -644,7 +644,7 @@ than a convergence proof.
 | adaptive Cash–Karp scheme | `src/fast_dynamics/integrator/meds_fast_integ_rk45.f90` (`rk45_step`, `rk45_state_railed`) |
 | the shared right-hand side | `src/fast_dynamics/integrator/meds_fast_integ_derivs.f90` (`march_derivs`, `surface_derivs`) |
 | the frozen record, Category 0 | `src/fast_dynamics/integrator/meds_fast_integ_frozen.f90` (`build_frozen`, `record_water_flows`) |
-| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/integrator/meds_fast_integ_backward_euler.f90` (`column_be_stage`, `newton_surface_solve`) |
+| the implicit stage and its leaf↔canopy-air Newton | `src/fast_dynamics/integrator/meds_fast_integ_backward_euler.f90` (`backward_euler_stage`, `newton_surface_solve`) |
 | the soil–plant water network | `meds_fast_integ_backward_euler.f90` (`water_step`), its flows and Jacobian in `meds_fast_integ_derivs.f90` (`water_derivs`) ([soil_plant_water](soil_plant_water.md)) |
 | the commit and the seven ledgers (§5b) | `src/fast_dynamics/integrator/meds_fast_integ_update.f90` (`update_dynamic_state`, `close_ledgers`) |
 | error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_integ_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
