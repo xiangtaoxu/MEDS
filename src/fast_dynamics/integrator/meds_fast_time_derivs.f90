@@ -311,9 +311,6 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
                                         water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
-      !----- The faces the energy equation was given, read from eforc, for the stepper to check      !
-      !      against the theta it commits. ---------------------------------------------------------!
-      f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store downward
       call soil_energy_time_deriv(soil_energy, eforc, site%soil_profile, site%soil,   &
                                   f%dedt, bottom_face=f%g_bottom)
 

@@ -63,10 +63,10 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! build_column_frozen -- the frozen record both schemes march against, as named steps, and !
-   ! the water network's and the march's start states. The snow stage advances the pack      !
-   ! (dynamic%snow); every other use of dynamic is read-only. out receives the aerodynamics,  !
-   ! the per-cohort rates, the step's GPP, NEE and decomposition scalars, and, with           !
-   ! out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).     !
+   ! the water network's and the march's start states. It only reads the dynamic state: the  !
+   ! snow stage advances a copy of the pack, which the update commits. out receives the       !
+   ! aerodynamics, the per-cohort rates, the step's GPP, NEE and decomposition scalars, and,  !
+   ! with out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).!
    !---------------------------------------------------------------------------------------!
    subroutine build_column_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
       real(wp),                   intent(in)    :: dt_fast
@@ -74,7 +74,7 @@ contains
       type(site_surface_t),       intent(in)    :: site
       type(fast_static_state_t),  intent(in)    :: static
       type(fast_forcing_t),       intent(in)    :: forcing
-      type(fast_dynamic_state_t), intent(inout) :: dynamic
+      type(fast_dynamic_state_t), intent(in)    :: dynamic
       type(fast_output_t),        intent(inout) :: out
       type(fast_workspace_t),     intent(inout) :: work     !< its aerodynamic environment and water network
       type(column_frozen_t),      intent(out)   :: frozen
@@ -85,6 +85,7 @@ contains
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
+      type(snow_column_t) :: pack   !< the snow pack the stage advances
       integer(ik) :: n, nsl
 
       n   = static%n
@@ -124,7 +125,8 @@ contains
       !----- The snow stage (docs/science/snow_biophysics.md §The snow store): after the rates, whose  !
       !      canopy air, air properties and ground conductance it reads; before the water network,  !
       !      so this step's meltwater reaches the pond this step. A no-op without a pack. -----------!
-      call advance_snow_stage(dynamic%snow, cfg%snow, cfg%aero%snow_rough, max(-site%soil_profile%z_node(1), tiny_num), &
+      pack = dynamic%snow
+      call advance_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, max(-site%soil_profile%z_node(1), tiny_num),        &
                               forcing%abs_sw_ground, forcing%abs_lw_ground, forcing%snowfall, forcing%rainfall,       &
                               forcing%air_temp, out%aero%ggnet, dynamic%soil_energy%soil_temp(1), dt_fast, tcas,      &
                               qcas, rho, press, frozen%snow)
@@ -503,12 +505,12 @@ contains
    ! advance_snow_stage -- accumulate snowfall and rain-on-snow, advance the snow-surface energy      !
    ! balance at the state^n canopy air, and drain meltwater to the pond as a paired (mass, enthalpy) !
    ! transfer, reported as melt_rate and t_melt (docs/science/snow_biophysics.md §The snow store).    !
-   ! Mutates only the pack; everything else it reports through st.                                    !
+   ! Advances the pack it is given (the build's copy) and reports the rest, the pack included, in st.  !
    !---------------------------------------------------------------------------------------!
    subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, abs_sw_ground, abs_lw_ground, &
                                  snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, qcas,    &
                                  rho, press, st)
-      type(snow_column_t),  intent(inout) :: snow           !< the pack store (the only state mutated here)
+      type(snow_column_t),  intent(inout) :: snow           !< the pack, advanced in place
       type(snow_params_t),  intent(in)    :: snow_params
       real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
       real(wp),             intent(in)    :: dz_soil_top    !< [m]       top soil-node depth |z_node(1)|
@@ -573,6 +575,7 @@ contains
       end if
       st%swe1  = snow%swe(1)
       st%enth1 = snow%snow_energy(1)
+      st%pack  = snow
    end subroutine advance_snow_stage
 
    !---------------------------------------------------------------------------------------!

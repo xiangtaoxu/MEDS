@@ -144,13 +144,13 @@ contains
          error stop 'soil heat step: energy budget did not close'
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
-      !----- Soil water is the network's, its end-of-step theta committed once in column_fast_step_ark     !
+      !----- Soil water is the network's, its end-of-step theta committed once by update_dynamic_state   !
       !      (docs/science/numerical_scheme.md §5b). The stages move theta at its steady rate, so each      !
       !      layer holds the water whose enthalpy the faces brought in; a steady rate is integrated exactly !
       !      and adds nothing to the error estimate. ---------------------------------------------------!
       y_out%theta(1:nsl) = y%theta(1:nsl) + dt * frozen%hydrology%theta_rate(1:nsl)
 
-      !----- The pond is passed through: column_fast_step_ark commits the network's end-of-step pond,  !
+      !----- The pond is passed through: update_dynamic_state commits the network's end-of-step pond, !
       !      and the pond is outside the error norm. --------------------------------------------------!
       y_out%w_surface      = y%w_surface
       y_out%w_surface_energy = y%w_surface_energy
@@ -160,7 +160,7 @@ contains
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
 
       !----- This stage's boundary-flux rates for the ledger, all at the committed state, so the amounts   !
-      !      ark2_column_step and adaptive_ark_march b-weight and accumulate telescope to closure. -------!
+      !      ark2_column_step and adaptive_march b-weight and accumulate telescope to closure. -----------!
       if (present(bf)) then
          t_cas1 = cas_enthalpy_to_temp(enth1, shv1)         ! committed CAS temperature, for the reported H
             bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%box%atm_enthalpy
@@ -173,8 +173,8 @@ contains
             !      to deep_temp under the Dirichlet anchor) crosses both the soil's and the column's book. !
             bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil
             bf%soil_enth_out= sum(water_heat(1:nsl)) + e_drain
-            !----- Soil water's storage change and flows are the network's, booked once per step in     !
-            !      column_fast_step_ark: the per-stage soil-water amounts are zero, and the whole-column   !
+            !----- Soil water's storage change and flows are the network's, booked once per step by     !
+            !      close_ledgers: the per-stage soil-water amounts are zero, and the whole-column          !
             !      water here is only the CAS-vapour exchange. ------------------------------------------!
             bf%soil_wat_in  = 0.0_wp
             bf%soil_wat_out = 0.0_wp
@@ -366,7 +366,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! advance_surf_water_full -- the canopy film over the full dt, the film analogue of                 !
    ! advance_plant_water: frozen interception in, b-weighted film evaporation out (the number the CAS  !
-   ! was credited). Unclamped: column_fast_step_ark clamps it and books the overflow and deficit.     !
+   ! was credited). Unclamped: update_dynamic_state clamps it and books the overflow and deficit.     !
    !---------------------------------------------------------------------------------------!
    pure subroutine advance_surf_water_full(y, frozen, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
       type(column_state_t),  intent(in)    :: y

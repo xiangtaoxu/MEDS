@@ -34,12 +34,13 @@ program test_column_derivs
                                      column_tend_t
    use meds_site_state_vars,  only : site_surface_t
    use meds_fast_be_stage,    only : column_be_stage, advance_plant_water
-   use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
+   use meds_fast_ark,         only : ark2_column_step
+   use meds_fast_step,        only : adaptive_march
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
    use meds_fast_types,       only : error_control_t, fast_workspace_t
-   use meds_fast_params,      only : CTRL_PI
+   use meds_fast_params,      only : CTRL_PI, INTEG_ARK
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The site every make_column fixture runs on (the frozen record holds only what freezes     !
@@ -526,7 +527,7 @@ contains
                       dtheta)
    end subroutine test_arrowhead
 
-   !----- 13. the production adaptive controller (adaptive_ark_march): tighter rtol takes more steps !
+   !----- 13. the production adaptive controller (adaptive_march): tighter rtol takes more steps     !
    !          and both agree with a fine fixed reference. -------------------------------------------!
    subroutine test_adaptive_march()
       type(column_state_t)  :: y, y1, y2, yr
@@ -546,9 +547,9 @@ contains
       !----- The controller under test is the PRODUCTION one, so the test fails for the reasons a
       !      real run would hit.
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
+      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
-      call adaptive_ark_march(y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
+      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
       !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
       call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_enthalpy_to_temp(y1%cas_enthalpy, y1%cas_shv)
@@ -636,11 +637,10 @@ contains
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
       type(column_state_t) :: y, ytmp, yerr
-      real(wp) :: w_out, e_in, e_out
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call rk45_column_step(y, frozen, site, n, nsl, dt, ytmp, yerr, w_out, e_in, e_out)
+         call rk45_column_step(y, frozen, site, n, nsl, dt, ytmp, yerr)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -702,7 +702,7 @@ contains
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
+      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -711,7 +711,7 @@ contains
       !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
-      call adaptive_ark_march(y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
+      call adaptive_march(INTEG_ARK, y, frozen, site, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -782,7 +782,7 @@ contains
                       (p_hi >= 4.5_wp .or. e4 < noise) .and. (p_fine >= 4.5_wp .or. e8 < noise), p_fine)
    end subroutine test_rk45_order
 
-   !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
+   !----- WRMS of the embedded error estimate (mirrors adaptive_march's ESDIRK2 accept test). ------!
    subroutine state_err_norm(ynew, yerr, yref, n, nsl, errnorm)
       type(column_state_t), intent(in)  :: ynew, yerr, yref
       integer(ik),          intent(in)  :: n, nsl

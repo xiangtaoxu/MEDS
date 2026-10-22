@@ -512,6 +512,9 @@ module meds_fast_types
       !----- The temperature with u_liq(T)*melt mass = melt_enth, handed to the water network as the  !
       !      pond inflow's, so the pond receives exactly melt_enth; t_3ple when nothing melts. --------!
       real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
+      !----- The pack after the stage, which the update commits: the frozen build only reads the      !
+      !      dynamic state, so the stage advances a copy. ---------------------------------------------!
+      type(snow_column_t) :: pack
    end type snow_stage_t
 
    !----- What drives the soil-plant water network over the step, held fixed across it: the water   !
@@ -623,10 +626,6 @@ module meds_fast_types
       real(wp), allocatable :: d_wood_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_wood - film_evap
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
       real(wp) :: g_bottom = 0.0_wp   !< [W/m2] heat across the soil column's bottom face, positive UP
-      !----- The interior faces this stage's soil-energy equation advected enthalpy on, taken from what !
-      !      assemble_soil_energy_forcing was handed, not from the water solve, so RK45 can check them  !
-      !      against the committed theta change (docs/science/numerical_scheme.md §5b). ---------------!
-      real(wp) :: soil_face(n_soil_layer_max) = 0.0_wp   !< [m/s] DOWNWARD interior face, k=1..nsl-1
       real(wp), allocatable :: leaf_temp(:)
    end type column_tend_t
 
