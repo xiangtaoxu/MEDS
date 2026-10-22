@@ -10,12 +10,9 @@
 !==========================================================================================!
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, cp_liq, t_3ple, tissue_c_leaf,       &
-                              tissue_c_wood_dry
-   use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
+   use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, cp_liq, t_3ple
    use meds_diag_vars,       only : CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
-   use meds_plant_hydr_lib,  only : conductance_retained_fraction, xylem_max_conductance,                         &
-                                    rhizosphere_conductance
+   use meds_plant_hydr_lib,  only : conductance_retained_fraction
    use meds_spac_solver, only : spac_solver_t, spac_allocate, spac_set_state, spac_advance, POND, WOOD
    use meds_soil_types, only : snow_melt_t, snow_env_t, snow_flux_t
    use meds_soil_water, only : ground_evap_env_t
@@ -31,7 +28,7 @@ module meds_fast_frozen
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer, EFFAREA_EVAP
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction,                 &
                                       snow_energy_step
-   use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy, tissue_dry_heat_capacity
+   use meds_therm_lib, only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy
    use meds_biophysics_params, only : snow_params_t
    use meds_patch_state_vars,   only : snow_column_t
    implicit none
@@ -68,8 +65,6 @@ contains
       !----- The water network's step, read into the frozen record; the arrays are by soil layer and   !
       !      by cohort. --------------------------------------------------------------------------------!
       real(wp) :: share_tot, face_resid, f_in, f_out, u_liq_soil_k(site%soil_profile%n_active)
-      real(wp) :: root_frac(site%soil_profile%n_active, static%n), root_frac_patch(site%soil_profile%n_active)
-      real(wp) :: z_top(site%soil_profile%n_active), z_bot(site%soil_profile%n_active), root_carbon
       real(wp) :: t_up_wl, u_liq_up, u_liq_leaf, u_liq_wood, sapflow_gnd, uptake_gnd, transp_gnd
       !----- Canopy interception scratch. -------------------------------------------------------------!
       real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
@@ -104,27 +99,8 @@ contains
       y%leaf_surf_water(1:n) = dynamic%leaf_surf_water(1:n)
       y%wood_surf_water(1:n) = dynamic%wood_surf_water(1:n)
 
-      !----- Each cohort's fine roots by layer, within its own rooting depth, and the patch's profile:   !
-      !      the cohorts' weighted by their fine-root carbon. A patch with no roots puts its weight in the !
-      !      top layer (it has no root respiration to weight). -----------------------------------------!
-      z_top(1:nsl) = -site%soil_profile%soil_layer_z(1:nsl)
-      z_bot(1:nsl) = -site%soil_profile%soil_layer_z(2:nsl+1)
-      root_frac_patch(1:nsl) = 0.0_wp
-      do i = 1_ik, n
-         call cohort_root_profile(static%height(i), cfg%pft%hydraulics%pft(static%pft(i)),       &
-                                  z_top(1:nsl), z_bot(1:nsl), root_frac(1:nsl, i))
-         root_frac_patch(1:nsl) = root_frac_patch(1:nsl) + static%nplant(i)*static%broot(i)*root_frac(1:nsl, i)
-      end do
-      root_carbon = sum(root_frac_patch(1:nsl))
-      if (root_carbon > tiny_num) then
-         root_frac_patch(1:nsl) = root_frac_patch(1:nsl) / root_carbon
-      else
-         root_frac_patch(1:nsl) = 0.0_wp
-         root_frac_patch(1) = 1.0_wp
-      end if
-
       !----- The shared pre-pass: gas exchange, respiration, aerodynamics, CAS capacities. --------------!
-      call column_prepass(cfg, site, static, forcing, dynamic, out, work, root_frac_patch(1:nsl),                  &
+      call column_prepass(cfg, site, static, forcing, dynamic, out, work, static%root_frac_patch(1:nsl),           &
                           tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_leaf, frozen%tissue%g_transp_leaf,      &
                           cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic)
 
@@ -182,13 +158,11 @@ contains
          frozen%tissue%abs_lw(i) = forcing%abs_lw(i)
          !----- Wood heat capacity: the dry heat of all the wood plus the water network's whole wood store  !
          !      (docs/science/vegetation_energy_dynamics.md eq. (8), §The store is ON). -------------------!
-         frozen%tissue%wood_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bwood(i),     &
-                                                                   tissue_c_wood_dry)
+         frozen%tissue%wood_dry_hcap(i) = static%wood_dry_hcap(i)
          frozen%tissue%wood_wmass(i)    = max(dynamic%wood_water_mass(i), 0.0_wp) * static%nplant(i)
          !----- Leaf heat capacity, the same two parts, its water read from dynamic (y's is filled at the  !
          !      end of this routine). The intercepted film is a separate store, not in it. ---------------!
-         frozen%tissue%leaf_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bleaf(i),     &
-                                                                   tissue_c_leaf)
+         frozen%tissue%leaf_dry_hcap(i) = static%leaf_dry_hcap(i)
          frozen%tissue%leaf_wmass(i)    = max(dynamic%leaf_water_mass(i), 0.0_wp) * static%nplant(i)
          !----- The wood's radiation and sensible coefficient: its whole energy budget in surface_derivs   !
          !      (docs/science/vegetation_energy_dynamics.md §Leaf and wood energy balance). -------------!
@@ -312,7 +286,7 @@ contains
       !      every cohort's wood and leaves, solved together on the transpiration demand above. The march  !
       !      reads all its water from it and holds its flows fixed. ------------------------------------!
       call run_spac_solver(dt_fast, cfg, site, static, dynamic, hforc, precip_ground, t_pond_inflow, &
-                           root_frac(1:nsl, 1:n), sf0%transp_c(1:n), n, nsl, work%spac)
+                           sf0%transp_c(1:n), n, nsl, work%spac)
 
       !----- The network's work counters (docs/science/soil_plant_water.md §6). -----------------------!
       out%report%work(WORK_WATER_NSUB)   = work%spac%nsub
@@ -386,7 +360,7 @@ contains
       if (share_tot > tiny_num) then
          frozen%roots%root_share(1:nsl) = frozen%roots%root_share(1:nsl) / share_tot
       else
-         frozen%roots%root_share(1:nsl) = root_frac_patch(1:nsl)
+         frozen%roots%root_share(1:nsl) = static%root_frac_patch(1:nsl)
       end if
       do i = 1_ik, n
          frozen%roots%qloss_frozen(i)     = sum(work%spac%uptake(1:nsl, i) * u_liq_soil_k(1:nsl)) / dt_fast
@@ -443,14 +417,13 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! run_spac_solver -- one patch's soil and plant water over the fast step, as one network            !
-   ! (meds_spac_solver; docs/science/soil_plant_water.md): builds the solver's inputs from the         !
-   ! patch's columns (xylem conductance from the sapwood, rooting from height and fine-root carbon,    !
-   ! root spacing from the patch's root-length density), starts it from the stores' state^n water and !
-   ! advances it. e_demand is each cohort's transpiration demand; the network takes less where a leaf  !
-   ! runs short (eq. (3)).                                                                              !
+   ! (meds_spac_solver; docs/science/soil_plant_water.md): hands the solver the cohorts' paths the     !
+   ! gather derived (derive_cohort_terms), starts it from the stores' state^n water and advances it.   !
+   ! e_demand is each cohort's transpiration demand; the network takes less where a leaf runs short    !
+   ! (eq. (3)).                                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine run_spac_solver(dt_fast, cfg, site, static, dynamic, hforc, precip_ground, t_pond_inflow, &
-                              root_frac, e_demand, n, nsl, spac)
+                              e_demand, n, nsl, spac)
       real(wp),                   intent(in)    :: dt_fast
       type(meds_config_t),        intent(in)    :: cfg
       type(site_surface_t),       intent(in)    :: site
@@ -460,36 +433,21 @@ contains
       real(wp),                   intent(in)    :: precip_ground   !< [kg/m2/s] water reaching the pond
       real(wp),                   intent(in)    :: t_pond_inflow   !< [K]       the temperature that values it
       integer(ik),                intent(in)    :: n, nsl
-      real(wp),                   intent(in)    :: root_frac(nsl, n)   !< [-] each cohort's fine roots by layer
       real(wp),                   intent(in)    :: e_demand(n)         !< [kg/m2 ground/s]
       type(spac_solver_t),        intent(inout) :: spac
-      real(wp)        :: root_len(nsl, n), half_spacing(nsl)
-      integer(ik)     :: i, k
+      integer(ik)     :: i
       type(tol_set_t) :: tols
       call spac_allocate(spac, nsl, n)
       do i = 1_ik, n
-         associate (hp => cfg%pft%hydraulics%pft(static%pft(i)))
-            spac%pft(i)      = static%pft(i)
-            spac%nplant(i)   = static%nplant(i)
-            spac%bleaf(i)    = static%bleaf(i)
-            spac%bwood(i)    = static%bsap(i) + static%broot(i)
-            spac%grav(i)     = crown_gravity_head(static%height(i))
-            spac%k_xylem(i)  = static%nplant(i) * xylem_max_conductance(hp%wood_kmax, static%sap_area(i), &
-                                                                           static%height(i), hp%vessel_curl)
-            spac%e_demand(i) = e_demand(i)
-            spac%r_close(i)  = hp%rwc_close
-            root_len(1:nsl, i) = static%broot(i) * root_frac(1:nsl, i) * hp%specific_root_length
-         end associate
-      end do
-      !----- Half the distance between a layer's roots, (pi L_v)^-1/2 over every cohort there, and each  !
-      !      cohort's rhizosphere conductance in it (docs/science/plant_hydraulics.md eq. (14)). ---------!
-      do k = 1_ik, nsl
-         half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(static%nplant(1:n) * root_len(k, 1:n))                &
-                                                  / site%soil_profile%dz(k), tiny_num))
-         do i = 1_ik, n
-            spac%g_rhizo(k, i) = rhizosphere_conductance(static%nplant(i), root_len(k, i), half_spacing(k),   &
-                                                         cfg%pft%hydraulics%pft(static%pft(i))%fine_root_radius)
-         end do
+         spac%pft(i)      = static%pft(i)
+         spac%nplant(i)   = static%nplant(i)
+         spac%bleaf(i)    = static%bleaf(i)
+         spac%bwood(i)    = static%bsap(i) + static%broot(i)
+         spac%grav(i)     = static%crown_head(i)
+         spac%k_xylem(i)  = static%k_xylem(i)
+         spac%e_demand(i) = e_demand(i)
+         spac%r_close(i)  = cfg%pft%hydraulics%pft(static%pft(i))%rwc_close
+         spac%g_rhizo(1:nsl, i) = static%g_rhizo(1:nsl, i)
       end do
       spac%rain       = precip_ground
       spac%t_rain     = t_pond_inflow

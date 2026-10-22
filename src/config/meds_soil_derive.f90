@@ -10,7 +10,8 @@
 module meds_soil_derive
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : n_soil_layer_max
-   use meds_soil_hydr_lib, only : soil_head_to_theta, soil_matric_potential, soil_texture_t
+   use meds_soil_hydr_lib, only : soil_head_to_theta, soil_matric_potential, soil_texture_t,  &
+                                  build_soil_layer_curve
    use meds_soil_params,   only : soil_params_t, soil_texture_layers_t, soil_profile_t
    use meds_maps_params,   only : map_inputs_t
    implicit none
@@ -206,11 +207,12 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! A soil profile's geometry and hydraulics: the negative-z geometry from the layer       !
-   ! bottoms (soil_layer_grid), each layer's own texture, and the derived theta_fc (from    !
-   ! each layer's retention curve). The arrays hold one value per active layer: from a soil !
-   ! map's layers, or one value broadcast (build_profile_hydraulics). It starts the profile !
-   ! afresh; build_profile_thermal_layers adds the thermal texture. The roots are the       !
-   ! cohorts' own (meds_plant_hydraulics::cohort_root_profile), not the profile's.          !
+   ! bottoms (soil_layer_grid), each layer's own texture, and what derives from them: the   !
+   ! field capacity, and the water network's layer curves and face weights. The arrays      !
+   ! hold one value per active layer: from a soil map's layers, or one value broadcast      !
+   ! (build_profile_hydraulics). It starts the profile afresh; build_profile_thermal_layers !
+   ! adds the thermal texture. The roots are the cohorts' own                               !
+   ! (meds_plant_hydraulics::cohort_root_profile), not the profile's.                       !
    !---------------------------------------------------------------------------------------!
    pure subroutine build_profile_hydraulics_layers(n_active, retention, layer_bottoms, theta_sat,       &
                                                    theta_res, ksat, par_a, par_n, psi_fc_m, profile)
@@ -234,7 +236,8 @@ contains
          profile%z_node(k) = 0.5_wp * (profile%soil_layer_z(k) + profile%soil_layer_z(k+1))
       end do
       do k = 1_ik, n_active - 1_ik
-         profile%dz_node(k) = profile%z_node(k) - profile%z_node(k+1)
+         profile%dz_node(k)     = profile%z_node(k) - profile%z_node(k+1)
+         profile%face_weight(k) = profile%dz(k) / (profile%dz(k) + profile%dz(k+1))
       end do
       profile%dz_node(n_active) = profile%dz(n_active)      ! unused at the bottom face; kept > 0
 
@@ -248,6 +251,12 @@ contains
       !----- Derived threshold (from each layer's retention curve). -----------------------!
       profile%theta_fc(1:n_active) = soil_head_to_theta(retention, psi_fc_m, theta_sat(1:n_active),    &
                                         theta_res(1:n_active), par_a(1:n_active), par_n(1:n_active))
+
+      !----- Each layer's curve in the water network's unknown. ---------------------------!
+      do k = 1_ik, n_active
+         call build_soil_layer_curve(retention, theta_sat(k), theta_res(k), par_a(k), par_n(k), ksat(k),    &
+                                     profile%dz(k), profile%layer_curve(k))
+      end do
    end subroutine build_profile_hydraulics_layers
 
    !----- One texture for every layer: the per-layer build with each value broadcast. -----!

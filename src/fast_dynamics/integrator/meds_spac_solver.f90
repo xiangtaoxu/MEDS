@@ -11,8 +11,8 @@
 module meds_spac_solver
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : grav_head, rho_h2o, tiny_num
-   use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
-                                    soil_theta_to_unknown, pond_water_relations, pond_water_to_head
+   use meds_soil_hydr_lib,   only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,      &
+                                    pond_water_to_head
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,  &
                                     tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
    use meds_plant_hydraulics, only : supply_limited_transpiration
@@ -74,11 +74,7 @@ module meds_spac_solver
       integer(ik) :: nsl   = 0_ik         !< soil layers
       integer(ik) :: ncoh  = 0_ik         !< cohorts
       integer(ik) :: nsoil = 0_ik         !< soil nodes: the pond and the nsl layers
-      !----- The soil and the pond. -------------------------------------------------------!
-      type(soil_layer_curve_t), allocatable :: layer(:)   !< (nsl) each layer's curve
-      real(wp), allocatable :: z_node(:)        !< (nsl) [m, < 0] node depth
-      real(wp), allocatable :: dz_node(:)       !< (nsl) [m] distance to the node below
-      real(wp), allocatable :: face_weight(:)   !< (nsl) lower layer's weight in the face conductivity
+      !----- The soil and the pond; the layers' curves and geometry are the site's soil profile's. --!
       real(wp), allocatable :: t_soil(:)        !< (nsl) [K] temperature of water a layer gives up
       real(wp) :: rain       = 0.0_wp           !< [kg/m2/s] water reaching the pond
       real(wp) :: t_rain     = 298.15_wp        !< [K] the temperature that values it
@@ -132,16 +128,16 @@ contains
    subroutine spac_allocate(spac, nsl, ncoh)
       type(spac_solver_t), intent(inout) :: spac
       integer(ik),         intent(in)    :: nsl, ncoh
-      if (.not. allocated(spac%layer) .or. spac%nsl /= nsl .or. spac%ncoh /= ncoh) then
+      if (.not. allocated(spac%t_soil) .or. spac%nsl /= nsl .or. spac%ncoh /= ncoh) then
          spac%nsl = nsl
          spac%ncoh = ncoh
          spac%nsoil = 1_ik + nsl
-         if (allocated(spac%layer)) deallocate(spac%layer, spac%z_node, spac%dz_node, spac%face_weight,          &
-              spac%t_soil, spac%pft, spac%nplant, spac%bleaf, spac%bwood, spac%grav, spac%k_xylem,               &
+         if (allocated(spac%t_soil)) deallocate(spac%t_soil, spac%pft, spac%nplant, spac%bleaf, spac%bwood,     &
+              spac%grav, spac%k_xylem,                                                                            &
               spac%e_demand, spac%r_close, spac%g_rhizo, spac%soil_fixed, spac%tau_soil, spac%tau_coh,           &
               spac%water_soil, spac%water_coh, spac%face, spac%uptake, spac%sapflow, spac%transp,                &
               spac%psi_soil, spac%psi_coh)
-         allocate(spac%layer(nsl), spac%z_node(nsl), spac%dz_node(nsl), spac%face_weight(nsl), spac%t_soil(nsl))
+         allocate(spac%t_soil(nsl))
          allocate(spac%pft(ncoh), spac%nplant(ncoh), spac%bleaf(ncoh), spac%bwood(ncoh), spac%grav(ncoh),      &
                   spac%k_xylem(ncoh), spac%e_demand(ncoh), spac%r_close(ncoh), spac%g_rhizo(nsl, ncoh))
          allocate(spac%soil_fixed(spac%nsoil), spac%tau_soil(spac%nsoil), spac%tau_coh(COHORT_STORES, ncoh),    &
@@ -173,15 +169,7 @@ contains
       integer(ik) :: k, i
       real(wp)    :: psi, dpsi, w, dw, kk, dk, head1
       do k = 1_ik, spac%nsl
-         call build_soil_layer_curve(params%retention, params%theta_sat(k), params%theta_res(k),              &
-                                     params%curve_par_a(k), params%curve_par_n(k), params%ksat(k), params%dz(k), &
-                                     spac%layer(k))
-         spac%z_node(k) = params%z_node(k)
-         if (k < spac%nsl) then
-            spac%dz_node(k)     = params%dz_node(k)
-            spac%face_weight(k) = params%dz(k) / (params%dz(k) + params%dz(k+1))
-         end if
-         spac%tau_soil(1_ik + k)   = soil_theta_to_unknown(spac%layer(k), theta(k))
+         spac%tau_soil(1_ik + k)   = soil_theta_to_unknown(params%layer_curve(k), theta(k))
          spac%water_soil(1_ik + k) = rho_h2o * params%dz(k) * theta(k)
       end do
       !----- The pond starts at its water's head, but no higher than the head at which it neither   !
@@ -189,9 +177,9 @@ contains
       !      step, and its own head would start Newton at a flow thousands of times what it holds. --!
       spac%water_soil(POND) = w_pond
       spac%e_pond = e_pond
-      call soil_water_relations(spac%layer(1), spac%tau_soil(2), psi, dpsi, w, dw, kk, dk)
+      call soil_water_relations(params%layer_curve(1), spac%tau_soil(2), psi, dpsi, w, dw, kk, dk)
       head1 = psi / grav_head
-      spac%tau_soil(POND) = min(pond_water_to_head(w_pond), head1 + spac%z_node(1))
+      spac%tau_soil(POND) = min(pond_water_to_head(w_pond), head1 + params%z_node(1))
       do i = 1_ik, spac%ncoh
          associate (hp => hyd%pft(spac%pft(i)))
             spac%tau_coh(WOOD, i)   = tissue_rwc_to_unknown(                                               &
@@ -229,7 +217,7 @@ contains
 
       call clear_amounts(spac)
       call arrowhead_allocate(spac%sys, spac%nsoil, spac%ncoh, COHORT_STORES)
-      call water_scales(spac, hyd, scale_soil, scale_coh)
+      call water_scales(spac, params, hyd, scale_soil, scale_coh)
       spac%start_ready = .false.
 
       t = 0.0_wp
@@ -375,7 +363,7 @@ contains
          call newton_factor(spac, h, spac%ev(i_sol), ok)
          if (.not. ok) return
          call arrowhead_solve(spac%sys, -res_soil, -res_coh, step_soil, step_coh)
-         lam_max = step_limit(spac, tau_soil, tau_coh, step_soil, step_coh)
+         lam_max = step_limit(spac, params, tau_soil, tau_coh, step_soil, step_coh)
          lam = lam_max
          !----- A trial's evaluation replaces the Jacobian sys held, so the start's is gone. ---------!
          spac%start_ready = .false.
@@ -441,14 +429,16 @@ contains
    !      saturation or relative water content by more than STEP_MAX_DRY. A wet soil layer's unknown   !
    !      is its potential, so only the first applies to it: it keeps a step that would carry it past  !
    !      the branch point and below empty inside the curve. The pond's head is not bounded. -------!
-   pure real(wp) function step_limit(spac, tau_soil, tau_coh, step_soil, step_coh) result(lam)
-      type(spac_solver_t), intent(in) :: spac
-      real(wp),            intent(in) :: tau_soil(:), tau_coh(:,:), step_soil(:), step_coh(:,:)
+   pure real(wp) function step_limit(spac, params, tau_soil, tau_coh, step_soil, step_coh) result(lam)
+      type(spac_solver_t),  intent(in) :: spac
+      type(soil_profile_t), intent(in) :: params
+      real(wp),             intent(in) :: tau_soil(:), tau_coh(:,:), step_soil(:), step_coh(:,:)
       integer(ik) :: k, i, j
       lam = 1.0_wp
       do k = 1_ik, spac%nsl
          lam = min(lam, fraction_to_boundary(tau_soil(1_ik + k), step_soil(1_ik + k), STEP_MAX_SHARE))
-         if (tau_soil(1_ik + k) <= spac%layer(k)%se_switch) call cap_dry_change(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
+         if (tau_soil(1_ik + k) <= params%layer_curve(k)%se_switch)                                            &
+            call cap_dry_change(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
       end do
       do i = 1_ik, spac%ncoh
          do j = 1_ik, COHORT_STORES
@@ -505,7 +495,7 @@ contains
       ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
       do k = 1_ik, spac%nsl
          c = 1_ik + k
-         call soil_water_relations(spac%layer(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c), ev%water_soil(c), &
+         call soil_water_relations(params%layer_curve(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c), ev%water_soil(c), &
                                    ev%dwater_soil(c), ev%k_soil(c), ev%dk_soil(c))
       end do
       do i = 1_ik, spac%ncoh
@@ -522,8 +512,8 @@ contains
       !----- The pond and the top layer: Darcy, the pond a saturated layer as thick as the top one. !
       ca = POND
       cb = 2_ik
-      call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), 0.5_wp, ev%psi_soil(ca), ev%psi_soil(cb), -spac%z_node(1),  &
-                           -spac%z_node(1), q, dq_pa, dq_pb, dq_ka, dq_kb)
+      call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), 0.5_wp, ev%psi_soil(ca), ev%psi_soil(cb), -params%z_node(1), &
+                           -params%z_node(1), q, dq_pa, dq_pb, dq_ka, dq_kb)
       ev%pond_flux = q
       call add_soil_flow(ca, cb, q, dq_pa * ev%dpsi_soil(ca), dq_pb * ev%dpsi_soil(cb) + dq_kb * ev%dk_soil(cb))
 
@@ -531,8 +521,8 @@ contains
       do k = 1_ik, spac%nsl - 1_ik
          ca = 1_ik + k
          cb = 2_ik + k
-         call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), spac%face_weight(k), ev%psi_soil(ca), ev%psi_soil(cb), &
-                              spac%dz_node(k), spac%dz_node(k), q, dq_pa, dq_pb, dq_ka, dq_kb)
+         call soil_water_flux(ev%k_soil(ca), ev%k_soil(cb), params%face_weight(k), ev%psi_soil(ca), ev%psi_soil(cb), &
+                              params%dz_node(k), params%dz_node(k), q, dq_pa, dq_pb, dq_ka, dq_kb)
          ev%face_flux(k) = q
          dqa = dq_pa * ev%dpsi_soil(ca) + dq_ka * ev%dk_soil(ca)
          dqb = dq_pb * ev%dpsi_soil(cb) + dq_kb * ev%dk_soil(cb)
@@ -542,12 +532,12 @@ contains
       !----- Rain into the pond; evaporation from the top layer; drainage from the bottom one. ----!
       ev%inflow_soil(POND) = ev%inflow_soil(POND) + spac%rain
       c = 2_ik
-      theta1 = ev%water_soil(c) / (rho_h2o * spac%layer(1)%dz)
+      theta1 = ev%water_soil(c) / (rho_h2o * params%dz(1))
       call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, params, forcing, opts, e, de_dtheta, de_dpsi)
       ev%evap = e
       ev%inflow_soil(c) = ev%inflow_soil(c) - e
       if (with_jacobian) spac%sys%a(c, c) = spac%sys%a(c, c)                                                     &
-                         + de_dtheta * ev%dwater_soil(c) / (rho_h2o * spac%layer(1)%dz)                        &
+                         + de_dtheta * ev%dwater_soil(c) / (rho_h2o * params%dz(1))                            &
                          + de_dpsi * ev%dpsi_soil(c) / grav_head
       c = 1_ik + spac%nsl
       head = ev%psi_soil(c) / grav_head
@@ -564,7 +554,7 @@ contains
          psi_w = ev%psi_coh(WOOD, i)
          dpsi_w = ev%dpsi_coh(WOOD, i)
          call root_water_uptake_profile(spac%nsl, spac%g_rhizo(1:spac%nsl, i), ev%k_soil(2:spac%nsoil),             &
-                                        ev%psi_soil(2:spac%nsoil), spac%z_node(1:spac%nsl), psi_w,                &
+                                        ev%psi_soil(2:spac%nsoil), params%z_node(1:spac%nsl), psi_w,              &
                                         ev%uptake(1:spac%nsl, i), du_dpsi, du_dk)
          u_sum = 0.0_wp
          dqb_sum = 0.0_wp
@@ -776,15 +766,16 @@ contains
    !      the pond's is a metre of water per metre of the (top) layer, so its tolerances read as     !
    !      water content; a cohort's is the water its wood and leaf cells hold at full turgor, shared  !
    !      by both stores so a leafless cohort's empty leaf is weighed against its plant. ---------!
-   subroutine water_scales(spac, hyd, scale_soil, scale_coh)
+   subroutine water_scales(spac, params, hyd, scale_soil, scale_coh)
       type(spac_solver_t),        intent(in)  :: spac
+      type(soil_profile_t),       intent(in)  :: params
       type(hydraulics_table_t),   intent(in)  :: hyd
       real(wp),                   intent(out) :: scale_soil(:), scale_coh(:,:)
       integer(ik) :: k, i
       real(wp)    :: s
-      scale_soil(POND) = rho_h2o * spac%layer(1)%dz
+      scale_soil(POND) = rho_h2o * params%dz(1)
       do k = 1_ik, spac%nsl
-         scale_soil(1_ik + k) = rho_h2o * spac%layer(k)%dz
+         scale_soil(1_ik + k) = rho_h2o * params%dz(k)
       end do
       do i = 1_ik, spac%ncoh
          associate (lc => hyd%pft(spac%pft(i))%leaf_curve, wc => hyd%pft(spac%pft(i))%wood_curve)

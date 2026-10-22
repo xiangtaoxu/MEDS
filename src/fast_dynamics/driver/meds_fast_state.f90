@@ -1,9 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_state -- moves the state between the polygon and a fast step's records.        !
-! gather_patch fills a patch's static state (its cohorts' structure and traits, the canopy !
-! geometry and canopy-air top, the slow loop's daily inputs, the site's leaf table) and    !
-! its dynamic state (the patch's stores and its cohorts' tissue state); scatter_patch      !
+! gather_patch fills a patch's static state (its cohorts' structure and traits, what that  !
+! structure fixes -- roots, water paths, dry heat capacities (derive_cohort_terms) -- the  !
+! canopy geometry and canopy-air top, the slow loop's daily inputs, the site's leaf table) !
+! and its dynamic state (the patch's stores and its cohorts' tissue state); scatter_patch  !
 ! writes the dynamic state back. reset_fast_to_slow and accumulate_fast_to_slow keep the   !
 ! window's sums the slow step reads: GPP, maintenance respiration, light hours, the        !
 ! predawn leaf potential and the decomposition scalars. static_state_fixture builds a      !
@@ -11,10 +12,15 @@
 !==========================================================================================!
 module meds_fast_state
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : cm2_to_m2, c2b_wood, t_3ple, umol_2_kgc, day_sec, par_w_2_umol
+   use meds_constants,           only : cm2_to_m2, c2b_wood, t_3ple, umol_2_kgc, day_sec, par_w_2_umol, pi,      &
+                                        tiny_num, tissue_c_leaf, tissue_c_wood_dry
    use meds_numerics,            only : ascending_order
    use meds_config,              only : meds_config_t
-   use meds_pft_params,          only : pft_table_t
+   use meds_pft_params,          only : pft_table_t, hydraulics_table_t
+   use meds_soil_params,         only : soil_profile_t
+   use meds_plant_hydraulics,    only : cohort_root_profile, crown_gravity_head
+   use meds_plant_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance
+   use meds_therm_lib,           only : tissue_dry_heat_capacity
    use meds_cohort_state_vars,   only : cohort_block, alloc_cohort_block, init_cohort, cohort_tissue_temps,       &
                                         set_cohort_tissue_temps
    use meds_patch_state_vars,    only : decomp_xi_t
@@ -27,6 +33,7 @@ module meds_fast_state
    private
 
    public :: reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow
+   public :: derive_cohort_terms
    public :: static_state_fixture   ! used only by the tests
 
    !----- [m] The canopy height of a patch without cohorts: the aerodynamics' bare-ground top. -------!
@@ -56,10 +63,11 @@ contains
    end subroutine reset_fast_to_slow
 
    !---------------------------------------------------------------------------------------!
-   ! Gather patch ip for the window. The static state: the cohorts, the canopy geometry, the !
-   ! canopy-air top with its roughness and displacement, the slow loop's daily inputs and the !
-   ! site's leaf table. The dynamic state: the patch's stores and each cohort's tissue       !
-   ! energy, water and films. Every field is assigned, so neither needs seeding.            !
+   ! Gather patch ip for the window. The static state: the cohorts and what they fix on the  !
+   ! site's soil layers, the canopy geometry, the canopy-air top with its roughness and      !
+   ! displacement, the slow loop's daily inputs and the site's leaf table. The dynamic       !
+   ! state: the patch's stores and each cohort's tissue energy, water and films. Every field !
+   ! is assigned, so neither needs seeding.                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine gather_patch(poly, cfg, ip, static, dynamic)
       type(polygon_t),            intent(in)    :: poly
@@ -73,6 +81,7 @@ contains
       ncoh = poly%patch%cohort_count(ip)
       i0   = poly%patch%cohort_offset(ip)
       call gather_cohorts(static, poly%cohort, i0, ncoh)
+      call derive_cohort_terms(static, cfg%pft%hydraulics, poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
 
       !----- Canopy geometry. The open fraction exp(-(LAI + WAI)) weighs bare ground in the ground  !
       !      conductance (docs/science/canopy_aerodynamics.md eq. (6)), so a patch without cohorts  !
@@ -256,16 +265,70 @@ contains
       call ascending_order(static%height, ncoh, static%order)
    end subroutine gather_cohorts
 
-   !----- A fixture's static state: n cohorts born through init_cohort as a real recruit is and      !
-   !      gathered by gather_cohorts, with the PFT table's leaf table. The caller gives only each   !
-   !      cohort's PFT, diameter and density; the canopy geometry and the daily inputs keep their   !
-   !      defaults. ----------------------------------------------------------------------------!
-   subroutine static_state_fixture(static, pft, ipft, dbh, nplant)
+   !---------------------------------------------------------------------------------------!
+   ! What the cohorts' structure fixes for the slow step on the site's soil layers: each     !
+   ! cohort's fine roots by layer, within its own rooting depth, and the patch's profile,    !
+   ! the cohorts' weighted by their fine-root carbon (a patch with no roots puts its weight  !
+   ! in the top layer: it has no root respiration to weight); the water network's paths --   !
+   ! the intact xylem from the sapwood, the head to the crown, and each layer's rhizosphere  !
+   ! from the roots' length there, half the distance between the roots of every cohort in it !
+   ! (docs/science/plant_hydraulics.md eq. (14)); and the dry heat capacity of the leaves    !
+   ! and of all the wood (docs/science/vegetation_energy_dynamics.md eq. (8)).               !
+   !---------------------------------------------------------------------------------------!
+   subroutine derive_cohort_terms(static, hyd, profile)
+      type(fast_static_state_t), intent(inout) :: static
+      type(hydraulics_table_t),  intent(in)    :: hyd
+      type(soil_profile_t),      intent(in)    :: profile
+      real(wp)    :: z_top(profile%n_active), z_bot(profile%n_active), root_carbon, half_spacing
+      real(wp)    :: root_len(profile%n_active, static%n)   !< [m/plant] each cohort's fine roots by layer
+      integer(ik) :: i, k, n, nsl
+      n   = static%n
+      nsl = profile%n_active
+      z_top(1:nsl) = -profile%soil_layer_z(1:nsl)
+      z_bot(1:nsl) = -profile%soil_layer_z(2:nsl+1)
+      static%root_frac_patch = 0.0_wp
+      do i = 1_ik, n
+         associate (hp => hyd%pft(static%pft(i)))
+            call cohort_root_profile(static%height(i), hp, z_top(1:nsl), z_bot(1:nsl), static%root_frac(1:nsl, i))
+            static%root_frac_patch(1:nsl) = static%root_frac_patch(1:nsl)                                    &
+                                            + static%nplant(i)*static%broot(i)*static%root_frac(1:nsl, i)
+            root_len(1:nsl, i)   = static%broot(i) * static%root_frac(1:nsl, i) * hp%specific_root_length
+            static%k_xylem(i)    = static%nplant(i) * xylem_max_conductance(hp%wood_kmax, static%sap_area(i),   &
+                                                                            static%height(i), hp%vessel_curl)
+            static%crown_head(i) = crown_gravity_head(static%height(i))
+         end associate
+         static%leaf_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bleaf(i), tissue_c_leaf)
+         static%wood_dry_hcap(i) = tissue_dry_heat_capacity(static%nplant(i), static%bwood(i), tissue_c_wood_dry)
+      end do
+      root_carbon = sum(static%root_frac_patch(1:nsl))
+      if (root_carbon > tiny_num) then
+         static%root_frac_patch(1:nsl) = static%root_frac_patch(1:nsl) / root_carbon
+      else
+         static%root_frac_patch(1:nsl) = 0.0_wp
+         static%root_frac_patch(1) = 1.0_wp
+      end if
+      do k = 1_ik, nsl
+         half_spacing = 1.0_wp / sqrt(pi * max(sum(static%nplant(1:n) * root_len(k, 1:n)) / profile%dz(k),    &
+                                               tiny_num))
+         do i = 1_ik, n
+            static%g_rhizo(k, i) = rhizosphere_conductance(static%nplant(i), root_len(k, i), half_spacing,      &
+                                                           hyd%pft(static%pft(i))%fine_root_radius)
+         end do
+      end do
+   end subroutine derive_cohort_terms
+
+   !----- A fixture's static state: n cohorts born through init_cohort as a real recruit is,      !
+   !      gathered by gather_cohorts with what they fix on the soil profile, and the PFT table's   !
+   !      leaf table. The caller gives only each cohort's PFT, diameter and density and the soil;  !
+   !      the canopy geometry and the daily inputs keep their defaults. A test that edits a       !
+   !      cohort's structure afterwards calls derive_cohort_terms again. ------------------------!
+   subroutine static_state_fixture(static, pft, ipft, dbh, nplant, profile)
       type(fast_static_state_t), intent(inout) :: static
       type(pft_table_t),         intent(in)    :: pft
       integer(ik),               intent(in)    :: ipft(:)    !< (n) PFT index per cohort
       real(wp),                  intent(in)    :: dbh(:)     !< (n) [cm]       diameter
       real(wp),                  intent(in)    :: nplant(:)  !< (n) [plant/m2] density
+      type(soil_profile_t),      intent(in)    :: profile
       type(cohort_block) :: block
       integer(ik)        :: j, n
       n = int(size(ipft), ik)
@@ -278,6 +341,7 @@ contains
          call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j), t_3ple, 0.0_wp)
       end do
       call gather_cohorts(static, block, 1_ik, n)
+      call derive_cohort_terms(static, pft%hydraulics, profile)
       static%leaf_photo = pft%leaf_photo
    end subroutine static_state_fixture
 

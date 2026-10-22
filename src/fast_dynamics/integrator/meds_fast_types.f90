@@ -124,6 +124,18 @@ module meds_fast_types
       !      stomatal control (docs/science/leaf_gas_exchange.md §4.2). column_prepass always passes !
       !      it, since leaf_gas_exchange_batch reads an absent `psi` as no stress. -----------------!
       real(wp),    allocatable :: dmax_psi_leaf(:)                        !< [MPa] <= 0; UNSET_NEGATIVE => seed from soil
+      !----- What the cohorts' structure fixes for the slow step, derived once at the gather      !
+      !      (meds_fast_state::derive_cohort_terms): each cohort's fine roots by soil layer and the !
+      !      patch's, weighted by fine-root carbon; the water network's paths, the intact xylem,   !
+      !      each layer's rhizosphere and the head from the wood to the crown; and the dry heat    !
+      !      capacity of the leaves and of all the wood. ----------------------------------------!
+      real(wp),    allocatable :: root_frac(:,:)          !< (n_soil_layer_max, n) [-] each cohort's fine roots
+      real(wp)                 :: root_frac_patch(n_soil_layer_max) = 0.0_wp   !< [-] the patch's, summing to 1
+      real(wp),    allocatable :: k_xylem(:)              !< [kg/s/MPa per m2 ground] intact xylem conductance
+      real(wp),    allocatable :: g_rhizo(:,:)            !< (n_soil_layer_max, n) rhizosphere conductance per
+                                                          !<   unit soil conductivity [kg/s/MPa per m2, per m/s]
+      real(wp),    allocatable :: crown_head(:)           !< [MPa] hydrostatic head from the wood to the leaves
+      real(wp),    allocatable :: leaf_dry_hcap(:), wood_dry_hcap(:)   !< [J/K per m2 ground]
       !----- The canopy geometry, and the canopy-air top the forcing is moved to with the patch's   !
       !      roughness and displacement (docs/science/forcing.md §8). ------------------------------!
       type(aero_geom_t)        :: geom
@@ -599,6 +611,8 @@ contains
                static%leaf_area(n), static%nplant(n),                                                          &
                static%dbh(n), static%broot(n), static%bleaf(n), static%bsap(n), static%sap_area(n),           &
                static%bwood(n), static%vcmax25(n), static%rd25(n), static%dmax_psi_leaf(n))
+      allocate(static%root_frac(n_soil_layer_max, n), static%k_xylem(n), static%g_rhizo(n_soil_layer_max, n),      &
+               static%crown_head(n), static%leaf_dry_hcap(n), static%wood_dry_hcap(n))
       static%pft = 1_ik
       static%order = [(n - i + 1_ik, i = 1_ik, n)]   ! tallest first, as the gather leaves them
       static%lai = 0.0_wp
@@ -627,6 +641,12 @@ contains
       !----- Unset, not 0: a 0 would read as fully turgid and disable the stomatal stress limb for a  !
       !      caller that forgets to fill it; the sentinel makes column_prepass seed from the soil. ----!
       static%dmax_psi_leaf = UNSET_NEGATIVE
+      static%root_frac = 0.0_wp
+      static%k_xylem = 0.0_wp
+      static%g_rhizo = 0.0_wp
+      static%crown_head = 0.0_wp
+      static%leaf_dry_hcap = 0.0_wp
+      static%wood_dry_hcap = 0.0_wp
    end subroutine alloc_static_state
 
    !----- Grow-only capacity: reallocate only when the arrays hold fewer than n cohorts, else just   !

@@ -63,11 +63,16 @@ program test_column_ark
 
    !----- column setup (test_column_rk45 mirrors it). ----------------------------------------!
    cfg = build_test_config()
+   !----- The soil column, which the fixture's roots are laid out on. -----------------------!
+   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
    !----- On-allometry fixture, a 20 cm tree at 224 stems/ha (LAI ~3): born through the canonical !
    !      path (init_cohort + set_cohort_size) and gathered by the production gather, so every    !
    !      field -- height, leaf area, the wood carbon the wood heat capacity is sized from -- is  !
    !      mutually consistent. -------------------------------------------------------------------!
-   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)
    static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
    static%z_top = 30.0_wp                    ! the forcing's reference height
    !----- The gathered per-PFT aboveground fraction must reach the view the fast loop reads.   !
@@ -75,10 +80,6 @@ program test_column_ark
    !      init_cohort -> cohort block -> the view).                                            !
    call check_close(static%aboveground_frac(1), cfg%pft%allom(1)%aboveground_frac, 1.0e-14_wp,   &
                     'aboveground_frac did not reach the column view from the PFT table')
-   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
    call ensure_output_capacity(out, N, .false.)
    call ensure_forcing_capacity(forcing, N)
    forcing%abs_sw_wood = 0.0_wp ; forcing%abs_lw_wood = 0.0_wp
@@ -108,13 +109,13 @@ program test_column_ark
       real(wp) :: eps_leaf0, eps_wood0
       eps_leaf0 = cfg%pft%leaf_emissivity(static%pft(1)) ; eps_wood0 = cfg%pft%wood_emissivity(static%pft(1))
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
-      call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])   ! the view gathers them
+      call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)   ! the view gathers them
       call reset_state()
       call build_column_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws, fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
-      call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+      call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)
       call reset_state()
    end block
 

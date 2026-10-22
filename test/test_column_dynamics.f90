@@ -97,11 +97,17 @@ program test_column_dynamics
    !----- Full model config (PFT traits for leaf gas exchange) + geometry. ----------------!
    cfg = build_test_config()
 
+   !----- The soil column, which the fixture's roots are laid out on. -----------------------!
+   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
+   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
+   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
+
    !----- Cohort SoA (single cohort): a 20 cm tree at 224 stems/ha, which gives an LAI of ~3.    !
    !      On-allometry fixture: born through the canonical path (init_cohort + set_cohort_size)  !
    !      and gathered by the production gather, so every field -- height, leaf area, the wood   !
    !      carbon the wood heat capacity is sized from -- is mutually consistent. ----------------!
-   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)
    static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
    static%z_top = 30.0_wp                    ! the forcing's reference height
    !----- The hydraulics take the sapwood area in m2; the cohort keeps it in cm2. Passed through  !
@@ -110,11 +116,6 @@ program test_column_dynamics
                    static%sap_area(1) > 0.0_wp .and. static%sap_area(1) <= pio4*0.2_wp**2, &
                    static%sap_area(1))
 
-   !----- Static column config: soil column + respiration parameters. ---------------------!
-   call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
-   call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
-   call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
 
    call ensure_output_capacity(out, N, .false.)

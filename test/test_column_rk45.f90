@@ -22,7 +22,7 @@ program test_column_rk45
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, cas_enthalpy_to_temp,  &
                                            sat_specific_humidity, tissue_temp_to_energy,                         &
                                            tissue_dry_heat_capacity, internal_energy_liquid
-   use meds_fast_state,          only : static_state_fixture
+   use meds_fast_state,          only : static_state_fixture, derive_cohort_terms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,         only : soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
@@ -65,17 +65,18 @@ program test_column_rk45
 
    !----- column setup (mirrors test_column_ark). ---------------------------------------------!
    cfg = build_test_config()
-   !----- On-allometry fixture, a 20 cm tree at 224 stems/ha (LAI ~3): born through the canonical !
-   !      path (init_cohort + set_cohort_size) and gathered by the production gather, so every    !
-   !      field -- height, leaf area, the wood carbon the wood heat capacity is sized from -- is  !
-   !      mutually consistent. -------------------------------------------------------------------!
-   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
-   static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
-   static%z_top = 30.0_wp                    ! the forcing's reference height
+   !----- The soil column, which the fixture's roots are laid out on. -----------------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
    call build_profile_hydraulics(NSL, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,         &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, site%soil_profile)
    call build_profile_thermal(NSL, 3.0_wp, 0.15_wp, 2.0e6_wp, site%soil_profile)
+   !----- On-allometry fixture, a 20 cm tree at 224 stems/ha (LAI ~3): born through the canonical !
+   !      path (init_cohort + set_cohort_size) and gathered by the production gather, so every    !
+   !      field -- height, leaf area, the wood carbon the wood heat capacity is sized from -- is  !
+   !      mutually consistent. -------------------------------------------------------------------!
+   call static_state_fixture(static, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp], site%soil_profile)
+   static%geom%veg_height = 18.0_wp ; static%geom%opencan_frac = 0.0_wp ; static%geom%snowfac = 0.0_wp
+   static%z_top = 30.0_wp                    ! the forcing's reference height
    call ensure_output_capacity(out, N, .false.)
    call ensure_forcing_capacity(forcing, N)
    forcing%abs_sw_wood = 0.0_wp ; forcing%abs_lw_wood = 0.0_wp
@@ -408,6 +409,7 @@ contains
       static%lai(1) = 0.00265_wp ; static%wai(1) = 0.000529_wp ; static%leaf_area(1) = 0.00265_wp
       static%bleaf(1) = 0.0203507_wp ; static%bsap(1) = 0.00212943_wp ; static%broot(1) = 0.0203507_wp
       static%sap_area(1) = 1.0e-4_wp ; static%nplant(1) = 0.01_wp
+      call derive_cohort_terms(static, cfg%pft%hydraulics, site%soil_profile)
 
       call reset_state()
       cfg%time_integrator = INTEG_RK45
@@ -444,6 +446,7 @@ contains
       static%lai(1) = lai0 ; static%wai(1) = wai0 ; static%leaf_area(1) = leaf_area0
       static%bleaf(1) = bleaf0 ; static%bsap(1) = bsap0 ; static%broot(1) = broot0
       static%sap_area(1) = sap_area0 ; static%nplant(1) = nplant0
+      call derive_cohort_terms(static, cfg%pft%hydraulics, site%soil_profile)
    end subroutine test_rk45_tiny_cohort
 
    !----- ROBUSTNESS STRESS: a very dense canopy (LAI=8) under a hard cold snap (dry -20 C air) at      !
