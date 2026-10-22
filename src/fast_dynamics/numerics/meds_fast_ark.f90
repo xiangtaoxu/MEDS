@@ -34,10 +34,8 @@ module meds_fast_ark
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t, column_config_t, column_cohort_t, column_forcing_t,               &
-                               column_budget_t, column_state_t, column_frozen_t, surface_state_t,                 &
-                               surface_tend_t, stage_bflux_t, column_bflux_t, error_control_t, mask_is_full,      &
-                               ark_stages_t, fast_workspace_t
-   use meds_fast_time_derivs, only : surface_derivs
+                               column_budget_t, column_state_t, column_frozen_t, stage_bflux_t, column_bflux_t,   &
+                               error_control_t, mask_is_full, ark_stages_t, fast_workspace_t
    use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero,             &
                                      bflux_add, bflux_bweight, clamp_cas, soil_water_store, soil_energy_store,    &
                                      plant_water_store, canopy_film_store, deposit_condensate,                    &
@@ -46,7 +44,7 @@ module meds_fast_ark
    use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
    use meds_diag_vars,       only : CO_TRANSP
-   use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp
+   use meds_therm_lib, only : internal_energy_liquid
    use meds_budget_check, only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR, BUDGET_CO2_RATE_FLOOR
    implicit none
    private
@@ -284,10 +282,8 @@ contains
 
       type(column_frozen_t)  :: frozen
       type(column_state_t)   :: y, y_out, ycur, ytmp, yerr
-      type(surface_state_t)  :: y_stage
-      type(surface_tend_t)   :: surf_tend
       type(column_bflux_t)   :: acc, bfsub
-      real(wp)    :: tg, fl, dt0, cas_mass_capacity, cas_molar_capacity, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, &
+      real(wp)    :: dt0, cas_mass_capacity, cas_molar_capacity, enth0, shv0, co20, enth1, shv1, co21, e_soil0, e_soil1, &
            w_soil0, w_soil1
       real(wp)    :: e_pond0, e_pond1   !< [J/m2] pond enthalpy, start and end of the step
       real(wp)    :: w_plant0, w_plant1
@@ -410,10 +406,6 @@ contains
       end if
       call diagnose_soil_temps(y_out, col_config%soil_thermal%soil_dry_heat_capacity, nsl, biophys%soil_energy%soil_temp, &
             biophys%soil_energy%soil_fliq)
-      call internal_energy_to_temp(y_out%soil_energy(1), y_out%theta(1)*rho_h2o,                             &
-                        col_config%soil_thermal%soil_dry_heat_capacity(1), tg, fl)
-      y_stage%cas_enthalpy = y_out%cas_enthalpy ; y_stage%cas_shv = y_out%cas_shv ; y_stage%cas_co2 = y_out%cas_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, tg, n, surf_tend)
       !----- The tissue heat store is already inside the CAS solve: surface_derivs relaxes each tissue     !
       !      from frozen%tissue%t_leaf0/t_wood0 against leaf_hcap_per_dt/wood_hcap_per_dt = cap/dt_fast    !
       !      (docs/science/vegetation_energy_dynamics.md §One formulation), so nothing is corrected        !
@@ -429,13 +421,8 @@ contains
       !      the ledger are the same number and the whole-column energy closes to machine precision.  !
       !      Taking the last stage instead leaves ~3.9e4 J unaccounted per step -- 4e-4 relative,     !
       !      against a 1e-6 tolerance -- because the CAS moves across the stages. --------------------!
-      if (allocated(acc%tissue_leaf_int)) then
-         t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
-         t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast
-      else
-         t_leaf_avg(1:n) = surf_tend%leaf_temp(1:n)
-         t_wood_avg(1:n) = surf_tend%wood_temp(1:n)
-      end if
+      t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
+      t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast
       call commit_tissue_energy(frozen%tissue, col_cohort%nplant, col_config%mask%veg_energy,                  &
                                 col_config%mask%hydraulics, dt_fast, t_leaf_avg, t_wood_avg, n, biophys,      &
                                 tissue_store0, tissue_store1)

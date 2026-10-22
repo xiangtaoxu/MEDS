@@ -67,7 +67,7 @@ contains
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
-      real(wp)    :: co21, enth_unused, shv_unused
+      real(wp)    :: co21
       integer(ik) :: np, nfeval
       logical     :: ok
 
@@ -103,20 +103,16 @@ contains
          y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
          call surface_derivs(y_stage, cas_stage, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
                              t_ground, n, surf_tend)
-         call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, cas_molar_capacity, &
-                             g_atm_heat, g_atm_vapour, g_atm_co2, &
-                             dt, enth1, shv1, co21)
       else
-         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, enth1, &
-                                   shv1, surf_tend,   &
-                                   nfeval, ok)
+         call newton_surface_solve(y, cas_stage, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
+                                   surf_tend, nfeval, ok)
       end if
+      !----- One box commit for all three twins, in flux form, so the budgets close for any surf_tend: !
+      !      CO2 rides the same box as enthalpy and humidity. -----------------------------------------!
+      call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, cas_molar_capacity, &
+                          g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth1, shv1, co21)
       y_out%cas_enthalpy = enth1
       y_out%cas_shv      = shv1
-      if (np > 1_ik) call cas_box_commit(y%cas_enthalpy, y%cas_shv, y%cas_co2, surf_tend, cas_stage, cas_mass_capacity, &
-          cas_molar_capacity,     &
-                                         g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth_unused, shv_unused, &
-                                              co21)   ! CO2 rides the same box
       y_out%cas_co2      = co21
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
@@ -208,20 +204,18 @@ contains
    ! quadratically (~1 step) and stays robust near saturation, where a leaf<->CAS Picard iteration      !
    ! does not. Numerical Jacobian (forward-difference surface_derivs, jac_surface) -- captures the      !
    ! strong VPD self-limiting d src_vap/dq with no derivation risk. Singular-Jacobian guard + line      !
-   ! search + eval cap, and no supersaturation clamp (below); never error stops (GPU-safe). Commits     !
-   ! the CAS via the FLUX form so budgets close for ANY surf_tend.                                      !
+   ! search + eval cap, and no supersaturation clamp (below); never error stops (GPU-safe). Returns     !
+   ! the surface tendencies at the solution; column_be_stage commits the box from them in flux form.    !
    !---------------------------------------------------------------------------------------!
-   subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, enth1, shv1, &
+   subroutine newton_surface_solve(y, cas, frozen, t_ground, n, dt, cas_mass_capacity, g_atm_heat, g_atm_vapour, &
                                    surf_tend, nfeval, ok)
       type(column_state_t),   intent(in)    :: y
       type(cas_boundary_t),   intent(in)    :: cas      !< the stage's CAS boundary (its own conductances)
       type(column_frozen_t),  intent(in)    :: frozen   !< tissue / film / ground / snow for surface_derivs
       real(wp),               intent(in)    :: t_ground
-      real(wp) :: co2_unused
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt, cas_mass_capacity, g_atm_heat, g_atm_vapour
-      real(wp),               intent(out)   :: enth1, shv1
-      type(surface_tend_t),   intent(inout) :: surf_tend   !< filled in place by every evaluation
+      type(surface_tend_t),   intent(inout) :: surf_tend   !< the evaluation at the solution, on return
       integer(ik),            intent(out)   :: nfeval
       logical,                intent(out)   :: ok
 
@@ -275,13 +269,8 @@ contains
          Hk = Ht ; qk = qt ; R_H = RHt ; R_q = Rqt
          if (nfeval >= FEVAL_CAP) exit
       end do
-
-      !----- authoritative final eval + flux-form commit (conservation holds for ANY surf_tend). -----------!
-      y_stage%cas_enthalpy = Hk ; y_stage%cas_shv = qk
-      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
-         t_ground, n, surf_tend) ; nfeval = nfeval + 1_ik
-      call cas_box_commit(H0, q0, 0.0_wp, surf_tend, cas, cas_mass_capacity, 1.0_wp, g_atm_heat, g_atm_vapour, 0.0_wp, dt, enth1, &
-                          shv1, co2_unused)
+      !----- surf_tend holds the last evaluation, which is at (Hk, qk): the start when the first test  !
+      !      passes, else the accepted line-search trial. The caller commits the box from it. --------!
    end subroutine newton_surface_solve
 
    !---------------------------------------------------------------------------------------!
