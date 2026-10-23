@@ -429,6 +429,8 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 | C3 / C4 demand | `assimilation_demand_c3`, `assimilation_demand_c4` |
 | electron transport $J$ | `electron_transport_j` |
 | Leuning / Medlyn / Katul-$\lambda$ | `stomata_gs_leuning`, `stomata_gs_medlyn`, `katul_lambda` |
-| coupled solve | `solve_leaf_gas_exchange` |
+| the two water-stress controls, eqs. (9)–(10) | `capacity_stress_factor` ($`\beta_{ns}`$), `stomatal_stress_factor` ($`\beta_s`$) |
+| coupled solve | `solve_leaf_gas_exchange`; over n leaves, `leaf_gas_exchange_batch` |
+| a cohort's incident PAR per unit of its own leaf area | `cohort_leaf_par` |
 | residuals | `ci_residual` → `residual_explicit_gs`, `residual_optimality` |
 | root finder | `root_ci` (private), on `meds_numerics`' `root_bracket_t`, `regula_falsi_point` and `illinois_narrow` |
