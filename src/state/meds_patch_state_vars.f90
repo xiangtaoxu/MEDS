@@ -187,6 +187,9 @@ module meds_patch_state_vars
       !----- Per patch, so a patch's first sub-step does not depend on which patch ran before    !
       !      it, or on the thread schedule (docs/science/numerical_scheme.md §3). ---------------!
       real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop sub-step
+      !----- The patch's wall time in the last fast window, which orders the next window's patch   !
+      !      loop costliest first. Scheduling only: no result reads it, and it is never restarted. --!
+      real(wp),    allocatable :: fast_cost(:)         !< [s]
       !==========================================================================================!
       ! 11. OUTPUT ACCUMULATORS (meds_diag_vars; never restarted)                                !
       !==========================================================================================!
@@ -367,8 +370,9 @@ contains
       !----- 9. Within-step accumulators --------------------------------------------------------!
       allocate(patch%decomp_xi(cap), patch%litter_in(cap))       ! default-initialised by its type
       !----- 10. Solver memory ------------------------------------------------------------------!
-      allocate(patch%adapt_dt_last(cap))
+      allocate(patch%adapt_dt_last(cap), patch%fast_cost(cap))
       patch%adapt_dt_last = 0.0_wp
+      patch%fast_cost     = 0.0_wp
    end subroutine alloc_patch_block
 
    !----- Make room for at least `need` patches, growing 1.5x; a no-op when there is room  !
@@ -415,6 +419,7 @@ contains
       tmp%litter_in(1:m) = patch%litter_in(1:m)
       !----- 10. Solver memory ------------------------------------------------------------------!
       tmp%adapt_dt_last(1:m) = patch%adapt_dt_last(1:m)
+      tmp%fast_cost(1:m)     = patch%fast_cost(1:m)
       patch%n = tmp%n
       patch%cap = tmp%cap
       !----- 1. Identity and area ---------------------------------------------------------------!
@@ -446,6 +451,7 @@ contains
       call move_alloc(tmp%litter_in, patch%litter_in)
       !----- 10. Solver memory ------------------------------------------------------------------!
       call move_alloc(tmp%adapt_dt_last, patch%adapt_dt_last)
+      call move_alloc(tmp%fast_cost, patch%fast_cost)
    end subroutine expand_patch_block
 
    !----- Put old patch perm(k) at position k, k = 1..m, in every per-patch array and the  !
@@ -483,6 +489,7 @@ contains
       patch%litter_in(1:m) = patch%litter_in(perm(1:m))
       !----- 10. Solver memory ------------------------------------------------------------------!
       patch%adapt_dt_last(1:m) = patch%adapt_dt_last(perm(1:m))
+      patch%fast_cost(1:m)     = patch%fast_cost(perm(1:m))
       !----- 11. Output accumulators ------------------------------------------------------------!
       call reorder_patch_diag(patch%diag, perm, m)
       patch%n = m
@@ -499,7 +506,8 @@ contains
                                             patch%cas, patch%snow, patch%soil_water, patch%soil_energy,        &
                                             patch%soil_carbon, patch%shed_water_rate, patch%shed_water_enth,   &
                                             patch%slow_co2_rate,                                               &
-                                            patch%decomp_xi, patch%litter_in, patch%adapt_dt_last)
+                                            patch%decomp_xi, patch%litter_in, patch%adapt_dt_last,      &
+                                            patch%fast_cost)
    end subroutine free_patch_block
 
    !=======================================================================================!

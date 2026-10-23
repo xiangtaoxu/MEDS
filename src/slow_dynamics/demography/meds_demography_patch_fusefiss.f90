@@ -240,6 +240,8 @@ contains
          !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
          !      the result is DETERMINISTIC and order-independent. ------------------------------------!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
+         !----- fast_cost orders the fast loop only: the fused patch carries both patches' work. --------!
+         patch%fast_cost(recp)       = patch%fast_cost(recp) + patch%fast_cost(donp)
          !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
          call blend_patch_diag(patch%diag, recp, donp, ar, ad)
@@ -478,6 +480,7 @@ contains
             patch%shed_water_enth(newp) = 0.0_wp
             patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
             patch%adapt_dt_last(newp)   = 0.0_wp   ! a fresh gap cold-starts the controller
+            patch%fast_cost(newp)       = 0.0_wp   ! and is not yet measured
             patch%n = newp
 
             !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !

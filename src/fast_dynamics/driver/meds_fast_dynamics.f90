@@ -8,7 +8,8 @@
 ! are folded in patch order after the loop.                                                !
 !==========================================================================================!
 module meds_fast_dynamics
-   use meds_kinds,              only : wp, ik
+   use meds_kinds,              only : wp, ik, lk
+   use meds_numerics,           only : ascending_order
    use meds_constants,          only : latent_heat_vap
    use meds_config,             only : meds_config_t
    use meds_budget_check,       only : budget_t, budget_merge
@@ -114,7 +115,10 @@ contains
       !=========================================================================================!
       type(fast_step_data_t), allocatable :: step_data(:)
       real(wp)    :: area
-      integer(ik) :: ip, isub, npatch, ncoh_max, nsub, n_thread, ith, is_p, k
+      integer(ik) :: ip, isub, npatch, ncoh_max, nsub, n_thread, ith, is_p, k, iv
+      integer(ik), allocatable :: visit(:)          !< the patch loop's order, costliest first
+      real(wp),    allocatable :: neg_cost(:)
+      integer(lk) :: tick0, tick1, tick_rate
       logical     :: do_forcing, do_fast
 
       !----- Live forcing drives the sub-steps when it is on and a source, cursor and step time are   !
@@ -162,6 +166,19 @@ contains
          call ensure_step_data(step_data(ith), ncoh_max, poly%cohort%diag%active)
       end do
 
+      !----- The costliest patches first, by each one's wall time in the last window, so the last     !
+      !      patches the threads pick up are short ones. The order decides only which thread runs a  !
+      !      patch and when, so every result is the same. Before any measurement (a start or a       !
+      !      restart) the order is the patches' own. ----------------------------------------------!
+      allocate(visit(npatch), neg_cost(npatch))
+      visit = [(iv, iv = 1_ik, npatch)]
+      if (npatch > 1_ik) then
+         if (maxval(poly%patch%fast_cost(1:npatch)) > 0.0_wp) then
+            neg_cost = -poly%patch%fast_cost(1:npatch)
+            call ascending_order(neg_cost, npatch, visit)
+         end if
+      end if
+
       !=========================================================================================!
       !  The parallel patch loop (docs/science/numerical_scheme.md §6a): patches are            !
       !  independent within a dt_fast. schedule(dynamic, 1), because the adaptive march makes   !
@@ -169,8 +186,10 @@ contains
       !  step data.                                                                             !
       !=========================================================================================!
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
-      !$omp    private(ip, ith, isub, is_p, area, k)
-      do ip = 1_ik, npatch
+      !$omp    private(iv, ip, ith, isub, is_p, area, k, tick0, tick1, tick_rate)
+      do iv = 1_ik, npatch
+         ip = visit(iv)
+         call system_clock(tick0, tick_rate)
          !----- This thread's step data; without OpenMP the `!$` line is a comment: slot 1. --------!
          ith = 1_ik
          !$ ith = int(omp_get_thread_num(), ik) + 1_ik
@@ -212,6 +231,8 @@ contains
             red_nfail(ip)         = ledgers%whole_energy%n_fail + ledgers%whole_water%n_fail
          end associate
          end associate
+         call system_clock(tick1)
+         poly%patch%fast_cost(ip) = real(tick1 - tick0, wp) / real(max(tick_rate, 1_lk), wp)
       end do
       !$omp end parallel do
 
