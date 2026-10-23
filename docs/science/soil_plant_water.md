@@ -127,14 +127,17 @@ diffusivity, are set once per step (`ground_evaporation_setup`); an evaluation c
 with the top layer's water.
 
 **Error and sub-steps.** A sub-step's error is implicit Euler's local error, half the change in the
-inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last
-factorisation). The filter leaves slow modes alone and divides a stiff, already-settled exchange's
-error by its stiffness squared — what step doubling would measure, at a third of the cost. Each
-store's error is weighed against $`\text{atol}\cdot\text{scale} + \text{rtol}\cdot|W|`$: `[fast]`
-`water_atol` and `rtol`, read as water content for soil layers and the pond and as relative water content
-for tissues. A sub-step that fails Newton is cut to a quarter; one over tolerance is cut by the usual
-order-one controller, which also grows the next one. Every step starts with one sub-step of
-`dt_fast`; most need no more (BCI: 1.07 sub-steps and 3.5 Newton iterations per step on average).
+inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last Newton
+iteration's factorisation, one step behind the solution: the filter needs the stiff exchanges' scale,
+not the exact matrix, and a factorisation per sub-step is saved). The filter leaves slow modes alone
+and divides a stiff, already-settled exchange's error by its stiffness squared — what step doubling
+would measure, at a third of the cost. A sub-step whose start already balances takes no Newton
+iteration and has no error. Each store's error is weighed against
+$`\text{atol}\cdot\text{scale} + \text{rtol}\cdot|W|`$: `[fast]` `water_atol` and `rtol`, read as water
+content for soil layers and the pond and as relative water content for tissues. A sub-step that fails
+Newton is cut to a quarter; one over tolerance is cut by the usual order-one controller, which also
+grows the next one. Every step starts with one sub-step of `dt_fast`; most need no more (BCI: 1.07
+sub-steps and 3.5 Newton iterations per step on average).
 
 **Conservation.** Each store's water is advanced by the flows themselves, $`W \mathrel{+}= h\,F`$, so
 every kilogram that leaves one store arrives in another or crosses a boundary, whatever Newton's

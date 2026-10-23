@@ -449,11 +449,16 @@ contains
             h = max(h * NEWTON_FAIL_CUT, h_min)
             cycle
          end if
-         if (converged) then
+         !----- A sub-step whose start already balanced took no iteration: it ends where it began, its  !
+         !      inflows unchanged, so its error is zero, and it has no factorisation of its own to      !
+         !      filter with. ---------------------------------------------------------------------------!
+         if (.not. converged) then
+            err = huge(1.0_wp)
+         else if (iters == 0_ik) then
+            err = 0.0_wp
+         else
             err = water_substep_error(water%sys, h, water%ev(water%i_start), water%ev(i_sol), scale_soil,       &
                                       scale_coh, rtol, atol)
-         else
-            err = huge(1.0_wp)
          end if
          if (err > 1.0_wp .and. .not. last) then
             nreject = nreject + 1_ik
@@ -544,9 +549,10 @@ contains
          worst = worst_try
          i_sol = i_try
       end do
-      !----- Factor the Newton matrix at the solution: the error estimate solves with it. -----------!
-      call water_newton_factor(water%sys, h, water%ev(i_sol), ok)
-      converged = ok .and. worst <= 1.0_wp
+      !----- The error estimate solves with the last iteration's factorisation, one Newton step       !
+      !      behind the solution, not a fresh one at it: its filter needs the stiff exchanges' scale, !
+      !      not the exact matrix, and a factorisation per sub-step is saved. ------------------------!
+      converged = worst <= 1.0_wp
    end subroutine water_newton_substep
 
    !----- One store's water-balance residual [kg/m2/s]: (W(tau) - W_start)/h - inflow. ------------!
@@ -640,12 +646,14 @@ contains
       call arrowhead_factor(sys, add_soil, add_coh, ok)
    end subroutine water_newton_factor
 
-   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's   !
-   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that   !
-   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each    !
-   !      store is weighed against atol of its scale plus rtol of its water. --------------------!
+   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's  !
+   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that  !
+   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each   !
+   !      store is weighed against atol of its scale plus rtol of its water. The Newton matrix is  !
+   !      the last iteration's factorisation, with the coupling rows of the solution the last      !
+   !      evaluation wrote: close to the matrix at the end, which is all a filter needs. ----------!
    pure real(wp) function water_substep_error(sys, h, ev0, ev1, scale_soil, scale_coh, rtol, atol) result(err)
-      type(arrowhead_system_t), intent(in) :: sys        !< the Newton matrix, factored at the sub-step's end
+      type(arrowhead_system_t), intent(in) :: sys        !< the Newton matrix, factored at the last iteration
       real(wp),                 intent(in) :: h
       type(water_tend_t),       intent(in) :: ev0, ev1   !< the network at the sub-step's start and end
       real(wp),                 intent(in) :: scale_soil(:), scale_coh(:,:), rtol, atol
