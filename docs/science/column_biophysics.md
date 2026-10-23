@@ -66,7 +66,7 @@ schemes. The canopy radiation transfer runs before it, in the fast-loop driver
 
 **One coefficient is deliberately excluded from the freeze.** The CAS↔atmosphere conductances are
 re-solved at every integrator stage, because the canopy air is a low-capacity node
-(`cas_mass_capacity·cp ≈ 2.4×10⁴ J m⁻² K⁻¹`) whose own ventilation depends on its own temperature through
+(`cas_mass_capacity·cp` ≈ 2.4×10⁴ J m⁻² K⁻¹ for a 20 m deep canopy air) whose own ventilation depends on its own temperature through
 atmospheric stability. Freezing that one feedback across a step would feed a lagged canopy-air
 temperature back into its own balance and drive a sustained period-2 oscillation (~8 K peak-to-peak
 at 900 s) that **no conservation ledger detects**. See numerical_scheme §2 and canopy_aerodynamics §2.

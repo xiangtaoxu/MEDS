@@ -36,8 +36,8 @@ contains
       integer(ik),            intent(in)  :: n
       real(wp),               intent(out) :: qwf(0:)   !< [W/m2] face 0 = top ... face n = bottom
       integer(ik) :: k
-      !----- Top face: infiltration (flow down) carries the pond's water at t_water_top; flow up   !
-      !      draws from layer 1. -----------------------------------------------------------------!
+      !----- Top face: infiltration carries the pond's water at t_water_top. Exfiltration leaves   !
+      !      through root_heat_sink, so the face never flows up; the upward branch keeps the rule. !
       if (forcing%w_flux_top <= 0.0_wp) then
          qwf(0) = forcing%w_flux_top * rho_h2o * internal_energy_liquid(forcing%t_water_top)
       else

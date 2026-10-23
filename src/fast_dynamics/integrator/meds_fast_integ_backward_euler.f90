@@ -58,7 +58,7 @@ module meds_fast_integ_backward_euler
    real(wp),    parameter :: NEWTON_FAIL_CUT = 0.25_wp
    real(wp),    parameter :: H_MIN_SHARE = 1.0e-5_wp
    integer(ik), parameter :: TRIALS_MAX = 2000_ik
-   !----- [kg/m2] Below this a pond holds no water to carry a temperature (as meds_soil_water). ---!
+   !----- [kg/m2] Below this a pond holds no water to carry a temperature. ------------------------!
    real(wp),    parameter :: POND_TINY = 1.0e-9_wp
 
 contains

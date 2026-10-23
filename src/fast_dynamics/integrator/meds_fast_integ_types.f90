@@ -464,8 +464,8 @@ module meds_fast_integ_types
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type march_state_t
 
-   !----- Soil water over this dt_fast, from the soil-plant water network's step (water_step, run in !
-   !      build_frozen): its boundary flows, end-of-step stores, the temperatures that value   !
+   !----- Soil water over this dt_fast, from the soil-plant water network's step (water_step, run by !
+   !      fast_step after build_frozen): its boundary flows, end-of-step stores, the temperatures that value !
    !      the water crossing each boundary, and its interior faces. Every scheme commits its theta and !
    !      advects soil enthalpy on these same faces (docs/science/numerical_scheme.md §5b). ----------!
    type :: soil_hydrology_t
@@ -522,7 +522,7 @@ module meds_fast_integ_types
       logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + t_film_valuation)
       real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction
       real(wp) :: melt_rate  = 0.0_wp    !< [kg/m2/s]  meltwater to the ponding store (see t_melt)
-      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     rainfall enthalpy that entered the pack (boundary in)
+      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     precipitation (rain and snow) enthalpy that entered the pack
       real(wp) :: swe0       = 0.0_wp    !< [kg/m2]    pack mass BEFORE the stage (ledger store term)
       real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
       real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] enthalpy the meltwater carries from the pack to the pond

@@ -27,7 +27,7 @@ module meds_canopy_aerodynamics
    real(wp), parameter :: CONVECTIVE_BETA   = 1.0_wp      !< [-]
    real(wp), parameter :: MIXED_LAYER_DEPTH = 1000.0_wp   !< [m]
    !----- The under-canopy stability parameter of the dense-canopy ground conductance (CLM4's, whose  !
-   !      cs_dense and gamma_g it uses) is capped at 10 there; above it the conductance is ~0 anyway. -!
+   !      cs_dense and gamma_g it uses) is capped at 10, where its factor 1/(1 + gamma_g stab) is 1/6. -!
    real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp
    private
 
@@ -208,7 +208,7 @@ contains
             um = sqrt(uref * uref + wc * wc)
          end if
       end do
-      !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!
+      !----- Final ustar/temp1 at the last sweep's zeta (a fixed count of sweeps, not a converged root). -!
       ustar = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
       temp1 = von_karman / d_heat(zeta, zldis, z0m, cfg)
       obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral

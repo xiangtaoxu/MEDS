@@ -91,7 +91,8 @@ q_{pond} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{h-\psi_1}{-z_1}\Big) \qqu
 from the pond, treated as a saturated layer as thick as the top one, to the top node at depth $`z_1`$:
 eq. (3) with $w = 1/2$, $h$ the pond's head and $`\psi_1`$ here in metres. It is solved implicitly and is
 two-way: a top layer pushed past saturation exfiltrates to the pond. The pond holds up to
-`w_pond_max` (its first millimetre is a depression store that fills before any head builds); above
+`w_pond_max` (over its first millimetre, the depression store, its head grows as the square root of
+what it holds: [soil_plant_water](soil_plant_water.md) §2); above
 that, water runs off at the pond's temperature. The top layer's own $`K(\theta_1)`$ alone would seal a dried surface: near
 residual water content it is about $10^{-15}$ of $`K_{sat}`$ for a van Genuchten loam, so after a dry
 season the pond overflows and the soil never re-wets. With the geometric mean the capacity at that
@@ -234,7 +235,8 @@ on the ED_ERA5land grid build it the same way.
     run);
   - sealed, drainage at $f = 0$ (bedrock);
   - aquifer.
-- **The thermal anchor.** The Dirichlet bottom conducts to the map's `deep_temp`, the cell's mean air
+- **The thermal anchor.** With `thermal_bottom_bc = "dirichlet"`, the bottom conducts to the map's
+  `deep_temp`, the cell's mean air
   temperature plus 1 K, at $d/\sqrt2$ below the bottom node, $d = 1.973$ m (§ The bottom thermal
   boundary).
 
@@ -380,7 +382,9 @@ difference of large numbers, and a face valued at another temperature would swam
 ## Canopy interception
 
 Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
-`meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction, each
+`meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction
+$`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`intercept_alpha`, `intercept_k`) and a wetted fraction
+$`\sigma_w = (W/W_{max})^{2/3}`$, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
 infiltration boundary sees. A film left above its capacity, when a cohort sheds leaf area under a full
 film, drips the excess to the layer below, so the water stays in the column. A cohort holds its films
@@ -393,8 +397,8 @@ In the fast loop the cascade runs once per `dt_fast`, at the step's start, as ca
 evaporation is the energy stages' own flux. Each cohort holds one combined leaf-and-wood bucket, filled
 tallest first and shared between leaf and wood by capacity, and the update reaches both integrators as
 a constant rate whose Euler step over `dt_fast` reproduces it. Under a snowpack nothing is intercepted:
-the pack takes the rain and the snow, and snowfall below the new-snow threshold forms no pack and
-passes the canopy as liquid throughfall. The films are clamped at their boundary after the march, not
+the pack takes the rain and the snow. Snowfall below the new-snow threshold forms no pack and joins
+the rain as liquid: the films intercept it, and the rest reaches the pond. The films are clamped at their boundary after the march, not
 inside it. A film evaporates at a conductance frozen at the step's start and only roughly rescaled by
 what it holds, so it can overdraw below zero; left negative, it would create water in the next step's
 interception, so it is floored at zero and the shortfall is booked as a negative outflow, while water
@@ -416,7 +420,7 @@ and passes the resulting flux into the CO₂ source.
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Soil water | `soil_water_state_t` | `theta(:)`, `w_surface` | `psi_soil` |
+| Soil water | `soil_water_state_t` | `theta(:)`, `w_surface`, `w_surface_energy` | — |
 | Soil thermal | `soil_energy_state_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
 
 ## Code map

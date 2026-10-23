@@ -1,24 +1,24 @@
 # Canopy radiative transfer
 
 How MEDS partitions incident shortwave and longwave radiation among the cohorts of a patch and the
-ground. It is a faithful reimplementation of ED2's **two-stream** multi-layer canopy solver (the
-`icanrad=2` scheme in `../ED2/ED/src/dynamics/twostream_rad.f90`; Liou 2002 ch.6, Longo et al. 2019),
-generalized to run **one solver over every band** — the default set is VIS, NIR, and thermal LW. The
+ground. It is built on ED2's **two-stream** multi-layer canopy optics (the `icanrad=2` scheme in
+`../ED2/ED/src/dynamics/twostream_rad.f90`; Liou 2002 ch.6, Longo et al. 2019), solved by the adding
+method of §3 and generalized to run **one solver over every band** — the default set is VIS, NIR, and thermal LW. The
 returned per-cohort **absorbed leaf VIS** is the field the leaf-photosynthesis kernel consumes as PAR,
 and the absorbed leaf+wood SW/LW drive the leaf/wood energy balance. The library is state-free and
 device-eligible: it takes plain arrays and value types, never a `polygon_t`.
 
-Symbols: $\mu = \cos\theta_{sun}$ (solar-zenith cosine, floored $>0$); $\rho, \tau$ = leaf/wood
+Symbols: $\mu = \cos\theta_{sun}$ (solar-zenith cosine; the extinction $k$ guards $\mu\to0$); $\rho, \tau$ = leaf/wood
 reflectance and transmittance per band; $\omega = \rho+\tau$ = single-scatter albedo; $g$ = leaf-angle
 scattering asymmetry; the diffuse **backscatter** $\beta$ and the direct-beam **upscatter** $\beta_0$;
 $k$ = direct-beam extinction; and the effective (clumping-corrected) area indices ELAI, EWAI. All
 fluxes are **absolute W m⁻²** — there is no ED2-style normalize-to-unit-incidence.
 
 The pipeline has four stages, top to bottom: (1) the leaf-angle distribution and its integrals
-(`meds_optics_lib`, leaf-angle block); (2) the per-PFT, $\mu$-independent scattering table
-(`meds_optics_lib`, canopy block); (3) the per-cohort optics blend + solar geometry
-(`blend_cohort_optics`); and (4) the single-band adding solver — all three assembled, solved, and
-sealed inside the public seam `meds_canopy_radiation`. The pure optical-property kernels live in the
+(`meds_optics_lib`); (2) the per-PFT, $\mu$-independent scattering table, built once at load
+(`derive_rad_optics`, `meds_pft_derive`); (3) the per-cohort optics blend + solar geometry
+(`blend_cohort_optics`); and (4) the single-band adding solver. Stages 3 and 4 run inside
+`canopy_radiation` (`meds_canopy_radiation`). The pure optical-property kernels live in the
 shared library `meds_optics_lib` (`src/share/functions/`); the RT assembly, the two-stream solver,
 and the seam live together in `meds_canopy_radiation`.
 
@@ -60,8 +60,8 @@ k \;=\; \frac{G(\mu)}{\mu} \qquad(3)
 ```
 
 `gfun_direct` returns $G(\mu)$; the direct-beam extinction coefficient is $`k=G(\mu)/\mu`$. Because
-$G$ is band-independent, `canopy_radiation` evaluates it **once per cohort** and reuses it for every
-beam band.
+$G$ is band-independent, `canopy_radiation` evaluates it **once per PFT present** and reuses it for
+every cohort of that PFT and every beam band.
 
 ## 2. Single-scatter albedo, asymmetry, and the scattering coefficients
 
@@ -109,8 +109,11 @@ weighted by absorptivity $1-\omega$ and clumped area:
 cohort layers, ordered **BOTTOM (index 1) to TOP (index n)** with a virtual sky interface above.
 Shortwave bands carry a direct beam and no emission; the thermal band carries emission and no beam;
 the diffuse multiple-scattering operator is identical across bands — only the source terms and boundary
-conditions differ. It uses the **adding / layer-recursion** method: an $O(N)$, unconditionally stable
-direct solve of the block-tridiagonal two-stream system (the crown fraction is $\mathrm{cai}=1$).
+conditions differ. It uses the **adding / layer-recursion** method: two $O(N)$ sweeps, bottom-up for
+the reflectance and upward source of the stack below each layer, then top-down for the fluxes; each
+layer covers the ground (crown area index 1). A layer's diffuse operator is the exact solution for a
+homogeneous layer, and the beam a layer scatters enters as a source at its two faces, split by
+$\beta_0$, rather than through the layer's depth.
 
 **Per-layer diffuse reflectance/transmittance.** For a homogeneous layer of effective area index
 ETAI, `layer_rt` gives the classical Stokes two-stream coefficients with backward/forward diffuse

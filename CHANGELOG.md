@@ -97,7 +97,8 @@ build type now builds dev (Release) instead of Debug (#489). The snow pack excha
 air inside the march; the surface layer's convective velocity follows each sweep's buoyancy flux, as
 in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10⁻² MPa wide; RK45 takes
 `rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
-to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492).
+to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492). The fast
+kernels' comments and science pages say what the code computes, with no change to any result (#495).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -682,6 +683,14 @@ to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 
 
 ### Changed
 
+- **The fast kernels' comments and science pages say what the code computes** (#495). Sixteen comments
+  stated something the code does not do and are fixed, among them the surface layer's "converged" last
+  sweep, the leaf PAR's `leaf_absorptance`, stem and root respiration's response (always peaked) and the
+  soil curves' floors. The science pages now say that the two-stream is an adding method whose scattered
+  beam enters at a layer's faces, that the Kirchhoff mean is exact only without gravity, that the uptake
+  ramp is 10⁻² MPa wide, that λ is in µmol CO₂ per mol H₂O, that eq. (8)'s leaf water carries
+  `n_plant`, that the pond stays liquid, that every cohort's leaves take their water from their own curve,
+  and where four corners remain in the curves. No code changed.
 - **The snow pack exchanges with the canopy air inside the march** (#492). The pack's sensible, latent
   and vapour exchange and its conduction to the soil top were set once before the march, against the
   step's start; the march now solves the pack's surface balance at every evaluation against that

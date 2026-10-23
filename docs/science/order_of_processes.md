@@ -119,7 +119,8 @@ It then freezes, for the day, its soil-carbon pools and the tissue water the slo
 2. **Radiation.** The canopy radiation transfer splits absorbed shortwave and longwave among the
    cohorts and the ground ([canopy_radiation_transfer](canopy_radiation_transfer.md)), with forcing on
    or off. It runs in the driver (`apply_rt_forcing`), before the column step.
-3. **The aerodynamic environment** above the canopy ([canopy_aerodynamics](canopy_aerodynamics.md)).
+3. **The aerodynamic environment** above the canopy ([canopy_aerodynamics](canopy_aerodynamics.md)),
+   computed first in the column step's pre-pass (`build_frozen`, item 4).
 4. **The coupled column step** (`fast_step`, [column_biophysics](column_biophysics.md)).
    - Its pre-pass computes leaf gas exchange (GPP, stomatal conductance, leaf respiration), stem and
      root respiration, the canopy-air capacities, the aerodynamics and the plant-hydraulics solve.

@@ -129,8 +129,9 @@ Both routes end in the same code, and that is the point: the temperature respons
 in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift
 into three near-copies of an Arrhenius — a change to the deactivation normalisation or to the clamped
 `safe_exp` reaches every tissue at once. Stem and root take the leaf's $`E_a, H_d, \Delta S`$ too,
-`[leaf_physiology]`'s `ea_rd`, `hd_rd` and `ds_rd` (46390 / 200000 / 490 in the reference config): the three
-tissues share one thermal shape, set in one place.
+`[leaf_physiology]`'s `ea_rd`, `hd_rd` and `ds_rd` (46390 / 200000 / 490 in the reference config), set in
+one place. Stem and root always use them in the peaked form, while leaf $`R_d`$ takes
+`temp_response_form`, so the three tissues share one thermal shape under the default `peaked`.
 
 ## 5. Growth respiration on realized growth
 
@@ -219,5 +220,5 @@ See `docs/ROADMAP.md` §7 for the open items.
 | daily maintenance sum handed to the allocator | `meds_vegetation_dynamics`: `cohort_carbon_demand` (`resp_maint`) |
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
 | growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_integ_frozen` |
-| per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required) |
+| per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required but `stem_resp_sapwood25`, §2) |
 | tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |

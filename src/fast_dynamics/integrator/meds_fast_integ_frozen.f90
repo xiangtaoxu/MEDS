@@ -433,12 +433,13 @@ contains
    end subroutine canopy_leaf_gas_exchange
 
    !---------------------------------------------------------------------------------------!
-   ! A cohort's leaf PAR: the PAR its leaves absorb per unit of its OWN leaf area. The guard only   !
-   ! keeps a leafless cohort, which absorbs nothing, at 0; a floor on the leaf area would spread a  !
-   ! thin cohort's light over leaf area it does not have.                                           !
+   ! A cohort's leaf PAR per unit of its OWN leaf area: the PAR its leaves absorb, which            !
+   ! apply_rt_forcing has divided by leaf_absorptance, so it is the incident PAR the leaf kernel    !
+   ! takes. The guard only keeps a leafless cohort, which absorbs nothing, at 0; a floor on the     !
+   ! leaf area would spread a thin cohort's light over leaf area it does not have.                  !
    !---------------------------------------------------------------------------------------!
    elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
-      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb
+      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb, over leaf_absorptance
       real(wp), intent(in) :: lai        !< [m2 leaf/m2 ground] the cohort's leaf area index
       real(wp), intent(in) :: par_per_w  !< [umol/J] PAR photons per joule
       par = abs_par / max(lai, tiny_num) * par_per_w
@@ -447,12 +448,12 @@ contains
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort       !
    ! [umol/plant/s] and as patch totals [umol/m2 ground/s] (docs/science/plant_respiration.md       !
-   ! eqs. (3)-(4)), both on leaf Rd's temperature response. Elemental kernels: the array actuals    !
-   ! drive the broadcast; the response and the patch-uniform soil temperature scale broadcast.      !
+   ! eqs. (3)-(4)), both on the peaked response with leaf Rd's parameters. Elemental kernels: the   !
+   ! array actuals drive the broadcast; the patch-uniform soil temperature scale broadcasts.        !
    !---------------------------------------------------------------------------------------!
    subroutine canopy_maintenance_respiration(ea_rd, hd_rd, ds_rd, soil, root_frac, static, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
-      real(wp),                  intent(in)    :: ea_rd, hd_rd, ds_rd !< leaf Rd's peaked response (stem and roots)
+      real(wp),                  intent(in)    :: ea_rd, hd_rd, ds_rd !< leaf Rd's parameters, in the peaked form
       real(wp),                  intent(in)    :: root_frac(:)        !< [-] the patch's fine roots by layer
       type(soil_profile_t),      intent(in)    :: soil                !< active layer count
       type(fast_static_state_t), intent(in)    :: static
@@ -619,7 +620,7 @@ contains
       st%enth0       = snow%snow_energy(1)
       snow_e0 = snow%snow_energy(1)
       call snow_accumulate(snow, snowfall, rainfall, t_air, dt_fast, snow_params)
-      st%acc_enth = snow%snow_energy(1) - snow_e0   ! rainfall enthalpy into the pack (boundary in)
+      st%acc_enth = snow%snow_energy(1) - snow_e0   ! precipitation (rain and snow) enthalpy into the pack
       st%exists   = snow%nlayer >= 1_ik             ! accumulate took snow+rain -> rainfall routing
 
       if (st%exists) then

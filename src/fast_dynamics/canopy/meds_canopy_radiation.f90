@@ -125,7 +125,7 @@ contains
       real(wp) :: intercept, scat, emit_face, denom, incid_tot
       integer(ik) :: i
 
-      !----- Direct-beam profile: Beer's law from the top down (cai = 1). -----------------!
+      !----- Direct-beam profile: Beer's law from the top down (each layer covers the ground). -!
       if (has_beam) then
          down0(ncoh+1) = incid_beam
          do i = ncoh, 1_ik, -1_ik

@@ -38,7 +38,7 @@ contains
       !----- The sapwood term: the living wood respires by its volume, coarse roots included (§2). ---!
       real(wp),            intent(in)  :: sap_volume        !< [m3/plant] sapwood volume
       real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
-      !----- The peaked temperature response, leaf Rd's (docs/science/plant_respiration.md §4). ------!
+      !----- Leaf Rd's temperature parameters, always in the peaked form (plant_respiration.md §4). -!
       real(wp),            intent(in)  :: ea          !< [J/mol]   activation energy
       real(wp),            intent(in)  :: hd          !< [J/mol]   deactivation energy
       real(wp),            intent(in)  :: ds          !< [J/mol/K] entropy term
@@ -50,7 +50,7 @@ contains
          return
       end if
 
-      !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
+      !----- Peaked temperature response (= 1 at 25 degC) on leaf Rd's parameters. -----------!
       tscale = peaked_arrhenius_scale(1.0_wp, ea, hd, ds, wood_temp)
       !----- Per-plant stem surface: the cylinder plus the WAI branch term (WAI is per ground, !
       !      hence /nplant), over the aboveground fraction to cover the whole woody plant.      !
