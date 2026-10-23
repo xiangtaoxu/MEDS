@@ -491,13 +491,36 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `esdirk2` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `esdirk2`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
-| ED2 comparison at the algorithmic level | `rk45` (but check `mean_work_rk45_rescue_py` first) |
+| ED2 comparison at the algorithmic level | `rk45` at `rtol` ≤ 1e-4 (but check `mean_work_rk45_rescue_py` first) |
 
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
 reference, and the latent heat within 0.2 W m⁻² in the mean and 1.9 W m⁻² in any hour of the diurnal
 cycle on BCI's dry season. Soil-surface temperature is the loosest at 0.70 K. Under drought the fast
 water-stress limb reads the step-start leaf potential, which runs Palo Verde's February–April GPP and
 ET 5.5–6 % high at 900 s, 1.7 % over the season and 0.8 % over the year (§5a).
+
+**Choosing `rtol`.** The step's total error is mostly the split's, first order in `dt_fast` (§5a),
+and `rtol` sets only the march's own share of it. The default, 2e-3, is the loosest that holds the
+march's share of the fluxes' error near 10–20 % of the 900 s step's: measured on BCI's wet
+(September 2012) and dry (February 2013) months and Palo Verde's drought (December 2008 – April 2009),
+against a 60 s, rtol 1e-4 truth for the step's error and a 900 s, rtol 1e-6 run for the march's own:
+
+| `rtol` | LE, H: march / step error | daily GPP bias at Palo Verde: march / step | canopy-air T: march / step | CPU against 1e-3 |
+|---|---|---|---|---|
+| 1e-3 | 4–8 % (H at Palo Verde 16 %) | 2 % | 29–50 % | – |
+| 2e-3 | 7–13 % (22 %) | 6 % | 46–87 % | −7 to −15 % |
+| 5e-3 | 10–21 % (26 %) | 9 % | 71–120 % | −12 to −25 % |
+| 1e-2 | 10–22 % (26 %) | 9 % | 71–125 % | −12 to −25 % |
+
+From 5e-3 up the march takes one step per `dt_fast` almost everywhere (1.01–1.06), so it is the
+900 s step with no error control left; looser settings buy nothing. The canopy-air temperature's own
+error stays a large share because the step's error on it is small (0.015–0.06 K): at 2e-3 the march
+adds 0.010–0.035 K in any hour, RMS. A study that needs canopy-air temperature to a hundredth of a
+kelvin, or one-step accuracy at a storm front, tightens `rtol`; 1e-3 costs 7–18 % more CPU than 2e-3.
+
+The table is for `esdirk2`. **`rk45` needs `rtol` of 1e-4 or tighter.** On example 04's August its
+run-mean H is 50.99 W m⁻² at 1e-4, against the 50.94 both schemes converge to, but 51.9 at 1e-3, 54.3
+at 2e-3 and 73.3 at 5e-3, with LE falling to match; the ledgers close throughout, so nothing flags it.
 
 Configuration essentials:
 
@@ -507,7 +530,7 @@ time_integrator     = "esdirk2"  # "esdirk2" (default) | "rk45" (explicit Cash-K
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
                                  # range; canopy-air temperature is not the constraint. 300 s for
                                  # the timing of dry-season leaf habits.
-rtol                = 1.0e-3     # relative accuracy of every group (adaptive schemes only)
+rtol                = 2.0e-3     # relative accuracy of every group (adaptive schemes only)
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
 step_controller     = "i"        # "pi" damps step oscillation on stiff transients
 forcing_sample_frac = 0.5        # where in the sub-step the meteorology is sampled
