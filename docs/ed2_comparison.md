@@ -482,7 +482,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   per-kgC baseline times the layer-summed temperature scale times the fine-root carbon. ED2 references
   both at 15 °C and MEDS at 25 °C, so a value taken from ED2 or Chambers is converted once, when the PFT
   parameters are set.
-- **Tissue and soil energy** (`meds_fast_integ_derivs`, `meds_fast_integ_frozen`, `meds_soil_energy`). The leaf
+- **Tissue and soil energy** (`meds_fast_integ_derivs`, `meds_fast_integ_frozen`, `meds_soil_heat`). The leaf
   pays the full vapour enthalpy of what it transpires and the soil the liquid internal energy of what
   the roots draw, each once, as ED2's `rk4_derivs` charges `tq2enthalpy(T_leaf)` and `uint_water`. The
   advected-enthalpy names are ED2's: `qwflux_wl` is the sap flow's enthalpy into the leaf,
@@ -549,7 +549,7 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | `solve_band` / `layer_rt` | `sw_two_stream` **and** `lw_two_stream` | **Unified.** ED2's two ~600-line routines collapse to one: SW is beam with no emission, LW is emission with no beam, and the diffuse operator is identical. Absolute W m⁻² throughout, dropping ED2's normalise-to-unit-incidence. O(N) adding method in place of the dense `lisys_solver8`. |
 | `meds_pft_derive` (`derive_rad_optics`) | `init_can_rad_params` + the scatter/backscatter block | ED2/CLM's `(1+χ)²` backscatter fit → **SCOPE/4SAIL**: Beta leaf-angle distribution → `bf`, exact Ross `G(μ)`, `β = ½(1 + bf(ρ−τ)/ω)`. Fixes the near-horizontal-leaf inaccuracy of the fit. |
 | `ground_optics` | `sfcrad_ed` ground-albedo block | Per-band albedo + thermal emission, implemented B6-correct. |
-| `meds_canopy_types` | `canopy_radiation_coms.f90` | ED2's mutable module globals → explicit derived types passed as arguments. |
+| `meds_canopy_radiation` (its argument records) | `canopy_radiation_coms.f90` | ED2's mutable module globals → explicit derived types passed as arguments. |
 
 ---
 
@@ -558,14 +558,14 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | topic | MEDS | ED2 |
 |---|---|---|
 | Time integration | `src/fast_dynamics/integrator/meds_fast_integ_{stepper,esdirk2,rk45,derivs}.f90`; [`docs/science/numerical_scheme.md`](science/numerical_scheme.md) | `dynamics/rk4_*.f90`, `euler_driver.f90`, `heun_driver.f90`, `hybrid_driver.f90`, `bdf2_solver.f90` |
-| Photosynthesis | `src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
-| Radiation | `src/fast_dynamics/canopy/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
-| Turbulence | `src/fast_dynamics/canopy/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |
-| Hydraulics | `src/fast_dynamics/plant/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
+| Photosynthesis | `src/fast_dynamics/processes/meds_leaf_gas_exchange.f90`; [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | `farq_leuning.f90`, `farq_katul.f90`, `photosyn_driv.f90` |
+| Radiation | `src/fast_dynamics/processes/meds_canopy_radiation.f90`; [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | `twostream_rad.f90`, `radiate_driver.f90` |
+| Turbulence | `src/fast_dynamics/processes/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |
+| Hydraulics | `src/fast_dynamics/processes/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
 | Soil | `src/fast_dynamics/meds_soil_{water,energy}.f90`; [`soil_biophysics.md`](science/soil_biophysics.md) | `rk4_misc.f90`, `lsm_hyd.f90`, `soil_coms.F90` |
 | Allocation / growth | `src/slow_dynamics/plant/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
 | Decomposition | `src/slow_dynamics/soil/meds_soil_biogeochem.f90`; [`soil_carbon.md`](science/soil_carbon.md) | `soil_respiration.f90`, `decomp_coms.f90` |
-| Respiration | `src/fast_dynamics/plant/meds_plant_respiration.f90`; [`plant_respiration.md`](science/plant_respiration.md) | `stem_resp_driv.f90` |
+| Respiration | `src/fast_dynamics/processes/meds_plant_respiration.f90`; [`plant_respiration.md`](science/plant_respiration.md) | `stem_resp_driv.f90` |
 | Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
 | Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
 | Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |

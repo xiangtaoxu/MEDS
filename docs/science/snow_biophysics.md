@@ -13,7 +13,7 @@ stores are woven each `dt_fast`.
 
 ## The snow store
 
-The `snow_*` kernels live in `meds_ground_biophysics`; the pack is a single bulk layer (see
+The `snow_*` kernels live in `meds_surface`; the pack is a single bulk layer (see
 `docs/ROADMAP.md` for multi-layer snow). The prognostic state is water-equivalent mass `swe`
 [kg m⁻²] and **extensive** internal energy [J m⁻²]; temperature and liquid fraction are read-offs of
 `internal_energy_to_temp` (`dry_hcap=0`), so **melt/refreeze is the internal-energy plateau**, exactly
@@ -105,9 +105,9 @@ and full cover. The aerodynamic roughness does not see the pack: the driver pass
 
 | Concept | Routine |
 |---|---|
-| snow energy / base conductance | `meds_ground_biophysics`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` (`snow_energy_step`, the two in one step, for the tests) |
+| snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` (`snow_energy_step`, the two in one step, for the tests) |
 | the stage before the march, the exchange in it, the commit | `meds_fast_integ_frozen`: `prepare_snow_stage`; `meds_fast_integ_derivs`: `surface_derivs`; `meds_fast_integ_update`: `update_dynamic_state` |
-| snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
+| snow mass / cover / melt | `meds_surface`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | prognostic snow type | `meds_patch_state_vars`: `snow_state_t` |
 
 ## References

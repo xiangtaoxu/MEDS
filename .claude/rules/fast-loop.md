@@ -46,7 +46,7 @@ A new water flow belongs in the network (its law in `meds_plant_hydraulics` or `
 
 ## Rules that break things quietly
 
-- **Kernels never see `polygon_t`.** `canopy/`, `plant/` and `soil/` take only the per-patch store types
+- **Kernels never see `polygon_t`.** The process modules in `processes/` take only the per-patch store types
   from `meds_patch_state_vars` (through an only-list) and link only `state` and `config`. That is what
   keeps them device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A
   routine that needs `polygon_t` is driver code.

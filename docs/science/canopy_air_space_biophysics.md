@@ -43,7 +43,7 @@ the trees grew.
 > case is a *mid-height* canopy ([numerical_scheme](numerical_scheme.md) §5a′).
 
 All three twins (enthalpy, humidity, CO₂) are advanced by the shared
-two-form box kernel `cas_box_step_implicit` / `cas_box_time_deriv` (`meds_cas_biophysics`),
+two-form box kernel `cas_box_step_implicit` / `cas_box_time_deriv` (`meds_canopy_air_space`),
 implicit in the atmosphere exchange. Each twin obeys
 
 ```math
@@ -111,8 +111,8 @@ wrote it.
 
 | Concept | Routine |
 |---|---|
-| CAS twins (two-form box), eqs. (1)–(2) | `meds_cas_biophysics`: `cas_box_step_implicit`, `cas_box_time_deriv` |
-| source / capacity / conductance bundles | `meds_cas_biophysics`: `cas_source_t`, `cas_box_t` |
+| CAS twins (two-form box), eqs. (1)–(2) | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
+| source / capacity / conductance bundles | `meds_canopy_air_space`: `cas_source_t`, `cas_box_t` |
 | capacities $`W_{cap}`$, $`C_{cap}`$ + conductances | `meds_fast_integ_frozen`: `cas_capacities_and_conductances` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_integ_frozen`: `build_frozen` |
 | CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_patch_state_vars`) |

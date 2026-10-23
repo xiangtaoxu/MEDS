@@ -5,7 +5,7 @@ litter pools, advanced once a day. Links the column state and the config leaves 
 compute kernel is stateless, `pure` where possible, and device-eligible.
 
 **The fast canopy-air CO₂ exchange is not here.** It is a sub-daily biophysical process —
-turbulent diffusion and venting — and lives in `fast_dynamics/canopy/meds_cas_biophysics`. This
+turbulent diffusion and venting — and lives in `fast_dynamics/processes/meds_canopy_air_space`. This
 folder is the slow carbon half, and it owns heterotrophic respiration, which the fast loop reaches
 across the one documented fast/slow kernel seam.
 

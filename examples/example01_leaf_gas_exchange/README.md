@@ -3,7 +3,7 @@
 The leaf gas-exchange module of MEDS on its own: C3 photosynthesis (Farquhar–von Caemmerer–Berry),
 stomatal conductance, and their coupled solution for the intercellular CO₂ Cᵢ. A Python script sets
 every parameter and driver; there is no site, config file or canopy. The same compiled kernels
-([`meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/plant/meds_leaf_gas_exchange.f90)) run inside
+([`meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/processes/meds_leaf_gas_exchange.f90)) run inside
 the coupled model, where canopy radiation, the leaf energy balance and plant hydraulics supply their
 drivers. The equations are in [`docs/science/leaf_gas_exchange.md`](../../docs/science/leaf_gas_exchange.md).
 

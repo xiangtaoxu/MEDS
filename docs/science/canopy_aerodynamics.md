@@ -15,8 +15,10 @@ ground conductance.
 Symbols: $`u_*`$ = friction velocity; $\zeta = z/L$ = Monin-Obukhov stability parameter ($L$ = Obukhov
 length); $`z_{0m}, z_{0h}, z_{0q}`$ = roughness lengths for momentum / heat / vapour; $d$ = displacement
 height; $`\kappa`$ = von Karman constant; $`\Psi_m,\Psi_h`$ = integrated stability functions;
-$`\mathrm{Rib}`$ = bulk Richardson number. Everything is per unit ground area. All routines are `pure`
-and write per-cohort outputs into caller-owned arrays.
+$`\mathrm{Rib}`$ = bulk Richardson number; temp1 and temp2 = the scalar transfer factors for heat and for
+vapour and CO₂ (CLM's names; `heat_transfer_factor` and `vapour_transfer_factor` in `aero_out_t`).
+Everything is per unit ground area. All routines are `pure` and write per-cohort outputs into
+caller-owned arrays.
 
 ## 1. Roughness, displacement, and the reference geometry
 
@@ -202,7 +204,7 @@ the gather's ascending order (`static%order`) at the call site; the permutation 
 $n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
-Nusselt kernel `boundary_gbh_mos`, the parallel sum of forced (Reynolds) and free (Grashof) convection
+Nusselt kernel `boundary_layer_conductance`, the parallel sum of forced (Reynolds) and free (Grashof) convection
 — the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
 (leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
@@ -273,8 +275,8 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | profile denominators $D_m, D_h$ | `d_mom`, `d_heat` |
 | stability functions $`\Psi_m,\Psi_h`$ | `stabfunc1`, `stabfunc2`, `psim` |
 | canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
-| leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
+| leaf/wood Nusselt boundary layer | `boundary_layer_conductance` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
 | per-stage re-solve of eq. (5) | `meds_fast_integ_derivs`: `refresh_cas_conductances` |
-| types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
+| types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
 | bottom→top cohort reversal | `meds_fast_integ_frozen`: `aero_bottom_to_top` |

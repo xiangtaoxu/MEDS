@@ -250,7 +250,7 @@ column: its top layers hold the surface's organic, high-CEC soil and its deep la
 
 ## The soil thermal column
 
-`soil_energy_step_implicit` (`meds_soil_energy`) advances the prognostic volumetric internal energy
+`soil_energy_step_implicit` (`meds_soil_heat`) advances the prognostic volumetric internal energy
 $`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_linear_algebra`: `thomas_solve`)
 on **the same negative-$z$ geometry** as the water column. At each state it inverts
 $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
@@ -370,7 +370,7 @@ moisture (for $`\kappa,C_{eff}`$), and the water the network moves carries liqui
 face at the temperature of the node it leaves, out of each layer by root uptake at that layer's own
 temperature (`root_heat`, per layer), and between the pond and the top layer (`water_heat_out`).
 Infiltration crosses the top face at the pond's temperature. Drainage has no face term: its enthalpy
-leaves with the bottom layer's sink, `root_heat_sink`, beside the root uptake. Soil evaporation is not a
+leaves with the bottom layer's sink, `water_heat_out`, beside the root uptake. Soil evaporation is not a
 face either: its water leaves as vapour, and its enthalpy, liquid plus latent, has already left in the
 ground's latent flux inside $`G_{top}`$.
 
@@ -382,7 +382,7 @@ difference of large numbers, and a face valued at another temperature would swam
 ## Canopy interception
 
 Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
-`meds_plant_biophysics`): a capacity-limited bucket with a Beer interception fraction
+`meds_canopy_water`): a capacity-limited bucket with a Beer interception fraction
 $`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`intercept_alpha`, `intercept_k`) and a wetted fraction
 $`\sigma_w = (W/W_{max})^{2/3}`$, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
@@ -433,11 +433,11 @@ and passes the resulting flux into the CO₂ source.
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
 | thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |
-| soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
-| explicit thermal tendency (RK45) | `meds_soil_energy`: `soil_energy_time_deriv` |
-| bottom thermal boundary, eqs. (12)–(13) | `meds_soil_energy`: `bottom_heat_face`, `deep_conductance` |
+| soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
+| explicit thermal tendency (RK45) | `meds_soil_heat`: `soil_energy_time_deriv` |
+| bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
-| canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
+| canopy interception | `meds_canopy_water`: `intercept_canopy_layer` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_state_t`, `soil_energy_state_t` |
 
