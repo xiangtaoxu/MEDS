@@ -21,7 +21,7 @@ program test_column_derivs
                                       sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
                                       temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
    use meds_budget_check,   only : budget_t, budget_accumulate
-   use meds_soil_heat, only : soil_heat_forcing_t, soil_heat_flux_t
+   use meds_soil_heat, only : soil_heat_env_t, soil_heat_out_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,      only : soil_profile_t, soil_params_t
    use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
@@ -284,10 +284,10 @@ contains
    !----- 6. soil_energy_time_deriv == the dt->0 limit of the BE kernel soil_energy_step_implicit. ----------!
    subroutine test_soil_energy_tendency()
       type(soil_profile_t)        :: soil
-      type(soil_heat_forcing_t)      :: forcing
+      type(soil_heat_env_t)      :: forcing
       type(soil_params_t)         :: eopts
       type(soil_energy_state_t)   :: col, col0
-      type(soil_heat_flux_t)         :: eflux
+      type(soil_heat_out_t)         :: eflux
       real(wp)    :: dedt(n_soil_layer_max), dt, worst, fd
       integer(ik) :: k, nsl
       nsl = 10_ik
@@ -324,7 +324,7 @@ contains
       type(march_tend_t)        :: f
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
-      type(soil_heat_forcing_t)     :: eforc_chk
+      type(soil_heat_env_t)     :: eforc_chk
       type(soil_energy_state_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
       integer(ik) :: k, i, n, nsl

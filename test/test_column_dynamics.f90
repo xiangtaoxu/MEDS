@@ -23,7 +23,7 @@ program test_column_dynamics
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
                                            internal_energy_liquid, tissue_dry_heat_capacity
-   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, alloc_aero_out
    use meds_fast_state,          only : static_state_fixture
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_params,         only : SOIL_BC_DRAIN
@@ -664,7 +664,7 @@ contains
       type(fast_static_state_t) :: c2
       type(aero_out_t)      :: a2
       type(aero_env_t)      :: e2      ! defaults are fine (u_ref/zref/press/rho_air/can_* all sensible)
-      type(aero_geom_t)     :: g2
+      type(aero_args_t)     :: g2
       real(wp)              :: lt(2)
       call alloc_static_state(c2, 2_ik)
       c2%height = [18.0_wp, 6.0_wp] ; c2%lai = [2.0_wp, 2.0_wp]   ! DESCENDING
@@ -711,7 +711,7 @@ contains
       type(fast_static_state_t) :: c3
       type(aero_out_t)      :: a3
       type(aero_env_t)      :: e3
-      type(aero_geom_t)     :: g3
+      type(aero_args_t)     :: g3
       real(wp)              :: lt(1)
       call alloc_static_state(c3, 1_ik)
       c3%height = [38.0_wp] ; c3%lai = [5.0_wp]

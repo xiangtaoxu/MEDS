@@ -35,7 +35,7 @@ module meds_canopy_aerodynamics
    public :: mo_surface_layer                !< CLM Monin-Obukhov solve (the live CAS conductances re-solve it)
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
    public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
-   public :: aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
+   public :: aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: reduced_wind, boundary_layer_conductance, alloc_aero_out  ! used only by the tests
 
@@ -56,11 +56,11 @@ module meds_canopy_aerodynamics
    end type aero_env_t
 
    !----- Per-patch canopy geometry. -------------------------------------------------------!
-   type :: aero_geom_t
+   type :: aero_args_t
       real(wp) :: veg_height   = 20.0_wp            !< [m]  canopy top height
       real(wp) :: opencan_frac = 0.0_wp             !< [-]  open fraction W = exp(-(LAI+WAI)): 1 bare, 0 dense
       real(wp) :: snowfac      = 0.0_wp             !< [-]  snow burial fraction of the canopy
-   end type aero_geom_t
+   end type aero_args_t
 
    !----- Outputs: per-patch scalars + per-cohort arrays (caller-owned; written in place). ---!
    type :: aero_out_t
@@ -107,7 +107,7 @@ contains
    !      one definition, shared with the move of the forcing to the patch's canopy-air top. ------!
    pure subroutine canopy_roughness(cfg, geom, rough, displace)
       type(aero_params_t), intent(in)  :: cfg
-      type(aero_geom_t),   intent(in)  :: geom
+      type(aero_args_t),   intent(in)  :: geom
       real(wp),            intent(out) :: rough      !< [m] roughness length (z0m)
       real(wp),            intent(out) :: displace   !< [m] zero-plane displacement height
       rough    = (1.0_wp - geom%snowfac) * cfg%z0m_ratio * geom%veg_height                     &
@@ -125,7 +125,7 @@ contains
                                             leaf_width, branch_diam, out)
       type(aero_params_t), intent(in)    :: cfg
       type(aero_env_t),    intent(in)    :: env
-      type(aero_geom_t),   intent(in)    :: geom
+      type(aero_args_t),   intent(in)    :: geom
       integer(ik),         intent(in)    :: n
       real(wp),            intent(in)    :: height(n), lai(n)
       real(wp),            intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)

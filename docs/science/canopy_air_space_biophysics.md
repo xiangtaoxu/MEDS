@@ -82,8 +82,8 @@ would be over-coupled to the free atmosphere and lose its nocturnal build-up (se
 The two forms of the box kernel are the two-integrator seam: `cas_box_step_implicit` is the
 backward-Euler box commit of each `esdirk2` (ESDIRK2) stage (`meds_fast_integ_backward_euler`); `cas_box_time_deriv`
 is the explicit right-hand side the `rk45` stepper integrates (`surface_derivs`, `meds_fast_integ_derivs`).
-Both take the pre-assembled sources (`cas_source_t`) and the capacities/conductances/atmospheric BCs
-(`cas_box_t`) — any scheme-specific adjustment (the condensation sink, snow sublimation) is folded
+Both take one record, `cas_env_t`: the pre-assembled sources and the capacities, conductances and
+atmospheric boundary conditions — any scheme-specific adjustment (the condensation sink, snow sublimation) is folded
 into the source by the driver, so the box math itself is scheme-shared.
 
 ---
@@ -112,7 +112,7 @@ wrote it.
 | Concept | Routine |
 |---|---|
 | CAS twins (two-form box), eqs. (1)–(2) | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
-| source / capacity / conductance bundles | `meds_canopy_air_space`: `cas_source_t`, `cas_box_t` |
+| what the box reads: capacities, conductances, the atmosphere, the sources | `meds_canopy_air_space`: `cas_env_t` |
 | capacities $`W_{cap}`$, $`C_{cap}`$ + conductances | `meds_fast_integ_frozen`: `cas_capacities_and_conductances` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_integ_frozen`: `build_frozen` |
 | CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_patch_state_vars`) |

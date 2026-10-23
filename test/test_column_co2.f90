@@ -19,7 +19,7 @@ program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, kgcday_2_umols
-   use meds_canopy_air_space,   only : cas_box_t, cas_source_t, cas_box_step_implicit
+   use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
 
    !----- Local CO2 budget diagnostics, derived in co2_step from the production                  !
@@ -59,19 +59,18 @@ contains
       real(wp), intent(in)    :: can_depth, can_shv, gpp, plant_resp, hetero
       real(wp), intent(in)    :: ustar, vapour_transfer_factor, co2_atm, rho_air, dt
       type(co2_budget_t), intent(out) :: budget
-      type(cas_box_t) :: column
-      type(cas_source_t) :: source
+      type(cas_env_t) :: cas_env
       real(wp) :: can_dmol, ccapcan, gatm_co2, f_bio, enth_dummy, shv_dummy, co2_new
       can_dmol = rho_air * (1.0_wp - can_shv) / mmdry        ! dry-air molar density [mol/m3]
       ccapcan  = can_dmol * can_depth                        ! molar CAS capacity   [mol/m2]
       gatm_co2 = can_dmol * ustar * vapour_transfer_factor                    ! atm<->CAS molar conductance
       f_bio    = hetero + plant_resp - gpp                   ! Reco - GPP  [umol/m2/s]
-      column%air_mass_capacity   = 1.0_wp                    ! inert enthalpy/vapour twins (avoid 0/0)
-      column%air_molar_capacity  = ccapcan
-      column%atm_conductance_co2 = gatm_co2
-      column%atm_co2             = co2_atm
-      source%biotic_co2_source   = f_bio
-      call cas_box_step_implicit(0.0_wp, 0.0_wp, can_co2, source, column, dt,                 &
+      cas_env%air_mass_capacity   = 1.0_wp                    ! inert enthalpy/vapour twins (avoid 0/0)
+      cas_env%air_molar_capacity  = ccapcan
+      cas_env%atm_conductance_co2 = gatm_co2
+      cas_env%atm_co2             = co2_atm
+      cas_env%biotic_co2_source   = f_bio
+      call cas_box_step_implicit(0.0_wp, 0.0_wp, can_co2, cas_env, dt,                 &
                                     enth_dummy, shv_dummy, co2_new)
       budget%resid    = ccapcan * (co2_new - can_co2) - dt * (f_bio + gatm_co2 * (co2_atm - co2_new))
       budget%nee      = f_bio

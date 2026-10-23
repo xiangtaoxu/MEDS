@@ -133,8 +133,11 @@ integrated, so they live with the configuration they are derived from: their typ
 `meds_pft_params`), and the routines that derive them in `config/` (a site's soil profile in
 `meds_soil_derive`, the PFT table's leaf capacities and the per-PFT tables the fast loop reads in
 `meds_pft_derive`). A per-PFT table is `<process>_table_t` and its entries `<process>_pft_t`. A
-kernel's own argument types are not parameters in this sense: `*_args_t` (`pheno_args_t`, …) carry
-the values a kernel reads, a driver fills them from the parameters, and they live with the kernel.
+kernel's own argument records are not parameters in this sense: they live with the kernel, and are
+named by role. `<process>_env_t` is what a kernel reads that changes during the run (`leaf_env_t`,
+`cas_env_t`); `<process>_args_t` is what it reads that is fixed for the run or the slow step, which a
+driver fills from the parameters (`pheno_args_t`, `aero_args_t`); `<process>_out_t` is what it returns
+(`rad_out_t`, `snow_out_t`). `_state_t` is kept for the stores in `state/`.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,

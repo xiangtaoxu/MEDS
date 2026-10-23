@@ -16,7 +16,7 @@ module meds_fast_forcing
    use meds_radiation_lib,      only : slope_beam_factor
    use meds_polygon_state_vars, only : polygon_t
    use meds_pft_params,         only : N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
-   use meds_canopy_radiation, only : rad_forcing_t, rad_flux_t, alloc_rad_forcing, ground_optics_state_t
+   use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
    use meds_canopy_radiation,   only : canopy_radiation, ground_optics
    use meds_surface,  only : snow_cover_fraction
    use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
@@ -133,9 +133,9 @@ contains
       integer(ik) :: pft_bt(static%n)
       real(wp)    :: lai_bt(static%n), wai_bt(static%n), tcan_bt(static%n), hgt_bt(static%n)
       real(wp)    :: lf_bt, soil_albedo(N_RAD_BAND_DEFAULT), soil_temp_top
-      type(rad_forcing_t)   :: rf
-      type(rad_flux_t)      :: flux
-      type(ground_optics_state_t) :: surf
+      type(rad_env_t)   :: rf
+      type(rad_out_t)      :: flux
+      type(ground_optics_env_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
       real(wp) :: snow_fl, snow_fc
 
@@ -162,8 +162,8 @@ contains
                        + (1.0_wp - lf_bt) * dynamic%wood_temp(i) ** 4) ** 0.25_wp
       end do
 
-      !----- rad_forcing_t from met (all W/m2, direct assignment). --------------------------------!
-      call alloc_rad_forcing(rf, N_RAD_BAND_DEFAULT)
+      !----- rad_env_t from met (all W/m2, direct assignment). --------------------------------!
+      call alloc_rad_env(rf, N_RAD_BAND_DEFAULT)
       rf%cosz = met%cosz
       rf%incid_beam(RAD_VIS) = met%par_beam
       rf%incid_diff(RAD_VIS) = met%par_diffuse

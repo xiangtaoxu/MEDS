@@ -14,11 +14,11 @@
 module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_soil_heat, only : soil_heat_forcing_t, soil_heat_flux_t
+   use meds_soil_heat, only : soil_heat_env_t, soil_heat_out_t
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs, assemble_soil_energy_forcing
    use meds_fast_integ_control, only : water_scales
-   use meds_canopy_air_space, only : cas_box_step_implicit, cas_source_t
+   use meds_canopy_air_space, only : cas_box_step_implicit, cas_env_t
    use meds_fast_integ_types, only : march_state_t, frozen_t, surface_state_t, cas_boundary_t,                  &
                                surface_tend_t, stage_bflux_t, error_control_t, tol_set_t, fast_static_state_t,    &
                                water_drive_t, water_tend_t, water_state_t, water_flows_t, water_work_t,           &
@@ -87,8 +87,8 @@ contains
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with this stage's conductances
       type(soil_energy_state_t) :: se
-      type(soil_heat_forcing_t)     :: eforc
-      type(soil_heat_flux_t)        :: eflux
+      type(soil_heat_env_t)     :: eforc
+      type(soil_heat_out_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21
@@ -300,11 +300,12 @@ contains
       type(surface_tend_t),   intent(in)  :: surf_tend
       type(cas_boundary_t),   intent(in)  :: cas        !< the stage's boundary: its box carries the stage's conductances
       real(wp),               intent(out) :: h1, q1, c1
-      type(cas_source_t) :: src
-      src%surface_enthalpy_source  = surf_tend%src_enth
-      src%surface_vapor_source = surf_tend%src_vap
-      src%biotic_co2_source        = cas%nee_biotic
-      call cas_box_step_implicit(h0, q0, c0, src, cas%box, dt, h1, q1, c1)
+      type(cas_env_t) :: env
+      env = cas%box
+      env%surface_enthalpy_source = surf_tend%src_enth
+      env%surface_vapor_source    = surf_tend%src_vap
+      env%biotic_co2_source       = cas%nee_biotic
+      call cas_box_step_implicit(h0, q0, c0, env, dt, h1, q1, c1)
    end subroutine cas_box_commit
 
    !----- 2x2 numerical Jacobian of (R_H, R_q) w.r.t. (H, q) by forward-differencing surface_derivs. --!

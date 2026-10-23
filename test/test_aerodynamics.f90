@@ -24,7 +24,7 @@ program test_aerodynamics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : von_karman
-   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, alloc_aero_out
    use meds_biophysics_params,   only : aero_params_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
                                         reduced_wind, boundary_layer_conductance, open_canopy_fraction
@@ -103,7 +103,7 @@ contains
    subroutine test_master()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N)
@@ -143,7 +143,7 @@ contains
    subroutine test_open_canopy()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik, NW = 11_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW)
@@ -188,7 +188,7 @@ contains
    subroutine test_tied_layer()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: one, split
       real(wp), parameter :: H2(2) = [8.0_wp, 18.0_wp], LAI2(2) = [1.5_wp, 2.0_wp]
       real(wp), parameter :: TL2(2) = [299.0_wp, 300.0_wp], TW2(2) = [298.5_wp, 299.0_wp]

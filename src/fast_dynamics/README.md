@@ -15,10 +15,13 @@ keeps them device-eligible and standalone-buildable. The slow half is `src/slow_
 split between them is by **timescale**, and within each half by domain. See
 [`../README.md`](../README.md) for the tree-wide rules.
 
-Each process module owns its argument records, beside the kernel that reads them: the radiation's
-forcing and fluxes in `meds_canopy_radiation`, the aerodynamic environment and outputs in
-`meds_canopy_aerodynamics`, the leaf's in `meds_leaf_gas_exchange`, the soil heat's forcing in
-`meds_soil_heat`, the snow's in `meds_surface`, ground evaporation's in `meds_soil_water`. The
+Each process module owns its argument records, beside the kernel that reads them, named by role
+(`src/README.md`, rule 3): `*_env_t` what a kernel reads, `*_args_t` what is fixed for the slow
+step, `*_out_t` what it returns. `rad_env_t`/`rad_out_t` are `meds_canopy_radiation`'s,
+`aero_env_t`/`aero_args_t`/`aero_out_t` `meds_canopy_aerodynamics`', `cas_env_t`
+`meds_canopy_air_space`'s, `leaf_env_t`/`leaf_out_t` `meds_leaf_gas_exchange`'s,
+`soil_heat_env_t`/`soil_heat_out_t` `meds_soil_heat`'s, `snow_env_t`/`snow_out_t` `meds_surface`'s,
+`ground_evap_env_t` `meds_soil_water`'s. The
 `SOIL_*` / `ENERGY_*` selector codes live one layer down in
 `config/params/meds_soil_params`, and the prognostic per-store column state — the canopy-air state, the
 two soil columns, the snow store — lives in `state/meds_patch_state_vars`, with the rest of what a

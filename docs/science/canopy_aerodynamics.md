@@ -278,5 +278,5 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | leaf/wood Nusselt boundary layer | `boundary_layer_conductance` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
 | per-stage re-solve of eq. (5) | `meds_fast_integ_derivs`: `refresh_cas_conductances` |
-| types (cfg / env / geom / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
+| types (params / env / args / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_args_t`, `aero_out_t` |
 | bottom→top cohort reversal | `meds_fast_integ_frozen`: `aero_bottom_to_top` |

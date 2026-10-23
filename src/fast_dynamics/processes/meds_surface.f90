@@ -25,7 +25,7 @@ module meds_surface
    public :: snow_surface_balance, snow_take_exchange
    public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
    public :: snow_surface_fluxes   ! used only by the tests
-   public :: snow_env_t, snow_flux_t, snow_melt_t
+   public :: snow_env_t, snow_out_t
 
    !----- Surface boundary conditions for the snow-surface energy balance (read-only, forced). --!
    type :: snow_env_t
@@ -38,8 +38,11 @@ module meds_surface
       real(wp) :: dz_soil_top = 0.05_wp                 !< [m] top soil node depth |z_node(1)| (interface spacing)
    end type snow_env_t
 
-   !----- Snow-surface energy-balance outputs (all positive upward; per unit ground area). ------!
-   type :: snow_flux_t
+   !----- What the snow kernels return, per unit ground area. snow_surface_balance fills the exchange  !
+   !      (positive upward, away from the pack) and snow_drain_meltwater the meltwater handed to the   !
+   !      pond; each resets the whole record, so the other's fields read zero. ---------------------!
+   type :: snow_out_t
+      !----- The surface balance. ---------------------------------------------------------!
       real(wp) :: t_surf  = 273.16_wp, fliq = 0.0_wp    !< [K],[-] diagnosed snow-surface temperature + liquid fraction
       real(wp) :: h_snow  = 0.0_wp, le_snow = 0.0_wp    !< [W/m2] sensible + latent (sublimation/evap) to the CAS
       real(wp) :: w_flux  = 0.0_wp                      !< [kg/m2/s] vapour mass to CAS (>0 sublimation, <0 deposition)
@@ -48,17 +51,12 @@ module meds_surface
       real(wp) :: energy_in = 0.0_wp                    !< [W/m2] what the pack gains: rnet - h_snow - le_snow - g_base
       real(wp) :: snowfac = 0.0_wp                      !< [-] Niu-Yang07 snow-cover / burial fraction
       real(wp) :: energy_resid = 0.0_wp                 !< [J/m2] closed-budget residual (~0 by construction)
-   end type snow_flux_t
-
-   !----- Snow-mass outputs from accumulation + melt drainage (a store->store handoff to the pond). -!
-   type :: snow_melt_t
+      !----- The meltwater drainage, a store-to-store hand-off to the pond. -----------------!
       real(wp) :: melt_mass = 0.0_wp                    !< [kg/m2] free liquid drained this step -> the pond
       real(wp) :: melt_enth = 0.0_wp                    !< [J/m2]  matching enthalpy (internal_energy_liquid(t_3ple))
       real(wp) :: dump_mass = 0.0_wp                    !< [kg/m2] full-melt-out residual water dumped to the pond
       real(wp) :: dump_enth = 0.0_wp                    !< [J/m2]  full-melt-out residual energy dumped to the pond
-      logical  :: melted_out = .false.                  !< .true. when the layer vanished (nlayer -> 0)
-      real(wp) :: mass_resid = 0.0_wp                   !< [kg/m2] closed-budget residual (~0 by construction)
-   end type snow_melt_t
+   end type snow_out_t
 
 contains
 
@@ -121,16 +119,15 @@ contains
    pure subroutine snow_drain_meltwater(snow, params, melt)
       type(snow_state_t), intent(inout) :: snow
       type(snow_params_t), intent(in)    :: params
-      type(snow_melt_t),   intent(out)   :: melt
+      type(snow_out_t),   intent(out)   :: melt
       real(wp) :: wmass_free, hold
-      melt = snow_melt_t()
+      melt = snow_out_t()
       if (snow%nlayer == 0_ik) return
 
       !----- Vanished / trace layer: dump the whole residual to the soil, revert to bare ground. -----!
       if (snow%swe(1) <= params%tiny_snow_mass) then
          melt%dump_mass  = max(0.0_wp, snow%swe(1))
          melt%dump_enth  = snow%snow_energy(1)
-         melt%melted_out = .true.
          call clear_layer(snow)
          return
       end if
@@ -153,7 +150,6 @@ contains
       if (snow%swe(1) <= params%tiny_snow_mass) then
          melt%dump_mass  = max(0.0_wp, snow%swe(1))
          melt%dump_enth  = snow%snow_energy(1)
-         melt%melted_out = .true.
          call clear_layer(snow)
       else
          call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
@@ -213,12 +209,12 @@ contains
       type(snow_params_t), intent(in)  :: params
       real(wp),            intent(in)  :: dt
       real(wp),            intent(in)  :: area_frac    !< snow-cover fraction: scales all boundary exchange (sub-column)
-      type(snow_flux_t),   intent(out) :: flux
+      type(snow_out_t),   intent(out) :: flux
       real(wp) :: t_n, fliq_n, e_old, swe0, gcond, af, dtaf
       real(wp) :: h_n, w_n, le_n, g_n, dh_dt, dw_dt, demit_dt, l_vap, r0, drdt
       real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit
 
-      flux = snow_flux_t()
+      flux = snow_out_t()
       af = max(0.0_wp, min(1.0_wp, area_frac))
       if (snow%nlayer == 0_ik .or. snow%swe(1) <= params%tiny_snow_mass .or. af <= 0.0_wp) then
          flux%t_surf = env%t_soil_top                              ! no snow surface (or zero cover) to balance
@@ -309,7 +305,7 @@ contains
       type(snow_params_t), intent(in)    :: params
       real(wp),            intent(in)    :: dt
       real(wp),            intent(in)    :: area_frac
-      type(snow_flux_t),   intent(out)   :: flux
+      type(snow_out_t),   intent(out)   :: flux
       real(wp) :: e_old
       e_old = snow%snow_energy(1)
       call snow_surface_balance(snow, env, params, dt, area_frac, flux)

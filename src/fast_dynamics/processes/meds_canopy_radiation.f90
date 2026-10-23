@@ -18,22 +18,22 @@ module meds_canopy_radiation
 
    public :: ground_optics
    public :: canopy_radiation
-   public :: rad_forcing_t, rad_flux_t, ground_optics_state_t, alloc_rad_forcing, alloc_rad_flux
+   public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
 
    !----- Per-band incident forcing and ground boundary [W/m2]. In the thermal band the diffuse is   !
    !      the sky's longwave and grnd_emiss the ground's emission; in shortwave grnd_emiss = 0. -----!
-   type :: rad_forcing_t
+   type :: rad_env_t
       integer(ik) :: n_band = 0_ik
       real(wp)    :: cosz   = 1.0_wp               !< cosine of the solar zenith angle (the beam extinction guards cosz -> 0)
       real(wp), allocatable :: incid_beam(:)       !< (band) [W/m2] direct-beam incident at canopy top
       real(wp), allocatable :: incid_diff(:)       !< (band) [W/m2] diffuse incident at canopy top
       real(wp), allocatable :: grnd_refl(:)        !< (band) ground reflectance (albedo, or 1-emiss)
       real(wp), allocatable :: grnd_emiss(:)       !< (band) [W/m2] ground thermal emission (0 for SW)
-   end type rad_forcing_t
+   end type rad_env_t
 
    !----- Returned fluxes: per cohort and band, absorbed by leaves and wood [W/m2 of ground]; per  !
    !      band, the albedo and the fluxes below the canopy. ----------------------------------!
-   type :: rad_flux_t
+   type :: rad_out_t
       integer(ik) :: n_band = 0_ik, n_coh = 0_ik
       real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
       real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
@@ -41,16 +41,16 @@ module meds_canopy_radiation
       real(wp), allocatable :: albedo(:)           !< (band) upward over incident at the top; LW's includes emission (> 1)
       real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
-   end type rad_flux_t
+   end type rad_out_t
 
    !----- The ground's optical state, the two-stream's lower boundary                              !
    !      (docs/science/canopy_radiation_transfer.md §4): bare soil, blended toward the snow. ------!
-   type :: ground_optics_state_t
+   type :: ground_optics_env_t
       integer(ik)           :: n_band = 0_ik
       real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
       real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
       real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
-   end type ground_optics_state_t
+   end type ground_optics_env_t
 
 contains
 
@@ -112,7 +112,7 @@ contains
    !----- Per-band ground reflectance and emission: the soil albedo and 0 for a shortwave band,      !
    !      1 - emissivity and emissivity * sigma * T_soil^4 for a thermal band. --------------------!
    subroutine ground_optics(surf, n_band, has_emission, grnd_refl, grnd_emiss)
-      type(ground_optics_state_t), intent(in)  :: surf
+      type(ground_optics_env_t), intent(in)  :: surf
       integer(ik),           intent(in)  :: n_band
       logical,               intent(in)  :: has_emission(n_band)
       real(wp),              intent(out) :: grnd_refl(n_band)
@@ -245,12 +245,12 @@ contains
    !      unclumped (clumping is applied here); canopy_temp [K] drives the thermal emission. -------!
    subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, canopy_temp, flux)
       type(rad_pft_optics_t), intent(in)  :: optics
-      type(rad_forcing_t),    intent(in)  :: forcing
+      type(rad_env_t),    intent(in)  :: forcing
       integer(ik),            intent(in)  :: ncoh
       integer(ik),            intent(in)  :: pft(ncoh)
       real(wp),               intent(in)  :: height(ncoh)   !< [m] ascending; exact ties are co-dominant
       real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)
-      type(rad_flux_t),       intent(out) :: flux
+      type(rad_out_t),       intent(out) :: flux
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
@@ -266,7 +266,7 @@ contains
       real(wp)    :: gc_l, dn_ground, up_ground, albedo, incid_tot
       integer(ik) :: b, i, ip
 
-      call alloc_rad_flux(flux, forcing%n_band, ncoh)
+      call alloc_rad_out(flux, forcing%n_band, ncoh)
 
       !----- No resolvable cohorts: all radiation reaches the ground. ---------------------!
       if (ncoh < 1_ik) then
@@ -320,7 +320,7 @@ contains
       end if
 
       !----- Loop the configured bands. A band with no light and no emission (VIS and NIR at night)   !
-      !      absorbs, reflects and passes nothing: its fluxes keep the zeros alloc_rad_flux set, which  !
+      !      absorbs, reflects and passes nothing: its fluxes keep the zeros alloc_rad_out set, which  !
       !      are what the solve would return. -------------------------------------------------------!
       do b = 1_ik, forcing%n_band
          if (.not. optics%has_emission(b) .and. forcing%incid_beam(b) == 0.0_wp .and.                    &
@@ -421,8 +421,8 @@ contains
       end do
    end subroutine canopy_radiation
 
-   subroutine alloc_rad_forcing(f, n_band)
-      type(rad_forcing_t), intent(out) :: f
+   subroutine alloc_rad_env(f, n_band)
+      type(rad_env_t), intent(out) :: f
       integer(ik),         intent(in)  :: n_band
       f%n_band = n_band
       allocate(f%incid_beam(n_band), f%incid_diff(n_band), f%grnd_refl(n_band), f%grnd_emiss(n_band))
@@ -430,10 +430,10 @@ contains
       f%incid_diff = 0.0_wp
       f%grnd_refl  = 0.0_wp
       f%grnd_emiss = 0.0_wp
-   end subroutine alloc_rad_forcing
+   end subroutine alloc_rad_env
 
-   subroutine alloc_rad_flux(flux, n_band, n_coh)
-      type(rad_flux_t), intent(out) :: flux
+   subroutine alloc_rad_out(flux, n_band, n_coh)
+      type(rad_out_t), intent(out) :: flux
       integer(ik),      intent(in)  :: n_band, n_coh
       flux%n_band = n_band
       flux%n_coh  = n_coh
@@ -445,6 +445,6 @@ contains
       flux%albedo = 0.0_wp
       flux%dn_ground = 0.0_wp
       flux%up_ground = 0.0_wp
-   end subroutine alloc_rad_flux
+   end subroutine alloc_rad_out
 
 end module meds_canopy_radiation

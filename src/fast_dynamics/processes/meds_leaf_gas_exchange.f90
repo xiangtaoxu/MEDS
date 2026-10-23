@@ -23,7 +23,7 @@ module meds_leaf_gas_exchange
    private
 
    !----- The leaf's environment and fluxes, and the limitation flags. ------------------!
-   public :: leaf_env_t, leaf_flux_t
+   public :: leaf_env_t, leaf_out_t
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
 
    !----- Photosynthetic demand. ---------------------------------------------------------!
@@ -69,7 +69,7 @@ module meds_leaf_gas_exchange
    end type leaf_env_t
 
    !----- Leaf-level fluxes returned by the solver. ---------------------------------------!
-   type :: leaf_flux_t
+   type :: leaf_out_t
       real(wp)    :: A_net        !< [umol CO2/m2 leaf/s] net assimilation (A_gross - Rd)
       real(wp)    :: A_gross      !< [umol CO2/m2 leaf/s] gross assimilation
       real(wp)    :: gs           !< [mol H2O/m2 leaf/s]  stomatal conductance to water vapour
@@ -83,7 +83,7 @@ module meds_leaf_gas_exchange
       !      output (env%psi left at 0 makes beta_stomata identically 1). ---------------------------!
       real(wp)    :: beta_stomata    = 1.0_wp  !< [-] stomatal limb min(1, exp(sref*(psi-psi_onset))) (1 = unstressed)
       real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] fast limb, the psi_leaf ramp on Vcmax/Jmax/TPU
-   end type leaf_flux_t
+   end type leaf_out_t
 
    !----- Everything the Ci residual reads, passed explicitly so the residual is a module function    !
    !      (compiler trap: no contained function handed to a solver, docs/building.md). -------------!
@@ -258,7 +258,7 @@ contains
       type(leaf_photo_pft_t),    intent(in)  :: p
       integer(ik),               intent(in)  :: sm, temp_response_form, colim
       logical,                   intent(in)  :: use_boundary_layer
-      type(leaf_flux_t),         intent(out) :: flux
+      type(leaf_out_t),         intent(out) :: flux
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
@@ -574,7 +574,7 @@ contains
       real(wp),    optional, intent(out) :: beta_stom(n), beta_nonstom(n)
       integer(ik), optional, intent(out) :: limitation(n)
       type(leaf_env_t)          :: env
-      type(leaf_flux_t)         :: flux
+      type(leaf_out_t)         :: flux
       type(leaf_photo_pft_t)    :: p
       integer(ik) :: i
       do i = 1_ik, n

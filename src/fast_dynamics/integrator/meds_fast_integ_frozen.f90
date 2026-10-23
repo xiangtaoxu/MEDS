@@ -25,12 +25,12 @@ module meds_fast_integ_frozen
                                      CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_plant_hydr_lib,   only : conductance_retained_fraction
    use meds_plant_hydraulics, only : leaf_node_psi
-   use meds_surface, only : snow_melt_t
+   use meds_surface, only : snow_out_t
    use meds_soil_derive,      only : top_soil_psi
    use meds_soil_params,      only : soil_profile_t
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_surface_t
-   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, set_aero_env_atm
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, set_aero_env_atm
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
                                      march_state_t, frozen_t, surface_state_t,                            &
@@ -549,7 +549,7 @@ contains
                                  leaf_temp, wood_temp, aero)
       type(aero_params_t),   intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
-      type(aero_geom_t),     intent(in)    :: ageom
+      type(aero_args_t),     intent(in)    :: ageom
       integer(ik),           intent(in)    :: n
       integer(ik),           intent(in)    :: ord(:)          !< the cohorts from the ground up (static%order)
       real(wp),              intent(in)    :: height(:)       !< [m]  cohort height (gather order, top first)
@@ -613,7 +613,7 @@ contains
       real(wp),             intent(in)    :: t_air          !< [K]       reference-level air temperature
       real(wp),             intent(in)    :: dt_fast
       type(snow_stage_t),   intent(out)   :: st
-      type(snow_melt_t) :: smelt
+      type(snow_out_t) :: smelt
       real(wp)          :: snow_e0
 
       st%params      = snow_params

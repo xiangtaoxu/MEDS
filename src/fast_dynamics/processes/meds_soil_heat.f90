@@ -20,10 +20,10 @@ module meds_soil_heat
    private
 
    public :: soil_energy_step_implicit, soil_energy_time_deriv
-   public :: soil_heat_forcing_t, soil_heat_flux_t
+   public :: soil_heat_env_t, soil_heat_out_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
-   type :: soil_heat_forcing_t
+   type :: soil_heat_env_t
       real(wp) :: g_top      = 0.0_wp                       !< [W/m2] net ground heat flux (Rn-H-LE), top Neumann
       real(wp) :: geothermal = 0.0_wp                       !< [W/m2] prescribed bottom flux, positive up (held at 0)
       real(wp) :: soil_water(n_soil_layer_max) = 0.0_wp     !< [m3/m3] theta from hydrology (kappa, C_eff)
@@ -35,14 +35,14 @@ module meds_soil_heat
       !      faces (docs/science/soil_biophysics.md, "Water-thermal coupling"); no bottom face term. ---!
       real(wp) :: w_flux_top = 0.0_wp                       !< [m/s] water across the top face (<0 = infiltration in)
       real(wp) :: t_water_top = 0.0_wp                      !< [K] temperature of the infiltrating pond water
-   end type soil_heat_forcing_t
+   end type soil_heat_env_t
 
    !----- Soil-column energy outputs + diagnostics. ----------------------------------------!
-   type :: soil_heat_flux_t
+   type :: soil_heat_out_t
       real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] heat conducted out through the bottom face
       real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
       real(wp) :: heat_capacity = 0.0_wp                    !< [J/m2/K] the column's, at the step's start
-   end type soil_heat_flux_t
+   end type soil_heat_out_t
 
 contains
 
@@ -53,7 +53,7 @@ contains
    ! Evaporation is not a face: its enthalpy leaves in g_top's latent flux.                !
    !---------------------------------------------------------------------------------------!
    pure subroutine water_enthalpy_faces(forcing, temp, n, qwf)
-      type(soil_heat_forcing_t), intent(in)  :: forcing
+      type(soil_heat_env_t), intent(in)  :: forcing
       real(wp),               intent(in)  :: temp(:)   !< layer temps to upwind on (T^n or T^{n+1})
       integer(ik),            intent(in)  :: n
       real(wp),               intent(out) :: qwf(0:)   !< [W/m2] face 0 = top ... face n = bottom
@@ -104,7 +104,7 @@ contains
    !---------------------------------------------------------------------------------------!
    pure function bottom_heat_face(soil, forcing, g_deep, t_bot) result(hf_bot)
       type(soil_params_t),    intent(in) :: soil
-      type(soil_heat_forcing_t), intent(in) :: forcing
+      type(soil_heat_env_t), intent(in) :: forcing
       real(wp),               intent(in) :: g_deep      !< [W/m2/K] from deep_conductance
       real(wp),               intent(in) :: t_bot       !< [K] bottom-layer temperature
       real(wp) :: hf_bot
@@ -120,11 +120,11 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine soil_energy_step_implicit(col, forcing, profile, soil, dt, flux)
       type(soil_energy_state_t),   intent(inout) :: col
-      type(soil_heat_forcing_t),      intent(in)    :: forcing
+      type(soil_heat_env_t),      intent(in)    :: forcing
       type(soil_profile_t),        intent(in)    :: profile
       type(soil_params_t),         intent(in)    :: soil
       real(wp),                    intent(in)    :: dt
-      type(soil_heat_flux_t),         intent(out)   :: flux
+      type(soil_heat_out_t),         intent(out)   :: flux
 
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max) :: t_n, fl_n, kappa, c_eff, q_src, t_new, kf
@@ -193,7 +193,7 @@ contains
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_energy_time_deriv(col, forcing, profile, soil, dedt, bottom_face)
       type(soil_energy_state_t),   intent(in)  :: col
-      type(soil_heat_forcing_t),      intent(in)  :: forcing
+      type(soil_heat_env_t),      intent(in)  :: forcing
       type(soil_profile_t),        intent(in)  :: profile
       type(soil_params_t),         intent(in)  :: soil
       real(wp),                    intent(out) :: dedt(n_soil_layer_max)   !< [W/m3] dE/dt per layer (0 for k>n)

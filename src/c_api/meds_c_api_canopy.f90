@@ -18,11 +18,11 @@ module meds_c_api_canopy
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_config_io,            only : load_meds_config
-   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t
    use meds_pft_params,           only : leaf_photo_pft_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_leaf_gas_exchange,    only : solve_leaf_gas_exchange, leaf_params_at_capacity
    use meds_plant_trait_dynamics, only : light_plastic_traits
-   use meds_canopy_radiation, only : rad_forcing_t, rad_flux_t, ground_optics_state_t, alloc_rad_forcing
+   use meds_canopy_radiation, only : rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env
    use meds_canopy_radiation,     only : canopy_radiation, ground_optics
    use meds_numerics,             only : ascending_order
    implicit none
@@ -105,7 +105,7 @@ contains
       real(c_double),        intent(in)  :: psi_leaf(n), gb(n), psi(n)
       real(c_double),        intent(out) :: a_gross(n), a_net(n), gs(n), ci(n)
       type(leaf_env_t)          :: env
-      type(leaf_flux_t)         :: flux
+      type(leaf_out_t)         :: flux
       type(leaf_photo_pft_t)    :: p
       integer(ik) :: i
       do i = 1_ik, int(n, ik)
@@ -138,9 +138,9 @@ contains
       integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
       integer(ik) :: perm(max(ncoh,1)), pft_bt(max(ncoh,1))
       real(wp)    :: hgt_bt(max(ncoh,1)), lai_bt(max(ncoh,1)), wai_bt(max(ncoh,1)), tcan_bt(max(ncoh,1))
-      type(rad_forcing_t)         :: rf
-      type(rad_flux_t)            :: flux
-      type(ground_optics_state_t) :: surf
+      type(rad_env_t)         :: rf
+      type(rad_out_t)            :: flux
+      type(ground_optics_env_t) :: surf
       logical     :: he(NB)
       integer(ik) :: h, j, nc
       nc = int(ncoh, ik)
@@ -150,7 +150,7 @@ contains
          lai_bt(j) = lai(perm(j)) ; wai_bt(j) = wai(perm(j))
       end do
       tcan_bt = 298.15_wp                                     ! longwave only; its outputs are unused
-      call alloc_rad_forcing(rf, NB)
+      call alloc_rad_env(rf, NB)
       surf%n_band = NB
       allocate(surf%soil_albedo(NB))
       surf%soil_albedo = [g_cfg%soil%ground_albedo_vis, g_cfg%soil%ground_albedo_nir, 0.0_wp]
