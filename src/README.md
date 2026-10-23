@@ -115,7 +115,10 @@ offload (a portability property worth holding, though offload is not currently a
 test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
 (`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
 file goes to one shared directory, so any file can use any built module. **If a new routine needs
-`polygon_t`, it is driver code**, and it belongs in a `driver/` folder.
+`polygon_t`, it is driver code**, and it belongs in a `driver/` folder. The integrator
+(`fast_dynamics/integrator`), which steps one patch, holds to the same rule with one addition, the
+patch's site (`site_surface_t`); it never uses a met, output, calendar or driver module, and ctest
+`integrator_boundary` (`scripts/lint/check_integrator_boundary.py`) checks it.
 
 **2. A kernel goes where its caller's timescale is**, and within that, in its domain folder. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly

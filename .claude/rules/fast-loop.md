@@ -50,6 +50,9 @@ A new water flow belongs in the network (its law in `meds_plant_hydr_lib` or `me
   from `meds_patch_state_vars` (through an only-list) and link only `state` and `config`. That is what
   keeps them device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A
   routine that needs `polygon_t` is driver code.
+- **The integrator steps one patch.** `integrator/` takes the patch's site (`site_surface_t`) and the
+  per-patch store types, never the polygon, a met, output, calendar or driver module; ctest
+  `integrator_boundary` checks it.
 - **Build a fast step's static state through `meds_fast_state`.** `gather_patch` for production,
   `static_state_fixture` for tests and probes — the latter builds the block through the canonical
   birth path, so a fixture tree is on-allometry by construction. A hand-assembled one can describe a

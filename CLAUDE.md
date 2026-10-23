@@ -82,7 +82,8 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 1. **Kernels never see `polygon_t`.** The kernel folders take only the per-patch store types from the
    state layer (`meds_patch_state_vars`, through an only-list), which is what keeps them
    device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A routine that
-   needs `polygon_t` is driver code.
+   needs `polygon_t` is driver code. The integrator also takes the patch's site (`site_surface_t`) and
+   nothing past it; ctest `integrator_boundary` checks it.
 2. **A kernel goes where its caller's timescale is**, then in its domain folder. A kernel called
    from both tiers is a documented seam, never a folder — there is exactly one.
 3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
