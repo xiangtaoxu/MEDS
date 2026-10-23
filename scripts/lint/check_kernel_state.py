@@ -9,7 +9,7 @@ OpenMP `target` device. A routine that needs more is driver code.
 
 The library boundary cannot hold this rule, because every module file goes to one shared
 directory: once the state layer is built, any file can `use` any of its modules. So this script
-checks it on every ctest run. Code in the kernel folders (src/fast_dynamics/{canopy,plant,soil},
+checks it on every ctest run. Code in the kernel folders (src/fast_dynamics/processes,
 src/slow_dynamics/{plant,soil}):
   * takes from the state layer only the per-patch store types and their blends, through
     `use meds_patch_state_vars, only : ...`;
@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 
-KERNEL_DIRS = ("fast_dynamics/canopy", "fast_dynamics/plant", "fast_dynamics/soil",
+KERNEL_DIRS = ("fast_dynamics/processes",
                "slow_dynamics/plant", "slow_dynamics/soil")
 FORBIDDEN_TYPES = ("polygon_t", "cohort_block", "patch_block")
 FORBIDDEN_MODULES = ("meds_polygon_state_vars", "meds_cohort_state_vars", "meds_diag_vars")

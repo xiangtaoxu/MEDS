@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_canopy_radiation -- unit tests for the canopy two-stream RT library                 !
-! (src/fast_dynamics/canopy; docs/science/canopy_radiation_transfer.md).                   !
+! (src/fast_dynamics/processes; docs/science/canopy_radiation_transfer.md).                !
 !                                                                                          !
 ! Checks the physical invariants that a correct two-stream must satisfy:                     !
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
@@ -21,7 +21,7 @@ program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : stefan_boltzmann
-   use meds_canopy_types, only : rad_forcing_t, rad_flux_t, alloc_rad_forcing, ground_optics_state_t
+   use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
    use meds_pft_params,   only : rad_pft_optics_t, RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
    use meds_optics_lib,     only : beta_lidf, leaf_bf, gfun_direct, N_LEAF_CLASS
    use meds_pft_derive,     only : derive_rad_optics, moments_to_beta_params
@@ -89,10 +89,10 @@ contains
    !----- Fill shortwave + longwave forcing from a surface state. ----------------------------!
    subroutine build_forcing(cosz, t_sky, t_soil, f)
       real(wp),            intent(in)  :: cosz, t_sky, t_soil
-      type(rad_forcing_t), intent(out) :: f
-      type(ground_optics_state_t) :: surf
+      type(rad_env_t), intent(out) :: f
+      type(ground_optics_env_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
-      call alloc_rad_forcing(f, N_RAD_BAND_DEFAULT)
+      call alloc_rad_env(f, N_RAD_BAND_DEFAULT)
       f%cosz = cosz
       f%incid_beam(RAD_VIS) = 300.0_wp ; f%incid_diff(RAD_VIS) = 100.0_wp
       f%incid_beam(RAD_NIR) = 250.0_wp ; f%incid_diff(RAD_NIR) =  80.0_wp
@@ -134,8 +134,8 @@ contains
    !=======================================================================================!
    subroutine test_energy_conservation()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 4_ik
       integer(ik) :: pft(NC), b
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
@@ -169,8 +169,8 @@ contains
    !  apply_rt_forcing `perm` relies on to route the higher absorbed PAR to the taller cohort.     !
    subroutine test_cohort_order()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 2_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
@@ -209,8 +209,8 @@ contains
    !=======================================================================================!
    subroutine test_tied_cohorts_codominant()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 3_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
@@ -257,8 +257,8 @@ contains
    !=======================================================================================!
    subroutine test_beers_law()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 1_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), kdir, gee, absorbed_vis, expect
@@ -288,8 +288,8 @@ contains
    !=======================================================================================!
    subroutine test_zero_lai_albedo()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 1_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
@@ -307,8 +307,8 @@ contains
    !=======================================================================================!
    subroutine test_multi_pft()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 2_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
@@ -336,8 +336,8 @@ contains
    !=======================================================================================!
    subroutine test_longwave_equilibrium()
       type(rad_pft_optics_t) :: opt
-      type(rad_forcing_t)    :: f
-      type(rad_flux_t)       :: flux
+      type(rad_env_t)    :: f
+      type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 3_ik
       integer(ik) :: pft(NC), i
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet

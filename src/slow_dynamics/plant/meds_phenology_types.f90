@@ -2,8 +2,9 @@
 !==========================================================================================!
 ! meds_phenology_types -- the derived types of the PHENOLOGY kernel.                            !
 !                                                                                          !
-! Kept apart from the fast plant types (meds_plant_types) because phenology runs on the DAILY   !
-! tier, while leaf gas exchange, hydraulics and non-leaf maintenance respiration run sub-daily. !
+! Kept apart from the fast leaf types (meds_leaf_gas_exchange) because phenology runs on the  !
+! DAILY tier, while leaf gas exchange, hydraulics and non-leaf maintenance respiration run    !
+! sub-daily.                                                                                  !
 ! One shared types module would make the slow plant kernels depend on the fast ones and back    !
 ! again -- a genuine cycle, not a style point.                                                  !
 !                                                                                          !

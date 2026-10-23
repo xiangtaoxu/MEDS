@@ -16,7 +16,7 @@ hydraulics ([plant_hydraulics](plant_hydraulics.md)).
 
 ## Leaf and wood energy balance
 
-`veg_energy_balance` (`meds_plant_biophysics`) is the one kernel for a cohort's leaf **or** wood; wood is
+`veg_energy_balance` (`meds_plant_energy`) is the one kernel for a cohort's leaf **or** wood; wood is
 the case without transpiration. Its conductances and absorbed radiation are frozen for the step
 (Category 0, [numerical_scheme](numerical_scheme.md) §2), the saturation terms follow the canopy-air
 state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$. The balance is then
@@ -130,7 +130,7 @@ R_{net} = A_{sw} + A_{lw} - 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}\,\Del
 ```
 
 ($E$ per latent pathway; $`Q_{adv}`$ stays out of $`R_{net}`$ because it is an internal soil-to-plant
-transfer, not a radiative input at the column boundary: the soil's `root_heat_sink` has already
+transfer, not a radiative input at the column boundary: the soil's `water_heat_out` has already
 debited it, and $H$ and $E$ carry it on into the canopy air through $`\Delta T_{\rm avg}`$, so counting
 it in $`R_{net}`$ as well would count it twice in the whole-column ledger). Using one weight for both is
 what breaks conservation; pairing them closes the balance identically:
@@ -290,14 +290,14 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 
 | Concept | Routine |
 |---|---|
-| leaf/wood balance + exact exponential relaxation, eqs. (1), (3)–(7) | `meds_plant_biophysics`: `veg_energy_balance` |
+| leaf/wood balance + exact exponential relaxation, eqs. (1), (3)–(7) | `meds_plant_energy`: `veg_energy_balance` |
 | coefficients $h$, $g$, emission slope | `sensible_heat_coeff`, `leaf_transp_coeff`, `leaf_film_coeff`, `lw_emission_slope` |
 | latent terms, eq. (2); the per-cohort call | `meds_fast_integ_derivs`: `surface_derivs` |
 | tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_integ_frozen`: `tissue_coefficients`; the dry part `derive_cohort_terms` (`meds_fast_state`) |
 | tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_temp_to_energy`, `tissue_energy_to_temp` |
 | the fast step's energy commit | `meds_fast_integ_update`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
-| ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
+| ground skin fluxes | `meds_surface`: `ground_surface_fluxes` |
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/rk4_derivs.f90` — the leaf/wood energy budget in the reference model.

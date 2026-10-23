@@ -18,9 +18,9 @@ program test_surface_energy
    use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
                                         cas_enthalpy_to_temp
-   use meds_plant_biophysics, only : veg_energy_balance
-   use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_cas_biophysics,   only : cas_box_t, cas_source_t, cas_box_step_implicit
+   use meds_plant_energy, only : veg_energy_balance
+   use meds_surface, only : ground_surface_fluxes
+   use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
 
    call test_wood_stiffness_spread()
@@ -227,34 +227,33 @@ contains
       !      docs/science/canopy_air_space_biophysics.md eq. (2)). Vapour + CO2 twins held inert (0 !
       !      sources / 0 vapour conductance; a nonzero molar capacity avoids a 0/0 in the unused    !
       !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
-      type(cas_box_t) :: column
-      type(cas_source_t) :: source
+      type(cas_env_t) :: cas_env
       real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
       real(wp), parameter :: CAS_MASS_CAPACITY = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
-      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
+      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * heat_transfer_factor(c3)  [kg/m2/s]
       integer(ik) :: step
       print '(a)', 'test_cas:'
       shv  = 0.012_wp
       enth = cas_temp_to_enthalpy(295.0_wp, shv)                  ! CAS starts at 295 K
       temp = 295.0_wp
       enthalpy_atm = cas_temp_to_enthalpy(300.0_wp, shv)              ! warmer atmosphere
-      column%air_mass_capacity        = CAS_MASS_CAPACITY
-      column%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
-      column%atm_conductance_enthalpy = GATM
-      column%atm_conductance_vapor    = 0.0_wp
-      column%atm_conductance_co2      = 0.0_wp
-      column%atm_enthalpy             = enthalpy_atm
-      column%atm_specific_humidity    = 0.0_wp
-      column%atm_co2                  = 0.0_wp
-      source%surface_enthalpy_source  = 50.0_wp + 20.0_wp + 10.0_wp + 5.0_wp  ! cohort + ground sensible + vapour-enthalpy
-      source%surface_vapor_source     = 0.0_wp
-      source%biotic_co2_source        = 0.0_wp
+      cas_env%air_mass_capacity        = CAS_MASS_CAPACITY
+      cas_env%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
+      cas_env%atm_conductance_enthalpy = GATM
+      cas_env%atm_conductance_vapor    = 0.0_wp
+      cas_env%atm_conductance_co2      = 0.0_wp
+      cas_env%atm_enthalpy             = enthalpy_atm
+      cas_env%atm_specific_humidity    = 0.0_wp
+      cas_env%atm_co2                  = 0.0_wp
+      cas_env%surface_enthalpy_source  = 50.0_wp + 20.0_wp + 10.0_wp + 5.0_wp  ! cohort + ground sensible + vapour-enthalpy
+      cas_env%surface_vapor_source     = 0.0_wp
+      cas_env%biotic_co2_source        = 0.0_wp
       worst = 0.0_wp
       do step = 1_ik, 30_ik
-         call cas_box_step_implicit(enth, shv, 0.0_wp, source, column, 60.0_wp, enth_new, shv_new, co2_new)
-         resid = column%air_mass_capacity * (enth_new - enth)                                   &
-                 - 60.0_wp * (source%surface_enthalpy_source                                    &
-                              + column%atm_conductance_enthalpy * (column%atm_enthalpy - enth_new))
+         call cas_box_step_implicit(enth, shv, 0.0_wp, cas_env, 60.0_wp, enth_new, shv_new, co2_new)
+         resid = cas_env%air_mass_capacity * (enth_new - enth)                                   &
+                 - 60.0_wp * (cas_env%surface_enthalpy_source                                    &
+                              + cas_env%atm_conductance_enthalpy * (cas_env%atm_enthalpy - enth_new))
          worst = max(worst, abs(resid))
          enth = enth_new ; shv = shv_new
          temp = cas_enthalpy_to_temp(enth, shv)

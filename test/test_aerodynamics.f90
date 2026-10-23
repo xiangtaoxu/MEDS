@@ -1,13 +1,15 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_aerodynamics -- unit tests for the stateless canopy-aerodynamics kernel.                !
-!   1. NEUTRAL log-law: mo_surface_layer recovers ustar = vonk*u/ln(zldis/z0m) and temp1 =       !
-!      vonk/ln(zldis/z0m) when the air and canopy air have identical (theta, q), and the same      !
+!   1. NEUTRAL log-law: mo_surface_layer recovers ustar = vonk*u/ln(zldis/z0m) and             !
+!      heat_transfer_factor = vonk/ln(zldis/z0m) when the air and canopy air have identical    !
+!      (theta, q), and the same                                                                  !
 !      ustar a hair either side of neutral.                                                       !
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
 !      (warm air aloft) a SMALLER one, at the same wind.                                          !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
-!   4. boundary_gbh_mos is positive, above the floor, and increases with wind (forced convection).!
+!   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
+!      (forced convection).                                                                      !
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
 !      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
 !      in the open-canopy limit.                                                                 !
@@ -22,10 +24,10 @@ program test_aerodynamics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : von_karman
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, alloc_aero_out
    use meds_biophysics_params,   only : aero_params_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
-                                        reduced_wind, boundary_gbh_mos, open_canopy_fraction
+                                        reduced_wind, boundary_layer_conductance, open_canopy_fraction
    implicit none
 
    call test_neutral()
@@ -45,21 +47,21 @@ contains
    !----- 1. Neutral log-law recovery. -------------------------------------------------------!
    subroutine test_neutral()
       type(aero_params_t) :: cfg
-      real(wp) :: ustar, temp1, zeta, rib, obu, uref, z0m, zldis, ln, us_side
+      real(wp) :: ustar, heat_transfer_factor, zeta, rib, obu, uref, z0m, zldis, ln, us_side
       uref = 5.0_wp ; z0m = 0.1_wp ; zldis = 10.0_wp    ! displace = 0 => zldis = zref
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
-                            298.15_wp, 0.010_wp, ustar, temp1, zeta, rib, obu)
+                            298.15_wp, 0.010_wp, ustar, heat_transfer_factor, zeta, rib, obu)
       ln = log(zldis / z0m)
       call check('neutral ustar', ustar, von_karman * uref / ln, 1.0e-5_wp)
-      call check('neutral temp1', temp1, von_karman / ln,        1.0e-6_wp)
+      call check('neutral heat_transfer_factor', heat_transfer_factor, von_karman / ln,        1.0e-6_wp)
       call check('neutral zeta ~ 0', zeta, 0.0_wp, 1.0e-6_wp)
       !----- A hair either side of neutral gives the neutral answer: the convective velocity     !
       !      fades with the buoyancy flux, so the wind has no jump there. --------------------------!
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
-                            298.15_wp + 1.0e-9_wp, 0.010_wp, us_side, temp1, zeta, rib, obu)
+                            298.15_wp + 1.0e-9_wp, 0.010_wp, us_side, heat_transfer_factor, zeta, rib, obu)
       call check('ustar a hair unstable of neutral', us_side, ustar, 1.0e-6_wp)
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
-                            298.15_wp - 1.0e-9_wp, 0.010_wp, us_side, temp1, zeta, rib, obu)
+                            298.15_wp - 1.0e-9_wp, 0.010_wp, us_side, heat_transfer_factor, zeta, rib, obu)
       call check('ustar a hair stable of neutral', us_side, ustar, 1.0e-6_wp)
    end subroutine test_neutral
 
@@ -91,8 +93,8 @@ contains
    subroutine test_boundary_layer()
       type(aero_params_t) :: cfg
       real(wp) :: g_lo, g_hi
-      g_lo = boundary_gbh_mos(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
-      g_hi = boundary_gbh_mos(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
+      g_lo = boundary_layer_conductance(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
+      g_hi = boundary_layer_conductance(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       call check_true('gbh positive above floor', g_lo > cfg%gbhmos_min, g_lo)
       call check_true('gbh increases with wind',  g_hi > g_lo, g_hi - g_lo)
    end subroutine test_boundary_layer
@@ -101,7 +103,7 @@ contains
    subroutine test_master()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N)
@@ -141,7 +143,7 @@ contains
    subroutine test_open_canopy()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik, NW = 11_ik
       real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW)
@@ -186,7 +188,7 @@ contains
    subroutine test_tied_layer()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
-      type(aero_geom_t)   :: geom
+      type(aero_args_t)   :: geom
       type(aero_out_t)    :: one, split
       real(wp), parameter :: H2(2) = [8.0_wp, 18.0_wp], LAI2(2) = [1.5_wp, 2.0_wp]
       real(wp), parameter :: TL2(2) = [299.0_wp, 300.0_wp], TW2(2) = [298.5_wp, 299.0_wp]

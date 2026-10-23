@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! test_column_co2 -- unit tests for the column CO2 balance (the well-mixed                 !
 ! canopy-air-space CO2 box, docs/science/canopy_air_space_biophysics.md eq. (1)). The box  !
-! is advanced by the production kernel meds_cas_biophysics::cas_box_step_implicit; the  !
+! is advanced by the production kernel meds_canopy_air_space::cas_box_step_implicit; the   !
 ! local co2_step helper feeds it the raw scalar inputs and assembles the budget            !
 ! diagnostics (nee/nep/loss2atm/storage/resid) from its result. Test plan:                 !
 !   1. RESID ~ 0 : the closed CO2 budget residual vanishes for a spread of inputs.                 !
@@ -19,7 +19,7 @@ program test_column_co2
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : mmdry, kgcday_2_umols
-   use meds_cas_biophysics,   only : cas_box_t, cas_source_t, cas_box_step_implicit
+   use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
 
    !----- Local CO2 budget diagnostics, derived in co2_step from the production                  !
@@ -54,24 +54,23 @@ contains
    !      the budget diagnostics from its result.                                                   !
    !      The enthalpy/vapour twins are held inert (nonzero air_mass_capacity avoids a 0/0).        !
    subroutine co2_step(can_co2, can_depth, can_shv, gpp, plant_resp, hetero,                    &
-                       ustar, temp2, co2_atm, rho_air, dt, budget)
+                       ustar, vapour_transfer_factor, co2_atm, rho_air, dt, budget)
       real(wp), intent(inout) :: can_co2
       real(wp), intent(in)    :: can_depth, can_shv, gpp, plant_resp, hetero
-      real(wp), intent(in)    :: ustar, temp2, co2_atm, rho_air, dt
+      real(wp), intent(in)    :: ustar, vapour_transfer_factor, co2_atm, rho_air, dt
       type(co2_budget_t), intent(out) :: budget
-      type(cas_box_t) :: column
-      type(cas_source_t) :: source
+      type(cas_env_t) :: cas_env
       real(wp) :: can_dmol, ccapcan, gatm_co2, f_bio, enth_dummy, shv_dummy, co2_new
       can_dmol = rho_air * (1.0_wp - can_shv) / mmdry        ! dry-air molar density [mol/m3]
       ccapcan  = can_dmol * can_depth                        ! molar CAS capacity   [mol/m2]
-      gatm_co2 = can_dmol * ustar * temp2                    ! atm<->CAS molar conductance
+      gatm_co2 = can_dmol * ustar * vapour_transfer_factor                    ! atm<->CAS molar conductance
       f_bio    = hetero + plant_resp - gpp                   ! Reco - GPP  [umol/m2/s]
-      column%air_mass_capacity   = 1.0_wp                    ! inert enthalpy/vapour twins (avoid 0/0)
-      column%air_molar_capacity  = ccapcan
-      column%atm_conductance_co2 = gatm_co2
-      column%atm_co2             = co2_atm
-      source%biotic_co2_source   = f_bio
-      call cas_box_step_implicit(0.0_wp, 0.0_wp, can_co2, source, column, dt,                 &
+      cas_env%air_mass_capacity   = 1.0_wp                    ! inert enthalpy/vapour twins (avoid 0/0)
+      cas_env%air_molar_capacity  = ccapcan
+      cas_env%atm_conductance_co2 = gatm_co2
+      cas_env%atm_co2             = co2_atm
+      cas_env%biotic_co2_source   = f_bio
+      call cas_box_step_implicit(0.0_wp, 0.0_wp, can_co2, cas_env, dt,                 &
                                     enth_dummy, shv_dummy, co2_new)
       budget%resid    = ccapcan * (co2_new - can_co2) - dt * (f_bio + gatm_co2 * (co2_atm - co2_new))
       budget%nee      = f_bio
@@ -132,10 +131,10 @@ contains
                                  400.0_wp, 1.2_wp, 1.0e9_wp, b)
       call check_true('huge dt: L-stable, no overshoot below atm', cc_big >= 400.0_wp, cc_big)
       call check('huge dt: converges to atm', cc_big, 400.0_wp, 1.0e-3_wp)
-      !----- The M-O scalar-transfer coefficient temp2 (c3) scales the atm<->CAS conductance        !
+      !----- The M-O scalar-transfer coefficient vapour_transfer_factor (c3) scales the atm<->CAS conductance        !
       !      (docs/science/canopy_aerodynamics.md eq. (5)). Halving it must SLOW the approach to      !
       !      co2_atm, leaving the CAS farther from the atm after one step; a kernel that ignored     !
-      !      temp2 would give two identical runs. ---------------------------------------------------!
+      !      vapour_transfer_factor would give two identical runs. ---------------------------------------------------!
       block
          real(wp) :: cc_full, cc_half
          cc_full = 500.0_wp
@@ -144,7 +143,7 @@ contains
          cc_half = 500.0_wp
          call co2_step(cc_half, 20.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.30_wp, 0.5_wp, &
                                     400.0_wp, 1.2_wp, 60.0_wp, b)
-         call check_true('smaller temp2 (c3) slows atm coupling (CAS stays farther from atm)',        &
+         call check_true('smaller vapour_transfer_factor (c3) slows atm coupling (CAS stays farther from atm)',        &
                          (cc_half - 400.0_wp) > (cc_full - 400.0_wp), cc_half - cc_full)
       end block
    end subroutine test_atm_relaxation

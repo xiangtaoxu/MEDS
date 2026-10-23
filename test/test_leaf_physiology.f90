@@ -14,13 +14,13 @@ program test_leaf_physiology
                                   kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn, solve_leaf_gas_exchange
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
    type(leaf_env_t)    :: env
-   type(leaf_flux_t)   :: flux, flux2
+   type(leaf_out_t)   :: flux, flux2
    real(wp) :: a_gross, ac, aj, ap, an0, an1, an2, prev
    real(wp) :: psi_tlp, jump, gs_top
    integer(ik) :: i, j
@@ -420,7 +420,7 @@ contains
    subroutine leaf_solve(e, ipft, f)
       type(leaf_env_t),  intent(in)  :: e
       integer(ik),       intent(in)  :: ipft
-      type(leaf_flux_t), intent(out) :: f
+      type(leaf_out_t), intent(out) :: f
       associate (t => cfg%pft%leaf_photo)
          call solve_leaf_gas_exchange(e, t%pft(ipft), t%stomatal_model, t%temp_response_form, t%colimitation,  &
                                       t%use_boundary_layer, f)

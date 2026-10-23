@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**37.0 k lines, 106 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
+**37.5 k lines, 104 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,7 +13,7 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    37.0 k lines · 106 modules · 21 CMake libraries
+src/                                    37.5 k lines · 104 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
@@ -48,19 +48,17 @@ src/                                    37.0 k lines · 106 modules · 21 CMake 
 │                  a field holds before it has a real one                    2 754
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                      8 733
-│   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
-│   │              canopy-air box                                              943
-│   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
-│   │              respiration, tissue energy                                  998
-│   ├── soil/      the ground: soil water, soil energy, the ground skin,
-│   │              the snow store                                              744
+├── fast_dynamics/       sub-daily, one dt_fast per step                      9 230
+│   ├── processes/ one module per process: canopy radiation, aerodynamics,
+│   │              the canopy air space; leaf gas exchange, respiration, the
+│   │              plant's energy, the canopy's water, plant hydraulics; soil
+│   │              water, soil heat, the surface (snow, bare ground)         2 959
 │   ├── integrator/ the integrator machinery: the state vector, the frozen
 │   │              work record, ESDIRK2 and RK45, error control, the water
-│   │              network                                                   4 780
+│   │              network                                                   4 937
 │   └── driver/    the walk of one slow step in dt_fast sub-steps over the
 │                  patches: the gather and scatter, the forcing, and what
-│                  the output reads                                          1 268
+│                  the output reads                                          1 334
 │
 ├── slow_dynamics/       daily to annual                                      5 075
 │   ├── plant/     phenology, carbon allocation, trait plasticity               695
@@ -106,7 +104,7 @@ from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
 
-**1. Kernel folders never see `polygon_t`.** `fast_dynamics/{canopy,plant,soil}` and
+**1. Kernel folders never see `polygon_t`.** `fast_dynamics/processes` and
 `slow_dynamics/{plant,soil}` take from the state layer only the per-patch store types and their
 blends, through `use meds_patch_state_vars, only : ...`, and link only `state` and `config`. That is
 what keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
@@ -120,7 +118,8 @@ file goes to one shared directory, so any file can use any built module. **If a 
 patch's site (`site_surface_t`); it never uses a met, output, calendar or driver module, and ctest
 `integrator_boundary` (`scripts/lint/check_integrator_boundary.py`) checks it.
 
-**2. A kernel goes where its caller's timescale is**, and within that, in its domain folder. A
+**2. A kernel goes where its caller's timescale is**, and within that, in its process module: the fast
+half's are flat in `fast_dynamics/processes/`, the slow half's in its domain folder. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly
 one: `heterotrophic_respiration_matrix`, so that the sub-daily respiration debits the same CENTURY
 matrix the daily step does. Co-locating it with the daily step is what closes the seam gap to
@@ -134,8 +133,11 @@ integrated, so they live with the configuration they are derived from: their typ
 `meds_pft_params`), and the routines that derive them in `config/` (a site's soil profile in
 `meds_soil_derive`, the PFT table's leaf capacities and the per-PFT tables the fast loop reads in
 `meds_pft_derive`). A per-PFT table is `<process>_table_t` and its entries `<process>_pft_t`. A
-kernel's own argument types are not parameters in this sense: `*_args_t` (`pheno_args_t`, …) carry
-the values a kernel reads, a driver fills them from the parameters, and they live with the kernel.
+kernel's own argument records are not parameters in this sense: they live with the kernel, and are
+named by role. `<process>_env_t` is what a kernel reads that changes during the run (`leaf_env_t`,
+`cas_env_t`); `<process>_args_t` is what it reads that is fixed for the run or the slow step, which a
+driver fills from the parameters (`pheno_args_t`, `aero_args_t`); `<process>_out_t` is what it returns
+(`rad_out_t`, `snow_out_t`). `_state_t` is kept for the stores in `state/`.
 
 **4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
 (`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,
@@ -179,7 +181,7 @@ One edge is worth knowing because it is easy to get wrong:
 
 | You are adding | It goes in |
 |---|---|
-| a soil, canopy or plant process | `fast_dynamics/<domain>/` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
+| a soil, canopy or plant process | `fast_dynamics/processes/meds_<process>.f90` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
 | a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, the fusion policy, and, if it persists, the restart file (`io/init/meds_init_restart.f90`: three adjacent lines in its cohort section) |
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_patch_into`, the new gap in `apply_patch_disturbance`, and, if it persists, the restart file's patch section |
@@ -258,6 +260,6 @@ Revisit if the suite outgrows a single `ls`, or if two tests ever want the same 
 ## Per-folder notes
 
 Five folders carry their own README with subsystem detail:
-[`fast_dynamics/`](fast_dynamics/README.md), [`fast_dynamics/plant/`](fast_dynamics/plant/README.md),
+[`fast_dynamics/`](fast_dynamics/README.md), [`fast_dynamics/processes/`](fast_dynamics/processes/README.md),
 [`io/met/`](io/met/README.md), [`io/maps/`](io/maps/README.md),
 [`slow_dynamics/soil/`](slow_dynamics/soil/README.md).

@@ -91,7 +91,8 @@ Four rules, applied in order. The long form, with the library graph and a lookup
    device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A routine that
    needs `polygon_t` is driver code. The integrator also takes the patch's site (`site_surface_t`) and
    nothing past it; ctest `integrator_boundary` checks it.
-2. **A kernel goes where its caller's timescale is**, then in its domain folder. A kernel called
+2. **A kernel goes where its caller's timescale is**, then in its process module (fast:
+   `fast_dynamics/processes/`; slow: its domain folder). A kernel called
    from both tiers is a documented seam, never a folder — there is exactly one.
 3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
    of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,

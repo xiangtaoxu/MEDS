@@ -16,7 +16,7 @@ module meds_fast_integ_update
                                      step_report_t, march_state_t, frozen_t, boundary_flux_t,              &
                                      tissue_coefficients_t, diagnose_soil_temps
    use meds_diag_vars,        only : CO_TRANSP
-   use meds_ground_biophysics, only : snow_take_exchange
+   use meds_surface, only : snow_take_exchange
    use meds_therm_lib,        only : internal_energy_liquid, cas_enthalpy_to_temp, tissue_energy_to_temp
    use meds_budget_check,     only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR,           &
                                      BUDGET_CO2_RATE_FLOOR

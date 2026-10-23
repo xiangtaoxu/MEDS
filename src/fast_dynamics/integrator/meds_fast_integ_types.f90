@@ -26,8 +26,8 @@ module meds_fast_integ_types
    use meds_linear_algebra, only : arrowhead_system_t
    use meds_soil_water, only : ground_evap_env_t
    use meds_fast_params, only : CTRL_I
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
-   use meds_cas_biophysics, only : cas_box_t
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
+   use meds_canopy_air_space, only : cas_env_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -167,7 +167,7 @@ module meds_fast_integ_types
       real(wp),    allocatable :: leaf_dry_hcap(:), wood_dry_hcap(:)   !< [J/K per m2 ground]
       !----- The canopy geometry, and the canopy-air top the forcing is moved to with the patch's   !
       !      roughness and displacement (docs/science/forcing.md §8). ------------------------------!
-      type(aero_geom_t)        :: geom
+      type(aero_args_t)        :: geom
       real(wp)                 :: z_top    = 30.0_wp   !< [m] the canopy-air top, the forcing's reference height
       real(wp)                 :: rough    = 0.0_wp    !< [m] roughness length
       real(wp)                 :: displace = 0.0_wp    !< [m] zero-plane displacement height
@@ -332,7 +332,7 @@ module meds_fast_integ_types
    !      inputs a per-stage re-solve needs, and the biotic CO2 source. Plain scalars, so a stage    !
    !      can copy it and override the conductances. ----------------------------------------------!
    type :: cas_boundary_t
-      type(cas_box_t) :: box
+      type(cas_env_t) :: box   !< its sources are each evaluation's, set where the box is advanced
       !----- The box's conductances are the state^n values, which seed the march and the diagnostics; a stage !
       !      re-solves them at its own canopy-air state (docs/science/numerical_scheme.md §2, item 3; !
       !      docs/science/canopy_aerodynamics.md §2). mo_live says the mo_* inputs below are set: it  !

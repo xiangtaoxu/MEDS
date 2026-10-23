@@ -176,7 +176,7 @@ $`u_{ground}`$, and the patch **albedo** = upward flux leaving the top / total i
 `ground_optics` closes the two-stream at the bottom (`meds_canopy_radiation`, surface block). For a shortwave
 band the ground reflectance is the (per-band) soil albedo and its emission is zero; for the thermal
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
-T_{soil}^4`$. Its state (`ground_optics_state_t`) is **bare soil plus snow**: the per-band soil albedo,
+T_{soil}^4`$. Its input (`ground_optics_env_t`) is **bare soil plus snow**: the per-band soil albedo,
 the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo,
 emissivity and temperature by the Niu-Yang snow-cover fraction, so a partial pack changes the ground
 continuously; the snow's own albedo moves from its fresh to its aged value with the liquid fraction of
@@ -282,8 +282,8 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
 | per-PFT optics table ($\omega, g$), eq. (4) | `meds_pft_derive`: `derive_rad_optics`, once at load onto the PFT table (`cfg%pft%optics`) |
 | per-cohort blend ($\beta, \beta_0, k$, leaf_frac), eqs. (5)–(7) | `meds_canopy_radiation`: `blend_cohort_optics` |
-| ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_state_t`) |
+| ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_env_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
-| types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_types`: `rad_forcing_t`, `rad_flux_t`, `ground_optics_state_t` |
+| types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, LW emission temperature, snow on the ground) | `meds_fast_forcing`: `apply_rt_forcing` |

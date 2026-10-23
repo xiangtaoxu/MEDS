@@ -1,7 +1,7 @@
 # Leaf gas exchange
 
 How MEDS computes leaf-level photosynthesis, stomatal conductance, and their coupling. The code
-lives in [`src/fast_dynamics/plant/meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/plant/meds_leaf_gas_exchange.f90); the
+lives in [`src/fast_dynamics/processes/meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/processes/meds_leaf_gas_exchange.f90); the
 public entry points are `solve_leaf_gas_exchange` and `leaf_gas_exchange_batch` in
 `meds_leaf_gas_exchange`. Each PFT's parameters are flattened from the configuration once, at load,
 into the PFT table's leaf table (`meds_pft_derive`).

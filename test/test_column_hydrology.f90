@@ -36,7 +36,7 @@ program test_column_hydrology
    use meds_fast_integ_backward_euler,    only : water_step
    use meds_pft_params,       only : hydraulics_table_t
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp
-   use meds_plant_biophysics, only : intercept_canopy_layer
+   use meds_canopy_water, only : intercept_canopy_layer
    implicit none
 
    !----- A soil column as the water network sees it: no cohorts, what drives it, the network, its !

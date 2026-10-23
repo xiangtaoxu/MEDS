@@ -21,13 +21,14 @@ module meds_fast_integ_derivs
    use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
-   use meds_soil_types, only : energy_forcing_t, snow_env_t, snow_flux_t
+   use meds_soil_heat, only : soil_heat_env_t
+   use meds_surface, only : snow_env_t, snow_out_t
    use meds_patch_state_vars,   only : soil_energy_state_t
-   use meds_soil_energy, only : soil_energy_time_deriv
-   use meds_cas_biophysics, only : cas_box_t, cas_source_t, cas_box_time_deriv
-   use meds_ground_biophysics, only : ground_surface_fluxes, snow_surface_balance
+   use meds_soil_heat, only : soil_energy_time_deriv
+   use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv
+   use meds_surface, only : ground_surface_fluxes, snow_surface_balance
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
-   use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
+   use meds_plant_energy, only : veg_energy_balance, lw_emission_slope
    use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
                                march_state_t, frozen_t, march_tend_t, fast_static_state_t,               &
@@ -67,14 +68,15 @@ contains
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
       real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
-      real(wp) :: tcas, ustar, temp1, zeta, rib, obu, can_dmol
+      real(wp) :: tcas, ustar, heat_transfer_factor, zeta, rib, obu, can_dmol
       tcas = cas_enthalpy_to_temp(cas_enthalpy, cas_shv)
       !----- The pre-pass also passes can_theta = tcas, so only the state differs from its solve. -!
       call mo_surface_layer(cas%aero_cfg, cas%mo_u_ref, cas%mo_zref, cas%mo_displace, cas%mo_rough, &
                             cas%mo_theta_atm, cas%mo_shv_atm, tcas, cas_shv,                      &
-                            ustar, temp1, zeta, rib, obu)
+                            ustar, heat_transfer_factor, zeta, rib, obu)
       can_dmol = cas_molar_density(cas%mo_rho, cas_shv)
-      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, temp1, temp1, g_atm_heat, g_atm_vapour, g_atm_co2)
+      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, heat_transfer_factor, heat_transfer_factor,         &
+                                g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine refresh_cas_conductances
 
    !---------------------------------------------------------------------------------------!
@@ -121,13 +123,12 @@ contains
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
       type(snow_env_t)  :: senv        !< the pack's surroundings at this evaluation
-      type(snow_flux_t) :: sfx         !< its exchange with them (zero without a pack)
+      type(snow_out_t) :: sfx         !< its exchange with them (zero without a pack)
       !----- Film-evaporation latent terms: frozen conductance, live dqdt and qsat_c - qcas, as for the !
       !      dry pathway. With canopy_water_on off, f_wet_c = 0 and the wet pathway vanishes. --------!
       real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
       real(wp)    :: gah_l, gaw_l, gac_l      !< the conductances this evaluation uses
-      type(cas_source_t) :: cas_src
-      type(cas_box_t) :: cas_col
+      type(cas_env_t) :: cas_env
       integer(ik) :: i
 
       call ensure_surface_tend(f, n)
@@ -243,18 +244,18 @@ contains
 
       !----- CAS box tendencies (shared kernel; the condensation adjustment above is folded into    !
       !      src_enth/src_vap, so the box math is scheme-agnostic). ---------------------------------!
-      cas_src%surface_enthalpy_source = f%src_enth
-      cas_src%surface_vapor_source    = f%src_vap
-      cas_src%biotic_co2_source       = cas%nee_biotic
+      cas_env = cas%box
+      cas_env%surface_enthalpy_source = f%src_enth
+      cas_env%surface_vapor_source    = f%src_vap
+      cas_env%biotic_co2_source       = cas%nee_biotic
       !----- The CAS <-> atmosphere conductances follow the live canopy-air state: RK45 re-solves them   !
       !      here. ESDIRK2 arrives with mo_live cleared on its stage copy, having solved once for the    !
       !      stage, so its Newton's residual evaluations reuse that value. ------------------------------!
-      cas_col = cas%box
       call cas_conductances(cas, y%cas_enthalpy, y%cas_shv, gah_l, gaw_l, gac_l)
-      cas_col%atm_conductance_enthalpy = gah_l
-      cas_col%atm_conductance_vapor    = gaw_l
-      cas_col%atm_conductance_co2      = gac_l
-      call cas_box_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
+      cas_env%atm_conductance_enthalpy = gah_l
+      cas_env%atm_conductance_vapor    = gaw_l
+      cas_env%atm_conductance_co2      = gac_l
+      call cas_box_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_env,                 &
                                  f%d_cas_enthalpy, f%d_cas_shv, f%d_cas_co2)
    end subroutine surface_derivs
 
@@ -296,7 +297,7 @@ contains
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
       type(soil_energy_state_t)  :: soil_energy
-      type(energy_forcing_t)     :: eforc
+      type(soil_heat_env_t)     :: eforc
       real(wp)                   :: t_ground, fliq1, wmass1, transp_i, e_drain, water_heat(nsl)
       integer(ik)                :: i
 
@@ -592,7 +593,7 @@ contains
    !---------------------------------------------------------------------------------------!
    pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, theta, water_heat_out,                  &
                                                 face_flux, infiltration, t_infil, e_drain)
-      type(energy_forcing_t), intent(out) :: eforc
+      type(soil_heat_env_t), intent(out) :: eforc
       integer(ik),            intent(in)  :: nsl
       real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
       real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
@@ -605,12 +606,12 @@ contains
       eforc%g_top = g_top
       do k = 1_ik, nsl
          eforc%soil_water(k)     = theta(k)
-         eforc%root_heat_sink(k) = water_heat_out(k)
+         eforc%water_heat_out(k) = water_heat_out(k)
          eforc%w_flux(k)         = -face_flux(k)
       end do
       eforc%w_flux_top  = -infiltration / rho_h2o
       eforc%t_water_top = t_infil
-      eforc%root_heat_sink(nsl) = eforc%root_heat_sink(nsl) + e_drain
+      eforc%water_heat_out(nsl) = eforc%water_heat_out(nsl) + e_drain
    end subroutine assemble_soil_energy_forcing
 
 end module meds_fast_integ_derivs

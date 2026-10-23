@@ -1,0 +1,44 @@
+# `fast_dynamics/processes/` — the sub-daily process modules
+
+**One module per process, named after its science page.** Each holds its physics for one patch and
+the argument records its kernels read; none sees `polygon_t`, so they compile and unit-test
+standalone (`cmake --build … --target meds_fast_kernels`). The integrator (`../integrator/`) decides
+when each is called and how the stores are advanced; the laws they evaluate that other layers also
+use (the tissue and soil water curves, the thermal properties, the optics) are in
+`src/share/functions/`.
+
+| Module | Process | Science page |
+|---|---|---|
+| `meds_canopy_radiation` | The two-stream over every band (VIS, NIR, LW): the per-cohort optics blend, the adding solver, the ground's optics, and the radiation's argument records. | [canopy_radiation_transfer](../../../docs/science/canopy_radiation_transfer.md) |
+| `meds_canopy_aerodynamics` | The Monin-Obukhov surface layer, the canopy-air ↔ atmosphere conductances, the ground conductance, the in-canopy wind and the leaf and wood boundary layers, with the aerodynamic environment and outputs. | [canopy_aerodynamics](../../../docs/science/canopy_aerodynamics.md) |
+| `meds_canopy_air_space` | The canopy-air box: its three prognostic variables (enthalpy, humidity, CO₂) as a tendency and as an implicit step. | [canopy_air_space_biophysics](../../../docs/science/canopy_air_space_biophysics.md) |
+| `meds_leaf_gas_exchange` | FvCB C3 and Collatz C4 demand, the electron-transport hyperbola, Leuning / Medlyn / Katul stomata and the bracketed Cᵢ solver; `solve_leaf_gas_exchange` for one leaf, `leaf_gas_exchange_batch` over bare arrays, and the leaf's environment and flux records. | [leaf_gas_exchange](../../../docs/science/leaf_gas_exchange.md) |
+| `meds_plant_respiration` | Stem and fine-root maintenance respiration. Leaf Rd is the leaf solve's; growth respiration is the daily allocator's, on realized growth. | [plant_respiration](../../../docs/science/plant_respiration.md) |
+| `meds_plant_energy` | The leaf and wood tissue energy balance, relaxed exactly over the step, and its coefficients. | [vegetation_energy_dynamics](../../../docs/science/vegetation_energy_dynamics.md) |
+| `meds_canopy_water` | The canopy's interception film: one cohort's bucket and the wetted fraction it returns. | [soil_biophysics](../../../docs/science/soil_biophysics.md) §Canopy interception |
+| `meds_plant_hydraulics` | How water moves through a cohort's plants: the sapflow through the Kirchhoff mean of the vulnerability curve, root water uptake and the leaves' supply limit, each with its derivatives; the leaf node potential, the crown head, the rooting depth and profile. | [plant_hydraulics](../../../docs/science/plant_hydraulics.md), [soil_plant_water](../../../docs/science/soil_plant_water.md) |
+| `meds_soil_water` | The soil's water flows: Darcy flow between layers and from the pond, ground evaporation through the dry surface layer, and the bottom boundary. | [soil_biophysics](../../../docs/science/soil_biophysics.md), [soil_plant_water](../../../docs/science/soil_plant_water.md) |
+| `meds_soil_heat` | The soil-heat column in internal energy: the implicit step and the explicit tendency, with the water's enthalpy on the faces and the column's forcing record. | [soil_biophysics](../../../docs/science/soil_biophysics.md) §The soil thermal column |
+| `meds_surface` | The ground's surface: the bare-ground skin fluxes and the snow store (cover fraction, accumulation, meltwater drainage, the snow-surface energy balance and the exchange it hands the pack). | [snow_biophysics](../../../docs/science/snow_biophysics.md) |
+
+The per-PFT tables these modules read (the leaf parameters, the hydraulics with each PFT's Kirchhoff
+lookup, the optics) are derived from the configuration once, at load, onto the PFT table
+(`config/meds_pft_derive`). The daily plant kernels — phenology, carbon allocation, trait plasticity
+— are in `src/slow_dynamics/plant/`, and the vital-rate laws in `src/slow_dynamics/demography/`.
+
+## Python
+
+The `src/c_api/meds_c_api_*.f90` shims compile once, into the object library `meds_c_api`, which the
+single optional `libmeds.so` (`-DMEDS_BUILD_PYLIB=ON`) **and** the mandatory C-API ctest targets
+link, so an ABI or signature change is a build failure in a default build rather than a silent break
+in an optional one.
+
+Exposed through process-oriented packages in `python/meds/`:
+
+- `meds.plant.leaf` — leaf gas exchange. Reproduces Slot & Winter (2017) in
+  [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/).
+- `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is in `slow_dynamics/plant/`).
+  The four phenology strategies are in
+  [`examples/example02_canopy_phenology/`](../../../examples/example02_canopy_phenology/).
+- `meds.canopy` — the leaf solve over many leaves and the two-stream over a frozen stand
+  (`meds_c_api_canopy`).

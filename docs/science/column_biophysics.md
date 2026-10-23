@@ -174,15 +174,15 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 
 | Concept | Routine |
 |---|---|
-| CAS enthalpy + vapour + CO₂ twins | `meds_cas_biophysics`: `cas_box_step_implicit`, `cas_box_time_deriv` |
+| CAS enthalpy + vapour + CO₂ twins | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
 | soil and plant water (one network) | `meds_fast_integ_backward_euler`: `water_step`; `meds_fast_integ_derivs`: `water_derivs`, `set_water_state`; `meds_fast_integ_frozen`: `record_water_flows` |
-| canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
-| soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
-| leaf/wood energy | `meds_plant_biophysics`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |
-| ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
+| canopy interception | `meds_canopy_water`: `intercept_canopy_layer` |
+| soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
+| leaf/wood energy | `meds_plant_energy`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |
+| ground skin fluxes | `meds_surface`: `ground_surface_fluxes` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; per patch and sub-step, `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
-| snow energy / base conductance | `meds_ground_biophysics`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` |
-| snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
+| snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` |
+| snow mass / cover / melt | `meds_surface`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | the step, the march + RK45→ESDIRK2 rescue | `meds_fast_integ_stepper`: `fast_step`, `adaptive_march` |
 | the frozen record | `meds_fast_integ_frozen`: `build_frozen`, `record_water_flows` |
 | the update + ledgers | `meds_fast_integ_update`: `update_dynamic_state`, `close_ledgers` |
@@ -190,5 +190,5 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | one ESDIRK2 stage | `meds_fast_integ_backward_euler`: `backward_euler_stage`, `newton_surface_solve` |
 | Cash–Karp step (config `rk45`) | `meds_fast_integ_rk45`: `rk45_step`, `rk45_state_railed` |
 | whole-column tendency RHS | `meds_fast_integ_derivs`: `march_derivs` (`rk45`), `surface_derivs` (both) |
-| explicit tendency siblings | `meds_soil_energy`: `soil_energy_time_deriv`; the soil and plant water tendencies are the water network's rates, set in `march_derivs` |
+| explicit tendency siblings | `meds_soil_heat`: `soil_energy_time_deriv`; the soil and plant water tendencies are the water network's rates, set in `march_derivs` |
 | prognostic column types | `meds_patch_state_vars`: `cas_state_t`, `snow_state_t`, `soil_water_state_t`, `soil_energy_state_t` |

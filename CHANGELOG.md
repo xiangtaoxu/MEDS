@@ -99,7 +99,9 @@ in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10â
 `rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
 to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492). The fast
 kernels' comments and science pages say what the code computes, with no change to any result (#495). The
-Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496).
+Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496). The
+fast kernels are one folder of eleven process modules, `fast_dynamics/processes`, with no change to any
+result (#497).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -684,6 +686,20 @@ Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirch
 
 ### Changed
 
+- **The fast kernels are one folder of process modules, `fast_dynamics/processes`** (#497).
+  `canopy/`, `plant/` and `soil/` become eleven modules, each named after its science page:
+  `meds_canopy_air_space` was `meds_cas_biophysics`, `meds_plant_energy` was `meds_plant_biophysics`
+  (its interception bucket is `meds_canopy_water`), `meds_soil_heat` was `meds_soil_energy`, and
+  `meds_surface` was `meds_ground_biophysics`. `meds_canopy_types`, `meds_plant_types` and
+  `meds_soil_types` are gone: each record lives in the kernel that reads it. `energy_forcing_t` and
+  `energy_flux_t` are `soil_heat_forcing_t` and `soil_heat_flux_t`, `root_heat_sink` is `water_heat_out`,
+  `boundary_gbh_mos` is `boundary_layer_conductance`, and `aero_out_t`'s `temp1`/`temp2` are
+  `heat_transfer_factor`/`vapour_transfer_factor`. A kernel's records are named by role: `*_env_t` what it
+  reads, `*_args_t` what is fixed for the slow step, `*_out_t` what it returns (`rad_env_t`, `rad_out_t`,
+  `ground_optics_env_t`, `aero_args_t`, `leaf_out_t`, `soil_heat_env_t`, `soil_heat_out_t`); `cas_box_t` and
+  `cas_source_t` are one `cas_env_t`, and `snow_flux_t` and `snow_melt_t` one `snow_out_t`, without the
+  never-set `mass_resid` and the never-read `melted_out`. Every variable of the 10 harness cases is
+  identical on gfortran and ifx.
 - **The Kirchhoff mean and the plant's flows move to `meds_plant_hydraulics`; the Kirchhoff table is
   config's** (#496). The Kirchhoff potential is the vulnerability curve integrated, used only as the
   sapflow's path-mean conductance, so its evaluation, `xylem_sapflow` and `root_water_uptake(_profile)`

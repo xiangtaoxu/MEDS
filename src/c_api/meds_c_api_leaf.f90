@@ -14,7 +14,7 @@
 module meds_c_api_leaf
    use iso_c_binding,          only : c_double, c_int
    use meds_kinds,             only : wp, ik
-   use meds_plant_types,       only : leaf_env_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t
    use meds_pft_params,        only : leaf_photo_pft_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics
@@ -32,7 +32,7 @@ module meds_c_api_leaf
       real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi
    end type leaf_env_c
 
-   !----- C-interoperable mirror of leaf_flux_t (7 doubles + 2 ints; converged 0/1). --------!
+   !----- C-interoperable mirror of leaf_out_t (7 doubles + 2 ints; converged 0/1). --------!
    type, bind(c) :: leaf_flux_c
       real(c_double) :: A_net, A_gross, gs, ci, cs, transpiration, rd
       integer(c_int) :: limitation
@@ -77,7 +77,7 @@ contains
       type(leaf_flux_c),   intent(out) :: flux_c
       type(leaf_env_t)          :: env
       type(leaf_photo_pft_t)    :: p
-      type(leaf_flux_t)         :: flux
+      type(leaf_out_t)         :: flux
 
       env = to_env(env_c) ; p = to_params(p_c)
 
