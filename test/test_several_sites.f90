@@ -28,10 +28,7 @@ program test_several_sites
    implicit none
 
    integer(ik), parameter :: N_DAY = 60_ik            ! two short years of two 15-day months
-   real(wp),    parameter :: RTOL  = 1.0e-12_wp
-   !----- A site in a polygon of two against the same site alone: gfortran and an ifx Debug build   !
-   !      agree to RTOL, an optimized ifx build of the two-stream to ~1e-9 over the 60 days. --------!
-   real(wp),    parameter :: RTOL_SITE = 1.0e-7_wp
+   real(wp),    parameter :: RTOL  = 1.0e-12_wp   !< relative: check_close scales it by the expected value
    type(meds_config_t)  :: cfg, cfg_shallow
    type(polygon_t)      :: one, two, two_mt, one_shallow, mixed, back
    type(meds_time_t)    :: now, t_read
@@ -55,17 +52,17 @@ program test_several_sites
    do is = 1_ik, 2_ik
       call check(two%site%patch_count(is) == one%patch%n,                                            &
                  'each identical site has the one site''s patches after the disturbance and fusion')
-      call check_close(site_carbon(two, is), site_carbon(one, 1_ik), RTOL * site_carbon(one, 1_ik),   &
+      call check_close(site_carbon(two, is), site_carbon(one, 1_ik), RTOL,                             &
                        'each identical site holds the one site''s plant carbon')
-      call check_close(site_water(two, is), site_water(one, 1_ik), RTOL * site_water(one, 1_ik),      &
+      call check_close(site_water(two, is), site_water(one, 1_ik), RTOL,                              &
                        'each identical site holds the one site''s soil water')
    end do
    call check(all(two%patch%owner_site(1:two%patch%n) == [(1_ik, is = 1_ik, two%site%patch_count(1)),  &
                                                             (2_ik, is = 1_ik, two%site%patch_count(2))]), &
               'the patch block stays sorted by site through the disturbance and fusion')
-   call check_close(total_agb(two), total_agb(one), RTOL * total_agb(one),                          &
+   call check_close(total_agb(two), total_agb(one), RTOL,                                           &
                     'the polygon''s AGB is the one site''s to round-off')
-   call check_close(total_nplant(two), total_nplant(one), RTOL * total_nplant(one),                 &
+   call check_close(total_nplant(two), total_nplant(one), RTOL,                                     &
                     'the polygon''s stem density is the one site''s to round-off')
    call check_close(total_area(two), 1.0_wp, 1.0e-12_wp, 'the patches still cover the polygon')
    do is = 1_ik, 2_ik
@@ -91,12 +88,12 @@ program test_several_sites
               'the two sites have different soil columns')
    call check(abs(site_water(mixed, 1_ik) - site_water(mixed, 2_ik)) > 1.0_wp,                      &
               'the two soils hold different water')
-   call check_close(site_carbon(mixed, 1_ik), site_carbon(one, 1_ik), RTOL_SITE * site_carbon(one, 1_ik), &
+   call check_close(site_carbon(mixed, 1_ik), site_carbon(one, 1_ik), RTOL,                         &
                     'the deep site grows the one-site stand on the deep soil')
-   call check_close(site_carbon(mixed, 2_ik), site_carbon(one_shallow, 1_ik),                      &
-                    RTOL_SITE * site_carbon(one_shallow, 1_ik), 'the shallow site grows the one-site stand on its soil')
-   call check_close(site_water(mixed, 2_ik), site_water(one_shallow, 1_ik),                        &
-                    RTOL_SITE * site_water(one_shallow, 1_ik), 'the shallow site keeps the one-site water on its soil')
+   call check_close(site_carbon(mixed, 2_ik), site_carbon(one_shallow, 1_ik), RTOL,                 &
+                    'the shallow site grows the one-site stand on its soil')
+   call check_close(site_water(mixed, 2_ik), site_water(one_shallow, 1_ik), RTOL,                   &
+                    'the shallow site keeps the one-site water on its soil')
 
    !=== 4. The mixed polygon through a state file. ==========================================!
    now = meds_time_t(year=2000, month=3, day=1)
@@ -111,7 +108,7 @@ program test_several_sites
               'each patch keeps its site')
    do is = 1_ik, 2_ik
       call check(back%site%patch_count(is) == mixed%site%patch_count(is), 'each site keeps its patches')
-      call check_close(site_carbon(back, is), site_carbon(mixed, is), RTOL * site_carbon(mixed, is),  &
+      call check_close(site_carbon(back, is), site_carbon(mixed, is), RTOL,                         &
                        'each site keeps its plant carbon')
       call check(site_water(back, is) == site_water(mixed, is), 'each site keeps its soil water')
    end do
