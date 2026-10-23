@@ -30,6 +30,7 @@ module meds_fast_integ_backward_euler
                               liquid_energy_to_temp
    use meds_numerics,     only : sufficient_decrease, fraction_to_boundary
    use meds_soil_hydr_lib, only : pond_water_to_head
+   use meds_soil_water,    only : ground_evaporation_setup
    use meds_linear_algebra, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_params, only : soil_profile_t, soil_params_t
    use meds_pft_params, only : hydraulics_table_t
@@ -399,7 +400,8 @@ contains
    ! the GRP_THETA tolerances. On return the state holds the end-of-step water, unknowns and  !
    ! potentials, the flows what each path moved, and work_count the network's work: accepted  !
    ! sub-steps, Newton iterations, rejected sub-steps, and sub-steps taken although they did  !
-   ! not converge or meet the tolerance (counted, not hidden).                                !
+   ! not converge or meet the tolerance (counted, not hidden). The drive is held over the     !
+   ! step, so the ground evaporation's constant terms are set into it once, here.             !
    !---------------------------------------------------------------------------------------!
    subroutine water_step(dt, static, profile, soil, hyd, drive, tols, water, work_count)
       real(wp),                  intent(in)    :: dt
@@ -407,7 +409,7 @@ contains
       type(soil_profile_t),      intent(in)    :: profile
       type(soil_params_t),       intent(in)    :: soil
       type(hydraulics_table_t),  intent(in)    :: hyd
-      type(water_drive_t),       intent(in)    :: drive
+      type(water_drive_t),       intent(inout) :: drive
       type(tol_set_t),           intent(in)    :: tols
       type(water_work_t),        intent(inout) :: water
       integer(ik),               intent(inout) :: work_count(:)   !< the step report's work counters
@@ -426,6 +428,7 @@ contains
       nfail   = 0_ik
       call arrowhead_allocate(water%sys, water%nsoil, water%ncoh, COHORT_STORES)
       call water_scales(static, profile, hyd, scale_soil, scale_coh)
+      call ground_evaporation_setup(profile, soil, drive%ground)
       water%start_ready = .false.
 
       t = 0.0_wp
@@ -760,15 +763,16 @@ contains
       flows%rain_enth = 0.0_wp
    end subroutine clear_flows
 
-   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at   !
-   !      the current state for a sub-step of h -- the largest difference between J v and a central !
-   !      difference of the residual along v, relative to the largest entry of either. -----------!
+   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at  !
+   !      the current state for a sub-step of h -- the largest difference between J v and a        !
+   !      central difference of the residual along v, relative to the largest entry of either. The !
+   !      drive is set up as water_step sets it. --------------------------------------------------!
    real(wp) function water_jacobian_error(static, profile, soil, hyd, drive, water, h) result(err)
       type(fast_static_state_t), intent(in)    :: static
       type(soil_profile_t),      intent(in)    :: profile
       type(soil_params_t),       intent(in)    :: soil
       type(hydraulics_table_t),  intent(in)    :: hyd
-      type(water_drive_t),       intent(in)    :: drive
+      type(water_drive_t),       intent(inout) :: drive
       type(water_work_t),        intent(inout) :: water
       real(wp),                  intent(in)    :: h
       type(water_tend_t) :: ev
@@ -781,6 +785,7 @@ contains
       integer(ik) :: c, i, j, l
       ev = water%ev(1)                       ! scratch of the network's shape
       call arrowhead_allocate(water%sys, water%nsoil, water%ncoh, COHORT_STORES)
+      call ground_evaporation_setup(profile, soil, drive%ground)
       associate (st => water%state)
          do c = 1_ik, water%nsoil
             v_soil(c) = 1.0e-2_wp * (1.0_wp + 0.1_wp * real(c, wp)) * max(abs(st%tau_soil(c)), 1.0e-3_wp) ! clamp-ok: test step

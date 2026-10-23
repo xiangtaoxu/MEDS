@@ -476,8 +476,7 @@ contains
       ev%inflow_soil(POND) = ev%inflow_soil(POND) + drive%rain
       c = 2_ik
       theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1))
-      call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, profile, drive%ground, soil, e, de_dtheta,  &
-                                   de_dpsi)
+      call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, drive%ground, soil, e, de_dtheta, de_dpsi)
       ev%evap = e
       ev%inflow_soil(c) = ev%inflow_soil(c) - e
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
