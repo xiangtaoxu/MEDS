@@ -27,7 +27,7 @@ program test_column_dynamics
    use meds_fast_state,          only : static_state_fixture
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_params,         only : SOIL_BC_DRAIN
-   use meds_canopy_aerodynamics, only : set_aero_env_atm, set_aero_env_canopy
+   use meds_canopy_aerodynamics, only : set_aero_env_atm, set_aero_env_canopy, canopy_aerodynamics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, fast_workspace_t, alloc_static_state,          &
@@ -36,7 +36,7 @@ program test_column_dynamics
    use meds_site_state_vars,     only : site_surface_t
    use meds_fast_integ_control,        only : build_tol_set, build_error_control
    use meds_fast_integ_stepper,           only : fast_step
-   use meds_fast_integ_frozen,         only : aero_bottom_to_top, cohort_leaf_par
+   use meds_fast_integ_frozen,         only : cohort_leaf_par
    use meds_numerics,            only : ascending_order
    use meds_fast_integ_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_plant_hydr_lib,      only : tissue_water_to_psi, tissue_psi_to_water
@@ -213,7 +213,7 @@ program test_column_dynamics
    call check_true('PER-LAYER ROOTS: leaf psi still under tension', psileaf_noon < 0.0_wp, psileaf_noon)
 
    !=====================================================================================!
-   !  RUN 4 -- caller-side cohort ORDER: aero_bottom_to_top must respect the wind cascade.  !
+   !  RUN 4 -- caller-side cohort ORDER: canopy_aerodynamics must respect the wind cascade.  !
    !=====================================================================================!
    call test_aero_order()
 
@@ -654,7 +654,7 @@ contains
    end subroutine integrate_day
 
 
-   !----- Guard the caller-side cohort order. aero_bottom_to_top feeds canopy_aerodynamics the        !
+   !----- Guard the caller-side cohort order. canopy_aerodynamics puts the cohorts in the        !
    !      BOTTOM(1)->TOP(n) order it contracts for, starting from a height-DESCENDING column buffer  !
    !      (index 1 = tallest). So the TALL cohort (gather index 1 = canopy top) must come back with   !
    !      the top-of-canopy wind (=> higher boundary-layer gb); the short understory gets the         !
@@ -663,7 +663,7 @@ contains
    subroutine test_aero_order()
       type(fast_static_state_t) :: c2
       type(aero_out_t)      :: a2
-      type(aero_env_t)      :: e2      ! defaults are fine (u_ref/zref/press/rho_air/can_* all sensible)
+      type(aero_env_t)      :: e2      ! defaults are fine (u_ref/zref/can_* all sensible)
       type(aero_args_t)     :: g2
       real(wp)              :: lt(2)
       call alloc_static_state(c2, 2_ik)
@@ -674,8 +674,8 @@ contains
       e2%u_ref = 3.0_wp
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
-      call aero_bottom_to_top(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, c2%leaf_width,    &
-                              c2%branch_diam, lt, lt, a2)
+      call canopy_aerodynamics(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, lt, lt, c2%leaf_width, &
+                              c2%branch_diam, a2)
       call check_true('aero order: tall cohort (gather idx1=top) gets more wind', a2%wind(1) > a2%wind(2),            &
               a2%wind(1) - a2%wind(2))
       call check_true('aero order: tall cohort gets higher leaf gb', a2%leaf_gbw(1) > a2%leaf_gbw(2),                 &
@@ -688,12 +688,12 @@ contains
          real(wp) :: tair(2), twarm(2)
          tair = e2%can_temp ; twarm = e2%can_temp + 8.0_wp
          call alloc_aero_out(a_ref, 2_ik) ; call alloc_aero_out(a_warm_leaf, 2_ik) ; call alloc_aero_out(a_warm_wood, 2_ik)
-         call aero_bottom_to_top(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, c2%leaf_width, &
-                                 c2%branch_diam, tair, tair, a_ref)
-         call aero_bottom_to_top(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, c2%leaf_width, &
-                                 c2%branch_diam, twarm, tair, a_warm_leaf)
-         call aero_bottom_to_top(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, c2%leaf_width, &
-                                 c2%branch_diam, tair, twarm, a_warm_wood)
+         call canopy_aerodynamics(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, tair, tair, c2%leaf_width, &
+                                 c2%branch_diam, a_ref)
+         call canopy_aerodynamics(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, twarm, tair, c2%leaf_width, &
+                                 c2%branch_diam, a_warm_leaf)
+         call canopy_aerodynamics(cfg%aero, e2, g2, 2_ik, c2%order, c2%height, c2%lai, tair, twarm, c2%leaf_width, &
+                                 c2%branch_diam, a_warm_wood)
          call check_true('wood gb ignores the leaf temperature', all(a_warm_leaf%wood_gbh == a_ref%wood_gbh), &
                  maxval(abs(a_warm_leaf%wood_gbh - a_ref%wood_gbh)))
          call check_true('warm leaves raise the leaf gb (free convection)', all(a_warm_leaf%leaf_gbh > a_ref%leaf_gbh), &
@@ -718,13 +718,12 @@ contains
       call ascending_order(c3%height, 1_ik, c3%order)
       c3%leaf_width = [0.04_wp] ; c3%branch_diam = [0.02_wp]
       g3%veg_height = 38.0_wp ; g3%opencan_frac = 0.0_wp ; g3%snowfac = 0.0_wp
-      e3%u_ref = 3.0_wp ; e3%zref = 43.0_wp
-      call set_aero_env_atm(e3, 300.0_wp, 0.015_wp, 400.0_wp)
-      call set_aero_env_canopy(e3, 300.0_wp, 0.015_wp, 400.0_wp, 300.0_wp)
+      call set_aero_env_atm(e3, 3.0_wp, 43.0_wp, 300.0_wp, 0.015_wp)
+      call set_aero_env_canopy(e3, 300.0_wp, 0.015_wp, 300.0_wp)
       lt = 300.0_wp
       call alloc_aero_out(a3, 1_ik)
-      call aero_bottom_to_top(cfg%aero, e3, g3, 1_ik, c3%order, c3%height, c3%lai, c3%leaf_width,    &
-                              c3%branch_diam, lt, lt, a3)
+      call canopy_aerodynamics(cfg%aero, e3, g3, 1_ik, c3%order, c3%height, c3%lai, lt, lt, c3%leaf_width, &
+                              c3%branch_diam, a3)
       call check_true('reference level: equal canopy and reference air has no temperature scale',               &
               a3%tstar == 0.0_wp, a3%tstar)
       call check_true('reference level: equal canopy and reference air is neutral', a3%zeta == 0.0_wp, a3%zeta)

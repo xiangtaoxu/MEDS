@@ -193,7 +193,7 @@ contains
    subroutine frozen_record(fz, ys)
       type(frozen_t), intent(out) :: fz
       type(march_state_t),  intent(out) :: ys
-      call build_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws%aenv, ws%water, fz, ys)
+      call build_frozen(DT_FAST, cfg, site, static, forcing, dynamic, out, ws%water, fz, ys)
       call water_step(DT_FAST, static, site%soil_profile, site%soil, cfg%pft%hydraulics, fz%water_drive,         &
                       build_tol_set(cfg), ws%water, out%report%work)
       call record_water_flows(DT_FAST, cfg, site, static, dynamic, ws%water, out, fz)

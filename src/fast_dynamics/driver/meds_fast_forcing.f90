@@ -17,8 +17,8 @@ module meds_fast_forcing
    use meds_polygon_state_vars, only : polygon_t
    use meds_pft_params,         only : N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
-   use meds_canopy_radiation,   only : canopy_radiation, ground_optics
-   use meds_surface,  only : snow_cover_fraction
+   use meds_canopy_radiation,   only : canopy_radiation, ground_optics, radiative_temperature
+   use meds_surface,            only : snow_blend_ground_optics
    use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
    implicit none
    private
@@ -132,12 +132,11 @@ contains
       integer(ik) :: j, i, ig, ncoh
       integer(ik) :: pft_bt(static%n)
       real(wp)    :: lai_bt(static%n), wai_bt(static%n), tcan_bt(static%n), hgt_bt(static%n)
-      real(wp)    :: lf_bt, soil_albedo(N_RAD_BAND_DEFAULT), soil_temp_top
+      real(wp)    :: soil_albedo(N_RAD_BAND_DEFAULT), soil_temp_top
       type(rad_env_t)   :: rf
       type(rad_out_t)      :: flux
       type(ground_optics_env_t) :: surf
       logical :: he(N_RAD_BAND_DEFAULT)
-      real(wp) :: snow_fl, snow_fc
 
       ncoh = static%n
       !----- Bare-soil albedo per band from [soil] (no longwave reflection) and the ground's emission  !
@@ -153,13 +152,8 @@ contains
          lai_bt(j) = static%lai(i)
          hgt_bt(j) = static%height(i)
          wai_bt(j) = static%wai(i)
-         !----- LW emission temperature: T_rad = (f_l*T_leaf^4 + (1-f_l)*T_wood^4)^(1/4), f_l =        !
-         !      LAI/(LAI+WAI), at the start of the sub-step (docs/science/canopy_radiation_transfer.md  !
-         !      §3); abs_lw is net of that emission (docs/science/vegetation_energy_dynamics.md, "The   !
-         !      emission base"). -----------------------------------------------------------------------!
-         lf_bt      = static%lai(i) / max(static%lai(i) + static%wai(i), tiny_num)
-         tcan_bt(j) = (lf_bt * dynamic%leaf_temp(i) ** 4                                     &
-                       + (1.0_wp - lf_bt) * dynamic%wood_temp(i) ** 4) ** 0.25_wp
+         !----- The emission temperature at the start of the sub-step. ----------------------------!
+         tcan_bt(j) = radiative_temperature(static%lai(i), static%wai(i), dynamic%leaf_temp(i), dynamic%wood_temp(i))
       end do
 
       !----- rad_env_t from met (all W/m2, direct assignment). --------------------------------!
@@ -178,21 +172,9 @@ contains
       surf%soil_albedo = soil_albedo
       surf%soil_emiss  = cfg%soil%ground_emissivity
       surf%soil_temp   = soil_temp_top
-      !----- Snow blends the ground's albedo, emissivity and temperature toward the pack's by the      !
-      !      Niu-Yang 2007 snow-cover fraction, so a partial pack is continuous; fresh and aged albedos !
-      !      are weighted by the surface liquid fraction (docs/science/canopy_radiation_transfer.md §4). !
-      associate (snow => dynamic%snow, sp => cfg%snow)
-         if (snow%nlayer >= 1_ik .and. snow%swe(1) > sp%tiny_snow_mass) then
-            snow_fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), sp, cfg%aero%snow_rough)
-            snow_fl = snow%snow_fliq(1)
-            surf%soil_albedo(RAD_VIS) = (1.0_wp - snow_fc) * soil_albedo(RAD_VIS)                 &
-                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_vis_fresh + snow_fl * sp%albedo_vis_aged)
-            surf%soil_albedo(RAD_NIR) = (1.0_wp - snow_fc) * soil_albedo(RAD_NIR)                 &
-                 + snow_fc * ((1.0_wp - snow_fl) * sp%albedo_nir_fresh + snow_fl * sp%albedo_nir_aged)
-            surf%soil_emiss = (1.0_wp - snow_fc) * cfg%soil%ground_emissivity + snow_fc * sp%snow_emiss
-            surf%soil_temp  = (1.0_wp - snow_fc) * soil_temp_top + snow_fc * snow%snow_temp(1)
-         end if
-      end associate
+      !----- A pack blends them toward its own (meds_surface). -----------------------------------!
+      call snow_blend_ground_optics(dynamic%snow, cfg%snow, cfg%aero%snow_rough, surf%soil_albedo(RAD_VIS),   &
+                                    surf%soil_albedo(RAD_NIR), surf%soil_emiss, surf%soil_temp)
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 

@@ -90,7 +90,7 @@ contains
       bf%snow_enth_in  = surf_tend%snow_enth_in
       bf%snow_vap_out  = surf_tend%snow_vap_out
       bf%atm_heat_out  = gah*cp_air*(cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)          &
-                                     - frozen%cas%mo_theta_atm)
+                                     - frozen%cas%env%theta_atm)
       bf%atm_vap_out   = gaw*(y_stage%cas_shv - frozen%cas%box%atm_specific_humidity)
    end subroutine explicit_stage_bflux
 
