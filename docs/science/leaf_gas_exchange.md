@@ -208,7 +208,7 @@ Stomata are assumed to **maximize carbon gain net of a water cost**:
 ```
 
 where $E = g_s D$ is transpiration and $\lambda$ is the **marginal water-use efficiency** — the
-"price" of water (mol C per mol H₂O). The optimum satisfies $\partial A/\partial E = \lambda$.
+"price" of water (µmol CO₂ per mol H₂O, the unit `lambda25` is given in). The optimum satisfies $\partial A/\partial E = \lambda$.
 Writing both fluxes in $C_i$-space (with $A = \tfrac{g_s}{1.6}(C_s - C_i)$, so
 $`g_s = 1.6\,A/(C_s-C_i)`$ and $`E = 1.6\,D\,A/(C_s-C_i)`$) and setting
 $`dA/dC_i = \lambda\,dE/dC_i`$ rearranges to the residual root-found on $C_i$:
@@ -266,7 +266,7 @@ An exponential in the **predawn** water potential, downregulating the *aperture*
 - **Leuning / Medlyn:** scale the slope, $`g_{1,\text{eff}} = g_1\,\beta_s`$.
 - **Katul:** raise the marginal price, $`\lambda = \lambda_{25}\,\beta_s^{-e}`$ (`katul_lambda`).
   Because Medlyn gives $g_1 \propto \lambda^{-1/2}$, the exponent $e = 2$ makes the Katul and
-  Leuning/Medlyn responses *identical* for the same $\beta_s$.
+  Medlyn responses *identical* for the same $\beta_s$; Leuning's $g_1$ has no such link to $\lambda$.
 
 Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp` ($e$), and
 `stomata_psi_onset` ($`\psi_{onset}`$, default half the PFT's turgor-loss point, so the gravity head a
@@ -328,8 +328,8 @@ linear, so its response to an error in $\psi_{leaf}$ is linear too; ED2's 6th po
 the same error harder.
 
 **Stomatal scope.** Restricting $\beta_s$ to Katul, as ED2 does, would leave the two explicit
-schemes with no stomatal drought response at all. MEDS applies it to both, and the exponent
-$e = 2$ makes them exactly equivalent because Medlyn gives $`g_1 \propto \lambda^{-1/2}`$ (§4.2).
+schemes with no stomatal drought response at all. MEDS applies it to both; for Medlyn the exponent
+$e = 2$ makes it exactly equivalent to Katul's, because Medlyn gives $`g_1 \propto \lambda^{-1/2}`$ (§4.2).
 
 **Parameter split.** MEDS's $`s_{ref}\,e`$ is precisely ED2's `stoma_beta` — the same exponential in
 the same potential — so a value calibrated for one transfers to the other as

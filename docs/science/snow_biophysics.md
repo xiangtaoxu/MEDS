@@ -1,4 +1,4 @@
-# Snow / temporary-surface-water biophysics
+# Snow biophysics
 
 An always-active mass+energy reservoir stacked between the canopy air space and the top soil
 layer. When present it becomes the CAS-facing surface (its energy balance replaces the bare-ground skin)
@@ -21,8 +21,9 @@ as for soil. Each `dt_fast` runs **accumulate → drain** before the march, the 
 and the **commit** after it:
 
 - **Accumulate** (`snow_accumulate`): snowfall lands as ice at $`\min(T_{3ple},T_{air})`$, rain-on-snow
-  as liquid at $`T_{air}`$ (refreezing later via the inverter). A layer is created only above
-  `min_new_snow_mass`; sub-threshold snow is folded into the soil store by the caller.
+  as liquid at $`T_{air}`$ (refreezing later via the inverter). A layer is created only from
+  `min_new_snow_mass` of new snow in one `dt_fast`; sub-threshold snow joins the rain as liquid (the
+  canopy films, then the pond).
 - **Drain** (`snow_drain_meltwater`): the free liquid the pack then holds above its holding capacity, the
   last step's melt and this step's rain, percolates out as a paired (mass, enthalpy) hand-off to the
   pond, which it reaches at the melt temperature and infiltrates from in this step's water network;

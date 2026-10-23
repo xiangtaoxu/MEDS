@@ -16,8 +16,7 @@ Symbols: $`u_*`$ = friction velocity; $\zeta = z/L$ = Monin-Obukhov stability pa
 length); $`z_{0m}, z_{0h}, z_{0q}`$ = roughness lengths for momentum / heat / vapour; $d$ = displacement
 height; $`\kappa`$ = von Karman constant; $`\Psi_m,\Psi_h`$ = integrated stability functions;
 $`\mathrm{Rib}`$ = bulk Richardson number. Everything is per unit ground area. All routines are `pure`
-and write per-cohort outputs into caller-owned SoA slices — never an array-valued function result passed
-straight into a call, which nvfortran miscompiles (see `CLAUDE.md`).
+and write per-cohort outputs into caller-owned arrays.
 
 ## 1. Roughness, displacement, and the reference geometry
 
@@ -32,8 +31,8 @@ d = c_d\,h\,(1-\mathrm{snowfac}) \qquad(1)
 with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`), $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`) and
 $`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes an
 unburied canopy ($`\mathrm{snowfac}=0`$), so the snow blend is inactive in a run (see docs/ROADMAP.md);
-the open-canopy blend of §3 acts. The canopy displacement height
-$`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$ is the surface-layer thickness the Monin-Obukhov solve integrates
+the open-canopy blend of §3 acts. The height above the displacement,
+$`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$, is the surface-layer thickness the Monin-Obukhov solve integrates
 over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
 the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
 sets the CAS air mass per ground area, hence every twin's storage capacity.
@@ -87,7 +86,8 @@ $`x=(1-16\zeta)^{1/4}`$:
 
 (`stabfunc1`/`stabfunc2`; the stable branch is $`-5\zeta`$). Careful placement — $`\zeta_{0m}=z_{0m}
 \zeta/z_{ldis}=z_{0m}/L`$ appears without dividing by $\zeta$, and $\zeta$ only divides in the very-
-unstable/very-stable branches where $|\zeta|>1$ — keeps the whole solve safe under `-fpe0`. The
+unstable/very-stable branches, where $|\zeta|$ exceeds $`\zeta_t`$ (0.465) or 1 — keeps the whole solve
+safe under `-fpe0`. The
 neutral limit is $`u_*\to\kappa u/\ln(z_{ldis}/z_{0m})`$, $`\mathrm{temp1}\to\kappa/\ln(z_{ldis}/
 z_{0m})`$.
 
@@ -124,8 +124,9 @@ solve and lower the reported H by $`g_{ah}\,g\,z_{ref}`$, about 100 W m⁻² at 
 Almost everything the fast loop computes per-cohort — photosynthesis, stomatal conductance, the leaf
 boundary layers, radiation, hydraulics — is **frozen once per `dt_fast`** (see
 [numerical_scheme](numerical_scheme.md) §2). The conductances of eq. (5) are the exception:
-`mo_surface_layer` is re-solved at each stage of the time integrator, against that stage's own canopy-air
-temperature and humidity, and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated
+`mo_surface_layer` is re-solved at each stage of the time integrator — under `rk45` at the stage's own
+canopy-air temperature and humidity, under `esdirk2` at the state the stage starts from, held through
+its Newton solve — and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated
 (`refresh_cas_conductances`). The per-cohort boundary layers around it stay frozen.
 
 The reason is a feedback loop that runs entirely through this kernel. A warmer canopy air makes the
@@ -196,8 +197,9 @@ u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(8)
 ```
 
 so the cascade walks **top → bottom**. The kernel's cohort arrays run bottom → top (the radiation
-convention) while the cohort block is gathered tallest first, so `aero_bottom_to_top` reverses them at
-the call site; the reversal is the identity for $n\le1$.
+convention) while the cohort block is gathered tallest first, so `aero_bottom_to_top` permutes them by
+the gather's ascending order (`static%order`) at the call site; the permutation is the identity for
+$n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
 Nusselt kernel `boundary_gbh_mos`, the parallel sum of forced (Reynolds) and free (Grashof) convection
@@ -237,10 +239,10 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
 | — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
 | $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |
-| $`u_{*,min}`$ | `ustmin` | friction-velocity floor |
-| $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) |
-| — | `ugbmin` | floor on the canopy-top and in-canopy wind |
-| $`c_s,\gamma_g`$ | `cs_dense`, `gamma_g` | CLM4 dense-canopy ground conductance |
+| $`u_{*,min}`$ | `ustmin` | friction-velocity floor (0.10 m s⁻¹) |
+| $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) (0.65 m s⁻¹) |
+| — | `ugbmin` | floor on the canopy-top and in-canopy wind (0.25 m s⁻¹) |
+| $`c_s,\gamma_g`$ | `cs_dense`, `gamma_g` | CLM4 dense-canopy ground conductance (0.004, 0.5); its stability parameter is capped at 10 |
 | — | `gbh_2_gbw` | boundary-layer heat:vapour ratio (1.075) |
 | $`g_{bh,min}`$ | `gbhmos_min` | boundary-layer conductance floor [m s⁻¹] |
 | — | `kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air` | linear-in-T air viscosity and diffusivity |

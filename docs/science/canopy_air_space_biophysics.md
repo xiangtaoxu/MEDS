@@ -2,7 +2,7 @@
 
 The **canopy air space (CAS)** is the well-mixed sub-canopy air box that acts as the shared coupling
 reservoir of the fast loop: every surface store (leaf, wood, ground, snow) exchanges heat, water vapour,
-and CO₂ with it, and it in turn vents to the free atmosphere. It carries three **implicit prognostic
+and CO₂ with it, and it in turn vents to the free atmosphere. It carries three **prognostic
 twins** — specific enthalpy, specific humidity, and CO₂ mixing ratio — each advanced from its summed
 surface sources and an implicit atmospheric-exchange term that shares the
 $`u_*\cdot\mathrm{temp1/temp2}`$ conductance from the aerodynamics kernel
@@ -51,8 +51,9 @@ implicit in the atmosphere exchange. Each twin obeys
 ```
 
 with capacity $\mathcal{C}$, summed surface source $F_{surf}$, and the atm↔CAS conductance $g_{atm}$.
-The atmospheric term is taken **implicit** for L-stability (it is the stiff coupling); the surface
-sources are explicit. For the enthalpy twin, with $`F_{sens}`$ the summed cohort+ground sensible+latent
+Under `esdirk2` the atmospheric term is taken **implicit** in the box commit, for L-stability (it is the
+stiff coupling), and the surface sources come out of the stage's Newton solve; `rk45` integrates
+eq. (1) explicitly. For the enthalpy twin, with $`F_{sens}`$ the summed cohort+ground sensible+latent
 flux and $`g_{atm}=\rho\,u_*\,\mathrm{temp1}`$:
 
 ```math

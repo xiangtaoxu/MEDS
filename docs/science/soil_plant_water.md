@@ -46,7 +46,10 @@ The paths:
   two-way aquifer); and each cohort's transpiration out of its leaves.
 
 Every flow is written with its derivatives in each store's unknown, so Newton's Jacobian is exact.
-Every switch in a flow is smoothed (C¹), so Newton never meets a corner:
+Every switch in a flow is smoothed (C¹), so the flows put no corner in Newton's way. Four corners
+remain in the curves and the base: the pressure-volume curve's slope at the turgor-loss point,
+Campbell's air-entry switch, van Genuchten's conductivity slope at saturation for $n<2$, and the
+aquifer's upwind switch. The ramp is:
 
 ```math
 r(x) = \begin{cases} 0 & x \le 0\\ x\,t\,(2-t),\ t = x/w & 0 < x < w\\ x & x \ge w \end{cases}
@@ -67,7 +70,8 @@ a few hundredths of a W m⁻².
 Each store is solved in the unknown in which its curve is best behaved:
 
 - A **soil layer** uses its effective saturation $S_e$ on the dry side and its potential on the wet
-  side, joined (C¹) at the curve's point of largest capacity: $`S_e = (1+m)^{-m}`$ for van Genuchten, the
+  side, joined at the curve's point of largest capacity (C¹ for van Genuchten; for Campbell the water's
+  slope jumps there): $`S_e = (1+m)^{-m}`$ for van Genuchten, the
   air-entry point for Campbell. Above saturation the layer stores water through a specific storage
   $`S_s = 10^{-4}`$ m⁻¹, so a layer pushed past saturation raises its potential and sends the excess up to
   the pond and down to the next layer: there is no saturation clip. Dry, $S_e > 0$ always, and the
@@ -150,8 +154,9 @@ sub-steps and 3.5 Newton iterations per step on average).
 
 **Conservation.** Each store's water is advanced by the flows themselves, $`W \mathrel{+}= h\,F`$, so
 every kilogram that leaves one store arrives in another or crosses a boundary, whatever Newton's
-residual. Two stores hang off the network by one path and can hold far less than Newton's slack —
-the pond, and a near-leafless cohort's leaves. They take their water from their own curve instead,
+residual. Two kinds of store hang off the network by one path, the pond and each cohort's leaves, and
+a trace pond or a near-leafless cohort's leaves can hold far less than Newton's slack. Both always take
+their water from their own curve instead,
 and their single path carries exactly the flow that closes their balance; the store across that path
 (the top layer, the wood) absorbs the slack, which is small against what it holds. After each sub-step
 water above `[soil].w_pond_max` spills as runoff at the pond's temperature.
@@ -196,7 +201,7 @@ agree to 0.6 W m⁻² in any hour.
 The network moves water; the soil-energy solve and the tissue stores carry its enthalpy:
 
 - Water crossing a soil face, the pond face or the base carries the liquid enthalpy of the node it
-  leaves.
+  leaves; water rising from an aquifer enters at the bottom layer's temperature.
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
 - A tissue's energy is its state ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq.
   (9)): the water it gains or loses carries its liquid enthalpy at the tissue's start-of-step

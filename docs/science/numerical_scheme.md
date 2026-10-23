@@ -449,8 +449,8 @@ pair: rain in at its own temperature, snowmelt in at the pack's, infiltration ou
 temperature, exfiltration from the top layer in at that layer's temperature, and runoff out at the
 pond's. A pond with no thermal state would shed the enthalpy of every kilogram crossing into it,
 and that energy would leave the column ledger while the water sat on the surface still holding it.
-The pond's energy (`w_surface_energy`, J m⁻²) is stored like the snow's, and its temperature and
-liquid fraction are read off it the same way, so a pond freezes and thaws with no code of its own.
+The pond's energy (`w_surface_energy`, J m⁻²) is stored like the snow's; its temperature is read off
+it with the liquid datum, so the pond stays liquid and does not freeze.
 
 **A thin tissue closes its own balance.** A leaf or wood store's relaxation closes for any coupling,
 however small, since it is written on the start-of-step imbalance with no division by the coupling;

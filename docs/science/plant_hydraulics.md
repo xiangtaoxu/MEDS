@@ -99,8 +99,10 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}} \qquad(7)
 \psi_{50}\,G(r)\ \text{(lookup table)} & \text{else}\end{cases} \qquad(8)
 ```
 
-The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction — the
-finite-difference-consistent conductance that reproduces the exact Kirchhoff-integrated flux:
+The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction. Without gravity
+it gives the exact steady flux through the path. With gravity the flow is this conductance times the
+gravity-inclusive drive, which overstates the steady flux where the xylem is embolised and the head
+is a large share of the drop:
 
 ```math
 K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_{down}}
@@ -194,7 +196,9 @@ r_{\text{half},k}=\left(\pi\,\frac{\sum_{\text{cohorts}} n_{plant}\,L_k}{\Delta 
 
 where $L_k$ is the plant's fine-root length in the layer (SRL = `specific_root_length`, m kgC⁻¹),
 $`r_{\text{half},k}`$ comes from the patch's root-length density in the layer, and $`r_{\text{root}}`$ =
-`fine_root_radius` (the logarithm is floored at ln 2 for very crowded roots). The conductance grows with
+`fine_root_radius` (the logarithm is floored at ln 2 for very crowded roots). In the code $g_k$ also
+carries $`n_{plant}`$ and $`1/(\rho g)`$ (`rhizosphere_conductance`), so $`U_k`$ is per m² of ground with the
+drive in MPa. The conductance grows with
 root length and falls only by the logarithm as roots crowd, so it does not depend on how the soil is
 layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
 \Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
@@ -210,7 +214,7 @@ Each layer is its own path from the soil to the wood, so the uptake from layer $
 U_k = g_k\,r\!\left(\psi_{soil,k}+\rho g\,z_k-\psi_W\right),\qquad Q_{\text{root}}=\sum_k U_k \qquad(15)
 ```
 
-with $r$ zero below zero and the identity above a width of 10⁻³ MPa, joined smoothly
+with $r$ zero below zero and the identity above a width of 10⁻² MPa, joined smoothly
 ([soil_plant_water](soil_plant_water.md) eq. (1)). **Hydraulic redistribution is not enabled:** a layer
 drier than the wood gives nothing and takes nothing, so every $U_k\ge 0$. HR — the per-layer efflux
 and the soil re-wetting it implies — is not represented (see `docs/ROADMAP.md`).
@@ -260,7 +264,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 
 | Concept | Routine |
 |---|---|
-| PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+| PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
 | a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_water_to_rwc` |
 | vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `conductance_retained_fraction`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow`, from `kirchhoff_difference` |
 | Kirchhoff table | `meds_plant_hydr_lib`: `build_hydro_table` (one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`; `kirchhoff_tail` past the table) |
