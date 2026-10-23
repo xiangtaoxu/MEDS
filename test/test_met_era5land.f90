@@ -229,8 +229,8 @@ contains
       !----- At a stamp every weight is 0, so the record comes through untouched. ---------------!
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
       met = step_sample(src, cur, t)
-      call check('Tair at a stamp', met%tair_k, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
-      call check('Qair = the kernel of the stored Tdew and PSurf', met%qair,                      &
+      call check('Tair at a stamp', met%air_temp, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
+      call check('Qair = the kernel of the stored Tdew and PSurf', met%air_shv,                      &
                  sat_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g),                    &
                                                field(ERA_PSURF, 1_ik, 3_ik, g)), 1.0e-15_wp)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; v1 = field(ERA_V10, 1_ik, 3_ik, g)
@@ -242,13 +242,13 @@ contains
       !----- Inside January's file: 31 Jan 23:30 sits between 23:00 and 00:00 (both January). --!
       t = meds_time_t(2021_ik, 1_ik, 31_ik, 23_ik, 30_ik) ; g = hour_index(meds_time_t(2021_ik, 1_ik, 31_ik, 23_ik))
       met = step_sample(src, cur, t)
-      call check('31 Jan 23:30 interpolates inside the January file', met%tair_k,                 &
+      call check('31 Jan 23:30 interpolates inside the January file', met%air_temp,                 &
                  0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, g) + field(ERA_TAIR, 1_ik, 3_ik, g + 1_ik)), 1.0e-9_wp)
 
       !----- The seam: 1 Feb 00:00 is January's last record, 01:00 February's first. -----------!
       t = meds_time_t(2021_ik, 2_ik, 1_ik, 0_ik, 30_ik) ; g = hour_index(meds_time_t(2021_ik, 2_ik, 1_ik))
       met = step_sample(src, cur, t)
-      call check('1 Feb 00:30 brackets January''s last and February''s first record', met%tair_k, &
+      call check('1 Feb 00:30 brackets January''s last and February''s first record', met%air_temp, &
                  0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, g) + field(ERA_TAIR, 1_ik, 3_ik, g + 1_ik)), 1.0e-9_wp)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; u2 = field(ERA_U10, 1_ik, 3_ik, g + 1_ik)
       v1 = field(ERA_V10, 1_ik, 3_ik, g) ; v2 = field(ERA_V10, 1_ik, 3_ik, g + 1_ik)
@@ -278,16 +278,16 @@ contains
       q0  = sat_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g), p0)
       lw0 = field(ERA_LWDOWN, 1_ik, 3_ik, g)
       t1  = t0 - 0.0042_wp * 500.0_wp ; p1 = lapse_pressure(p0, t0, 500.0_wp, 0.0042_wp)
-      call check('lapse: T by January''s rate', met%tair_k, t1, 1.0e-9_wp)
-      call check('lapse: P hydrostatic', met%psurf_pa, p1, 1.0e-6_wp)
+      call check('lapse: T by January''s rate', met%air_temp, t1, 1.0e-9_wp)
+      call check('lapse: P hydrostatic', met%air_pressure, p1, 1.0e-6_wp)
       rh0 = q0 * p0 / (0.622_wp + 0.378_wp * q0) / sat_vapor_pressure(t0)
-      rh1 = met%qair * met%psurf_pa / (0.622_wp + 0.378_wp * met%qair) / sat_vapor_pressure(met%tair_k)
+      rh1 = met%air_shv * met%air_pressure / (0.622_wp + 0.378_wp * met%air_shv) / sat_vapor_pressure(met%air_temp)
       call check('lapse: relative humidity held', rh1, rh0, 1.0e-12_wp)
-      call check_true('lapse: the colder site holds less vapour', met%qair < q0, met%qair - q0)
-      call check('lapse: file longwave scaled by eps*T^4', met%lwdown,                              &
-                 lw0 * clear_sky_emissivity(fc%lw_clear_form, met%tair_k, met%qair, met%psurf_pa)      &
-                     * met%tair_k**4 / (clear_sky_emissivity(fc%lw_clear_form, t0, q0, p0) * t0**4), 1.0e-9_wp)
-      call check_true('lapse: the colder, drier site gets less longwave', met%lwdown < lw0, met%lwdown - lw0)
+      call check_true('lapse: the colder site holds less vapour', met%air_shv < q0, met%air_shv - q0)
+      call check('lapse: file longwave scaled by eps*T^4', met%lw_down,                              &
+                 lw0 * clear_sky_emissivity(fc%lw_clear_form, met%air_temp, met%air_shv, met%air_pressure)      &
+                     * met%air_temp**4 / (clear_sky_emissivity(fc%lw_clear_form, t0, q0, p0) * t0**4), 1.0e-9_wp)
+      call check_true('lapse: the colder, drier site gets less longwave', met%lw_down < lw0, met%lw_down - lw0)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; v1 = field(ERA_V10, 1_ik, 3_ik, g)
       call check('the reader leaves the wind as delivered (u)', met%wind_u, u1, 1.0e-12_wp)
       call check('the reader leaves the wind as delivered (v)', met%wind_v, v1, 1.0e-12_wp)
@@ -315,11 +315,11 @@ contains
       call check_true('the window is 8760 records', src%nrec == 8760_ik)
       t = meds_time_t(2035_ik, 6_ik, 15_ik, 12_ik) ; g = hour_index(meds_time_t(2021_ik, 6_ik, 15_ik, 12_ik))
       met = step_sample(src, cur, t)
-      call check('2035-06-15 12:00 reads 2021-06-15 12:00', met%tair_k, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
+      call check('2035-06-15 12:00 reads 2021-06-15 12:00', met%air_temp, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
       t = meds_time_t(2036_ik, 1_ik, 1_ik, 0_ik, 30_ik)
       met = step_sample(src, cur, t)
       call check('the year-end seam brackets December''s last and January''s first record',       &
-                 met%tair_k, 0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, 8759_ik) + field(ERA_TAIR, 1_ik, 3_ik, 0_ik)), &
+                 met%air_temp, 0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, 8759_ik) + field(ERA_TAIR, 1_ik, 3_ik, 0_ik)), &
                  1.0e-9_wp)
       !----- Walk the model from 2036-12-30 across the wrap day by day: the wrap step needs December's  !
       !      last record and January, and the reader reads January once more, not December again. ---!
@@ -329,7 +329,7 @@ contains
          t = meds_time_t(2036_ik, 12_ik, 31_ik, 23_ik, 30_ik) ; met = step_sample(src, cur, t)
          loads = src%n_loads
          t = meds_time_t(2037_ik, 1_ik, 1_ik, 0_ik, 30_ik) ; met = step_sample(src, cur, t)
-         call check('across the wrap: December''s last and January''s first record', met%tair_k,   &
+         call check('across the wrap: December''s last and January''s first record', met%air_temp,   &
                     0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, 8759_ik) + field(ERA_TAIR, 1_ik, 3_ik, 0_ik)), 1.0e-9_wp)
          call check_true('the wrap reads January once, December''s record comes from the buffer',  &
                          src%n_loads == loads + 1_ik, real(src%n_loads - loads, wp))
@@ -408,15 +408,15 @@ contains
          do k = 1_ik, 2_ik
             call met_advance(region, cur(k), t) ; met = met_instant(region, cur(k), t)
             met_site = step_sample(site(k), cur_site(k), t)
-            same = same .and. met%tair_k == met_site%tair_k .and. met%qair == met_site%qair       &
-                 .and. met%psurf_pa == met_site%psurf_pa .and. met%precip == met_site%precip    &
+            same = same .and. met%air_temp == met_site%air_temp .and. met%air_shv == met_site%air_shv       &
+                 .and. met%air_pressure == met_site%air_pressure .and. met%precip == met_site%precip    &
                  .and. met%wind == met_site%wind                                                &
                  .and. met%wind_u == met_site%wind_u .and. met%wind_v == met_site%wind_v        &
-                 .and. met%lwdown == met_site%lwdown .and. met%par_beam == met_site%par_beam    &
+                 .and. met%lw_down == met_site%lw_down .and. met%par_beam == met_site%par_beam    &
                  .and. met%par_diffuse == met_site%par_diffuse                                  &
                  .and. met%nir_beam == met_site%nir_beam                                        &
                  .and. met%nir_diffuse == met_site%nir_diffuse .and. met%cosz == met_site%cosz
-            if (j == 1_ik) call check('at a stamp the cursor reads its own cell''s Tair', met%tair_k, &
+            if (j == 1_ik) call check('at a stamp the cursor reads its own cell''s Tair', met%air_temp, &
                                       field(ERA_TAIR, PR(k), PC(k), hour_index(t)), 1.0e-9_wp)
          end do
          call check_true('one prefetch serves every cursor (no read inside the step)',           &
@@ -436,7 +436,7 @@ contains
       call site_cursor(site(1), cur_site(1), fc)
       t = times(3)
       met = step_sample(site(1), cur_site(1), t)
-      call check('a reopened source reads its new cell''s carried record', met%tair_k,               &
+      call check('a reopened source reads its new cell''s carried record', met%air_temp,               &
                  0.5_wp * (field(ERA_TAIR, PR(2), PC(2), hour_index(meds_time_t(2021_ik, 2_ik, 1_ik)))  &
                  + field(ERA_TAIR, PR(2), PC(2), hour_index(meds_time_t(2021_ik, 2_ik, 1_ik)) + 1_ik)), 1.0e-9_wp)
       call met_close(site(1)) ; call met_close(site(2))
@@ -467,14 +467,14 @@ contains
       call check_true('a midnight anchor opens (MET_OK)', st == MET_OK)
       call site_cursor(src, cur, fc)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 12_ik))
-      call check('the day before a midnight anchor reads the window''s last day', met%tair_k,          &
+      call check('the day before a midnight anchor reads the window''s last day', met%air_temp,          &
                  field(ERA_TAIR, 1_ik, 3_ik, hour_index(meds_time_t(2022_ik, 1_ik, 1_ik, 12_ik))), 1.0e-9_wp)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 23_ik, 30_ik))
-      call check('a midnight anchor''s seam: the window''s last and first records', met%tair_k,         &
+      call check('a midnight anchor''s seam: the window''s last and first records', met%air_temp,         &
                  seam_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 23_ik), fc%recycle_start), 1.0e-9_wp)
       loads = src%n_loads
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 2_ik, 0_ik, 30_ik))
-      call check('after it, the window''s first hour', met%tair_k, pair_mean(fc%recycle_start), 1.0e-9_wp)
+      call check('after it, the window''s first hour', met%air_temp, pair_mean(fc%recycle_start), 1.0e-9_wp)
       call check_true('the next day loads the window''s first month, once', src%n_loads == loads + 1_ik,  &
                       real(src%n_loads - loads, wp))
       call met_close(src)
@@ -487,20 +487,20 @@ contains
       call check_true('a 06:00 anchor opens (MET_OK)', st == MET_OK)
       call site_cursor(src, cur, fc)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 2_ik, 30_ik))
-      call check('before a 06:00 anchor''s seam: the window''s last month', met%tair_k,                &
+      call check('before a 06:00 anchor''s seam: the window''s last month', met%air_temp,                &
                  pair_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 2_ik)), 1.0e-9_wp)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 5_ik, 30_ik))
-      call check('a 06:00 anchor''s seam, inside the step', met%tair_k,                                 &
+      call check('a 06:00 anchor''s seam, inside the step', met%air_temp,                                 &
                  seam_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 5_ik), fc%recycle_start), 1.0e-9_wp)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 12_ik, 30_ik))
-      call check('the same step after the seam reads the window''s first day', met%tair_k,           &
+      call check('the same step after the seam reads the window''s first day', met%air_temp,           &
                  pair_mean(meds_time_t(2021_ik, 1_ik, 1_ik, 12_ik)), 1.0e-9_wp)
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 23_ik, 30_ik))
-      call check('... through its last hour', met%tair_k, pair_mean(meds_time_t(2021_ik, 1_ik, 1_ik, 23_ik)), &
+      call check('... through its last hour', met%air_temp, pair_mean(meds_time_t(2021_ik, 1_ik, 1_ik, 23_ik)), &
                  1.0e-9_wp)
       loads = src%n_loads
       met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 2_ik, 0_ik, 30_ik))
-      call check('the next day reads the window''s first month', met%tair_k,                           &
+      call check('the next day reads the window''s first month', met%air_temp,                           &
                  pair_mean(meds_time_t(2021_ik, 1_ik, 2_ik)), 1.0e-9_wp)
       call check_true('... loaded once', src%n_loads == loads + 1_ik, real(src%n_loads - loads, wp))
       call met_close(src)
@@ -519,11 +519,11 @@ contains
       end do
       t = meds_time_t(2036_ik, 1_ik, 31_ik, 23_ik, 30_ik)
       call met_advance(src, cur, t) ; met = met_instant(src, cur, t)
-      call check('the seam of a window from the 1st ends the month', met%tair_k,                         &
+      call check('the seam of a window from the 1st ends the month', met%air_temp,                         &
                  seam_mean(meds_time_t(2022_ik, 1_ik, 31_ik, 23_ik), fc%recycle_start), 1.0e-9_wp)
       call check_true('the month loaded nothing after its first day', src%n_loads == loads)
       met = step_sample(src, cur, meds_time_t(2036_ik, 2_ik, 1_ik, 0_ik, 30_ik))
-      call check('the next month opens on the window''s first hour', met%tair_k,                        &
+      call check('the next month opens on the window''s first hour', met%air_temp,                        &
                  pair_mean(fc%recycle_start), 1.0e-9_wp)
       call check_true('... loading its own month only', src%n_loads == loads + 1_ik,                     &
                       real(src%n_loads - loads, wp))

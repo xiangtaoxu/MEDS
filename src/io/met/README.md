@@ -12,7 +12,7 @@ demography or state layer — so a prescribed driver stays low in the library gr
 - **`meds_met_types`** — the runtime types. `met_forcing_t` is the instantaneous atmospheric
   state the fast loop reads (a polygon's sample, and a site's or a patch's after the vertical
   moves): a read-only boundary-condition value, which carries the wind vector as well as the speed
-  when the source supplies components; its one method, `swdown()`, sums the four shortwave streams.
+  when the source supplies components; its one method, `sw_down()`, sums the four shortwave streams.
   `met_record_t` is one ingested file record. The reader state comes in two parts: `met_source_t`,
   one per run, holds the file, the time axis, the cell list and the records in memory, and is
   read-only while a step runs; `met_cursor_t`, one per polygon, holds the polygon's cell and

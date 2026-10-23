@@ -182,7 +182,7 @@ contains
          do isub = 1_ik, nsub
             !----- The patch's forcing, the phenology's air temperature and the precipitation split. -!
             call patch_forcing(cfg, sd%static, sd%dynamic, met_site(isub, is_p), do_forcing, sd%forcing)
-            red_site(RED_PHENO_TAIR, isub, ip) = met_site(isub, is_p)%tair_k
+            red_site(RED_PHENO_TAIR, isub, ip) = met_site(isub, is_p)%air_temp
             red_site(RED_RAINF,      isub, ip) = area * sd%forcing%rainfall
             red_site(RED_SNOWFALL,   isub, ip) = area * sd%forcing%snowfall
 

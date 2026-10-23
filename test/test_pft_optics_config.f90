@@ -91,7 +91,7 @@ program test_pft_optics_config
                        'soil.ground_albedo_vis did not reach the radiation solver')
       call check_close(forcing%sw_up_nir, 0.22_wp * forcing%sw_in_nir, 1.0e-12_wp,                            &
                        'soil.ground_albedo_nir did not reach the radiation solver')
-      lw_up = (1.0_wp - 0.93_wp) * met%lwdown + 0.93_wp * stefan_boltzmann * 290.0_wp**4
+      lw_up = (1.0_wp - 0.93_wp) * met%lw_down + 0.93_wp * stefan_boltzmann * 290.0_wp**4
       call check_close(forcing%lw_up, lw_up, 1.0e-9_wp, 'soil.ground_emissivity did not reach the radiation solver')
    end block
    cfg%soil%ground_albedo_vis = 0.15_wp ; cfg%soil%ground_albedo_nir = 0.30_wp ; cfg%soil%ground_emissivity = 0.95_wp

@@ -248,14 +248,14 @@ program test_fast_loop
          do isub = 1_ik, cfg%n_fast_per_slow
             ts = time_advance_seconds(t0, (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
             call met_advance(drv, cur2, ts) ; m = met_instant(drv, cur2, ts)
-            sum_t = sum_t + m%tair_k * cfg%dt_fast ; sum_q = sum_q + m%qair * cfg%dt_fast
+            sum_t = sum_t + m%air_temp * cfg%dt_fast ; sum_q = sum_q + m%air_shv * cfg%dt_fast
             sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
-            sum_sw = sum_sw + m%swdown() * cfg%dt_fast
+            sum_sw = sum_sw + m%sw_down() * cfg%dt_fast
             associate (f => ob%fast_forcing(:, isub))
-               exact = exact .and. f(PY_QAIR) == m%qair .and. f(PY_LWDOWN) == m%lwdown               &
+               exact = exact .and. f(PY_QAIR) == m%air_shv .and. f(PY_LWDOWN) == m%lw_down               &
                        .and. f(PY_PAR_DIFFUSE) == m%par_diffuse .and. f(PY_COSZ) == m%cosz           &
-                       .and. f(PY_RHO_AIR) == m%rho_air .and. f(PY_WIND) == m%wind                   &
-                       .and. f(PY_TAIR) == m%tair_k .and. f(PY_SW_IN) == m%swdown()
+                       .and. f(PY_RHO_AIR) == m%air_density .and. f(PY_WIND) == m%wind                   &
+                       .and. f(PY_TAIR) == m%air_temp .and. f(PY_SW_IN) == m%sw_down()
             end associate
          end do
          w = poly%diag%w

@@ -107,16 +107,16 @@ contains
    subroutine fill_forcing(forcing, met)
       type(fast_forcing_t), intent(inout) :: forcing
       type(met_forcing_t),  intent(in)    :: met
-      forcing%enthalpy_atm = cas_temp_to_enthalpy(met%tair_k, met%qair)
-      forcing%shv_atm      = met%qair
+      forcing%enthalpy_atm = cas_temp_to_enthalpy(met%air_temp, met%air_shv)
+      forcing%shv_atm      = met%air_shv
       forcing%co2_atm      = met%co2
       forcing%wind         = met%wind
-      forcing%press        = met%psurf_pa
-      forcing%rho_air      = met%rho_air
+      forcing%press        = met%air_pressure
+      forcing%rho_air      = met%air_density
       !----- The rain/snow split at the record's temperature: with forcing, the patch's canopy-air top, !
       !      where the precipitation's enthalpy is valued too (docs/science/forcing.md §7). ------------!
-      call precip_phase(met%precip, met%tair_k, forcing%rainfall, forcing%snowfall)
-      forcing%air_temp     = met%tair_k                ! rainfall enthalpy reference (snow/rain-on-snow)
+      call precip_phase(met%precip, met%air_temp, forcing%rainfall, forcing%snowfall)
+      forcing%air_temp     = met%air_temp                ! rainfall enthalpy reference (snow/rain-on-snow)
    end subroutine fill_forcing
 
    !----- Run the patch's two-stream canopy radiation and fill each cohort's absorbed SW,            !
@@ -170,7 +170,7 @@ contains
       rf%incid_beam(RAD_NIR) = met%nir_beam
       rf%incid_diff(RAD_NIR) = met%nir_diffuse
       rf%incid_beam(RAD_LW)  = 0.0_wp
-      rf%incid_diff(RAD_LW)  = met%lwdown
+      rf%incid_diff(RAD_LW)  = met%lw_down
 
       !----- Ground optics: bare-soil albedo/emissivity from [soil], skin temperature from the top soil node. --!
       surf%n_band = N_RAD_BAND_DEFAULT

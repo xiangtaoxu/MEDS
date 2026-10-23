@@ -290,10 +290,10 @@ contains
       end if
 
       !----- States linear; wind in energy form (docs/science/forcing.md eq. (1)). ----------!
-      met%tair_k   = linear_interpolate(p%tair_k,   n%tair_k,   w_next)
-      met%qair     = linear_interpolate(p%qair,     n%qair,     w_next)
-      met%psurf_pa = linear_interpolate(p%psurf_pa, n%psurf_pa, w_next)
-      met%lwdown   = linear_interpolate(p%lwdown,   n%lwdown,   w_next)
+      met%air_temp   = linear_interpolate(p%air_temp,   n%air_temp,   w_next)
+      met%air_shv     = linear_interpolate(p%air_shv,     n%air_shv,     w_next)
+      met%air_pressure = linear_interpolate(p%air_pressure, n%air_pressure, w_next)
+      met%lw_down   = linear_interpolate(p%lw_down,   n%lw_down,   w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
       !----- The vector interpolates linearly, which keeps its direction; never floored. --------!
       if (src%has_wind_vector) then
@@ -306,7 +306,7 @@ contains
       mean_rec = interval_mean_record(src, cur)
 
       !----- Precipitation: the interval's total rate, held across it; each patch splits it. -!
-      met%precip = mean_rec%rainf
+      met%precip = mean_rec%rain
 
       !----- Shortwave: each mean stream times cosz(now)/<cosz>_win (docs/science/forcing.md      !
       !      eq. (5)), the window anchored on the model calendar (mws), so both see the same sun. !
@@ -328,12 +328,12 @@ contains
             sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
             kt_now = clearness_index(sw_now, cosz_now)
             if (kt_now < 0.0_wp) kt_now = cur%kt_last_day
-            met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
+            met%lw_down = synthesize_lwdown(f%lw_clear_form, met%air_temp, met%air_shv, met%air_pressure,   &
                                            kt_now, f%lw_cloud_a)
          end block
       end if
 
-      met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
+      met%air_density = air_density(met%air_temp, met%air_pressure, met%air_shv)
       end associate
    end function met_instant
 
@@ -395,12 +395,12 @@ contains
       site = met
       if (f%apply_elevation_lapse .and. dz /= 0.0_wp) then
          gamma         = f%lapse_rate_tair(month)
-         site%psurf_pa = lapse_pressure(met%psurf_pa, met%tair_k, dz, gamma)
-         site%tair_k   = lapse_air_temperature(met%tair_k, dz, gamma)
-         site%qair     = lapse_specific_humidity(met%qair, met%tair_k, met%psurf_pa, site%tair_k, site%psurf_pa)
-         site%lwdown   = lapse_longwave(met%lwdown, f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,     &
-                                        site%tair_k, site%qair, site%psurf_pa)
-         site%rho_air  = air_density(site%tair_k, site%psurf_pa, site%qair)
+         site%air_pressure = lapse_pressure(met%air_pressure, met%air_temp, dz, gamma)
+         site%air_temp   = lapse_air_temperature(met%air_temp, dz, gamma)
+         site%air_shv     = lapse_specific_humidity(met%air_shv, met%air_temp, met%air_pressure, site%air_temp, site%air_pressure)
+         site%lw_down   = lapse_longwave(met%lw_down, f%lw_clear_form, met%air_temp, met%air_shv, met%air_pressure,     &
+                                        site%air_temp, site%air_shv, site%air_pressure)
+         site%air_density  = air_density(site%air_temp, site%air_pressure, site%air_shv)
       end if
       site%par_beam = met%par_beam * beam_factor
       site%nir_beam = met%nir_beam * beam_factor
@@ -455,8 +455,8 @@ contains
       end if
       z_t = f%tq_height
       if (f%height_above == HEIGHT_ABOVE_ZERO_PLANE) z_t = displace + f%tq_height
-      top%tair_k  = dry_adiabat_temperature(met%tair_k, z_top - z_t)
-      top%rho_air = air_density(top%tair_k, top%psurf_pa, top%qair)
+      top%air_temp  = dry_adiabat_temperature(met%air_temp, z_top - z_t)
+      top%air_density = air_density(top%air_temp, top%air_pressure, top%air_shv)
    end function met_to_cas_top
 
    !=======================================================================================!
@@ -526,24 +526,24 @@ contains
       else
          call default_file_record(src, irec, rec, humidity_value, sw_total)
       end if
-      call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
+      call assert_finite(rec%air_temp, 'Tair', irec, src%grid_index)
       call assert_finite(humidity_value, MEDS_FIELD(humidity_field(src%humidity)), irec, src%grid_index)
-      call assert_finite(rec%psurf_pa, 'PSurf', irec, src%grid_index)
+      call assert_finite(rec%air_pressure, 'PSurf', irec, src%grid_index)
       !----- Specific humidity at the forcing's own temperature and pressure: a dewpoint and a     !
       !      relative humidity both go through the model's liquid-water saturation curve           !
       !      (docs/science/forcing.md eq. (11)). ---------------------------------------------------!
       select case (src%humidity)
       case (HUMIDITY_RHAIR)
-         rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
+         rec%air_shv = rh_to_specific_humidity(humidity_value, rec%air_temp, rec%air_pressure)
       case (HUMIDITY_TDEW)
-         rec%qair = sat_specific_humidity(humidity_value, rec%psurf_pa)
+         rec%air_shv = sat_specific_humidity(humidity_value, rec%air_pressure)
       case default
-         rec%qair = humidity_value
+         rec%air_shv = humidity_value
       end select
       call assert_finite(rec%wind, 'Wind', irec, src%grid_index)
-      call assert_finite(rec%rainf, 'Rainf', irec, src%grid_index)
+      call assert_finite(rec%rain, 'Rainf', irec, src%grid_index)
       if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
-         call assert_finite(rec%lwdown, 'LWdown', irec, src%grid_index)
+         call assert_finite(rec%lw_down, 'LWdown', irec, src%grid_index)
 
       !----- The terrain lapse, from the cell's elevation to the polygon's                        !
       !      (docs/science/forcing.md §8 Step 1, eqs. (13)-(14)). ----------------------------------!
@@ -552,21 +552,21 @@ contains
             real(wp) :: dz, gamma, t_grid, p_grid, q_grid
             dz     = cur%elevation_m - cur%grid_elevation_m       ! + when the polygon is higher
             gamma  = src%fcfg%lapse_rate_tair(rec%when%month)
-            t_grid = rec%tair_k
-            p_grid = rec%psurf_pa
-            q_grid = rec%qair   ! before it is overwritten
-            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, gamma)
-            rec%tair_k   = lapse_air_temperature(t_grid, dz, gamma)
+            t_grid = rec%air_temp
+            p_grid = rec%air_pressure
+            q_grid = rec%air_shv   ! before it is overwritten
+            rec%air_pressure = lapse_pressure(p_grid, t_grid, dz, gamma)
+            rec%air_temp   = lapse_air_temperature(t_grid, dz, gamma)
             !----- Relative humidity is held: a measured one is used as is, any other is formed at the cell. !
             if (src%humidity == HUMIDITY_RHAIR) then
-               rec%qair  = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
+               rec%air_shv  = rh_to_specific_humidity(humidity_value, rec%air_temp, rec%air_pressure)
             else
-               rec%qair  = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%tair_k, rec%psurf_pa)
+               rec%air_shv  = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%air_temp, rec%air_pressure)
             end if
             !----- Only a file's longwave: a synthesized one is built later from the lapsed T and q. -!
             if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                           &
-               rec%lwdown = lapse_longwave(rec%lwdown, src%fcfg%lw_clear_form, t_grid, q_grid, p_grid, &
-                                           rec%tair_k, rec%qair, rec%psurf_pa)
+               rec%lw_down = lapse_longwave(rec%lw_down, src%fcfg%lw_clear_form, t_grid, q_grid, p_grid, &
+                                           rec%air_temp, rec%air_shv, rec%air_pressure)
          end block
       end if
 
@@ -577,7 +577,7 @@ contains
          call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, src%grid_index)
       else
          call assert_finite(sw_total, 'SWdown', irec, src%grid_index)
-         call partition_shortwave(sw_total, record_mean_cosz(src, cur, rec%when), rec%psurf_pa,    &
+         call partition_shortwave(sw_total, record_mean_cosz(src, cur, rec%when), rec%air_pressure,    &
                                   src%fcfg%sw_partition,                                          &
                                   rec%par_beam, rec%par_diffuse, rec%nir_beam, rec%nir_diffuse)
       end if
