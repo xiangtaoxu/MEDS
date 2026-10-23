@@ -423,11 +423,10 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
-- **Attack the allocator traffic.** *Done in part* (2026-09-30). [#195](https://github.com/xiangtaoxu/MEDS/issues/195)
+- **Attack the allocator traffic.** *Done.* [#195](https://github.com/xiangtaoxu/MEDS/issues/195)
   With #188, #146 and the per-thread ARK storage, a patch-step allocates 104 times instead of 304,
-  and the allocator's share of a serial BCI run fell from 14.9 % to 7.7 %. What remains is mostly the
-  frozen record, built afresh each step (4 % of the serial fast loop): it relies on a new record's
-  defaults for its scalars, so reusing it needs a reset that lists them.
+  and the allocator's share of a serial BCI run fell from 14.9 % to 7.7 %. The frozen record, which was
+  built afresh each step (4 % of the serial fast loop), is each thread's since #485, reset in place.
 - **The water network's cost.** *Within its gate.* On the BCI profile the soil-plant water network
   runs at +13.5 % against the solvers it replaced at 12 threads (+19 % serial), inside the plan's
   +15 % (`MEDS_SPAC_WATER_NETWORK_PLAN.md` §12.4). Most of it is Newton iterations (§4 above) and the
