@@ -52,7 +52,8 @@ module meds_fast_integ_frozen
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, snow_energy_step
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
                                      cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure,               &
-                                     soil_thermal_conductivity, specific_humidity_to_vapor_pressure
+                                     soil_thermal_conductivity, specific_humidity_to_vapor_pressure,            &
+                                     sat_specific_humidity
    use meds_numerics,         only : weighted_mean
    implicit none
    private
@@ -136,7 +137,8 @@ contains
          call advance_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, max(-prof%z_node(1), tiny_num), k_soil_top,   &
                                  forcing%abs_sw_ground, forcing%abs_lw_ground, forcing%snowfall, forcing%rainfall,    &
                                  forcing%air_temp, out%aero%ggnet, dynamic%soil_energy%soil_temp(1), dt_fast, tcas,   &
-                                 qcas, rho, press, frozen%snow)
+                                 qcas, rho, press, frozen%cas%box%air_mass_capacity,                                  &
+                                 frozen%cas%box%atm_conductance_vapor, forcing%shv_atm, frozen%snow)
       end associate
 
       call intercept_rain(dt_fast, cfg, static, forcing, dynamic, frozen%snow%exists, frozen%film, throughfall)
@@ -597,7 +599,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top, abs_sw_ground,      &
                                  abs_lw_ground, snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, &
-                                 qcas, rho, press, st)
+                                 qcas, rho, press, cas_capacity, g_atm_vapour, shv_atm, st)
       type(snow_state_t),   intent(inout) :: snow           !< the pack, advanced in place
       type(snow_params_t),  intent(in)    :: snow_params
       real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
@@ -611,12 +613,15 @@ contains
       real(wp),             intent(in)    :: ggnet          !< [m/s]     ground <-> CAS conductance
       real(wp),             intent(in)    :: t_soil_top     !< [K]       top soil-node temperature
       real(wp),             intent(in)    :: dt_fast, tcas, qcas, rho, press
+      real(wp),             intent(in)    :: cas_capacity   !< [kg/m2]   the canopy air's mass
+      real(wp),             intent(in)    :: g_atm_vapour   !< [kg/m2/s] its vapour conductance to the atmosphere
+      real(wp),             intent(in)    :: shv_atm        !< [kg/kg]   the atmosphere's humidity
       type(snow_stage_t),   intent(out)   :: st
 
       type(snow_env_t)  :: senv
       type(snow_flux_t) :: sfx
       type(snow_melt_t) :: smelt
-      real(wp)          :: snow_e0
+      real(wp)          :: snow_e0, g_snow, q_snow
 
       !----- Default: the bare-ground boundary (snowfac = 0). The stage always runs; with no pack and    !
       !      snowfall under min_new_snow_mass, snow_accumulate returns at once, and these defaults make  !
@@ -638,7 +643,14 @@ contains
          senv%abs_sw      = abs_sw_ground
          senv%abs_lw = abs_lw_ground
          senv%can_temp    = tcas
-         senv%can_shv = qcas
+         !----- The pack exchanges vapour with the canopy air in minutes, far inside a dt_fast, so its    !
+         !      frozen flux is set against the humidity the canopy air takes over the step with only the !
+         !      atmosphere and the pack exchanging (one backward-Euler balance), not its start value: a  !
+         !      deposition against the start value can take more vapour than the canopy air holds.  ---!
+         g_snow = rho * ggnet * st%snowfac
+         q_snow = sat_specific_humidity(snow%snow_temp(1), press, snow%snow_fliq(1))
+         senv%can_shv = (cas_capacity / dt_fast * qcas + g_atm_vapour * shv_atm + g_snow * q_snow)       &
+                        / max(cas_capacity / dt_fast + g_atm_vapour + g_snow, tiny_num)
          senv%ggnet = ggnet
          senv%rho_air     = rho
          senv%press = press

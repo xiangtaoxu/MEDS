@@ -32,7 +32,14 @@ as for soil. The fast-loop driver orchestrates **accumulate → energy step → 
   balance and cannot overshoot it, and a melting pack under cold air freezes through the plateau and
   stops where the balance does. Sublimation takes its latent heat from the balance, and the mass
   that leaves takes the pack's specific energy with it, so the rest keeps $T$; a pack that would
-  sublimate whole does, the vapour taking all the energy left. The **snow-base →
+  sublimate whole does, the vapour taking all the energy left. The vapour flux is set against the
+  canopy air's humidity over the step, not at its start: the pack and the canopy air exchange vapour
+  within minutes, so the step's humidity is taken from one backward-Euler balance of the canopy air
+  with the atmosphere and the pack alone,
+  $`q^* = (W\,q^n/\Delta t + G_a q_a + G_s q_s)/(W/\Delta t + G_a + G_s)`$ ($`W`$ the canopy air's mass,
+  $`G_a`$ its vapour conductance to the atmosphere, $`G_s = \rho\,g_{net} f_{snow}`$ the pack's, $`q_s`$ the
+  pack's saturation humidity). Against the start value, a deposition from warm saturated air onto a
+  melting pack could take more vapour in one step than the canopy air holds. The **snow-base →
   soil-top conductance** is the series resistance of the half snow layer and the top soil node;
   $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
   winter soil surface, and it becomes the soil's top BC. The top node's $`k_{soil}`$ is the soil heat
