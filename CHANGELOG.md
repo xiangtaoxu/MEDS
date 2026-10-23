@@ -89,7 +89,8 @@ air takes its molar-mass ratios exactly (#486). The fast march's warm-start seed
 rejection, its error norm measures only the states it integrates, the leaf's Ci root is found by the
 Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
 or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
-run 24–35 % faster (#490).
+run 24–35 % faster (#490). The soil-plant water network's step costs a simulated day 8–9 % less
+again: four changes leave every result as it was, and three move results at round-off (#488).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -647,9 +648,34 @@ run 24–35 % faster (#490).
   keeps its value; the shipped ones (examples 04 and 05, `test/region`) now set 2e-3. 1e-3 still gives
   the earlier march, a little tighter than before for a patch with many cohorts (the norm below). An
   `rk45` run wants 1e-4 or tighter (`docs/science/numerical_scheme.md` §6).
+- **Fortran: `ground_evaporation_rate` reads its per-step terms from its boundary** (#488). It no
+  longer takes the soil profile: `ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil,
+  de_dtheta, de_dpsi)`. Call `ground_evaporation_setup(profile, soil, forcing)` after filling a
+  `ground_evap_env_t` and before the first rate; it fills the record's new fields `rv_t`, `q_sat`,
+  `theta_init`, `theta_span` and `dsl_diffusivity`. `water_step` does this itself, so its `drive`
+  argument, and `water_jacobian_error`'s, is now `intent(inout)`.
 
 ### Changed
 
+- **The water network's step is cheaper** (#488). Per simulated day on example 04's 120-patch stand
+  (ifx dev build, `rtol` 2e-3): 1.257 → 1.140 s on one thread (−9 %), 0.113 → 0.104 s on 20 (−8 %).
+  Four changes leave results unchanged on gfortran and ifx:
+  - one pass over the stores gives each evaluation's residual, its merit and its worst store;
+  - the ground evaporation's terms that depend only on its boundary and the top layer's curve (R_v T,
+    the ground skin's saturation humidity, the dry surface layer's span and vapour diffusivity) are set
+    once per water step by `ground_evaporation_setup`;
+  - root uptake calls `smooth_max0` only inside its rounded corner;
+  - the retained conductance fraction squares r by a product for exponent 2.
+
+  Three more move results at round-off:
+  - the exponent-2 Kirchhoff difference is one arctangent;
+  - the van Genuchten conductivity's slope takes its powers from those the conductivity already took;
+  - the sub-step's error estimate solves with the last Newton iteration's factorisation instead of a
+    fresh one, and a sub-step that took no iteration has zero error.
+
+  Example 04's hourly LE moves by at most 3×10⁻⁴ W/m², and its canopy-air temperature by 1×10⁻⁷ K.
+  The regeneration and site cases move by at most 0.32 W/m² in an hour (median 5×10⁻⁵); the base
+  run's own gfortran–ifx difference there is 0.09 W/m².
 - **Examples 04 and 05 are rerun** on the fast-loop follow-up at `rtol` 2e-3 (#490):
   - **Example 04** (against v0.3.5): the tower-period means move by at most 0.2 % (GPP 10.48 → 10.47
     µmol m⁻² s⁻¹ default, 8.60 calibrated; H by day 158.11 → 157.94 W m⁻² calibrated), and the window's
