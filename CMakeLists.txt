@@ -17,8 +17,10 @@ cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.3.5 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
+#      A configure that names no build type gets the dev kind (docs/building.md, "Build kinds"):
+#      Release, the project's -O2, code for any x86-64 CPU. The debug kind is asked for by name.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-   set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type: Release (dev, profile, production) or Debug" FORCE)
 endif()
 
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
@@ -433,7 +435,7 @@ endif()
 #      the netCDF bindings (meds_netcdf_c, above). netCDF is always compiled.                        #
 #      (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --                #
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
-#      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
+#      per call; a Release build, the default, is clean.)                                            #
 add_library(meds_output_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90)
 target_link_libraries(meds_output_stream PUBLIC meds_demography meds_netcdf_c meds_output)
 meds_fortran_flags(meds_output_stream)
