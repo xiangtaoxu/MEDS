@@ -35,7 +35,9 @@ as for soil. The fast-loop driver orchestrates **accumulate → energy step → 
   sublimate whole does, the vapour taking all the energy left. The **snow-base →
   soil-top conductance** is the series resistance of the half snow layer and the top soil node;
   $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
-  winter soil surface, and it becomes the soil's top BC.
+  winter soil surface, and it becomes the soil's top BC. The top node's $`k_{soil}`$ is the soil heat
+  solver's own conductivity of layer 1 at the step's start (its water, ice fraction and texture), so
+  a frozen or a dry top layer conducts as the soil column says it does.
 - **Drain** (`snow_drain_meltwater`): free liquid above the holding capacity percolates out as a paired
   (mass, enthalpy) hand-off to the pond, which it reaches at the melt temperature and infiltrates
   from; full melt-out dumps the residual and reverts to bare ground.
