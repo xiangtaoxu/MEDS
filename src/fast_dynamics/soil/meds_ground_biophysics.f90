@@ -5,7 +5,8 @@
 ! giving the soil-top boundary and the canopy-air fluxes (docs/science/snow_biophysics.md):!
 !   * ground_surface_fluxes -- the bare ground's sensible and latent fluxes;               !
 !   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater -- the snow's mass;     !
-!   * snow_surface_fluxes / snow_base_conductance / snow_energy_step -- its energy.        !
+!   * snow_surface_fluxes / snow_base_conductance / snow_surface_balance /                !
+!     snow_take_exchange / snow_energy_step -- its energy.                                 !
 !==========================================================================================!
 module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
@@ -22,7 +23,8 @@ module meds_ground_biophysics
 
    public :: ground_surface_fluxes
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater
-   public :: snow_energy_step
+   public :: snow_surface_balance, snow_take_exchange
+   public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
    public :: snow_surface_fluxes   ! used only by the tests
 
 contains
@@ -81,8 +83,8 @@ contains
       snow%nlayer         = 1_ik
    end subroutine snow_accumulate
 
-   !----- Percolation after the energy step: drain the free liquid above the holding capacity as a   !
-   !      paired (mass, enthalpy) hand-off to the pond (melt_*), and dump the residual at melt-out. --!
+   !----- Percolation: drain the free liquid above the holding capacity as a paired (mass, enthalpy) !
+   !      hand-off to the pond (melt_*), and dump the residual at melt-out. ------------------------!
    pure subroutine snow_drain_meltwater(snow, params, melt)
       type(snow_state_t), intent(inout) :: snow
       type(snow_params_t), intent(in)    :: params
@@ -165,20 +167,23 @@ contains
       gcond    = 1.0_wp / max(r_series, tiny_num)
    end function snow_base_conductance
 
-   !----- Advance the snow store one dt by a linearized backward-Euler step on its enthalpy           !
-   !      (docs/science/snow_biophysics.md, "The snow store"): with every flux linearized about T^n,   !
-   !      swe e(T) = E^n + dt af R(T) has one root, found in closed form on the plateau or the ice or  !
-   !      liquid line. Sublimating mass leaves with the pack's specific energy, so the rest keeps T. -!
-   pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
-      type(snow_state_t), intent(inout) :: snow
-      type(snow_env_t),    intent(in)    :: env
-      type(snow_params_t), intent(in)    :: params
-      real(wp),            intent(in)    :: dt
-      real(wp),            intent(in)    :: area_frac    !< snow-cover fraction: scales all boundary exchange (sub-column)
-      type(snow_flux_t),   intent(out)   :: flux
-      real(wp) :: t_n, fliq_n, e_old, swe0, swe1, gcond, af, dtaf
+   !----- The pack's exchange with its surroundings over dt, from a linearized backward-Euler step on  !
+   !      its enthalpy that it does not commit (docs/science/snow_biophysics.md, "The snow store"):     !
+   !      with every flux linearized about T^n, swe e(T) = E^n + dt af R(T) has one root, found in      !
+   !      closed form on the plateau or the ice or liquid line, and the fluxes are taken at that T.     !
+   !      Sublimating mass leaves with the pack's specific energy, so the rest keeps T. The march      !
+   !      calls this at every evaluation, against the canopy air and soil top it holds then; the pack   !
+   !      takes the exchange's time integral afterwards (snow_take_exchange). ------------------------!
+   pure subroutine snow_surface_balance(snow, env, params, dt, area_frac, flux)
+      type(snow_state_t),  intent(in)  :: snow
+      type(snow_env_t),    intent(in)  :: env
+      type(snow_params_t), intent(in)  :: params
+      real(wp),            intent(in)  :: dt
+      real(wp),            intent(in)  :: area_frac    !< snow-cover fraction: scales all boundary exchange (sub-column)
+      type(snow_flux_t),   intent(out) :: flux
+      real(wp) :: t_n, fliq_n, e_old, swe0, gcond, af, dtaf
       real(wp) :: h_n, w_n, le_n, g_n, dh_dt, dw_dt, demit_dt, l_vap, r0, drdt
-      real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit, net_flux
+      real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit
 
       flux = snow_flux_t()
       af = max(0.0_wp, min(1.0_wp, area_frac))
@@ -228,36 +233,58 @@ contains
       emit  = demit_dt * dtemp                     ! the emission added as the surface moves from T^n to T
       if (w_s * dtaf < swe0) then
          le_s = w_s * (l_vap + e_bal / swe0)       ! the latent heat plus the leaving mass's own energy
-         swe1 = swe0 - w_s * dtaf
       else                                         ! the whole pack sublimates, with all the energy left
          w_s  = swe0 / dtaf
          le_s = e_old / dtaf + env%abs_sw + env%abs_lw - emit - h_s - g_s
-         swe1 = 0.0_wp
       end if
 
-      !----- Energy and mass update: the pack keeps e(T) per kilogram, so it reads off at T. ---------!
-      net_flux = af * (env%abs_sw + env%abs_lw - emit - h_s - le_s - g_s)   ! sub-column area weight
-      snow%snow_energy(1) = e_old + dt * net_flux
-      snow%swe(1)         = swe1
-      snow%snow_depth(1)  = max(0.0_wp, snow%swe(1)) / params%rho_snow
+      !----- The area-weighted fluxes, positive away from the pack: h_snow + le_snow -> the canopy air's !
+      !      enthalpy, w_flux -> its vapour, g_base -> the soil top; energy_in is what the pack gains. ---!
+      flux%t_surf    = t_new
+      flux%h_snow    = af * h_s
+      flux%le_snow   = af * le_s
+      flux%w_flux    = af * w_s
+      flux%g_base    = af * g_s
+      flux%rnet      = af * (env%abs_sw + env%abs_lw - emit)   ! snow's area-weighted net radiation into the store
+      flux%energy_in = flux%rnet - flux%h_snow - flux%le_snow - flux%g_base
+   end subroutine snow_surface_balance
 
+   !----- The pack takes an exchange's amounts: energy_amount [J/m2] in, vapour_amount [kg/m2] out,  !
+   !      keeping e(T) per kilogram, so its temperature reads off the new energy. A pack whose mass    !
+   !      is gone is left at t_3ple for the drain kernel to empty. --------------------------------!
+   pure subroutine snow_take_exchange(snow, energy_amount, vapour_amount, params)
+      type(snow_state_t),  intent(inout) :: snow
+      real(wp),            intent(in)    :: energy_amount, vapour_amount
+      type(snow_params_t), intent(in)    :: params
+      if (snow%nlayer == 0_ik) return
+      snow%snow_energy(1) = snow%snow_energy(1) + energy_amount
+      snow%swe(1)         = max(0.0_wp, snow%swe(1) - vapour_amount)
+      snow%snow_depth(1)  = snow%swe(1) / params%rho_snow
       if (snow%swe(1) > params%tiny_snow_mass) then
          call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
       else
          snow%snow_temp(1) = t_3ple                               ! vanished; drain kernel dumps residual
          snow%snow_fliq(1) = 0.0_wp
       end if
+   end subroutine snow_take_exchange
 
-      !----- Report the turbulent + conduction fluxes for the CAS + soil coupling. h_snow + le_snow -> !
-      !      CAS enthalpy; w_flux -> CAS vapour; g_base -> soil top BC. ------------------------------!
-      flux%t_surf  = merge(snow%snow_temp(1), t_new, snow%swe(1) > params%tiny_snow_mass)
-      flux%fliq    = snow%snow_fliq(1)
-      flux%h_snow  = af * h_s
-      flux%le_snow = af * le_s
-      flux%w_flux  = af * w_s
-      flux%g_base  = af * g_s
-      flux%rnet    = af * (env%abs_sw + env%abs_lw - emit)   ! snow's area-weighted net radiation into the store
-      flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * net_flux
+   !----- One whole step at a fixed environment: the balance, then the pack takes it. The unit the    !
+   !      snow tests check; energy_resid is zero by construction. --------------------------------!
+   pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
+      type(snow_state_t),  intent(inout) :: snow
+      type(snow_env_t),    intent(in)    :: env
+      type(snow_params_t), intent(in)    :: params
+      real(wp),            intent(in)    :: dt
+      real(wp),            intent(in)    :: area_frac
+      type(snow_flux_t),   intent(out)   :: flux
+      real(wp) :: e_old
+      e_old = snow%snow_energy(1)
+      call snow_surface_balance(snow, env, params, dt, area_frac, flux)
+      if (flux%snowfac <= 0.0_wp) return
+      call snow_take_exchange(snow, dt * flux%energy_in, dt * flux%w_flux, params)
+      flux%t_surf = merge(snow%snow_temp(1), flux%t_surf, snow%swe(1) > params%tiny_snow_mass)
+      flux%fliq   = snow%snow_fliq(1)
+      flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * flux%energy_in
    end subroutine snow_energy_step
 
 end module meds_ground_biophysics

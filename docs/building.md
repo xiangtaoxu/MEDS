@@ -10,13 +10,17 @@ and exits.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix to use
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, as `cmake --preset dev` makes it
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 
-./build/meds_main examples/example03_demography/example_config_main.toml
+./build-dev/meds_main examples/example03_demography/example_config_main.toml
 ```
+
+With no build type a configure builds dev, the everyday kind; the others, and the presets that name
+all four, are under [Build kinds](#build-kinds). `build-dev` is where the example scripts look for
+`meds_main` and the Python package for `libmeds.so`, which `-DMEDS_BUILD_PYLIB=ON` adds.
 
 If the run cannot find `libnetcdf` or the compiler runtime, put both on the loader path:
 `LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH`. Note the `:$LD_LIBRARY_PATH` — replacing the
@@ -78,21 +82,77 @@ each bitten at least once, and each was invisible to ifx:
   error. Assign a default-initialised local that is never written, or reset through an
   `intent(out)` dummy.
 
-## Build types
+## Build kinds
+
+| Kind | Use it for | Configure |
+|---|---|---|
+| `debug` | writing or fixing engine code: every bounds, uninitialised-value and floating-point check is on | `cmake --preset debug` |
+| `dev` | everyday work: the tests, short runs, the Python package, comparing outputs between commits | `cmake --preset dev` |
+| `profile` | finding where the time goes (VTune, perf) | `cmake --preset profile` |
+| `production` | long runs: the examples, calibration, regional runs | `cmake --preset production` |
+
+Each preset builds in `build-<kind>` and takes netCDF from the active conda environment
+(`$CONDA_PREFIX`). Run it from the repository root, and choose the compiler with `FC=ifx` (or
+`gfortran`) before `cmake --preset`; presets need CMake ≥ 3.21.
 
 ```bash
-# Release -- production runs and the netCDF layer.
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-
-# Debug -- strict checking (-stand f18 -check all -fpe0). Use it for engine work.
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+FC=ifx cmake --preset dev
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 ```
 
-Debug emits one harmless `arg_temp_created` remark per netCDF call, so prefer Release when the
-output layer is what you are exercising. Per-compiler flags live in the `meds_fortran_flags()`
-function in `CMakeLists.txt`.
+A `-D` after `--preset` overrides the preset, and `-B` its directory:
+`cmake --preset dev -DCMAKE_PREFIX_PATH=<netCDF prefix>`. Without presets, the same kinds are
+`-DCMAKE_BUILD_TYPE=Debug|Release`, plus `-DCMAKE_Fortran_FLAGS=-g` for profile and
+`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production, and `-DMEDS_BUILD_PYLIB=ON` for every
+kind but debug. **A configure that names no build type builds dev**, without `libmeds.so` unless it
+adds `-DMEDS_BUILD_PYLIB=ON`. The per-compiler flags live in the `meds_fortran_flags()` function in
+`CMakeLists.txt`.
+
+**`build-dev` is the default build.** dev builds `meds_main`, `libmeds.so` and the tests, and the
+example scripts run `build-dev/meds_main` and the Python package loads `build-dev/libmeds.so`, unless
+`--meds-main` (or `MEDS_MAIN`) or `MEDS_LIB` names another build. The library costs dev no
+measurable build time, because the tests compile its sources anyway and it adds one link: with or
+without it, a clean configure and build at `-j 16` takes 44–50 s with ifx and 52–56 s with gfortran,
+and the rebuild after an edit 3–4 s. It compiles every library position-independent (`-fPIC`),
+which leaves every output value of `meds_main` as it is, on ifx and gfortran, and its run time
+within noise. The suite gains the Python package's tests: 84 tests.
+
+**dev is the reference.** It is the project's `-O2`, for any x86-64 CPU. Outputs are compared between
+commits on dev builds; gfortran dev builds of two commits that change no arithmetic give
+byte-identical output. A profile build gives dev's output byte for byte. A production build gives
+the same results to round-off ([Production's output against dev's](#productions-output-against-devs)),
+so do not compare a production run's output byte for byte with a dev run's.
+
+**production is 26–29 % faster than dev** (ifx, example 04's 120-patch stand, 1 and 20 threads). Two
+things give it: inlining across modules (`MEDS_IPO`), and code for the CPU family
+(`MEDS_CPU_TARGET=cascadelake`, which gains more with more threads; it covers cbsuxu 01–10). Under
+IPO the files compile at `-O2`, and ifx generates the code at the link at `-O3`, which the build
+names; gfortran keeps each file's `-O2` through the link. A production binary may not start on an
+older CPU: build with `-DMEDS_CPU_TARGET=` (empty) for a portable one, or `host` for the machine you
+build on. Use ifx: gfortran's production build is only 4–8 % faster than ifx dev. IPO and the CPU
+target are offered for ifx and gfortran; nvfortran builds debug and dev.
+
+**production builds `meds_main` and `libmeds.so`, not the tests.** Under IPO each of the ~80 test
+programs is a whole-program link of its own, and several tests assert results to the last bit, which
+a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 4 of 84 tests fail with ifx and
+2 with gfortran ([The suite runs on dev](#the-suite-runs-on-dev)). Run the suite on dev. For the same
+reason `meds.model` and `meds_main` agree to round-off on a production build, not bit for bit: each
+is optimised as a whole program of its own.
+To run the examples or a calibration on a production build, point them at it: a script that runs
+`meds_main` takes `--meds-main` (or `MEDS_MAIN`) and otherwise runs `build-dev/meds_main`, and the
+Python API takes `MEDS_LIB=build-production/libmeds.so` and otherwise loads `build-dev/libmeds.so`.
+
+**Why development uses dev.** With ifx, a production build relinks the whole program at every link:
+an edit to one file takes ~35 s to rebuild instead of ~4 s, and rebuilding the tests ~85 s instead of
+~11 s. It needs under 3 GB of memory, tests included. For a long run without that cost, add
+`-DMEDS_CPU_TARGET=cascadelake` to a dev build in a directory of its own (`-B build-dev-cascadelake`):
+most of the gain at 20 threads, none of the relink.
+
+**profile** is dev with `-g`, which VTune and perf read; gprof also needs `-pg`
+(`cmake --preset profile -DCMAKE_Fortran_FLAGS="-g -pg"`). **debug** is many times slower and prints
+one harmless `arg_temp_created` remark per netCDF call; prefer dev when the output layer is what you
+are exercising.
 
 ## Parallel builds
 
@@ -100,8 +160,7 @@ function in `CMakeLists.txt`.
 region run its polygons (`docs/configuration.md`, "Regional runs"):
 
 ```bash
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+FC=ifx cmake --preset dev
 # then set [run].n_threads in the TOML (default 1), and give the job that many cores.
 ```
 
@@ -197,12 +256,13 @@ conda activate meds
 ```
 
 To drive the model from Python, `pip install python/` compiles the Fortran and bundles
-`libmeds.so` beside the package. See [`../python/README.md`](../python/README.md).
+`libmeds.so` beside the package; from the source tree, `PYTHONPATH=python` and a dev build are
+enough. See [`../python/README.md`](../python/README.md).
 
 ## Running the tests
 
 ```bash
-ctest --test-dir build-ifx --output-on-failure          # all of them
+ctest --test-dir build-dev --output-on-failure          # all of them
 ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one, by regex
 ```
 
@@ -211,3 +271,64 @@ individual physical kernels, the coupled column on both integrators, the output 
 conservation ledgers, and a full spin-up. Every C-API shim is compiled by a mandatory test target,
 so an ABI change is a build failure in a default build rather than a silent break in an optional
 one.
+
+### The suite runs on dev
+
+**Run the suite on a dev build** (or debug); dev passes all 84 tests with ifx and with gfortran.
+Several tests compare two computations of the same number bit for bit, or within a few units in the
+last place, and that holds only when both are compiled the same way. dev compiles each file on its
+own at `-O2`, for any x86-64 CPU. production optimises across files (IPO) and generates AVX-512 code,
+so the two sides of such a check can be compiled differently and part in the last bits. Built with
+`-DMEDS_BUILD_TESTS=ON`, production fails 4 of the 84 tests with ifx and 2 with gfortran:
+
+| Test | Compiler | The check that fails | Production's value | Tolerance | Cause |
+|---|---|---|---|---|---|
+| `fast_loop` | ifx | the fast tier stages each sub-step's forcing sample exactly | the test's own recomputation of a sample does not equal the staged one; recomputed in a routine of its own, all eight fields match exactly, and printing the difference in place makes the check pass | exact | IPO |
+| `water_processes` | ifx | a leaf above its closing water content transpires its demand | 1.9999999999999998e-5 against 2e-5: one unit in the last place (3e-21, 2e-16 relative); dev gives 2e-5 exactly | exact | IPO |
+| `water_processes` | ifx | transpiration's derivative matches finite differences | where the derivative is 0, the finite difference is 2.6e-14, from round-off in the two transpirations it differences 2e-7 apart; dev's is 0 | 1e-15 | IPO |
+| `water_processes` | gfortran | transpiration's derivative matches finite differences | the same, 5.8e-15 | 1e-15 | FMA under LTO |
+| `python_api` | ifx | `meds.model` writes `meds_main`'s output bit for bit | 101 of 301 variables differ, by up to 1.3e-12 of a variable's largest value (patch sensible heat), the near-zero conservation residuals aside | exact | IPO |
+| `python_api` | gfortran | `meds.model` writes `meds_main`'s output bit for bit | 104 of 301 variables differ, by up to 9.5e-14 (patch sensible heat), the residuals aside | exact | FMA under LTO |
+| `several_sites` | ifx | each of two identical sites holds the one-site stand's plant carbon | 9.696054 against 9.696198 kgC m⁻² after 60 days, 1.5e-5 relative; the two sites agree with each other to 2e-16 | 1e-12 relative | AVX-512 vectorisation |
+
+The causes come from building each part of production on its own: IPO alone, the CPU target alone,
+and each with fused multiply-add (FMA) turned off (`-no-fma`, `-ffp-contract=off`).
+
+- **IPO**: the test fails with IPO alone and passes with the CPU target alone. Each program is
+  optimised as a whole, so one routine compiles differently where it is inlined: in the test and in
+  the driver, or in `meds_main` and in `libmeds.so`. With ifx, turning FMA off leaves the same four
+  failures.
+- **FMA under LTO**: gfortran fails only with LTO and the CPU target together, and passes with FMA
+  off. Inlining across files lets FMA contract expressions that each file alone leaves apart.
+- **AVX-512 vectorisation**: the test fails with the CPU target alone, with or without FMA, and
+  passes with IPO alone. The rounding of a vectorised loop depends on how many elements it covers,
+  so a site in a two-site polygon parts from the same site run alone in the last bit, and the run's
+  fusion and disturbance carry that to 1.5e-5 in 60 days. It is the size of the difference between
+  dev builds with the two compilers (1.6e-5 in the same quantity), and production's one-site value
+  lies 3.6e-5 from dev's.
+
+### Production's output against dev's
+
+Ten runs, each with a dev and a production build, one thread: the largest difference in any hourly
+value (daily where the run writes no hourly output), over ifx and gfortran, and the largest change
+of a run mean.
+
+| Run | LE (W m⁻²) | H (W m⁻²) | Canopy air (K) | GPP (µmol m⁻² s⁻¹) | Largest run-mean change |
+|---|---|---|---|---|---|
+| A census on the reference climate, 2 years (daily) | 3.9e-5 | 4.4e-5 | 1.8e-6 | 3.3e-5 | 3.5e-6 (NEE) |
+| The same, 1 year, hourly | 6.9e-4 | 5.3e-4 | 1.2e-6 | 4.6e-4 | 8.4e-7 (NEE) |
+| A restart from the 2-year run, 6 months (daily) | 5.9e-7 | 4.4e-5 | 1.8e-6 | 5.8e-7 | 1.3e-5 (GPP) |
+| Example 04, the BCI census on tower forcing, 1 month | 7.7e-5 | 7.4e-5 | 1.2e-6 | 1.2e-7 | 2.2e-9 (H) |
+| The same on RK45 | 0.10 | 0.093 | 3.5e-3 | 1.8e-4 | 6.6e-6 (H) |
+| Example 05, BCI from bare ground on ERA5-Land, 1 year | 0.085 | 0.031 | 1.5e-3 | 6.4e-4 | 1.8e-5 (NEE) |
+| The same polygon as two sites | 0.059 | 0.025 | 1.1e-3 | 5.0e-4 | 1.4e-5 (NEE) |
+| A region of ERA5-Land cells at Palo Verde, 2 months (daily) | 0.23 | 0.089 | 3.0e-3 | monthly only | 4.0e-4 (NEE) |
+| A restart of the region, 1 month (daily) | 0.12 | 0.063 | 3.3e-3 | monthly only | 1.5e-3 (NEE) |
+| Ithaca from bare ground under snow, 2 winter months | 1.6e-6 | 8.2e-7 | 3.4e-8 | 0 in both | 2.6e-10 (LE) |
+
+Every run mean of LE, H and GPP stays within 2.1e-5 of dev's, relative; NEE, the small difference
+of two large fluxes, moves most. Most values differ far less than the largest: the median
+difference in hourly LE is below 3e-5 W m⁻² in every run that writes hourly output. A dev build with
+ifx and one with gfortran differ by the same amounts. **Production's results are dev's to round-off,
+carried through a run by its thresholds and adaptive steps, so compare a production run with dev's
+within tolerances, never byte for byte.**

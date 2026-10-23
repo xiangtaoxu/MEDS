@@ -85,9 +85,13 @@ module meds_plant_hydr_lib
    !----- [-] Floor of half-spacing / root radius in the single-root (Gardner)             !
    !      conductance: closer, the roots all but touch and the form fails. ----------------!
    real(wp), parameter :: MIN_SPACING_RATIO = 2.0_wp
-   !----- [MPa] Width over which smooth_max0 rounds root uptake's corner, small against the !
-   !      0.1-1 MPa a root works across (docs/science/soil_plant_water.md eq. (1)). -------!
-   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp
+   !----- [MPa] Width over which smooth_max0 rounds root uptake's corner. At night the wood  !
+   !      settles towards its wettest layers, which then sit in the corner, where uptake's  !
+   !      slope is small; a narrower corner makes Newton see those layers as almost         !
+   !      unresponsive, overshoot the wood's potential and backtrack. This width is still   !
+   !      10-100 times below the 0.1-1 MPa a root works across, and changes uptake only     !
+   !      where the driving force is below it (docs/science/soil_plant_water.md eq. (1)). --!
+   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-2_wp
 
 contains
 
@@ -253,13 +257,18 @@ contains
    !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp), r =          !
    !      psi/psi50, and one at or above zero potential (docs/science/plant_hydraulics.md  !
    !      eq. (7)). r = 0 is kept off the general power: under floating-point trapping a   !
-   !      compiler may take 0**kexp through log(0). ---------------------------------------!
+   !      compiler may take 0**kexp through log(0). Exponent 2, tested as in               !
+   !      has_closed_form, squares r by a product: the general power is a library call,    !
+   !      and this fraction is the sapflow's slope at every evaluation of the water        !
+   !      network. ------------------------------------------------------------------------!
    elemental real(wp) function conductance_retained_fraction(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
       if (r <= 0.0_wp) then
          f = 1.0_wp
+      else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+         f = 1.0_wp / (1.0_wp + r * r)
       else
          f = 1.0_wp / (1.0_wp + r**kexp)
       end if
@@ -281,6 +290,23 @@ contains
          phi = kirchhoff_potential_table(psi, psi50, table)
       end if
    end function kirchhoff_potential
+
+   !----- Phi(psi_a) - Phi(psi_b) [MPa], the Kirchhoff potential's difference across a     !
+   !      path. For exponent 2 with both ends at or below zero it is one arctangent, psi50 !
+   !      atan((r_a - r_b) / (1 + r_a r_b)), not two: half the cost, and it keeps the      !
+   !      digits two close potentials share. ----------------------------------------------!
+   pure real(wp) function kirchhoff_difference(psi_a, psi_b, psi50, kexp, table) result(dphi)
+      real(wp),            intent(in) :: psi_a, psi_b, psi50, kexp
+      type(hydro_table_t), intent(in) :: table
+      real(wp) :: r_a, r_b
+      if (psi_a <= 0.0_wp .and. psi_b <= 0.0_wp .and. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+         r_a  = psi_a / psi50
+         r_b  = psi_b / psi50
+         dphi = psi50 * atan((r_a - r_b) / (1.0_wp + r_a * r_b))
+      else
+         dphi = kirchhoff_potential(psi_a, psi50, kexp, table) - kirchhoff_potential(psi_b, psi50, kexp, table)
+      end if
+   end function kirchhoff_difference
 
    !----- dPhi/dpsi of exactly the potential kirchhoff_potential computes (the retained    !
    !      fraction, the slope of the table's linear piece, or the tail's), so the solver's !
@@ -452,8 +478,7 @@ contains
       real(wp) :: dpsi, keff, dk_dw, dk_dl, mid, drive
       dpsi = psi_w - psi_l
       if (abs(dpsi) > KIRCHHOFF_EPS) then
-         keff  = k_cond * (kirchhoff_potential(psi_w, psi50, kexp, table)                          &
-                          - kirchhoff_potential(psi_l, psi50, kexp, table)) / dpsi
+         keff  = k_cond * kirchhoff_difference(psi_w, psi_l, psi50, kexp, table) / dpsi
          dk_dw = (k_cond * kirchhoff_slope(psi_w, psi50, kexp, table) - keff) / dpsi
          dk_dl = (keff - k_cond * kirchhoff_slope(psi_l, psi50, kexp, table)) / dpsi
       else
@@ -509,13 +534,25 @@ contains
    !----- A cohort's root water uptake [kg/m2/s] from one soil layer: g_rhizo K_soil times !
    !      the driving force psi_soil + grav_head z_soil - psi_wood (z_soil < 0), through   !
    !      the ramp, so a root never loses water to drier soil                              !
-   !      (docs/science/plant_hydraulics.md eq. (15)). ------------------------------------!
+   !      (docs/science/plant_hydraulics.md eq. (15)). Outside its rounded corner the ramp !
+   !      is the force itself or zero, written out here: this runs for every cohort and    !
+   !      layer at every evaluation of the water network, and smooth_max0 is a call into   !
+   !      another module. -----------------------------------------------------------------!
    elemental subroutine root_water_uptake(g_rhizo, k_soil, psi_soil, z_soil, psi_wood, u,             &
                                           du_dpsi_soil, du_dpsi_wood, du_dk)
       real(wp), intent(in)  :: g_rhizo, k_soil, psi_soil, z_soil, psi_wood
       real(wp), intent(out) :: u, du_dpsi_soil, du_dpsi_wood, du_dk
-      real(wp) :: drive, dramp
-      call smooth_max0(psi_soil + grav_head * z_soil - psi_wood, UPTAKE_RAMP_WIDTH, drive, dramp)
+      real(wp) :: force, drive, dramp
+      force = psi_soil + grav_head * z_soil - psi_wood
+      if (force >= UPTAKE_RAMP_WIDTH) then
+         drive = force
+         dramp = 1.0_wp
+      else if (force <= 0.0_wp) then
+         drive = 0.0_wp
+         dramp = 0.0_wp
+      else
+         call smooth_max0(force, UPTAKE_RAMP_WIDTH, drive, dramp)
+      end if
       u            = g_rhizo * k_soil * drive
       du_dpsi_soil = g_rhizo * k_soil * dramp
       du_dpsi_wood = -du_dpsi_soil

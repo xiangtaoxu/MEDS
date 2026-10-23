@@ -33,7 +33,7 @@ program test_water_processes
                                     water_curve_t, tissue_rwc_to_psi, tissue_psi_to_water
    use meds_plant_hydraulics, only : supply_limited_transpiration
    use meds_numerics,    only : smooth_max0
-   use meds_soil_water, only : ground_evaporation_rate, soil_water_flux, ground_evap_env_t
+   use meds_soil_water, only : ground_evaporation_rate, ground_evaporation_setup, soil_water_flux, ground_evap_env_t
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
    use meds_soil_params, only : soil_profile_t, soil_params_t
@@ -256,9 +256,9 @@ contains
       call root_water_uptake(g, k * (1.0_wp - 1.0e-6_wp), ps, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(duk, (up - um) / (2.0e-6_wp * k), 1.0e-6_wp, 0.0_wp)) ok = .false.
       !----- On the ramp: half a width of driving force. --------------------------------------!
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp, z, pw, u, dus, duw, duk)
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp + h, z, pw, up, dum, dum, dum)
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp - h, z, pw, um, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp, z, pw, u, dus, duw, duk)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp + h, z, pw, up, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp - h, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(dus, (up - um) / (2*h), 1.0e-5_wp, 0.0_wp)) ok = .false.
       call check_true('root: derivatives match finite differences, on and off the ramp', ok)
       call root_water_uptake(g, k, -2.0_wp, z, pw, u, dus, duw, duk)
@@ -361,19 +361,20 @@ contains
       sp%dz(1:3) = 0.03_wp ; sp%theta_sat(1:3) = 0.4314_wp ; sp%theta_res(1:3) = 0.0981_wp
       sp%curve_par_a(1:3) = 0.7607_wp ; sp%curve_par_n(1:3) = 1.3554_wp ; sp%ksat(1:3) = 4.54e-6_wp
       f%t_ground = 300.0_wp ; f%q_air = 0.012_wp ; f%rho_air = 1.15_wp ; f%r_aero = 60.0_wp
+      call ground_evaporation_setup(sp, o, f)
       ok_d = .true. ; ok_v = .true.
       do i = 1, 30
          theta = 0.10_wp + 0.011_wp * real(i, wp)
          head  = -(1.0_wp / 0.7607_wp) * (((theta - 0.0981_wp) / (0.4314_wp - 0.0981_wp))              &
                   ** (-1.0_wp / (1.0_wp - 1.0_wp / 1.3554_wp)) - 1.0_wp) ** (1.0_wp / 1.3554_wp)
-         call ground_evaporation_rate(theta, head, sp, f, o, e, det, dep)
+         call ground_evaporation_rate(theta, head, f, o, e, det, dep)
          h = 1.0e-7_wp
-         call ground_evaporation_rate(theta + h, head, sp, f, o, ep, dum, dum)
-         call ground_evaporation_rate(theta - h, head, sp, f, o, em, dum, dum)
+         call ground_evaporation_rate(theta + h, head, f, o, ep, dum, dum)
+         call ground_evaporation_rate(theta - h, head, f, o, em, dum, dum)
          if (.not. fd_agrees(det, (ep - em) / (2*h), 1.0e-4_wp, 1.0e-14_wp)) ok_d = .false.
          h = 1.0e-5_wp * max(abs(head), 1.0_wp)
-         call ground_evaporation_rate(theta, head + h, sp, f, o, ep, dum, dum)
-         call ground_evaporation_rate(theta, head - h, sp, f, o, em, dum, dum)
+         call ground_evaporation_rate(theta, head + h, f, o, ep, dum, dum)
+         call ground_evaporation_rate(theta, head - h, f, o, em, dum, dum)
          if (.not. fd_agrees(dep, (ep - em) / (2*h), 1.0e-4_wp, 1.0e-14_wp)) ok_d = .false.
          !----- Moist enough that no dry surface layer forms: the closed form rho (alpha q_sat - q_air) !
          !      / r_aero, with Philip's alpha = exp(psi g / (R_v T)). --------------------------------!

@@ -30,6 +30,7 @@ module meds_fast_integ_backward_euler
                               liquid_energy_to_temp
    use meds_numerics,     only : sufficient_decrease, fraction_to_boundary
    use meds_soil_hydr_lib, only : pond_water_to_head
+   use meds_soil_water,    only : ground_evaporation_setup
    use meds_linear_algebra, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_params, only : soil_profile_t, soil_params_t
    use meds_pft_params, only : hydraulics_table_t
@@ -183,7 +184,7 @@ contains
             !----- ground_rad is the snowfac-blended radiation (abs_sw + abs_lw when bare). Infiltration,  !
             !      exfiltration and uptake move enthalpy between tracked stores and cancel; rain and runoff  !
             !      are added once at the outer level (docs/science/numerical_scheme.md §5b). -------------!
-            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat
+            bf%whole_enth_in= surf_tend%coh_rnet + surf_tend%ground_rad - eflux%bottom_heat
             !----- The condensate is not a boundary loss: the caller deposits it in soil layer 1 with the  !
             !      enthalpy surface_derivs debited from the CAS (whole_cond, whole_cond_enth). -----------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%box%atm_enthalpy) + e_drain
@@ -191,6 +192,8 @@ contains
             bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%box%atm_specific_humidity)
             bf%whole_cond   = surf_tend%cond                     ! deposited into soil layer 1, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
+            bf%snow_enth_in = surf_tend%snow_enth_in
+            bf%snow_vap_out = surf_tend%snow_vap_out
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
             bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%box%atm_specific_humidity)
@@ -399,7 +402,8 @@ contains
    ! the GRP_THETA tolerances. On return the state holds the end-of-step water, unknowns and  !
    ! potentials, the flows what each path moved, and work_count the network's work: accepted  !
    ! sub-steps, Newton iterations, rejected sub-steps, and sub-steps taken although they did  !
-   ! not converge or meet the tolerance (counted, not hidden).                                !
+   ! not converge or meet the tolerance (counted, not hidden). The drive is held over the     !
+   ! step, so the ground evaporation's constant terms are set into it once, here.             !
    !---------------------------------------------------------------------------------------!
    subroutine water_step(dt, static, profile, soil, hyd, drive, tols, water, work_count)
       real(wp),                  intent(in)    :: dt
@@ -407,7 +411,7 @@ contains
       type(soil_profile_t),      intent(in)    :: profile
       type(soil_params_t),       intent(in)    :: soil
       type(hydraulics_table_t),  intent(in)    :: hyd
-      type(water_drive_t),       intent(in)    :: drive
+      type(water_drive_t),       intent(inout) :: drive
       type(tol_set_t),           intent(in)    :: tols
       type(water_work_t),        intent(inout) :: water
       integer(ik),               intent(inout) :: work_count(:)   !< the step report's work counters
@@ -426,6 +430,7 @@ contains
       nfail   = 0_ik
       call arrowhead_allocate(water%sys, water%nsoil, water%ncoh, COHORT_STORES)
       call water_scales(static, profile, hyd, scale_soil, scale_coh)
+      call ground_evaporation_setup(profile, soil, drive%ground)
       water%start_ready = .false.
 
       t = 0.0_wp
@@ -446,11 +451,16 @@ contains
             h = max(h * NEWTON_FAIL_CUT, h_min)
             cycle
          end if
-         if (converged) then
+         !----- A sub-step whose start already balanced took no iteration: it ends where it began, its  !
+         !      inflows unchanged, so its error is zero, and it has no factorisation of its own to      !
+         !      filter with. ---------------------------------------------------------------------------!
+         if (.not. converged) then
+            err = huge(1.0_wp)
+         else if (iters == 0_ik) then
+            err = 0.0_wp
+         else
             err = water_substep_error(water%sys, h, water%ev(water%i_start), water%ev(i_sol), scale_soil,       &
                                       scale_coh, rtol, atol)
-         else
-            err = huge(1.0_wp)
          end if
          if (err > 1.0_wp .and. .not. last) then
             nreject = nreject + 1_ik
@@ -495,7 +505,7 @@ contains
       real(wp) :: step_soil(water%nsoil), step_coh(COHORT_STORES, water%ncoh)
       real(wp) :: try_soil(water%nsoil), try_coh(COHORT_STORES, water%ncoh)
       real(wp) :: res2_soil(water%nsoil), res2_coh(COHORT_STORES, water%ncoh)
-      real(wp) :: merit, merit_try, worst, lam, lam_max
+      real(wp) :: merit, merit_try, worst, worst_try, lam, lam_max
       integer(ik) :: it, ib, i_try
       logical  :: ok
 
@@ -509,9 +519,8 @@ contains
          call water_derivs(static, profile, soil, hyd, drive, tau_soil, tau_coh, water%ev(i_sol), water%sys, .true.)
          water%start_ready = .true.
       end if
-      call water_residual(water%state, h, water%ev(i_sol), res_soil, res_coh)
-      merit = residual_merit(atol, h, res_soil, res_coh, scale_soil, scale_coh)
-      worst = residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh)
+      call water_residual(water%state, h, water%ev(i_sol), atol, scale_soil, scale_coh, res_soil, res_coh,      &
+                          merit, worst)
       if (merit /= merit) return
       do it = 1_ik, NEWTON_MAX
          if (worst <= 1.0_wp) exit
@@ -528,8 +537,8 @@ contains
             try_coh = tau_coh + lam * step_coh
             call water_derivs(static, profile, soil, hyd, drive, try_soil, try_coh, water%ev(i_try), water%sys,   &
                               .true.)
-            call water_residual(water%state, h, water%ev(i_try), res2_soil, res2_coh)
-            merit_try = residual_merit(atol, h, res2_soil, res2_coh, scale_soil, scale_coh)
+            call water_residual(water%state, h, water%ev(i_try), atol, scale_soil, scale_coh, res2_soil,          &
+                                res2_coh, merit_try, worst_try)
             if (merit_try == merit_try .and. sufficient_decrease(merit_try, merit, lam)) exit
             lam = 0.5_wp * lam
          end do
@@ -539,43 +548,53 @@ contains
          res_soil = res2_soil
          res_coh = res2_coh
          merit = merit_try
+         worst = worst_try
          i_sol = i_try
-         worst = residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh)
       end do
-      !----- Factor the Newton matrix at the solution: the error estimate solves with it. -----------!
-      call water_newton_factor(water%sys, h, water%ev(i_sol), ok)
-      converged = ok .and. worst <= 1.0_wp
+      !----- The error estimate solves with the last iteration's factorisation, one Newton step       !
+      !      behind the solution, not a fresh one at it: its filter needs the stiff exchanges' scale, !
+      !      not the exact matrix, and a factorisation per sub-step is saved. ------------------------!
+      converged = worst <= 1.0_wp
    end subroutine water_newton_substep
 
-   !----- The water-balance residual of every store [kg/m2/s]: (W(tau) - W_start)/h - inflow. ----!
-   pure subroutine water_residual(state, h, ev, res_soil, res_coh)
+   !----- One store's water-balance residual [kg/m2/s]: (W(tau) - W_start)/h - inflow. ------------!
+   elemental real(wp) function store_residual(water, water_start, h, inflow) result(res)
+      real(wp), intent(in) :: water, water_start, h, inflow
+      res = (water - water_start) / h - inflow
+   end function store_residual
+
+   !----- Every store's residual and, in the same pass, two measures of it, each store's imbalance !
+   !      over the sub-step against NEWTON_TOL of its absolute water tolerance: worst, below one,  !
+   !      means the balance is solved; merit, the sum of squares, is what the line search asks to  !
+   !      fall -- a Newton step always points down it, which is not true of the worst store alone. !
+   !      The soil's squares and the cohorts' are summed apart, then added. -----------------------!
+   pure subroutine water_residual(state, h, ev, atol, scale_soil, scale_coh, res_soil, res_coh, merit, worst)
       type(water_state_t), intent(in)  :: state
-      real(wp),            intent(in)  :: h
+      real(wp),            intent(in)  :: h, atol, scale_soil(:), scale_coh(:,:)
       type(water_tend_t),  intent(in)  :: ev
-      real(wp),            intent(out) :: res_soil(:), res_coh(:,:)
-      res_soil = (ev%water_soil - state%water_soil) / h - ev%inflow_soil
-      res_coh  = (ev%water_coh - state%water_coh) / h - ev%inflow_coh
+      real(wp),            intent(out) :: res_soil(:), res_coh(:,:), merit, worst
+      real(wp)    :: tol, x, merit_coh
+      integer(ik) :: c, i, j
+      tol = NEWTON_TOL * atol
+      merit = 0.0_wp
+      worst = 0.0_wp
+      do c = 1_ik, size(res_soil, kind=ik)
+         res_soil(c) = store_residual(ev%water_soil(c), state%water_soil(c), h, ev%inflow_soil(c))
+         x = res_soil(c) * h / (tol * scale_soil(c))
+         merit = merit + x * x
+         worst = max(worst, abs(x))
+      end do
+      merit_coh = 0.0_wp
+      do i = 1_ik, size(res_coh, 2, kind=ik)
+         do j = 1_ik, COHORT_STORES
+            res_coh(j, i) = store_residual(ev%water_coh(j, i), state%water_coh(j, i), h, ev%inflow_coh(j, i))
+            x = res_coh(j, i) * h / (tol * scale_coh(j, i))
+            merit_coh = merit_coh + x * x
+            worst = max(worst, abs(x))
+         end do
+      end do
+      merit = merit + merit_coh
    end subroutine water_residual
-
-   !----- Each store's imbalance over the sub-step against NEWTON_TOL of its absolute water        !
-   !      tolerance. residual_worst, below one, means the balance is solved; residual_merit, the sum of !
-   !      squares, is what the line search asks to fall -- a Newton step always points down it,      !
-   !      which is not true of the worst store alone. ---------------------------------------------!
-   pure real(wp) function residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh) result(m)
-      real(wp), intent(in) :: atol, h, res_soil(:), res_coh(:,:), scale_soil(:), scale_coh(:,:)
-      real(wp) :: tol
-      tol = NEWTON_TOL * atol
-      m = max(maxval(abs(res_soil) * h / (tol * scale_soil)), 0.0_wp)
-      if (size(res_coh, 2) > 0) m = max(m, maxval(abs(res_coh) * h / (tol * scale_coh)))
-   end function residual_worst
-
-   pure real(wp) function residual_merit(atol, h, res_soil, res_coh, scale_soil, scale_coh) result(m)
-      real(wp), intent(in) :: atol, h, res_soil(:), res_coh(:,:), scale_soil(:), scale_coh(:,:)
-      real(wp) :: tol
-      tol = NEWTON_TOL * atol
-      m = sum((res_soil * h / (tol * scale_soil)) ** 2)
-      if (size(res_coh, 2) > 0) m = m + sum((res_coh * h / (tol * scale_coh)) ** 2)
-   end function residual_merit
 
    !----- The largest share of a Newton step every store can take: no soil layer or tissue is      !
    !      driven more than STEP_MAX_SHARE of the way to empty, and none on the dry side moves its      !
@@ -629,12 +648,14 @@ contains
       call arrowhead_factor(sys, add_soil, add_coh, ok)
    end subroutine water_newton_factor
 
-   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's   !
-   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that   !
-   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each    !
-   !      store is weighed against atol of its scale plus rtol of its water. --------------------!
+   !----- The sub-step's local error relative to its tolerance (<= 1 to accept): implicit Euler's  !
+   !      h (F_end - F_start)/2, filtered twice through (I - h dF/dW)^-1 so a stiff exchange that  !
+   !      has already settled does not read as error (docs/science/soil_plant_water.md §3). Each   !
+   !      store is weighed against atol of its scale plus rtol of its water. The Newton matrix is  !
+   !      the last iteration's factorisation, with the coupling rows of the solution the last      !
+   !      evaluation wrote: close to the matrix at the end, which is all a filter needs. ----------!
    pure real(wp) function water_substep_error(sys, h, ev0, ev1, scale_soil, scale_coh, rtol, atol) result(err)
-      type(arrowhead_system_t), intent(in) :: sys        !< the Newton matrix, factored at the sub-step's end
+      type(arrowhead_system_t), intent(in) :: sys        !< the Newton matrix, factored at the last iteration
       real(wp),                 intent(in) :: h
       type(water_tend_t),       intent(in) :: ev0, ev1   !< the network at the sub-step's start and end
       real(wp),                 intent(in) :: scale_soil(:), scale_coh(:,:), rtol, atol
@@ -752,15 +773,16 @@ contains
       flows%rain_enth = 0.0_wp
    end subroutine clear_flows
 
-   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at   !
-   !      the current state for a sub-step of h -- the largest difference between J v and a central !
-   !      difference of the residual along v, relative to the largest entry of either. -----------!
+   !----- For the tests: how far the assembled Jacobian is from the residual's own derivative, at  !
+   !      the current state for a sub-step of h -- the largest difference between J v and a        !
+   !      central difference of the residual along v, relative to the largest entry of either. The !
+   !      drive is set up as water_step sets it. --------------------------------------------------!
    real(wp) function water_jacobian_error(static, profile, soil, hyd, drive, water, h) result(err)
       type(fast_static_state_t), intent(in)    :: static
       type(soil_profile_t),      intent(in)    :: profile
       type(soil_params_t),       intent(in)    :: soil
       type(hydraulics_table_t),  intent(in)    :: hyd
-      type(water_drive_t),       intent(in)    :: drive
+      type(water_drive_t),       intent(inout) :: drive
       type(water_work_t),        intent(inout) :: water
       real(wp),                  intent(in)    :: h
       type(water_tend_t) :: ev
@@ -773,6 +795,7 @@ contains
       integer(ik) :: c, i, j, l
       ev = water%ev(1)                       ! scratch of the network's shape
       call arrowhead_allocate(water%sys, water%nsoil, water%ncoh, COHORT_STORES)
+      call ground_evaporation_setup(profile, soil, drive%ground)
       associate (st => water%state)
          do c = 1_ik, water%nsoil
             v_soil(c) = 1.0e-2_wp * (1.0_wp + 0.1_wp * real(c, wp)) * max(abs(st%tau_soil(c)), 1.0e-3_wp) ! clamp-ok: test step
@@ -796,10 +819,12 @@ contains
          eps = 1.0e-5_wp
          call water_derivs(static, profile, soil, hyd, drive, st%tau_soil + eps * v_soil, st%tau_coh + eps * v_coh, &
                            ev, water%sys, .false.)
-         call water_residual(st, h, ev, rp_soil, rp_coh)
+         rp_soil = store_residual(ev%water_soil, st%water_soil, h, ev%inflow_soil)
+         rp_coh  = store_residual(ev%water_coh, st%water_coh, h, ev%inflow_coh)
          call water_derivs(static, profile, soil, hyd, drive, st%tau_soil - eps * v_soil, st%tau_coh - eps * v_coh, &
                            ev, water%sys, .false.)
-         call water_residual(st, h, ev, rm_soil, rm_coh)
+         rm_soil = store_residual(ev%water_soil, st%water_soil, h, ev%inflow_soil)
+         rm_coh  = store_residual(ev%water_coh, st%water_coh, h, ev%inflow_coh)
       end associate
       rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps)
       rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
