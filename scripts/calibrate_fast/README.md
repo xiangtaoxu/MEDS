@@ -229,7 +229,7 @@ calibrate_fast.py fit    --config calibration.toml --variant interception_off --
 calibrate_fast.py variants runs/off/fit.json runs/on/fit.json --out runs/variants.json   # the structures side by side
 ```
 
-- **Runners:** add `--runner ../../build-ifx/meds_main` to `check` or `fit` to run the trials with
+- **Runners:** add `--runner ../../build-dev/meds_main` to `check` or `fit` to run the trials with
   the executable. The EEO vcmax25 prior needs `libmeds.so` in any case.
 - **Re-running:** a re-run of `fit` replays every trial it has run from the cache in `--work`. It
   costs only the work that is new, such as the post-fit steps after a change in the tool.

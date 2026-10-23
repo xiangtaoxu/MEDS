@@ -484,4 +484,4 @@ Gaps and residues found in the 2026-10-17 annotation review.
   gas exchange at the mid-step leaf potential and re-solves the water network once would remove it,
   for about one extra pre-pass per step. Until then 300 s is the advice for dry-season leaf-habit
   studies. The second item is a consistent midpoint freeze to replace the `forcing_sample_frac` trade
-  (§7 item 5). The stability in light wind is scored and passes (§5a′, §7 item 2).
+  (§7 item 4). The stability in light wind is scored and passes (§5a′, §7 item 2).

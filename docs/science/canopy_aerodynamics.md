@@ -54,16 +54,28 @@ u_m = \begin{cases}\bar u & \Delta\theta_v\ge0\ \text{(stable)}\\[2pt]
 \bar u = \max(u_{ref},\,u_{b,min}) \qquad(2)
 ```
 
-($w_c$ = convective velocity scale `wc`; $`u_{b,min}`$ = `ubmin`, the reference-wind floor). Each sweep
-evaluates the CLM5 momentum and scalar **profile denominators** $D_m(\zeta)$ and $D_h(\zeta)$ over four
-stability ranges (very-unstable / unstable / stable / very-stable, `d_mom` and `d_heat`), then updates
-$`u_*`$, the scalar factor, and $\zeta$:
+($w_c$ = `wc`, the first guess's convective velocity; $`u_{b,min}`$ = `ubmin`, the reference-wind
+floor). Each sweep evaluates the CLM5 momentum and scalar **profile denominators** $D_m(\zeta)$ and
+$D_h(\zeta)$ over four stability ranges (very-unstable / unstable / stable / very-stable, `d_mom` and
+`d_heat`), then updates $`u_*`$, the scalar factor, $\zeta$ and, as CLM5 does, the wind $u_m$ with a
+convective velocity from the sweep's own buoyancy flux:
 
 ```math
 u_* = \max\!\Big(u_{*,min},\,\frac{\kappa\,u_m}{D_m(\zeta)}\Big), \qquad
 \mathrm{temp1} = \frac{\kappa}{D_h(\zeta)}, \qquad
 \zeta = \frac{z_{ldis}\,\kappa\,g\,\theta_{v*}}{u_*^2\,\theta_{v,atm}} \qquad(3)
 ```
+
+```math
+u_m = \begin{cases}\bar u & \zeta\ge0\\[2pt]
+\sqrt{\bar u^2+w_c^2},\ \ w_c = \beta\Big(\dfrac{-g\,u_*\,\theta_{v*}\,z_i}{\theta_{v,atm}}\Big)^{1/3} & \zeta<0\end{cases}
+\qquad(3b)
+```
+
+with $\beta = 1$ and the mixed layer $`z_i`$ = 1000 m (CLM5's constants). The buoyancy flux
+$`-u_*\theta_{v*}`$ vanishes as the air turns neutral, so $w_c$ does too: the wind, and with it $`u_*`$
+and the conductances, pass through neutral without a jump. Only the first guess, eq. (2), uses the fixed
+`wc`, and the sweeps forget it.
 
 The unstable-range stability integrals are the standard Businger-Dyer / Paulson forms with
 $`x=(1-16\zeta)^{1/4}`$:
@@ -224,7 +236,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | — | `n_iter_mo` | fixed Monin-Obukhov iterations (4, GPU-uniform) |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
 | — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
-| $w_c$ | `wc` | convective velocity scale (MoninObukIni) |
+| $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |
 | $`u_{*,min}`$ | `ustmin` | friction-velocity floor |
 | $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) |
 | — | `ugbmin` | floor on the canopy-top and in-canopy wind |

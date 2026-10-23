@@ -85,7 +85,19 @@ fast loop on or off; the `[forcing]` CO₂ keys apply without forcing too. Under
 conducts into the top soil layer's own conductivity and its vapour exchange is set against the canopy
 air's humidity over the step, which closes the water ledger at Ithaca in January. The stage clamp and
 RK45's railed check share one pair of bounds and the clamp leaves a state in range as it is, and moist
-air takes its molar-mass ratios exactly (#486).
+air takes its molar-mass ratios exactly (#486). The fast march's warm-start seed can grow back after a
+rejection, its error norm measures only the states it integrates, the leaf's Ci root is found by the
+Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
+or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
+run 24–35 % faster (#490). The soil-plant water network's step costs a simulated day 8–9 % less
+again: four changes leave every result as it was, and three move results at round-off (#488). MEDS builds in four kinds,
+`debug`, `dev`, `profile` and `production`, one CMake preset each: `production` adds interprocedural
+optimisation and code for Cascade Lake and runs 26–29 % faster than dev, and a configure that names no
+build type now builds dev (Release) instead of Debug (#489). The snow pack exchanges with the canopy
+air inside the march; the surface layer's convective velocity follows each sweep's buoyancy flux, as
+in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10⁻² MPa wide; RK45 takes
+`rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
+to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -639,9 +651,139 @@ air takes its molar-mass ratios exactly (#486).
     (0), the caller sets it.
 
   No netCDF variable name or C API changes; state files written before restart.
+- **The default `[fast].rtol` is 2e-3** (#487), where it was 1e-3. A configuration that sets `rtol`
+  keeps its value; the shipped ones (examples 04 and 05, `test/region`) now set 2e-3. 1e-3 still gives
+  the earlier march, a little tighter than before for a patch with many cohorts (the norm below). An
+  `rk45` run wants 1e-4 or tighter (`docs/science/numerical_scheme.md` §6).
+- **Fortran: `ground_evaporation_rate` reads its per-step terms from its boundary** (#488). It no
+  longer takes the soil profile: `ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil,
+  de_dtheta, de_dpsi)`. Call `ground_evaporation_setup(profile, soil, forcing)` after filling a
+  `ground_evap_env_t` and before the first rate; it fills the record's new fields `rv_t`, `q_sat`,
+  `theta_init`, `theta_span` and `dsl_diffusivity`. `water_step` does this itself, so its `drive`
+  argument, and `water_jacobian_error`'s, is now `intent(inout)`.
+- **A configure with no `CMAKE_BUILD_TYPE` now builds Release (dev), not Debug** (#489). Ask for the
+  checked build with `-DCMAKE_BUILD_TYPE=Debug` or `cmake --preset debug`. A build directory configured
+  earlier keeps the build type in its cache.
+- **A production binary runs only on Cascade Lake or newer Xeons** (#489); `-DMEDS_CPU_TARGET=` builds a
+  portable one. On a production build, `meds.model` and `meds_main` agree to round-off rather than bit
+  for bit, and the suite's bit-exact checks fail, so run the suite on dev.
+- **RK45 refuses an `rtol` above 1e-4** (#492), and takes 1e-4 when the key is absent. An `rk45`
+  configuration that sets a looser `rtol` (1e-3 was the old default) now stops at the check: remove the
+  key or tighten it.
+- **A source-tree run looks for `build-dev`** (#492). The Python package no longer finds libmeds.so in
+  `build-py`, `build-pylib`, `build` or `build-ifx`, nor the scripts `meds_main` in `build-ifx`: build
+  with `cmake --preset dev`, or point them elsewhere with `MEDS_LIB`, `--meds-main` or `MEDS_MAIN`.
+- **Fortran: the snow stage before the march only takes in and drains** (#492).
+  `advance_snow_stage` is `prepare_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top,
+  snowfall, rainfall, t_air, dt_fast, st)`, and `snow_stage_t` no longer holds the step's fluxes
+  (`h_snow`, `le_snow`, `g_base`, `subl_rate`, `ground_rad`) or the pack after them (`swe1`, `enth1`):
+  the march computes them with `snow_surface_balance`, and the update commits them with
+  `snow_take_exchange`.
 
 ### Changed
 
+- **The snow pack exchanges with the canopy air inside the march** (#492). The pack's sensible, latent
+  and vapour exchange and its conduction to the soil top were set once before the march, against the
+  step's start; the march now solves the pack's surface balance at every evaluation against that
+  evaluation's canopy air and top soil node, as it does each tissue's, and the pack then takes the time
+  integral of its exchange. The stage before the march keeps the step's snowfall and rain and drains the
+  liquid the pack holds, so meltwater reaches the pond the step after it melts. On Ithaca's January the
+  canopy-air temperature rises 0.06 K in the mean (5.3 K in its worst hour), H moves −0.16 %, LE
+  −0.31 %, SWE +0.3 %, and ESDIRK2 takes 10 % fewer sub-steps (1.84 → 1.65 per `dt_fast`).
+  Snow-free runs are unchanged on gfortran.
+- **The surface layer's convective velocity follows each sweep's buoyancy flux, as in CLM5** (#492).
+  The Monin–Obukhov solve kept its first guess's fixed `wc` = 0.5 m/s for every sweep when the air was
+  unstable, so the wind jumped from u to √(u² + 0.25) at neutral, 26 % at the 0.65 m/s floor. Each
+  sweep now takes w_c = β w_* from its own buoyancy flux (β = 1, a 1000 m mixed layer;
+  `canopy_aerodynamics.md` eq. (3b)), which vanishes at neutral. A convective daytime layer couples
+  more strongly: example 04's August H +1.0 %, LE +0.6 %, GPP +0.45 %; the regeneration run's GPP
+  +1.7 %; the region test's LE +1.7–1.9 %; ESDIRK2's sub-steps +1–2 %.
+- **Root uptake's rounded corner is 10⁻² MPa wide** (#492), where it was 10⁻³. At night the wood
+  settles towards its wettest layers, which sat in the narrow corner's near-flat slope, so Newton
+  overshot and backtracked at dawn and in changing rain. The wider corner is still 10–100 times below
+  the 0.1–1 MPa a root works across (`soil_plant_water.md` eq. (1)); results move little (the region
+  test's means by ≤ 5e-4 relative), and it gives most of this release's last speed-up: a simulated day
+  on example 04's stand costs 1.053 s on one thread where it cost 1.134 s, and 0.100 s on 20 where it
+  cost 0.105 s, together with the next two entries.
+- **RK45 takes `rtol` 1e-4 by default and refuses a looser one** (#492). Its step is set by stability,
+  not by `rtol`: from 1e-4 to 1e-3 it saves 2–4 % of the CPU while its own error grows six- to
+  eightfold, and looser still its fluxes leave the answer (`numerical_scheme.md` §6).
+- **The Illinois steps of a bracketed root live in `meds_numerics`** (#492): `root_bracket_t`,
+  `regula_falsi_point` and `illinois_narrow`, with `root_ci` keeping its loop and its own residual. No
+  change to any result.
+- **The C-API shims compile once** (#492), into the object library `meds_c_api` that libmeds.so and the
+  C-API tests link.
+- **`build-dev` is the default build** (#492): the dev preset builds libmeds.so, the scripts run
+  `build-dev/meds_main`, and the Python package loads `build-dev/libmeds.so`.
+- **`docs/building.md` says why the suite runs on dev, and how far production lands from dev** (#492).
+  With the tests on, production fails 4 of the 84 tests with ifx and 2 with gfortran, each a bit-exact
+  or near-exact check that IPO, FMA under LTO or AVX-512 vectorisation parts at round-off; on ten runs
+  its LE, H and GPP run means stay within 2.1e-5 relative of dev's.
+- **Build kinds** (#489; `docs/building.md`, "Build kinds"). `CMakePresets.json` (CMake ≥ 3.21) names
+  four, each in `build-<kind>`:
+  - `debug`;
+  - `dev`: Release, the project's `-O2`, any x86-64 CPU, the reference for comparing outputs;
+  - `profile`: dev with `-g`, whose output is dev's byte for byte;
+  - `production`: Release with `MEDS_IPO=ON` and `MEDS_CPU_TARGET=cascadelake`; it builds `meds_main`
+    and `libmeds.so`, not the tests.
+
+  `MEDS_IPO` (default OFF) turns on interprocedural optimisation and names the link's level, `-O3`.
+  `MEDS_CPU_TARGET` (default empty) maps `cascadelake` and `host` to `-xCORE-AVX512` and `-xHost` (ifx)
+  or `-march=cascadelake` and `-march=native` (gfortran). Both options are for ifx and gfortran only. On
+  example 04's stand, ifx production costs a simulated day 0.836 s on one thread where dev costs 1.133 s
+  (−26 %), and 0.073 s on 20 where dev costs 0.103 s (−29 %), with results within round-off; an edit
+  takes ~35 s to rebuild instead of ~4 s. A plain Release configure's command lines are those of the
+  former explicit Release build; the dev preset also builds libmeds.so (#492), which adds `-fPIC`.
+- **The water network's step is cheaper** (#488). Per simulated day on example 04's 120-patch stand
+  (ifx dev build, `rtol` 2e-3): 1.257 → 1.140 s on one thread (−9 %), 0.113 → 0.104 s on 20 (−8 %).
+  Four changes leave results unchanged on gfortran and ifx:
+  - one pass over the stores gives each evaluation's residual, its merit and its worst store;
+  - the ground evaporation's terms that depend only on its boundary and the top layer's curve (R_v T,
+    the ground skin's saturation humidity, the dry surface layer's span and vapour diffusivity) are set
+    once per water step by `ground_evaporation_setup`;
+  - root uptake calls `smooth_max0` only inside its rounded corner;
+  - the retained conductance fraction squares r by a product for exponent 2.
+
+  Three more move results at round-off:
+  - the exponent-2 Kirchhoff difference is one arctangent;
+  - the van Genuchten conductivity's slope takes its powers from those the conductivity already took;
+  - the sub-step's error estimate solves with the last Newton iteration's factorisation instead of a
+    fresh one, and a sub-step that took no iteration has zero error.
+
+  Example 04's hourly LE moves by at most 3×10⁻⁴ W/m², and its canopy-air temperature by 1×10⁻⁷ K.
+  The regeneration and site cases move by at most 0.32 W/m² in an hour (median 5×10⁻⁵); the base
+  run's own gfortran–ifx difference there is 0.09 W/m².
+- **Examples 04 and 05 are rerun** on the fast-loop follow-up at `rtol` 2e-3 (#490):
+  - **Example 04** (against v0.3.5): the tower-period means move by at most 0.2 % (GPP 10.48 → 10.47
+    µmol m⁻² s⁻¹ default, 8.60 calibrated; H by day 158.11 → 157.94 W m⁻² calibrated), and the window's
+    sunlit top leaves run about 0.2 K cooler. Every step takes 13.5 min on 8 threads, where it took 20.7.
+  - **Example 05's census check** (against v0.3.5): the stand budget moves by under 1 % (GPP 31.25 →
+    31.32 MgC ha⁻¹ yr⁻¹); 4.1 min, where it took 6.2. **The Palo Verde inventory check** moves by under
+    0.5 % (leaf litter 0.494 → 0.496 kg dry m⁻² yr⁻¹).
+  - **BCI 1600–2020 and the Palo Verde regrowth** are measured against v0.3.4, their last runs, so these
+    moves include every change since. BCI's AGB in 2020 is 127.4 → 129.8 MgC ha⁻¹, with the early PFT
+    33.4 → 22.9 and the mid 91.3 → 104.4; 151 min on 20 threads, where it took 200. Palo Verde's AGB at
+    150 years is 84.3 → 76.1 MgC ha⁻¹, with BD 33.2 → 10.0 and Ds 12.6 → 25.3, and the early basal-area
+    overshoot is gone; 36 min on 12 threads.
+- **The fast march is 10 % cheaper** (#487). Measured on example 04's
+  120-patch stand, ifx dev build, a simulated day costs 1.253 s on one thread where it cost 1.399 s, and
+  0.115 s on 20 threads where it cost 0.129 s. Against a 60 s truth, the hourly RMSE of LE and H falls
+  (BCI wet: LE 4.36 → 4.26 W/m², H 3.15 → 3.05; BCI dry: 3.63 → 3.44, 2.83 → 2.61; Palo Verde's drought:
+  4.76 → 4.70, 3.38 → 3.19), that of the canopy-air temperature rises by 0.01–0.03 K (BCI wet 0.019 →
+  0.028 K, Palo Verde 0.056 → 0.088 K), and Palo Verde's daily GPP bias goes 1.95 → 1.81 %. Four parts:
+  - **the warm-start seed can grow back** after a rejection. An accepted step the interval's end cut
+    short now raises the next interval's seed to the step the controller asked for before the cut,
+    capped at `dt_fast`; before, a seed below 900 s never grew back, so the patch took two sub-steps
+    for the rest of the run;
+  - **the error norm measures only the states the march integrates**, the canopy air and the soil heat.
+    Soil and plant water move at the water network's fixed rate, so their exact zeros diluted the norm
+    by a factor that grew with the cohort count (2.1× at 13 cohorts on 7 layers, 2.8× at 30);
+  - **the leaf's Ci root is found by the Illinois method**, on the same bracket and to the same
+    tolerance as the bisection it replaces, with fewer residuals: 2–5 % less CPU, hourly LE within
+    4e-4 W/m²;
+  - **the default `rtol` is 2e-3**, the loosest that holds the march's own share of the LE and H error
+    near 10–20 % of the 900 s step's (`docs/science/numerical_scheme.md` §6 gives the table and the
+    recipe for a new site).
 - **A start's canopy air is the air of the first forcing sample** (#486). A bare-ground or census start
   put every patch's canopy air at 288 K, 0.008 kg/kg and 400 µmol/mol, and its tissues at 288 K,
   whatever the site's air. At the start's first window the fast loop now sets each patch's canopy air
@@ -1259,6 +1401,12 @@ air takes its molar-mass ratios exactly (#486).
 
 ### Fixed
 
+- **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
+  targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
+  `-j 16`). The shims now compile in one target.
+- **Example 05's census check stopped at import** (#490). `calibrate_growth.py` read `aboveground_frac`
+  from the PFT file's `[pft]` table after it had moved to `[allometry]`, so every mode stopped with a
+  `KeyError`. It now reads `[allometry]`.
 - **The snow's deposition could drain the canopy air below zero** (#486). The pack's sublimation or
   deposition was fixed at the step's start against the canopy air's start humidity, and the pack and
   the canopy air exchange vapour within minutes: in warm saturated air over a melting pack it took up to

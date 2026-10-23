@@ -7,9 +7,11 @@ ABI and one search (python/README.md). The search lives here once, and a sub-pac
 library asks for it.
 
 Search order:
-  1. ``$MEDS_LIB`` — an explicit path, which always wins.
+  1. ``$MEDS_LIB`` — an explicit path, which always wins: another build kind's library, such as
+     ``build-production/libmeds.so``, is loaded this way.
   2. Next to this package, i.e. ``meds/libmeds.so`` — how a built wheel ships it.
-  3. A CMake build directory in the source tree, for an editable install.
+  3. ``build-dev/libmeds.so`` in the source tree — the dev preset's build, for a run from the
+     source tree.
 
 The library needs the Fortran runtime on ``LD_LIBRARY_PATH`` (``source /opt/intel/oneapi/setvars.sh``
 for ifx) and, because it links the model's netCDF I/O, a netCDF runtime — which is why ``netcdf4``
@@ -20,8 +22,8 @@ import os
 from pathlib import Path
 
 _SONAME = "libmeds.so"
-#----- Build dirs an editable install might be paired with, most specific first. ----------------#
-_BUILD_DIRS = ("build-py", "build-pylib", "build", "build-ifx")
+#----- The build directory a source-tree run loads from: the dev preset's (CMakePresets.json). ---#
+_BUILD_DIR = "build-dev"
 #----- Env vars MEDS does not read, still recognised so a command line that sets one is told -----#
 #      to use MEDS_LIB instead of failing with a path that does not exist.                        #
 _LEGACY_ENV = ("MEDS_PLANT_LIB",)
@@ -34,7 +36,7 @@ def _candidates():
     cands = [here.parent / _SONAME]                  # bundled beside the package (wheel)
     if len(here.parents) > 2:
         repo_root = here.parents[2]                  # .../python/meds/ -> repo root
-        cands += [repo_root / b / _SONAME for b in _BUILD_DIRS]
+        cands.append(repo_root / _BUILD_DIR / _SONAME)
     return cands
 
 
@@ -56,9 +58,9 @@ def library_path():
         hint = (f"\n({', '.join(legacy)} is set, but the two shared libraries were merged into "
                 f"one {_SONAME}; use MEDS_LIB instead.)")
     raise FileNotFoundError(
-        f"{_SONAME} not found. Build it with:\n"
-        "  cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON\n"
-        "  cmake --build build-py --target meds_py\n"
+        f"{_SONAME} not found. Build it from the repository root with:\n"
+        "  FC=ifx cmake --preset dev\n"
+        f"  cmake --build {_BUILD_DIR} --target meds_py\n"
         "then put the Fortran runtime on LD_LIBRARY_PATH, or set MEDS_LIB to the .so path."
         + hint
         + f"\nLooked in: {[str(c) for c in _candidates()]}")

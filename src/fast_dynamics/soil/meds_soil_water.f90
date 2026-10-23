@@ -4,7 +4,8 @@
 ! its derivatives for the water network (docs/science/soil_biophysics.md eqs. (1)-(4)):    !
 !   * soil_water_flux         -- Darcy flow between two layers, or the pond and the top    !
 !                                layer, eqs. (3)-(4);                                      !
-!   * ground_evaporation_rate -- evaporation from the top layer;                           !
+!   * ground_evaporation_rate -- evaporation from the top layer, on the terms              !
+!                                ground_evaporation_setup sets once per water step;        !
 !   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer.!
 ! A layer's water relations are in meds_soil_hydr_lib, root uptake in meds_plant_hydr_lib. !
 !==========================================================================================!
@@ -19,7 +20,7 @@ module meds_soil_water
    private
 
    public :: soil_water_flux, ground_evaporation_rate, bottom_flux
-   public :: ground_evap_env_t
+   public :: ground_evap_env_t, ground_evaporation_setup
 
    !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
    !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
@@ -29,7 +30,8 @@ module meds_soil_water
    !----- CLM5 eq 5.78: the 'air dry' matric head [m], where the soil counts as dry (CLM5's 1e7 mm). !
    real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp
 
-   !----- The boundary ground_evaporation_rate reads: the ground skin and the canopy air over it. ----!
+   !----- The boundary ground_evaporation_rate reads: the ground skin and the canopy air over it,    !
+   !      and the terms that depend only on them and the top layer's curve. -------------------------!
    type :: ground_evap_env_t
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
       !----- A frozen surface evaporates over ice (docs/science/snow_biophysics.md eq. (1)). ---------!
@@ -40,6 +42,12 @@ module meds_soil_water
                                                           !<       (1/ggnet), not inflated for snow
       real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free area fraction (1-snowfac) that evaporates,
                                                           !<     an area-weighted tile flux (snow_biophysics.md)
+      !----- Set by ground_evaporation_setup from the fields above and the top layer's curve. -------!
+      real(wp) :: rv_t            = 0.0_wp   !< [J/kg] R_v T of the ground skin, the scale of Philip's humidity
+      real(wp) :: q_sat           = 0.0_wp   !< [kg/kg] saturation specific humidity at the ground skin
+      real(wp) :: theta_init      = 0.0_wp   !< [m3/m3] top-layer water content below which the dry layer forms
+      real(wp) :: theta_span      = 0.0_wp   !< [m3/m3] theta_init less the air-dry water content
+      real(wp) :: dsl_diffusivity = 0.0_wp   !< [m2/s] vapour diffusivity through the dry surface layer
    end type ground_evap_env_t
 
 contains
@@ -98,42 +106,56 @@ contains
       end if
    end subroutine bottom_flux
 
+   !----- The terms of ground_evaporation_rate that depend only on its boundary and the top layer's  !
+   !      curve: R_v T and the saturation humidity at the ground skin (over ice when frozen), and    !
+   !      the dry surface layer's water-content span and vapour diffusivity. The water network holds !
+   !      the boundary over its step, so water_step sets them once, before its first evaluation. ----!
+   pure subroutine ground_evaporation_setup(profile, soil, forcing)
+      type(soil_profile_t),    intent(in)    :: profile
+      type(soil_params_t),     intent(in)    :: soil
+      type(ground_evap_env_t), intent(inout) :: forcing
+      real(wp) :: theta_air, dvap, phi, phi_air, tau
+      forcing%rv_t  = r_wv * forcing%t_ground
+      forcing%q_sat = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
+      !----- The dry surface layer, referenced to the air-dry water content. ---------------------!
+      theta_air = soil_head_to_theta(profile%retention, PSI_AIR_DRY, profile%theta_sat(1), profile%theta_res(1),  &
+                                     profile%curve_par_a(1), profile%curve_par_n(1))
+      forcing%theta_init = soil%dsl_theta_init * profile%theta_sat(1)
+      dvap    = 2.12e-5_wp * (forcing%t_ground / t_kelvin) ** 1.75_wp
+      phi     = profile%theta_sat(1)
+      phi_air = max(phi - theta_air, tiny_num)
+      tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)
+      forcing%theta_span      = max(forcing%theta_init - theta_air, tiny_num)
+      forcing%dsl_diffusivity = max(dvap * tau, tiny_num)
+   end subroutine ground_evaporation_setup
+
    !---------------------------------------------------------------------------------------!
    ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water content        !
    ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives (docs/science/soil_biophysics.md,    !
    ! "The soil water column"): Philip's pore-space humidity (over ice when frozen) through the          !
    ! Swenson-Lawrence dry-surface-layer resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from    !
    ! the snow-free share only (docs/science/snow_biophysics.md). Both corners are rounded for Newton.   !
+   ! The boundary's constant terms are ground_evaporation_setup's.                                      !
    !---------------------------------------------------------------------------------------!
-   pure subroutine ground_evaporation_rate(theta1, psi1, profile, forcing, soil, e_soil, de_dtheta, de_dpsi)
+   pure subroutine ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil, de_dtheta, de_dpsi)
       real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content
       real(wp),               intent(in)  :: psi1        !< [m]     top-layer matric head
-      type(soil_profile_t),   intent(in)  :: profile
       type(ground_evap_env_t), intent(in) :: forcing
       type(soil_params_t),    intent(in)  :: soil
       real(wp),               intent(out) :: e_soil      !< [kg/m2/s]
       real(wp),               intent(out) :: de_dtheta   !< [kg/m2/s per m3/m3]
       real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per m of head]
-      real(wp) :: alpha_soil, dalpha, q_sat, drive, ddrive, theta_air, theta_init, dry, ddry
-      real(wp) :: dvap, phi, phi_air, tau, r_soil, dr_dtheta, resist
-      alpha_soil = safe_exp(psi1 * grav / (r_wv * forcing%t_ground))
-      dalpha     = alpha_soil * grav / (r_wv * forcing%t_ground)
-      q_sat      = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
-      call smooth_max0(alpha_soil * q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
-      !----- The dry surface layer, referenced to the air-dry water content. ---------------------!
-      theta_air  = soil_head_to_theta(profile%retention, PSI_AIR_DRY, profile%theta_sat(1), profile%theta_res(1),  &
-                                       profile%curve_par_a(1), profile%curve_par_n(1))
-      theta_init = soil%dsl_theta_init * profile%theta_sat(1)
-      call smooth_max0(theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
-      dvap    = 2.12e-5_wp * (forcing%t_ground / t_kelvin) ** 1.75_wp
-      phi     = profile%theta_sat(1)
-      phi_air = max(phi - theta_air, tiny_num)
-      tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)
-      r_soil    = soil%dsl_dmax * dry / max(theta_init - theta_air, tiny_num) / max(dvap * tau, tiny_num)
-      dr_dtheta = -soil%dsl_dmax * ddry / max(theta_init - theta_air, tiny_num) / max(dvap * tau, tiny_num)
+      real(wp) :: alpha_soil, dalpha, drive, ddrive, dry, ddry, r_soil, dr_dtheta, resist
+      alpha_soil = safe_exp(psi1 * grav / forcing%rv_t)
+      dalpha     = alpha_soil * grav / forcing%rv_t
+      call smooth_max0(alpha_soil * forcing%q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
+      !----- The dry surface layer, from theta_init down to the air-dry water content. ----------!
+      call smooth_max0(forcing%theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
+      r_soil    = soil%dsl_dmax * dry / forcing%theta_span / forcing%dsl_diffusivity
+      dr_dtheta = -soil%dsl_dmax * ddry / forcing%theta_span / forcing%dsl_diffusivity
       resist    = forcing%r_aero + r_soil
       e_soil    = forcing%snow_free_frac * forcing%rho_air * drive / resist
-      de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * q_sat * dalpha / resist
+      de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * forcing%q_sat * dalpha / resist
       de_dtheta = -e_soil * dr_dtheta / resist
    end subroutine ground_evaporation_rate
 

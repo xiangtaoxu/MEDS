@@ -31,8 +31,9 @@ dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is t
 # time_integrator     = "esdirk2"    # "esdirk2" (default) | "rk45" (explicit, for comparison)
 # esdirk2_adaptive    = true         # adaptive sub-steps; false: esdirk2_fixed_substep of them
 # esdirk2_fixed_substep   = 4            # [-]  sub-steps per dt_fast when not adaptive
-# rtol                = 1.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
-#                                    #   and the soil-plant water network's
+# rtol                = 2.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
+#                                    #   and the soil-plant water network's; "rk45" takes 1.0e-4, the
+#                                    #   loosest it accepts
 # atol_scale          = 1.0          # [-]  multiplier on every absolute tolerance (rtol alone saturates)
 # step_controller     = "i"          # "i" (integral) | "pi" (proportional-integral, damps step hunting)
 # ---- The soil-plant water network (docs/science/soil_plant_water.md §3). ----
@@ -110,7 +111,8 @@ zeta_m           = 1.574      # [-]   Monin-Obukhov momentum-range transition (C
 zeta_t           = 0.465      # [-]   Monin-Obukhov scalar-range transition (CLM5)
 zeta_max_stable  = 0.5        # [-]   cap on the first stability guess (CLM5)
 n_iter_mo        = 4          # [-]   Monin-Obukhov iterations, a fixed number
-wc               = 0.5        # [m/s] convective velocity scale
+wc               = 0.5        # [m/s] convective velocity of the first stability guess, eq. (2); the
+                              #   sweeps take it from the buoyancy flux, eq. (3b)
 ustmin           = 0.10       # [m/s] friction-velocity floor
 ubmin            = 0.65       # [m/s] bulk-wind floor, eq. (2)
 ugbmin           = 0.25       # [m/s] canopy-top and in-canopy wind floor

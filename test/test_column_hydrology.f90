@@ -29,7 +29,7 @@ program test_column_hydrology
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
                                     soil_theta_to_head
-   use meds_soil_water,       only : ground_evaporation_rate, bottom_flux, ground_evap_env_t
+   use meds_soil_water,       only : ground_evaporation_rate, ground_evaporation_setup, bottom_flux, ground_evap_env_t
    use meds_fast_integ_types,       only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,           &
                                      ensure_static_capacity, POND, GRP_THETA, N_WORK
    use meds_fast_integ_derivs, only : set_water_state
@@ -406,13 +406,14 @@ contains
       print '(a)', 'test_snow_free_evap:'
       call loam_params(params)
       f%t_ground = 305.0_wp ; f%q_air = 0.001_wp ; f%rho_air = 1.2_wp ; f%r_aero = 50.0_wp
+      call ground_evaporation_setup(params, opts, f)
       head = soil_theta_to_head(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       f%snow_free_frac = 1.0_wp
-      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_full, de1, de2)
+      call ground_evaporation_rate(0.30_wp, head, f, opts, e_full, de1, de2)
       f%snow_free_frac = 0.5_wp
-      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_half, de1, de2)
+      call ground_evaporation_rate(0.30_wp, head, f, opts, e_half, de1, de2)
       f%snow_free_frac = 0.0_wp
-      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_none, de1, de2)
+      call ground_evaporation_rate(0.30_wp, head, f, opts, e_none, de1, de2)
       call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
       call check('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,             &
                  1.0e-14_wp * max(e_full, 1.0e-12_wp))
@@ -435,30 +436,30 @@ contains
       print '(a)', 'test_evap_moisture_response:'
       call loam_params(params)
       f%t_ground = 300.0_wp ; f%q_air = 0.005_wp ; f%rho_air = 1.2_wp ; f%r_aero = 100.0_wp
+      call ground_evaporation_setup(params, opts, f)
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
       monotone = .true. ; e_prev = -1.0_wp
       do i = 1, 40
          theta = params%theta_res(1) + real(i, wp) / 40.0_wp * (theta_init - params%theta_res(1))
-         e_now = loam_evap(theta, params, f, opts)
+         e_now = loam_evap(theta, f, opts)
          if (e_now < e_prev - 1.0e-14_wp) monotone = .false.
          e_prev = e_now
       end do
       call check_true('ground evaporation increases monotonically with soil moisture', monotone, 0.0_wp)
-      e_sat   = loam_evap(theta_init, params, f, opts)
-      e_below = loam_evap(theta_init - 1.0e-3_wp * (theta_init - params%theta_res(1)), params, f, opts)
+      e_sat   = loam_evap(theta_init, f, opts)
+      e_below = loam_evap(theta_init - 1.0e-3_wp * (theta_init - params%theta_res(1)), f, opts)
       call check_true('approaches the DSL-free limit continuously at theta_init',                       &
                       e_below > 0.8_wp * e_sat, e_below / max(e_sat, 1.0e-30_wp))
    end subroutine test_evap_moisture_response
 
-   !----- Ground evaporation of the loam's top layer at water content th. ----------------------!
-   real(wp) function loam_evap(th, params, f, opts) result(e)
+   !----- Ground evaporation of the loam's top layer at water content th, under f set up for it. --!
+   real(wp) function loam_evap(th, f, opts) result(e)
       real(wp),               intent(in) :: th
-      type(soil_profile_t),   intent(in) :: params
       type(ground_evap_env_t), intent(in) :: f
       type(soil_params_t),    intent(in) :: opts
       real(wp) :: de1, de2
       call ground_evaporation_rate(th, soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp,     &
-                                   3.6_wp, 1.56_wp), params, f, opts, e, de1, de2)
+                                   3.6_wp, 1.56_wp), f, opts, e, de1, de2)
    end function loam_evap
 
 end program test_column_hydrology

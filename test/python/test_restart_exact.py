@@ -21,7 +21,7 @@ from meds.config import RunConfig  # noqa: E402
 sys.path.insert(0, str(ROOT / "scripts"))
 import meds_forcing_file as mff  # noqa: E402
 
-MEDS_MAIN = os.environ.get("MEDS_MAIN", str(ROOT / "build-ifx" / "meds_main"))
+MEDS_MAIN = os.environ.get("MEDS_MAIN", str(ROOT / "build-dev" / "meds_main"))
 
 
 def base_config(run_dir, start, end, *, slow_on, restart_file=None, reacclimate=False,

@@ -359,22 +359,26 @@ contains
    !----- Conductivity [m/s] and dK/dSe at saturation se: van Genuchten-Mualem with L =    !
    !      VG_PORE_CONNECTIVITY (docs/science/soil_biophysics.md eq. (2)), or Campbell's Ks !
    !      Se^(2b+3). No floor: K goes to zero with Se. The van Genuchten slope is          !
-   !      unbounded at Se = 1; the solver calls this only dry of the branch point. --------!
+   !      unbounded at Se = 1; the solver calls this only dry of the branch point. The     !
+   !      slope's powers come from the ones K takes, a division each: Se^(L-1) = Se^L/Se,  !
+   !      Se^(1/m-1) = Se^(1/m)/Se and u^(m-1) = u^m/u, with u = 1 - Se^(1/m). ------------!
    elemental subroutine saturation_to_conductivity(retention, par_n, ksat, se, kcond, dk_dse)
       integer(ik), intent(in)  :: retention
       real(wp),    intent(in)  :: par_n, ksat, se
       real(wp),    intent(out) :: kcond, dk_dse
-      real(wp) :: m, u, t
+      real(wp) :: m, se_1m, se_l, u, u_m, t
       if (retention == SOIL_RETENTION_CAMPBELL) then
          kcond  = ksat * se ** (2.0_wp * par_n + 3.0_wp)
          dk_dse = (2.0_wp * par_n + 3.0_wp) * kcond / se
       else
-         m  = 1.0_wp - 1.0_wp / par_n
-         u  = 1.0_wp - se ** (1.0_wp / m)
-         t  = 1.0_wp - u ** m
-         kcond  = ksat * se ** VG_PORE_CONNECTIVITY * t * t
-         dk_dse = ksat * (VG_PORE_CONNECTIVITY * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * t * t                  &
-                  + 2.0_wp * se ** VG_PORE_CONNECTIVITY * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
+         m     = 1.0_wp - 1.0_wp / par_n
+         se_1m = se ** (1.0_wp / m)
+         se_l  = se ** VG_PORE_CONNECTIVITY
+         u     = 1.0_wp - se_1m
+         u_m   = u ** m
+         t     = 1.0_wp - u_m
+         kcond  = ksat * se_l * t * t
+         dk_dse = ksat * (VG_PORE_CONNECTIVITY * (se_l / se) * t * t + 2.0_wp * se_l * t * (u_m / u) * (se_1m / se))
       end if
    end subroutine saturation_to_conductivity
 

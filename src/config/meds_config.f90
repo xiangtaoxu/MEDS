@@ -79,7 +79,8 @@ module meds_config
       integer(ik) :: time_integrator     = INTEG_ESDIRK2  !< INTEG_ESDIRK2 | INTEG_RK45
       logical     :: esdirk2_adaptive    = .true.         !< adaptive sub-steps; .false.: esdirk2_fixed_substep
       integer(ik) :: esdirk2_fixed_substep = 4_ik         !< sub-steps per dt_fast when not adaptive
-      real(wp)    :: rtol                = 1.0e-3_wp      !< [-] relative tolerance of every group
+      real(wp)    :: rtol                = 2.0e-3_wp      !< [-] relative tolerance of every group (esdirk2's
+                                                            !<     default; rk45 takes RK45_RTOL)
       real(wp)    :: atol_scale          = 1.0_wp         !< [-] multiplier on every group's atol
       integer(ik) :: step_controller     = CTRL_I         !< CTRL_I | CTRL_PI
       real(wp)    :: water_atol          = 1.0e-4_wp      !< [-] the water network's absolute tolerance

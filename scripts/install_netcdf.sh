@@ -184,8 +184,7 @@ fi
 cat <<'EOF'
 
 Done. Build MEDS (netCDF is required), pointing CMake at the prefix above:
-    cmake -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_PREFIX_PATH=<prefix>
-    cmake --build build -j
-    LD_LIBRARY_PATH=<prefix>/lib ./build/meds_main meds_config_main.toml
+    cmake -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_PREFIX_PATH=<prefix>
+    cmake --build build-dev -j
+    LD_LIBRARY_PATH=<prefix>/lib ./build-dev/meds_main meds_config_main.toml
 EOF

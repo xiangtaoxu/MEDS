@@ -2,7 +2,8 @@
 !==========================================================================================!
 ! test_aerodynamics -- unit tests for the stateless canopy-aerodynamics kernel.                !
 !   1. NEUTRAL log-law: mo_surface_layer recovers ustar = vonk*u/ln(zldis/z0m) and temp1 =       !
-!      vonk/ln(zldis/z0m) when the air and canopy air have identical (theta, q).                  !
+!      vonk/ln(zldis/z0m) when the air and canopy air have identical (theta, q), and the same      !
+!      ustar a hair either side of neutral.                                                       !
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
 !      (warm air aloft) a SMALLER one, at the same wind.                                          !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
@@ -44,7 +45,7 @@ contains
    !----- 1. Neutral log-law recovery. -------------------------------------------------------!
    subroutine test_neutral()
       type(aero_params_t) :: cfg
-      real(wp) :: ustar, temp1, zeta, rib, obu, uref, z0m, zldis, ln
+      real(wp) :: ustar, temp1, zeta, rib, obu, uref, z0m, zldis, ln, us_side
       uref = 5.0_wp ; z0m = 0.1_wp ; zldis = 10.0_wp    ! displace = 0 => zldis = zref
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
                             298.15_wp, 0.010_wp, ustar, temp1, zeta, rib, obu)
@@ -52,6 +53,14 @@ contains
       call check('neutral ustar', ustar, von_karman * uref / ln, 1.0e-5_wp)
       call check('neutral temp1', temp1, von_karman / ln,        1.0e-6_wp)
       call check('neutral zeta ~ 0', zeta, 0.0_wp, 1.0e-6_wp)
+      !----- A hair either side of neutral gives the neutral answer: the convective velocity     !
+      !      fades with the buoyancy flux, so the wind has no jump there. --------------------------!
+      call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
+                            298.15_wp + 1.0e-9_wp, 0.010_wp, us_side, temp1, zeta, rib, obu)
+      call check('ustar a hair unstable of neutral', us_side, ustar, 1.0e-6_wp)
+      call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
+                            298.15_wp - 1.0e-9_wp, 0.010_wp, us_side, temp1, zeta, rib, obu)
+      call check('ustar a hair stable of neutral', us_side, ustar, 1.0e-6_wp)
    end subroutine test_neutral
 
    !----- 2. Stability ordering: unstable > neutral > stable ustar. --------------------------!

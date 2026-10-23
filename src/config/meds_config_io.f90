@@ -13,7 +13,7 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART
    use meds_pft_derive, only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI
+   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI, RK45_RTOL
    use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
@@ -289,7 +289,9 @@ contains
       call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'esdirk2', 'rk45'],          &
                       [INTEG_ESDIRK2, INTEG_RK45], cfg%time_integrator, m)
       cfg%esdirk2_adaptive  = toml_logical(tm, 'fast.esdirk2_adaptive',  .true.)
-      cfg%rtol              = toml_real   (tm, 'fast.rtol',              cfg%rtol)
+      !----- rtol's default is the integrator's: RK45 takes its own (meds_fast_params). ------------!
+      cfg%rtol              = toml_real   (tm, 'fast.rtol',                                            &
+                                           merge(RK45_RTOL, cfg%rtol, cfg%time_integrator == INTEG_RK45))
       !----- Optional error-control settings. -------------------------------------------------!
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%water_atol        = toml_real   (tm, 'fast.water_atol',        cfg%water_atol)

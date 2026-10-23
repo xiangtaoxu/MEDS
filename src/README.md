@@ -163,7 +163,8 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
   met, config ──→ maps ──────────────────────────┐
   output_stream ─────────────────────────────────┤
   model ─────────────────────────────────────────┴──→ driver ──→ meds_main
-                                                               └→ meds_py (libmeds.so)
+                                                               └→ c_api ──→ meds_py (libmeds.so)
+                                                                        └→ the C-API tests
 ```
 
 One edge is worth knowing because it is easy to get wrong:
@@ -232,9 +233,9 @@ These are the things that break quietly if you do not know them.
 Each kernel library compiles standalone, which is the fastest way to check that rule 1 still holds:
 
 ```bash
-cmake --build build-ifx --target meds_fast_kernels
-cmake --build build-ifx --target meds_slow_kernels
-cmake --build build-ifx --target meds_demography
+cmake --build build-dev --target meds_fast_kernels
+cmake --build build-dev --target meds_slow_kernels
+cmake --build build-dev --target meds_demography
 ```
 
 Full build, test and run instructions are in [`docs/building.md`](../docs/building.md).

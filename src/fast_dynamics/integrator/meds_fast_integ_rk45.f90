@@ -81,12 +81,14 @@ contains
       !      here is only the canopy-air vapour exchange. --------------------------------------------!
       bf%soil_wat_in   = 0.0_wp
       bf%soil_wat_out  = 0.0_wp
-      bf%whole_enth_in = surf_tend%coh_rnet + frozen%snow%ground_rad + k%g_bottom
+      bf%whole_enth_in = surf_tend%coh_rnet + surf_tend%ground_rad + k%g_bottom
       bf%whole_enth_out= gah*(y_stage%cas_enthalpy - frozen%cas%box%atm_enthalpy) + e_drain
       bf%whole_wat_in  = 0.0_wp
       bf%whole_wat_out = gaw*(y_stage%cas_shv - frozen%cas%box%atm_specific_humidity)
       bf%whole_cond    = surf_tend%cond
       bf%whole_cond_enth = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
+      bf%snow_enth_in  = surf_tend%snow_enth_in
+      bf%snow_vap_out  = surf_tend%snow_vap_out
       bf%atm_heat_out  = gah*cp_air*(cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)          &
                                      - frozen%cas%mo_theta_atm)
       bf%atm_vap_out   = gaw*(y_stage%cas_shv - frozen%cas%box%atm_specific_humidity)
@@ -249,6 +251,10 @@ contains
                             + B6*s(6)%whole_cond) * dt
       acc%whole_cond_enth = (B1*s(1)%whole_cond_enth + B3*s(3)%whole_cond_enth + B4*s(4)%whole_cond_enth       &
                              + B6*s(6)%whole_cond_enth) * dt
+      acc%snow_enth_in   = (B1*s(1)%snow_enth_in   + B3*s(3)%snow_enth_in   + B4*s(4)%snow_enth_in             &
+                            + B6*s(6)%snow_enth_in) * dt
+      acc%snow_vap_out   = (B1*s(1)%snow_vap_out   + B3*s(3)%snow_vap_out   + B4*s(4)%snow_vap_out             &
+                            + B6*s(6)%snow_vap_out) * dt
       acc%atm_heat_out   = (B1*s(1)%atm_heat_out   + B3*s(3)%atm_heat_out   + B4*s(4)%atm_heat_out             &
                             + B6*s(6)%atm_heat_out) * dt
       acc%atm_vap_out    = (B1*s(1)%atm_vap_out    + B3*s(3)%atm_vap_out    + B4*s(4)%atm_vap_out              &

@@ -20,7 +20,7 @@ module meds_fast_integ_types
    use meds_pft_params, only : leaf_photo_table_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_state_t, soil_energy_state_t, snow_state_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, internal_energy_to_temp
-   use meds_biophysics_params, only : aero_params_t
+   use meds_biophysics_params, only : aero_params_t, snow_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_linear_algebra, only : arrowhead_system_t
@@ -432,6 +432,9 @@ module meds_fast_integ_types
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp) :: cond_enth      = 0.0_wp     !< [W/m2]     liquid enthalpy the sink debited from the CAS
+      real(wp) :: ground_rad     = 0.0_wp     !< [W/m2]     the ground's net radiation, snow's and bare soil's
+      real(wp) :: snow_enth_in   = 0.0_wp     !< [W/m2]     energy into the snow pack (0 without one)
+      real(wp) :: snow_vap_out   = 0.0_wp     !< [kg/m2/s]  vapour from the snow pack to the CAS
       real(wp), allocatable :: leaf_temp(:)   !< [K]        diagnosed per-cohort leaf temperature
       real(wp), allocatable :: wood_temp(:)   !< [K]        diagnosed per-cohort wood temperature
       real(wp), allocatable :: transp_c(:)    !< [kg/m2/s]  per-cohort transpiration demand
@@ -510,30 +513,29 @@ module meds_fast_integ_types
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
    end type plant_water_t
 
-   !----- The frozen outcome of the step's snow advance (meds_fast_integ_frozen%advance_snow_stage). With  !
-   !      no pack every field is 0 or .false., which reduces the consumers exactly to the snow-free   !
-   !      form, so neither scheme needs a snow branch. ----------------------------------------------!
+   !----- The snow stage before the march (meds_fast_integ_frozen%prepare_snow_stage): the pack after  !
+   !      this step's snowfall and rain and the drainage of the liquid it holds, which the march          !
+   !      exchanges with at every evaluation (surface_derivs) and the update commits the exchange to;    !
+   !      with what that exchange reads that the march does not carry. With no pack the cover is 0, the  !
+   !      exchange is zero, and the consumers reduce exactly to the snow-free form, with no snow branch. -!
    type :: snow_stage_t
       logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + t_film_valuation)
-      real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction actually used
-      real(wp) :: h_snow     = 0.0_wp    !< [W/m2]     snowfac-weighted sensible flux to the CAS
-      real(wp) :: le_snow    = 0.0_wp    !< [W/m2]     snowfac-weighted latent (sublimation) flux
-      real(wp) :: g_base     = 0.0_wp    !< [W/m2]     throttled base conduction into the soil top
-      real(wp) :: subl_rate  = 0.0_wp    !< [kg/m2/s]  sublimation vapour source for the CAS
+      real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction
       real(wp) :: melt_rate  = 0.0_wp    !< [kg/m2/s]  meltwater to the ponding store (see t_melt)
-      real(wp) :: ground_rad = 0.0_wp    !< [W/m2]     blended ground radiative input for the ledgers
       real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     rainfall enthalpy that entered the pack (boundary in)
       real(wp) :: swe0       = 0.0_wp    !< [kg/m2]    pack mass BEFORE the stage (ledger store term)
-      real(wp) :: swe1       = 0.0_wp    !< [kg/m2]    pack mass AFTER  the stage (ledger store term)
       real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
-      real(wp) :: enth1      = 0.0_wp    !< [J/m2]     pack internal energy AFTER  (ledger store term)
       real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] enthalpy the meltwater carries from the pack to the pond
       !----- The temperature with u_liq(T)*melt mass = melt_enth, handed to the water network as the  !
       !      pond inflow's, so the pond receives exactly melt_enth; t_3ple when nothing melts. --------!
       real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
-      !----- The pack after the stage, which the update commits: the frozen build only reads the      !
-      !      dynamic state, so the stage advances a copy. ---------------------------------------------!
-      type(snow_state_t) :: pack
+      !----- The pack the march exchanges with, and the rest of what its balance reads beyond the       !
+      !      ground boundary: the top soil node's depth and conductivity, the step, the parameters. -----!
+      type(snow_state_t)  :: pack
+      type(snow_params_t) :: params
+      real(wp) :: dz_soil_top   = 0.0_wp !< [m]       top soil-node depth |z_node(1)|
+      real(wp) :: k_soil_top    = 0.0_wp !< [W/m/K]   top soil layer's thermal conductivity
+      real(wp) :: dt            = 0.0_wp !< [s]       the step its balance relaxes over (dt_fast)
    end type snow_stage_t
 
    !----- What drives the soil-plant water network over the step, held fixed across it: the water   !
@@ -663,6 +665,8 @@ module meds_fast_integ_types
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp!< [kg/m2/s]
       real(wp) :: whole_cond    = 0.0_wp                         !< [kg/m2/s] condensate
       real(wp) :: whole_cond_enth = 0.0_wp                       !< [W/m2] its liquid enthalpy at the stage CAS temperature
+      real(wp) :: snow_enth_in = 0.0_wp                          !< [W/m2]    energy into the snow pack
+      real(wp) :: snow_vap_out = 0.0_wp                          !< [kg/m2/s] vapour from it to the CAS
       !----- Net CAS -> atmosphere export at the ledger's own stage states and conductances: the      !
       !      reported H and LE (meds_fast_integ_stepper%atm_fluxes; docs/science/numerical_scheme.md §5b). -----!
       real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    g_atm_heat*cp_air*(T_cas - theta_atm)
@@ -678,11 +682,14 @@ module meds_fast_integ_types
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
       !----- Condensate, apart from whole_wat_out: dew and fog land inside the column, and the caller  !
-      !      deposits them into soil layer 1 (docs/science/numerical_scheme.md §7, item 4). ---------!
+      !      deposits them into soil layer 1 (docs/science/numerical_scheme.md §7, item 3). ---------!
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
       !----- ...and the liquid enthalpy it left the CAS with, b-weighted at each stage's own CAS     !
       !      temperature, as surface_derivs debited it; the deposit carries this, not u_liq(T_end). -!
       real(wp) :: whole_cond_enth = 0.0_wp !< [J/m2]
+      !----- The snow pack's exchange over the step, which the update commits to the pack. ----------!
+      real(wp) :: snow_enth_in = 0.0_wp    !< [J/m2]  energy into the pack
+      real(wp) :: snow_vap_out = 0.0_wp    !< [kg/m2] vapour from it to the CAS
       real(wp) :: atm_heat_out = 0.0_wp    !< [J/m2]  net CAS -> atmosphere sensible-heat export (reported H)
       real(wp) :: atm_vap_out  = 0.0_wp    !< [kg/m2] net CAS -> atmosphere vapour export (reported LE / L_v)
       !----- Per-cohort tissue-temperature time integrals [K*s], b-weighted over the stages and summed !
@@ -972,10 +979,12 @@ contains
       v(o+2) = 0.0_wp
    end subroutine tend_to_array
 
-   !----- How entry j of the flat array is treated: norm_group, its group in the step-size error norm !
-   !      (0: not counted), and in_embedded_error. The films and the pond are outside the norm; the    !
-   !      plant water, films and pond ride operator-split maps outside the stages, so their embedded    !
-   !      difference is set to 0 rather than left as the extrapolation's rounding noise. ------------!
+   !----- How entry j of the flat array is treated: norm_group, its group's tolerances (0: none), and  !
+   !      in_embedded_error, whether the march integrates it and so has an error to measure: the     !
+   !      canopy air and the soil heat. The soil and plant water move at the water network's fixed   !
+   !      rate on both schemes, and the films and the pond by operator-split maps, so their embedded  !
+   !      difference is structurally zero: it is set to 0, not left as rounding noise, and the norm  !
+   !      leaves them out. -----------------------------------------------------------------------!
    pure subroutine state_entry_rules(j, n, nsl, norm_group, in_embedded_error)
       integer(ik), intent(in)  :: j, n, nsl
       integer(ik), intent(out) :: norm_group
@@ -996,7 +1005,7 @@ contains
          in_embedded_error = .true.
       else if (j <= o) then
          norm_group = GRP_THETA
-         in_embedded_error = .true.
+         in_embedded_error = .false.
       else if (j <= o + 2_ik*n) then
          norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik)
          in_embedded_error = .false.
@@ -1087,6 +1096,8 @@ contains
       acc%whole_wat_out = b2*s2%whole_wat_out + b3*s3%whole_wat_out
       acc%whole_cond    = b2*s2%whole_cond    + b3*s3%whole_cond
       acc%whole_cond_enth = b2*s2%whole_cond_enth + b3*s3%whole_cond_enth
+      acc%snow_enth_in  = b2*s2%snow_enth_in  + b3*s3%snow_enth_in
+      acc%snow_vap_out  = b2*s2%snow_vap_out  + b3*s3%snow_vap_out
       acc%atm_heat_out  = b2*s2%atm_heat_out  + b3*s3%atm_heat_out
       acc%atm_vap_out   = b2*s2%atm_vap_out   + b3*s3%atm_vap_out
    end subroutine bflux_bweight
@@ -1122,6 +1133,8 @@ contains
       acc%whole_wat_out = acc%whole_wat_out + s%whole_wat_out
       acc%whole_cond    = acc%whole_cond    + s%whole_cond
       acc%whole_cond_enth = acc%whole_cond_enth + s%whole_cond_enth
+      acc%snow_enth_in  = acc%snow_enth_in  + s%snow_enth_in
+      acc%snow_vap_out  = acc%snow_vap_out  + s%snow_vap_out
       acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
       acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
       !----- Only accepted sub-steps reach here, so the tissue integrals cover the same sub-steps as  !
