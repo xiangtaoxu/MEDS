@@ -3,7 +3,7 @@
 ! meds_biogeochem_types -- the audit and diagnostic records of the SLOW soil-carbon cycle: the    !
 ! CENTURY-family multi-pool soil carbon advanced daily by the carbon matrix ODE                    !
 ! dX/dt = B*I + A*xi*K*X (docs/science/soil_carbon.md eq. (1)). Pure DATA, no methods -- the       !
-! biogeochem analogue of meds_canopy_types/meds_soil_types. Links meds_kinds,                     !
+! biogeochem analogue of the fast process modules' argument records. Links meds_kinds,          !
 ! meds_patch_state_vars and meds_biogeochem_params only.                                           !
 !                                                                                          !
 ! Owned HERE: soilc_audit_t, soilc_seam_t and soilc_diag_t. The pools themselves (soil_carbon_t)  !

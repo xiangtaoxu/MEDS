@@ -18,9 +18,9 @@ program test_surface_energy
    use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
                                         cas_enthalpy_to_temp
-   use meds_plant_biophysics, only : veg_energy_balance
-   use meds_ground_biophysics, only : ground_surface_fluxes
-   use meds_cas_biophysics,   only : cas_box_t, cas_source_t, cas_box_step_implicit
+   use meds_plant_energy, only : veg_energy_balance
+   use meds_surface, only : ground_surface_fluxes
+   use meds_canopy_air_space,   only : cas_box_t, cas_source_t, cas_box_step_implicit
    implicit none
 
    call test_wood_stiffness_spread()
@@ -231,7 +231,7 @@ contains
       type(cas_source_t) :: source
       real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
       real(wp), parameter :: CAS_MASS_CAPACITY = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
-      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * temp1(c3)  [kg/m2/s]
+      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * heat_transfer_factor(c3)  [kg/m2/s]
       integer(ik) :: step
       print '(a)', 'test_cas:'
       shv  = 0.012_wp

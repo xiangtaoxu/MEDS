@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_canopy_radiation -- unit tests for the canopy two-stream RT library                 !
-! (src/fast_dynamics/canopy; docs/science/canopy_radiation_transfer.md).                   !
+! (src/fast_dynamics/processes; docs/science/canopy_radiation_transfer.md).                !
 !                                                                                          !
 ! Checks the physical invariants that a correct two-stream must satisfy:                     !
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
@@ -21,7 +21,7 @@ program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : stefan_boltzmann
-   use meds_canopy_types, only : rad_forcing_t, rad_flux_t, alloc_rad_forcing, ground_optics_state_t
+   use meds_canopy_radiation, only : rad_forcing_t, rad_flux_t, alloc_rad_forcing, ground_optics_state_t
    use meds_pft_params,   only : rad_pft_optics_t, RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
    use meds_optics_lib,     only : beta_lidf, leaf_bf, gfun_direct, N_LEAF_CLASS
    use meds_pft_derive,     only : derive_rad_optics, moments_to_beta_params

@@ -14,18 +14,18 @@
 module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_soil_types, only : energy_forcing_t, energy_flux_t
+   use meds_soil_heat, only : soil_heat_forcing_t, soil_heat_flux_t
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs, assemble_soil_energy_forcing
    use meds_fast_integ_control, only : water_scales
-   use meds_cas_biophysics, only : cas_box_step_implicit, cas_source_t
+   use meds_canopy_air_space, only : cas_box_step_implicit, cas_source_t
    use meds_fast_integ_types, only : march_state_t, frozen_t, surface_state_t, cas_boundary_t,                  &
                                surface_tend_t, stage_bflux_t, error_control_t, tol_set_t, fast_static_state_t,    &
                                water_drive_t, water_tend_t, water_state_t, water_flows_t, water_work_t,           &
                                GRP_THETA, POND, WOOD, LEAF, COHORT_STORES, WORK_WATER_NSUB, WORK_WATER_NEWTON,    &
                                WORK_WATER_REJECT, WORK_WATER_NFAIL, state_init
    use meds_site_state_vars, only : site_surface_t
-   use meds_soil_energy, only : soil_energy_step_implicit
+   use meds_soil_heat, only : soil_energy_step_implicit
    use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,             &
                               liquid_energy_to_temp
    use meds_numerics,     only : sufficient_decrease, fraction_to_boundary
@@ -87,8 +87,8 @@ contains
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with this stage's conductances
       type(soil_energy_state_t) :: se
-      type(energy_forcing_t)     :: eforc
-      type(energy_flux_t)        :: eflux
+      type(soil_heat_forcing_t)     :: eforc
+      type(soil_heat_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21
@@ -291,9 +291,9 @@ contains
    end subroutine newton_surface_solve
 
    !---------------------------------------------------------------------------------------!
-   ! The backward-Euler canopy-air box commit, through the shared box kernel                           !
-   ! meds_cas_biophysics%cas_box_step_implicit (docs/science/canopy_air_space_biophysics.md         !
-   ! eq. (2)): one implementation of the box, not a copy of its formulas here.                         !
+   ! The backward-Euler canopy-air box commit, through the shared box kernel                !
+   ! cas_box_step_implicit (meds_canopy_air_space; docs/science/canopy_air_space_biophysics.md !
+   ! eq. (2)): one implementation of the box, not a copy of its formulas here.              !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_box_commit(h0, q0, c0, surf_tend, cas, dt, h1, q1, c1)
       real(wp),               intent(in)  :: h0, q0, c0, dt

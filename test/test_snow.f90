@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_snow -- unit tests for the MEDS snow store (meds_ground_biophysics;                                   !
+! test_snow -- unit tests for the MEDS snow store (meds_surface;                           !
 ! docs/science/snow_biophysics.md).                                                                          !
 !   1. snow-cover fraction is monotone in [0,1].                                                 !
 !   2. datum round-trip: temp_to_internal_energy/internal_energy_to_temp + internal_energy_ice are exact inverses.     !
@@ -22,9 +22,9 @@ program test_snow
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
    use meds_patch_state_vars,   only : snow_state_t
-   use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
+   use meds_surface, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_params,  only : snow_params_t
-   use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
+   use meds_surface,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
                                        snow_energy_step, snow_surface_fluxes
    implicit none
 

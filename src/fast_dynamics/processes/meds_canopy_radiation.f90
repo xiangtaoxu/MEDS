@@ -12,13 +12,45 @@ module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
    use meds_pft_params,   only : rad_pft_optics_t
-   use meds_canopy_types, only : rad_forcing_t, rad_flux_t, alloc_rad_flux, ground_optics_state_t
    use meds_optics_lib,   only : gfun_direct
    implicit none
    private
 
    public :: ground_optics
    public :: canopy_radiation
+   public :: rad_forcing_t, rad_flux_t, ground_optics_state_t, alloc_rad_forcing, alloc_rad_flux
+
+   !----- Per-band incident forcing and ground boundary [W/m2]. In the thermal band the diffuse is   !
+   !      the sky's longwave and grnd_emiss the ground's emission; in shortwave grnd_emiss = 0. -----!
+   type :: rad_forcing_t
+      integer(ik) :: n_band = 0_ik
+      real(wp)    :: cosz   = 1.0_wp               !< cosine of the solar zenith angle (the beam extinction guards cosz -> 0)
+      real(wp), allocatable :: incid_beam(:)       !< (band) [W/m2] direct-beam incident at canopy top
+      real(wp), allocatable :: incid_diff(:)       !< (band) [W/m2] diffuse incident at canopy top
+      real(wp), allocatable :: grnd_refl(:)        !< (band) ground reflectance (albedo, or 1-emiss)
+      real(wp), allocatable :: grnd_emiss(:)       !< (band) [W/m2] ground thermal emission (0 for SW)
+   end type rad_forcing_t
+
+   !----- Returned fluxes: per cohort and band, absorbed by leaves and wood [W/m2 of ground]; per  !
+   !      band, the albedo and the fluxes below the canopy. ----------------------------------!
+   type :: rad_flux_t
+      integer(ik) :: n_band = 0_ik, n_coh = 0_ik
+      real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
+      real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
+      real(wp), allocatable :: incid_top(:,:)      !< (band,col_cohort) [W/m2] beam + down diffuse at its layer's top
+      real(wp), allocatable :: albedo(:)           !< (band) upward over incident at the top; LW's includes emission (> 1)
+      real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
+      real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
+   end type rad_flux_t
+
+   !----- The ground's optical state, the two-stream's lower boundary                              !
+   !      (docs/science/canopy_radiation_transfer.md §4): bare soil, blended toward the snow. ------!
+   type :: ground_optics_state_t
+      integer(ik)           :: n_band = 0_ik
+      real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
+      real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
+      real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
+   end type ground_optics_state_t
 
 contains
 
@@ -388,5 +420,31 @@ contains
          flux%up_ground(b) = up_ground
       end do
    end subroutine canopy_radiation
+
+   subroutine alloc_rad_forcing(f, n_band)
+      type(rad_forcing_t), intent(out) :: f
+      integer(ik),         intent(in)  :: n_band
+      f%n_band = n_band
+      allocate(f%incid_beam(n_band), f%incid_diff(n_band), f%grnd_refl(n_band), f%grnd_emiss(n_band))
+      f%incid_beam = 0.0_wp
+      f%incid_diff = 0.0_wp
+      f%grnd_refl  = 0.0_wp
+      f%grnd_emiss = 0.0_wp
+   end subroutine alloc_rad_forcing
+
+   subroutine alloc_rad_flux(flux, n_band, n_coh)
+      type(rad_flux_t), intent(out) :: flux
+      integer(ik),      intent(in)  :: n_band, n_coh
+      flux%n_band = n_band
+      flux%n_coh  = n_coh
+      allocate(flux%abs_leaf(n_band, n_coh), flux%abs_wood(n_band, n_coh), flux%incid_top(n_band, n_coh))
+      allocate(flux%albedo(n_band), flux%dn_ground(n_band), flux%up_ground(n_band))
+      flux%abs_leaf = 0.0_wp
+      flux%abs_wood = 0.0_wp
+      flux%incid_top = 0.0_wp
+      flux%albedo = 0.0_wp
+      flux%dn_ground = 0.0_wp
+      flux%up_ground = 0.0_wp
+   end subroutine alloc_rad_flux
 
 end module meds_canopy_radiation

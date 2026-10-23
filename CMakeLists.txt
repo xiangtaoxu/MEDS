@@ -271,19 +271,18 @@ add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
 target_link_libraries(meds_slow_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_slow_kernels)
 
-#----- FAST kernels (sub-daily): canopy radiative transfer + aerodynamics + the canopy air space #
-#      (canopy/ = the medium), leaf gas exchange + hydraulics + maintenance respiration + the     #
-#      tissue energy balance (plant/ = the organisms), and the soil water / soil energy / ground  #
-#      + snow stores (soil/). State-free apart from the patch store types; builds standalone.     #
+#----- FAST kernels (sub-daily): the process modules in processes/, one per process: canopy      #
+#      radiation, aerodynamics and the canopy air space; leaf gas exchange, maintenance           #
+#      respiration, the plant's energy, the canopy's water and plant hydraulics; soil water,     #
+#      soil heat and the surface (snow and bare ground). State-free apart from the patch store   #
+#      types; builds standalone.                                                                  #
 #                                                                                                  #
 #      It links meds_state and meds_config only: the fast kernels import nothing from                #
 #      slow_dynamics/, and the one fast->slow edge (the heterotrophic-respiration seam,              #
 #      docs/science/soil_carbon.md §7) sits on meds_fast.                                            #
 file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/canopy/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/processes/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
 target_link_libraries(meds_fast_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_fast_kernels)

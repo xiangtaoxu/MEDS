@@ -18,11 +18,11 @@ module meds_c_api_canopy
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_config_io,            only : load_meds_config
-   use meds_plant_types,          only : leaf_env_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_flux_t
    use meds_pft_params,           only : leaf_photo_pft_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_leaf_gas_exchange,    only : solve_leaf_gas_exchange, leaf_params_at_capacity
    use meds_plant_trait_dynamics, only : light_plastic_traits
-   use meds_canopy_types,         only : rad_forcing_t, rad_flux_t, ground_optics_state_t, alloc_rad_forcing
+   use meds_canopy_radiation, only : rad_forcing_t, rad_flux_t, ground_optics_state_t, alloc_rad_forcing
    use meds_canopy_radiation,     only : canopy_radiation, ground_optics
    use meds_numerics,             only : ascending_order
    implicit none

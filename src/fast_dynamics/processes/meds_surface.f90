@@ -1,14 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_ground_biophysics -- the stateless land-surface interface kernels: the bare-ground  !
-! skin and the one-layer snow / temporary-surface-water store, blended by snowfac, each    !
-! giving the soil-top boundary and the canopy-air fluxes (docs/science/snow_biophysics.md):!
+! meds_surface -- the ground's surface: the bare-ground skin and the one-layer snow        !
+! store, blended by snowfac, each giving the soil-top boundary and the canopy-air fluxes   !
+! (docs/science/snow_biophysics.md):                                                       !
 !   * ground_surface_fluxes -- the bare ground's sensible and latent fluxes;               !
 !   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater -- the snow's mass;     !
 !   * snow_surface_fluxes / snow_base_conductance / snow_surface_balance /                !
 !     snow_take_exchange / snow_energy_step -- its energy.                                 !
 !==========================================================================================!
-module meds_ground_biophysics
+module meds_surface
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan_boltzmann, &
                                        latent_heat_fusion, tsupercool_liq
@@ -16,7 +16,6 @@ module meds_ground_biophysics
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_liquid, precip_enthalpy
    use meds_patch_state_vars,   only : snow_state_t
-   use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_params,  only : snow_params_t
    implicit none
    private
@@ -26,6 +25,40 @@ module meds_ground_biophysics
    public :: snow_surface_balance, snow_take_exchange
    public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
    public :: snow_surface_fluxes   ! used only by the tests
+   public :: snow_env_t, snow_flux_t, snow_melt_t
+
+   !----- Surface boundary conditions for the snow-surface energy balance (read-only, forced). --!
+   type :: snow_env_t
+      real(wp) :: abs_sw   = 0.0_wp, abs_lw = 0.0_wp    !< [W/m2] the snow-blended ground's absorbed SW and net LW
+      real(wp) :: can_temp = 273.16_wp, can_shv = 0.0_wp !< [K],[kg/kg] CAS state (forced sibling)
+      real(wp) :: ggnet    = 0.0_wp                     !< [m/s] ground<->CAS conductance (heat = vapour)
+      real(wp) :: rho_air  = 1.2_wp, press = 101325.0_wp !< [kg/m3],[Pa] CAS air
+      real(wp) :: t_soil_top = 273.16_wp                !< [K] top soil-node temperature (snow-base conduction target)
+      real(wp) :: k_soil_top = 0.0_wp                   !< [W/m/K] top soil layer's thermal conductivity (the caller's)
+      real(wp) :: dz_soil_top = 0.05_wp                 !< [m] top soil node depth |z_node(1)| (interface spacing)
+   end type snow_env_t
+
+   !----- Snow-surface energy-balance outputs (all positive upward; per unit ground area). ------!
+   type :: snow_flux_t
+      real(wp) :: t_surf  = 273.16_wp, fliq = 0.0_wp    !< [K],[-] diagnosed snow-surface temperature + liquid fraction
+      real(wp) :: h_snow  = 0.0_wp, le_snow = 0.0_wp    !< [W/m2] sensible + latent (sublimation/evap) to the CAS
+      real(wp) :: w_flux  = 0.0_wp                      !< [kg/m2/s] vapour mass to CAS (>0 sublimation, <0 deposition)
+      real(wp) :: g_base  = 0.0_wp                      !< [W/m2] conduction snow-base -> soil top (the new soil top BC)
+      real(wp) :: rnet    = 0.0_wp                      !< [W/m2] net all-wave radiation absorbed by the snow surface
+      real(wp) :: energy_in = 0.0_wp                    !< [W/m2] what the pack gains: rnet - h_snow - le_snow - g_base
+      real(wp) :: snowfac = 0.0_wp                      !< [-] Niu-Yang07 snow-cover / burial fraction
+      real(wp) :: energy_resid = 0.0_wp                 !< [J/m2] closed-budget residual (~0 by construction)
+   end type snow_flux_t
+
+   !----- Snow-mass outputs from accumulation + melt drainage (a store->store handoff to the pond). -!
+   type :: snow_melt_t
+      real(wp) :: melt_mass = 0.0_wp                    !< [kg/m2] free liquid drained this step -> the pond
+      real(wp) :: melt_enth = 0.0_wp                    !< [J/m2]  matching enthalpy (internal_energy_liquid(t_3ple))
+      real(wp) :: dump_mass = 0.0_wp                    !< [kg/m2] full-melt-out residual water dumped to the pond
+      real(wp) :: dump_enth = 0.0_wp                    !< [J/m2]  full-melt-out residual energy dumped to the pond
+      logical  :: melted_out = .false.                  !< .true. when the layer vanished (nlayer -> 0)
+      real(wp) :: mass_resid = 0.0_wp                   !< [kg/m2] closed-budget residual (~0 by construction)
+   end type snow_melt_t
 
 contains
 
@@ -287,4 +320,4 @@ contains
       flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * flux%energy_in
    end subroutine snow_energy_step
 
-end module meds_ground_biophysics
+end module meds_surface

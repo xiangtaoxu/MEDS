@@ -26,8 +26,8 @@ module meds_fast_integ_types
    use meds_linear_algebra, only : arrowhead_system_t
    use meds_soil_water, only : ground_evap_env_t
    use meds_fast_params, only : CTRL_I
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
-   use meds_cas_biophysics, only : cas_box_t
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity
+   use meds_canopy_air_space, only : cas_box_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none

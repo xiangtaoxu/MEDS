@@ -25,12 +25,12 @@ module meds_fast_integ_frozen
                                      CO_PSI_WOOD, CO_PLC, CO_SAPFLOW, CO_ROOT_UPTAKE
    use meds_plant_hydr_lib,   only : conductance_retained_fraction
    use meds_plant_hydraulics, only : leaf_node_psi
-   use meds_soil_types,       only : snow_melt_t
+   use meds_surface, only : snow_melt_t
    use meds_soil_derive,      only : top_soil_psi
    use meds_soil_params,      only : soil_profile_t
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_surface_t
-   use meds_canopy_types,     only : aero_env_t, aero_geom_t, aero_out_t, set_aero_env_atm
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, set_aero_env_atm
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
                                      march_state_t, frozen_t, surface_state_t,                            &
@@ -43,13 +43,14 @@ module meds_fast_integ_frozen
    use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
-   use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, intercept_canopy_layer, &
-                                     EFFAREA_HEAT, EFFAREA_TRANSP, EFFAREA_EVAP
+   use meds_plant_energy, only : sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, EFFAREA_HEAT, &
+                                 EFFAREA_TRANSP, EFFAREA_EVAP
+   use meds_canopy_water, only : intercept_canopy_layer
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,           &
                                       root_zone_temp_scale
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
-   use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
+   use meds_surface, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
                                      cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure,               &
                                      soil_thermal_conductivity, specific_humidity_to_vapor_pressure
@@ -119,8 +120,9 @@ contains
       frozen%cas%nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp + static%slow_co2_rate
       out%report%exports%gpp_last = gpp
       out%report%exports%nee_last = frozen%cas%nee_biotic
-      call cas_capacities_and_conductances(rho, qcas, dynamic%cas%can_depth, out%aero%ustar, out%aero%temp1,    &
-                                           out%aero%temp2, frozen%cas%box%air_mass_capacity,                    &
+      call cas_capacities_and_conductances(rho, qcas, dynamic%cas%can_depth, out%aero%ustar,                    &
+                                           out%aero%heat_transfer_factor, out%aero%vapour_transfer_factor,      &
+                                           frozen%cas%box%air_mass_capacity,                                   &
                                            frozen%cas%box%air_molar_capacity,                                   &
                                            frozen%cas%box%atm_conductance_enthalpy,                             &
                                            frozen%cas%box%atm_conductance_vapor,                                &
@@ -521,18 +523,20 @@ contains
    !---------------------------------------------------------------------------------------!
    ! cas_capacities_and_conductances -- canopy-air-space mass and molar capacities [kg/m2],         !
    ! [mol/m2] and the CAS <-> atmosphere conductances for enthalpy, vapour and CO2                  !
-   ! (docs/science/canopy_aerodynamics.md eq. (5)). Heat rides the temp1 profile factor, vapour and !
-   ! CO2 ride temp2 (equal in canopy_aerodynamics, z0q = z0h).                                      !
+   ! (docs/science/canopy_aerodynamics.md eq. (5)). Heat rides heat_transfer_factor, vapour !
+   ! and CO2 vapour_transfer_factor (equal in canopy_aerodynamics, z0q = z0h).             !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, temp1, temp2,          &
+   pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, heat_transfer_factor,                &
+                                                   vapour_transfer_factor,                                           &
                                                    cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
-      real(wp), intent(in)  :: rho, qcas, can_depth, ustar, temp1, temp2
+      real(wp), intent(in)  :: rho, qcas, can_depth, ustar, heat_transfer_factor, vapour_transfer_factor
       real(wp), intent(out) :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp) :: can_dmol
       can_dmol = cas_molar_density(rho, qcas)
       cas_mass_capacity = rho      * can_depth
       cas_molar_capacity = can_dmol * can_depth
-      call cas_atm_conductances(rho, can_dmol, ustar, temp1, temp2, g_atm_heat, g_atm_vapour, g_atm_co2)
+      call cas_atm_conductances(rho, can_dmol, ustar, heat_transfer_factor, vapour_transfer_factor, g_atm_heat,   &
+                                g_atm_vapour, g_atm_co2)
    end subroutine cas_capacities_and_conductances
 
    !---------------------------------------------------------------------------------------!

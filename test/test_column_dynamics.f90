@@ -23,11 +23,11 @@ program test_column_dynamics
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_temp_to_enthalpy, temp_to_internal_energy, tissue_temp_to_energy,  &
                                            internal_energy_liquid, tissue_dry_heat_capacity
-   use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_state,          only : static_state_fixture
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_params,         only : SOIL_BC_DRAIN
-   use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
+   use meds_canopy_aerodynamics, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,  &
                                         fast_output_t, fast_workspace_t, alloc_static_state,          &
@@ -65,7 +65,7 @@ program test_column_dynamics
    logical  :: cold_air = .false.   !< RUN 9b: the sub-freezing air of the snowfall runs, without snowfall
    logical  :: snow_physical, snowfall_on = .false.
    !----- RUN 5b: a dark, isothermal, rain-free day, and the first step's reported H with the   !
-   !      conductance it ran on (rho*ustar*temp1). ------------------------------------------------!
+   !      conductance it ran on (rho*ustar*heat_transfer_factor). ------------------------------------------------!
    logical  :: iso_dark = .false.
    real(wp) :: h_first, gah_first
    real(wp) :: snow_swe_split
@@ -609,7 +609,7 @@ contains
          call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
          h_step = out%h_flux
          if (iso_dark) then
-            h_first = h_step ; gah_first = forcing%rho_air * out%aero%ustar * out%aero%temp1
+            h_first = h_step ; gah_first = forcing%rho_air * out%aero%ustar * out%aero%heat_transfer_factor
             exit
          end if
 
@@ -706,7 +706,7 @@ contains
    !----- The reference level (RUN 5b). Canopy air at the temperature and humidity of the air at   !
    !      the canopy-air top is a neutral surface layer with no temperature scale, whatever zref is.  !
    !      Referencing only the air to the ground would solve it as stable, with                       !
-   !      tstar = temp1*(g/cp)*zref (docs/science/canopy_aerodynamics.md §2, "The reference level").  !
+   !      tstar = heat_transfer_factor*(g/cp)*zref (docs/science/canopy_aerodynamics.md §2, "The reference level").  !
    subroutine test_reference_level()
       type(fast_static_state_t) :: c3
       type(aero_out_t)      :: a3

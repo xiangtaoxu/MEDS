@@ -14,7 +14,7 @@
 module meds_c_api_leaf
    use iso_c_binding,          only : c_double, c_int
    use meds_kinds,             only : wp, ik
-   use meds_plant_types,       only : leaf_env_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_flux_t
    use meds_pft_params,        only : leaf_photo_pft_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics

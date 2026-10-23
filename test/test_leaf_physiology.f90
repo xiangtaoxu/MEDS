@@ -14,7 +14,7 @@ program test_leaf_physiology
                                   kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn, solve_leaf_gas_exchange
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

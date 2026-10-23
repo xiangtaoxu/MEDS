@@ -21,13 +21,13 @@ program test_column_derivs
                                       sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
                                       temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
    use meds_budget_check,   only : budget_t, budget_accumulate
-   use meds_soil_types, only : energy_forcing_t, energy_flux_t
+   use meds_soil_heat, only : soil_heat_forcing_t, soil_heat_flux_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,      only : soil_profile_t, soil_params_t
    use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
+   use meds_soil_heat,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_pft_params,  only : hydraulics_pft_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_integ_derivs, only : surface_derivs, march_derivs
@@ -120,7 +120,7 @@ contains
       associate (b => frozen%cas%box)
          b%air_mass_capacity        = frozen%cas%rho * 20.0_wp                                 ! rho * can_depth
          b%air_molar_capacity       = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 20.0_wp
-         b%atm_conductance_enthalpy = frozen%cas%rho * 0.3_wp * 0.02_wp                        ! rho * ustar * temp1
+         b%atm_conductance_enthalpy = frozen%cas%rho * 0.3_wp * 0.02_wp                        ! rho * ustar * heat_transfer_factor
          b%atm_conductance_vapor    = frozen%cas%rho * 0.3_wp * 0.02_wp
          b%atm_conductance_co2      = (frozen%cas%rho * (1.0_wp - 0.012_wp) / 0.0289655_wp) * 0.3_wp * 0.02_wp
          b%atm_enthalpy             = cas_temp_to_enthalpy(300.0_wp, 0.011_wp)
@@ -284,10 +284,10 @@ contains
    !----- 6. soil_energy_time_deriv == the dt->0 limit of the BE kernel soil_energy_step_implicit. ----------!
    subroutine test_soil_energy_tendency()
       type(soil_profile_t)        :: soil
-      type(energy_forcing_t)      :: forcing
+      type(soil_heat_forcing_t)      :: forcing
       type(soil_params_t)         :: eopts
       type(soil_energy_state_t)   :: col, col0
-      type(energy_flux_t)         :: eflux
+      type(soil_heat_flux_t)         :: eflux
       real(wp)    :: dedt(n_soil_layer_max), dt, worst, fd
       integer(ik) :: k, nsl
       nsl = 10_ik
@@ -298,7 +298,7 @@ contains
       call build_profile_thermal(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
-      forcing%root_heat_sink(1:10) = 3.0_wp                       ! nonzero interior sink
+      forcing%water_heat_out(1:10) = 3.0_wp                       ! nonzero interior sink
       do k = 1_ik, 10_ik                                          ! a temperature gradient -> nonzero faces
          col%soil_energy(k) = temp_to_internal_energy(soil%dry_heat_capacity(k),                      &
                               forcing%soil_water(k) * rho_h2o, 291.0_wp - 0.6_wp * real(k-1_ik, wp), 1.0_wp)
@@ -324,7 +324,7 @@ contains
       type(march_tend_t)        :: f
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
-      type(energy_forcing_t)     :: eforc_chk
+      type(soil_heat_forcing_t)     :: eforc_chk
       type(soil_energy_state_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
       integer(ik) :: k, i, n, nsl
@@ -384,11 +384,11 @@ contains
       eforc_chk%g_top = surf_tend%g_top
       do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
-         eforc_chk%root_heat_sink(k) = frozen%roots%root_heat(k)
+         eforc_chk%water_heat_out(k) = frozen%roots%root_heat(k)
          eforc_chk%w_flux(k)         = -frozen%hydrology%w_flux_frozen(k)
       end do
-      eforc_chk%root_heat_sink(1)   = eforc_chk%root_heat_sink(1) + frozen%hydrology%exfil_enth
-      eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
+      eforc_chk%water_heat_out(1)   = eforc_chk%water_heat_out(1) + frozen%hydrology%exfil_enth
+      eforc_chk%water_heat_out(nsl) = eforc_chk%water_heat_out(nsl)                                  &
                                     + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
       eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
       eforc_chk%t_water_top = frozen%hydrology%t_infil
