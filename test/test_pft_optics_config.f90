@@ -160,7 +160,7 @@ program test_pft_optics_config
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)
       call finalize_init(poly)
       i2 = merge(1_ik, 2_ik, poly%cohort%pft(1) == 2_ik)        ! the PFT-2 cohort, after the sort
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),     &
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), poly%site%surface(1),          &
                                 t_birth, psi_birth)
       w_expect = tissue_psi_to_water(psi_birth, tab%pft(2)%leaf_curve, poly%cohort%leaf_carbon(i2))
       call check_close(poly%cohort%leaf_water_mass(i2), w_expect, 1.0e-12_wp,                      &

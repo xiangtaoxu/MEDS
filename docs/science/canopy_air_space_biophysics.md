@@ -95,8 +95,8 @@ into the source by the driver, so the box math itself is scheme-shared.
 
 ### The start
 
-A bare-ground or census start puts the canopy air at the air above it. Setup stores a placeholder,
-the reference climate (288 K, 0.008 kg kg⁻¹, the run's CO₂: `[forcing].co2_source`), so the store
+A bare-ground or census start puts the canopy air at the air above it. Setup stores a placeholder
+as it lays the patches out, the reference climate (288 K, 0.008 kg kg⁻¹, the run's CO₂: `[forcing].co2_source`), so the store
 is never unset. The fast loop's first window then sets each patch's canopy air from its site's
 first sub-step sample, after the site's terrain: the air temperature, the humidity and the CO₂, the
 enthalpy from them. Each cohort's tissues are held at that temperature, their water as it was. The
@@ -115,7 +115,7 @@ wrote it.
 | capacities $`W_{cap}`$, $`C_{cap}`$ + conductances | `meds_fast_integ_frozen`: `cas_capacities_and_conductances` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_integ_frozen`: `build_frozen` |
 | CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_patch_state_vars`) |
-| the start's canopy air | `init_fast_state` (`meds_init`, the placeholder); `seed_start_canopy_air` (`meds_fast_state`), called by `fast_dynamics` at the first window |
+| the start's canopy air | `seed_patch_stores` (`meds_init_bare_ground`, the placeholder); `seed_start_canopy_air` (`meds_fast_state`), called by `fast_dynamics` at the first window |
 | $`u_*`$ conductance (temp1/temp2) | `meds_canopy_aerodynamics` (see [canopy_aerodynamics](canopy_aerodynamics.md)) |
 
 ## References

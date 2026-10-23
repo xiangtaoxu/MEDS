@@ -76,8 +76,8 @@ src/                                    37.0 k lines · 106 modules · 21 CMake 
 │   ├── (root)     the netCDF C bindings, and the helpers both writers share    615
 │   ├── init/      the initial state, by [init].init_mode: bare ground, a
 │   │              cohort census, or a restart file, which the checkpoints
-│   │              write; init_polygon starts a polygon from one and seeds
-│   │              the fast loop's stores (init_fast_state)                   1 693
+│   │              write; init_polygon starts a polygon from one, the
+│   │              patches seeded as they are laid out                        1 693
 │   ├── met/       the atmosphere above the canopy: the met reader (a MEDS
 │   │              forcing file, or the ED_ERA5land archive) and its sample at
 │   │              a site and at a patch's canopy-air top (meds_met), the grid

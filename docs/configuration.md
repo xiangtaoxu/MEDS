@@ -349,9 +349,9 @@ reference climate (288 K, 0.008 kg kg⁻¹, the run's CO₂). A restart keeps th
 file holds ([canopy air](science/canopy_air_space_biophysics.md), The start).
 
 **A new cohort starts in its patch's state**, at setup and at every recruitment: at the canopy-air
-temperature, holding the water its tissues hold at the potential of the patch's top soil layer. At
-setup the fast loop has not seeded the patches yet, so a cohort starts at `soil_temp` and the starting
-soil water's potential, and is re-seeded from its patch once the patch is seeded.
+temperature, holding the water its tissues hold at the potential of the patch's top soil layer.
+Setup seeds each patch's stores as it lays the patches out, so a setup cohort is born in them too;
+with the fast loop off the canopy air keeps that seed, the reference climate's 288 K.
 
 ## Output
 

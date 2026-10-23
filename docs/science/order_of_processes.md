@@ -26,9 +26,12 @@ region (`"region"`). Both go through the same stages.
 2. Build each polygon's initial state from `[init].init_mode`: bare ground, a census, or a
    restart from the polygon's row of a state file. A census or state file that cannot start the run
    stops it. A restart also restores the calendar date and any restructuring the checkpoint still owes
-   ([§5](#5-the-calendar-boundary)). Bare ground and a census then seed the fast reservoirs
-   (`init_fast_state`): the soil at `[init]`'s temperature and water, uniform canopy air, the
-   cohorts' tissues in step with them, and the initial snow; a restart read all of these instead.
+   ([§5](#5-the-calendar-boundary)). Bare ground and a census seed each patch's stores as they lay
+   the patches out (`init_bare_sites`): the soil at `[init]`'s temperature and water, the canopy air
+   at the reference climate, so every setup cohort is born in its patch's state. Once the stand is
+   final, its cohorts' tissues are settled in step with their patches, and the initial snow laid
+   (`init_fast_state`), with the fast loop on or off; a restart read all of these instead. The fast
+   loop's first window then puts the canopy air at the first forcing sample.
 3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, the
    canopy-air depth, from the stand; the steady-state soil carbon (unless restored); and the slow
    ledger.

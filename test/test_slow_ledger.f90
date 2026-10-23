@@ -27,7 +27,6 @@ program test_slow_ledger
                                        soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
-   use meds_state_defaults,     only : UNSET_POSITIVE
    use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
@@ -39,7 +38,7 @@ program test_slow_ledger
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, slow_tissue_energy, SLOW_PHASE_GROW, &
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
-   use meds_slow_dynamics,      only : settle_tissue_water
+   use meds_slow_dynamics,      only : settle_tissue_water, refresh_canopy_depth
    use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
    use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -202,6 +201,7 @@ contains
       type(meds_config_t) :: c
       type(polygon_t)     :: st
       type(slow_ledger_t) :: lg
+      type(slow_store_t)  :: s_now
       type(water_curve_t) :: leaf_curve, wood_curve
       real(wp) :: shed0, excess, n_new, tol, theta_start(n_soil_layer_max)
       integer(ik) :: p, ph(3)
@@ -211,9 +211,11 @@ contains
       tol = 1.0e-12_wp
 
       !----- (a) A recruitment: water in, declared, and the recruit born in its patch's state -- here  !
-      !      a patch the fast loop has not seeded, so the run's starting state (check_birth_temp      !
-      !      covers a seeded one). -------------------------------------------------------------------!
+      !      a patch only the start has seeded, at the starting soil and the reference climate's       !
+      !      canopy air, its depth set as the driver sets it before the first step (check_birth_temp   !
+      !      covers a patch at another temperature). ------------------------------------------------!
       call init_bare_ground(st, c, 1_ik)
+      call refresh_canopy_depth(st, c)
       st%patch%recruit_pool(:, 1) = 0.0_wp
       st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
       lg = slow_ledger_t() ; lg%active = .true.
@@ -222,7 +224,11 @@ contains
       call check(st%cohort%n == 1_ik, 'tissue water (a): one recruit is born')
       call check(lg%decl_gross(SLOW_PHASE_RECRUIT)%water > 0.0_wp,                                 &
                  'tissue water (a): the recruit''s birth water is declared as drawn in')
-      call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water) <= tol * lg%decl_gross(SLOW_PHASE_RECRUIT)%water, &
+      !----- Zero to round-off of the store the ledger differences: the seeded soil holds hundreds  !
+      !      of kg/m2 against the recruit's grams. --------------------------------------------------!
+      s_now = slow_site_store(st, c, RHO)
+      call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water)                                        &
+                 <= tol * (lg%decl_gross(SLOW_PHASE_RECRUIT)%water + s_now%water),                  &
                  'tissue water (a): the recruit phase''s water residual is zero')
       leaf_curve = c%pft%hydro(2_ik)%leaf_curve
       wood_curve = c%pft%hydro(2_ik)%wood_curve
@@ -231,8 +237,8 @@ contains
       call check_close(tissue_water_to_psi(st%cohort%leaf_water_mass(1), leaf_curve,            &
                        st%cohort%leaf_carbon(1)), top_soil_psi(sp, theta_start(1)), 1.0e-9_wp,     &
                        'tissue water (a): a recruit''s leaves are born at the starting top-soil potential')
-      call check_close(st%cohort%leaf_temp(1), c%init%soil_temp, 1.0e-12_wp,                       &
-                       'tissue water (a): a recruit is born at the starting temperature')
+      call check_close(st%cohort%leaf_temp(1), st%patch%cas(1)%can_temp, 1.0e-12_wp,               &
+                       'tissue water (a): a recruit is born at its patch''s canopy-air temperature')
 
       !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
       c%fast_biophysics_on = .true.
@@ -756,8 +762,7 @@ contains
    end subroutine check_cull
 
    !----- A cohort is born in its patch's state (patch_physical_state): at the canopy-air temperature, !
-   !      its tissues at the top soil layer's potential. A patch not seeded yet gives the run's       !
-   !      starting state from [init]. ------------------------------------------------------------------!
+   !      its tissues at the top soil layer's potential. -------------------------------------------!
    subroutine check_birth_temp()
       integer(ik) :: m
       real(wp)    :: t_birth, psi_birth, t_save
@@ -765,7 +770,7 @@ contains
       m = poly%cohort%n + 1_ik
       t_save = poly%patch%cas(1)%can_temp
       poly%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
+      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), poly%site%surface(1),       &
                                 t_birth, psi_birth)
       call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
       call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%patch%soil_water(1)%theta(1)), &
@@ -779,14 +784,6 @@ contains
       call check_close(tissue_water_to_psi(poly%cohort%leaf_water_mass(m), leaf_curve,                &
                        poly%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
                        'birth: the leaves hold the water of that potential')
-      !----- A patch not seeded yet (its canopy air at the type's UNSET_POSITIVE) gives the starting state. !
-      poly%patch%cas(1)%can_temp = UNSET_POSITIVE
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), cfg, poly%site%surface(1),  &
-                                t_birth, psi_birth)
-      call check_close(t_birth, cfg%init%soil_temp, 1.0e-12_wp, 'birth: unseeded, the run''s starting temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%site%surface(1)%theta_start(1)), &
-                       1.0e-12_wp,                                                                        &
-                       'birth: unseeded, the starting soil water''s potential')
       poly%patch%cas(1)%can_temp = t_save
    end subroutine check_birth_temp
 

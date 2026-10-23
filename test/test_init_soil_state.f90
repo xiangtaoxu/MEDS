@@ -4,11 +4,11 @@
 !                                                                                          !
 ! A run without a spin-up starts from the initial soil state, so the keys matter only if   !
 ! they reach the column: this asserts the path from the config through build_soil_profile  !
-! to init_fast_state, and pins the defaults (288 K, theta = 0.30). A column with a         !
-! texture per layer (the soil maps) builds each layer's own curve and starts each layer at !
-! its own field capacity. A start below freezing seeds ice and diagnoses its own           !
-! temperature. A bare-ground start is empty unless a PFT's nbg_init_density seeds it, at   !
-! min_cohort_height.                                                                       !
+! to the patches init_bare_ground lays out, and pins the defaults (288 K, theta = 0.30). A !
+! column with a texture per layer (the soil maps) builds each layer's own curve and starts !
+! each layer at its own field capacity. A start below freezing seeds ice and diagnoses its !
+! own temperature. A bare-ground start is empty unless a PFT's nbg_init_density seeds it,  !
+! at min_cohort_height.                                                                    !
 !==========================================================================================!
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
@@ -20,6 +20,7 @@ program test_init_soil_state
    use meds_constants,        only : n_soil_layer_max, rho_h2o
    use meds_therm_lib,        only : internal_energy_to_temp
    use meds_init,             only : init_fast_state
+   use meds_met_types,        only : met_forcing_t
    use meds_test_support,     only : banner, build_test_config, check, check_close
    implicit none
    type(meds_config_t)  :: cfg
@@ -27,6 +28,7 @@ program test_init_soil_state
    type(soil_profile_t) :: prof
    integer(ik)          :: ip, nsl, k, n
    real(wp)             :: bottoms(n_soil_layer_max), tdiag, fdiag
+   type(met_forcing_t)  :: ref   !< the reference climate a start's canopy air is seeded at
 
    call banner('[init].soil_temp and soil_theta reach the soil column')
    cfg = build_test_config()
@@ -49,12 +51,14 @@ program test_init_soil_state
                  'a soil layer did not start at [init].soil_temp')
       call check(all(abs(poly%patch%soil_water(ip)%theta(1:nsl) - 0.25_wp) < 1.0e-12_wp),              &
                  'a soil layer did not start at [init].soil_theta')
+      call check(poly%patch%cas(ip)%can_temp == ref%air_temp .and. poly%patch%cas(ip)%can_shv == ref%air_shv, &
+                 'a laid-out patch''s canopy air is not at the reference climate')
    end do
 
    !=== 2b. A start below freezing: the water starts as ice, and the stored energy gives back the  !
    !        start temperature. ========================================================================!
    cfg%init%soil_temp = 260.0_wp
-   call init_fast_state(poly, cfg)
+   call init_bare_ground(poly, cfg, 3_ik)
    associate (se => poly%patch%soil_energy(2), surf => poly%site%surface(1))
       do k = 1_ik, nsl
          call internal_energy_to_temp(se%soil_energy(k), surf%theta_start(k) * rho_h2o,                     &

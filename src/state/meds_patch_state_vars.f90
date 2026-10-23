@@ -20,8 +20,7 @@ module meds_patch_state_vars
    use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
-   use meds_state_defaults,   only : UNSET_POSITIVE, is_unset_positive, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
-   use meds_config,           only : meds_config_t
+   use meds_state_defaults,   only : UNSET_POSITIVE, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
    use meds_soil_derive,      only : top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
    use meds_biogeochem_params,  only : N_SOIL_POOL
@@ -47,7 +46,7 @@ module meds_patch_state_vars
       real(wp) :: can_enthalpy = 0.0_wp                     !< [J/kg]     specific enthalpy (prognostic)
       real(wp) :: can_shv      = 0.0_wp                     !< [kg/kg]    specific humidity (prognostic)
       real(wp) :: can_co2      = CAN_CO2_UNSEEDED           !< [umol/mol] CO2 mixing ratio in dry air (prognostic)
-      real(wp) :: can_temp     = UNSET_POSITIVE             !< [K]        diagnosed; unset until the fast loop seeds it
+      real(wp) :: can_temp     = UNSET_POSITIVE             !< [K]        diagnosed; unset until a start seeds it
       real(wp) :: can_depth    = CAN_DEPTH_UNSET            !< [m]        tallest cohort + freeboard, set by the slow step
    end type cas_state_t
 
@@ -516,23 +515,15 @@ contains
 
    !----- A patch's canopy-air temperature [K] and the water potential of its top soil     !
    !      layer [MPa] (top_soil_psi), which a new cohort takes so it starts in equilibrium !
-   !      with where it stands. A patch the fast loop has not seeded yet -- at setup, or in!
-   !      a run without the fast loop -- gives the run's [init] temperature and the site's   !
-   !      starting water instead. init_fast_state re-seeds the setup cohorts once it       !
-   !      has seeded their patch. `surf` is the patch's site's surface. --------------------!
-   pure subroutine patch_physical_state(cas, soil_water, cfg, surf, temp, psi)
+   !      with where it stands. Every patch is seeded from its start (init_bare_sites, a   !
+   !      restart's file, a gap's donors). `surf` is the patch's site's surface. ----------!
+   pure subroutine patch_physical_state(cas, soil_water, surf, temp, psi)
       type(cas_state_t),         intent(in)  :: cas          !< the patch's canopy air
       type(soil_water_state_t), intent(in)  :: soil_water   !< the patch's soil water
-      type(meds_config_t),       intent(in)  :: cfg
       type(site_surface_t),      intent(in)  :: surf
       real(wp),                  intent(out) :: temp, psi
-      if (.not. is_unset_positive(cas%can_temp)) then
-         temp = cas%can_temp
-         psi  = top_soil_psi(surf%soil_profile, soil_water%theta(1))
-      else
-         temp = cfg%init%soil_temp
-         psi  = top_soil_psi(surf%soil_profile, surf%theta_start(1))
-      end if
+      temp = cas%can_temp
+      psi  = top_soil_psi(surf%soil_profile, soil_water%theta(1))
    end subroutine patch_physical_state
 
    !=======================================================================================!
