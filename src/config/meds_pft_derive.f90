@@ -3,15 +3,17 @@
 ! meds_pft_derive -- what the PFT file's traits imply, derived once at load               !
 ! (derive_parameters): the leaf capacities from Vcmax25, the stomatal stress points a PFT  !
 ! file may leave out, and the three tables the fast loop reads, kept on the PFT table: each !
-! PFT's leaf-photosynthesis parameters, its hydraulics with its Kirchhoff lookup, and the   !
+! PFT's leaf-photosynthesis parameters, its hydraulics with its Kirchhoff lookup (built     !
+! here, build_kirchhoff_table), and the                                                    !
 ! two-stream's optics. The laws these evaluate are share/functions'.                       !
 !==========================================================================================!
 module meds_pft_derive
    use meds_kinds,          only : wp, ik
    use meds_pft_params,     only : pft_table_t, HYD_UNSET, leaf_photo_pft_t, leaf_photo_table_t,           &
                                    hydraulics_table_t, rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS,       &
-                                   RAD_NIR, RAD_LW
-   use meds_plant_hydr_lib, only : tissue_psi_tlp, tissue_psi_to_rwc, build_hydro_table
+                                   RAD_NIR, RAD_LW, kirchhoff_table_t, KIRCHHOFF_TABLE_NTAB,                &
+                                   KIRCHHOFF_TABLE_RMAX
+   use meds_plant_hydr_lib, only : tissue_psi_tlp, tissue_psi_to_rwc
    use meds_optics_lib,     only : N_LEAF_CLASS, beta_lidf, leaf_bf, scatter_pair
    implicit none
    private
@@ -19,6 +21,7 @@ module meds_pft_derive
    public :: derive_leaf_params, derive_pft_tables
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: derive_rad_optics, moments_to_beta_params
+   public :: build_kirchhoff_table
 
 contains
 
@@ -174,11 +177,60 @@ contains
       allocate(table%pft(max(pft%n, 1_ik)))
       do i = 1_ik, pft%n
          table%pft(i)%plant_hydraulics_t = pft%hydro(i)
-         call build_hydro_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
+         call build_kirchhoff_table(table%pft(i)%vuln_table, table%pft(i)%wood_kexp)
          table%pft(i)%rwc_close = tissue_psi_to_rwc(pft_wstress_psi_close(pft, i), table%pft(i)%leaf_curve%pi0,   &
                                                     table%pft(i)%leaf_curve%elastic_mod)
       end do
    end subroutine build_hydraulics_table
+
+   !----- Fill a PFT's Kirchhoff table (docs/science/plant_hydraulics.md eq. (8)), one     !
+   !      7-point panel per interval added to the node below, so it rises monotonically.   !
+   !      A subroutine, not an array-valued function (docs/building.md, Compilers). ------!
+   pure subroutine build_kirchhoff_table(tab, kexp)
+      type(kirchhoff_table_t), intent(out) :: tab
+      real(wp),                intent(in)  :: kexp
+      real(wp) :: h
+      integer  :: j
+      tab%kexp  = kexp
+      tab%r_max = KIRCHHOFF_TABLE_RMAX
+      tab%n     = int(KIRCHHOFF_TABLE_NTAB, ik)
+      h         = KIRCHHOFF_TABLE_RMAX / real(KIRCHHOFF_TABLE_NTAB, wp)
+      tab%inv_h = 1.0_wp / h
+      tab%g(0) = 0.0_wp
+      do j = 1, KIRCHHOFF_TABLE_NTAB
+         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
+      end do
+   end subroutine build_kirchhoff_table
+
+   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre, !
+   !      exact for polynomials up to degree 13. The sum is written out rather than handed !
+   !      a function (docs/building.md, no procedure arguments); u = 0 is guarded as in    !
+   !      conductance_retained_fraction. --------------------------------------------------!
+   pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
+      real(wp), intent(in) :: a, b, kexp
+      real(wp), parameter :: NODE(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
+                                           -0.4058451513773972_wp,  0.0000000000000000_wp,     &
+                                            0.4058451513773972_wp,  0.7415311855993945_wp,     &
+                                            0.9491079123427585_wp ]
+      real(wp), parameter :: WEIGHT(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
+                                            0.3818300505051189_wp,  0.4179591836734694_wp,     &
+                                            0.3818300505051189_wp,  0.2797053914892766_wp,     &
+                                            0.1294849661688697_wp ]
+      real(wp)    :: mid, half, u, acc
+      integer(ik) :: k
+      mid  = 0.5_wp * (a + b)                    ! the nodes on [-1,1], mapped onto [a,b]
+      half = 0.5_wp * (b - a)
+      acc  = 0.0_wp
+      do k = 1_ik, 7_ik
+         u = mid + half * NODE(k)
+         if (u <= 0.0_wp) then
+            acc = acc + WEIGHT(k)
+         else
+            acc = acc + WEIGHT(k) / (1.0_wp + u**kexp)
+         end if
+      end do
+      g = half * acc
+   end function kirchhoff_panel
 
    !=======================================================================================!
    !  The optics table (docs/science/canopy_radiation_transfer.md §1-§2).                  !

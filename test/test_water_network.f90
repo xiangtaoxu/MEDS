@@ -36,7 +36,8 @@ program test_water_network
    use meds_fast_state,  only : derive_cohort_terms
    use meds_fast_integ_derivs, only : set_water_state
    use meds_fast_integ_backward_euler, only : water_step, water_jacobian_error
-   use meds_plant_hydr_lib, only : build_hydro_table, water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
+   use meds_plant_hydr_lib, only : water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
+   use meds_pft_derive,     only : build_kirchhoff_table
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
    use meds_pft_params,    only : hydraulics_table_t
    use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN
@@ -105,7 +106,7 @@ contains
       h%pft(1)%rwc_close = tissue_psi_to_rwc(2.0_wp * tissue_psi_tlp(h%pft(1)%leaf_curve%pi0,                    &
                                              h%pft(1)%leaf_curve%elastic_mod), h%pft(1)%leaf_curve%pi0,           &
                                              h%pft(1)%leaf_curve%elastic_mod)
-      call build_hydro_table(h%pft(1)%vuln_table, h%pft(1)%wood_kexp)
+      call build_kirchhoff_table(h%pft(1)%vuln_table, h%pft(1)%wood_kexp)
    end subroutine make_pft
 
    !----- BCI's clay (example 04), on a grid whose top layer is 2.6 cm. ----------------------!

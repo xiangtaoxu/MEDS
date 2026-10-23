@@ -4,7 +4,7 @@
 ! (docs/configuration.md, "The PFT file").                                                 !
 !                                                                                          !
 ! Structure-of-arrays: one allocatable array per trait, indexed by PFT. Each PFT's size    !
-! allometry (allom, meds_allometry_lib), hydraulics (hydro, meds_plant_hydr_lib) and       !
+! allometry (allom, meds_allometry_lib), hydraulics (hydro, plant_hydraulics_t) and        !
 ! phenology (pheno) are records. Every trait is the PFT file's: a trait that follows a     !
 ! fitted relation (the sapwood conductivity or the mortality hazards from wood density,    !
 ! the plasticity slopes from Vcmax) is computed outside the model, by scripts/pft_traits.  !
@@ -17,12 +17,13 @@
 module meds_pft_params
    use meds_kinds,          only : wp, ik
    use meds_allometry_lib,  only : allometry_t
-   use meds_plant_hydr_lib, only : plant_hydraulics_t, hydro_table_t
+   use meds_plant_hydr_lib, only : water_curve_t
    implicit none
    private
 
    public :: pft_table_t, phenology_traits_t
    public :: leaf_photo_pft_t, leaf_photo_table_t, hydraulics_pft_t, hydraulics_table_t, rad_pft_optics_t
+   public :: plant_hydraulics_t, kirchhoff_table_t, KIRCHHOFF_TABLE_NTAB, KIRCHHOFF_TABLE_RMAX
    public :: HYD_UNSET
    public :: PATH_C3, PATH_C4
    public :: RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
@@ -76,11 +77,41 @@ module meds_pft_params
       logical     :: use_boundary_layer = .true.  !< couple through the leaf boundary layer (gb)
    end type leaf_photo_table_t
 
+   !----- One PFT's hydraulic traits, from its PFT file's [hydraulics] block               !
+   !      (docs/science/plant_hydraulics.md, Parameters). The traits have no defaults: a   !
+   !      PFT file gives every one, for every PFT. ----------------------------------------!
+   type :: plant_hydraulics_t
+      type(water_curve_t) :: leaf_curve, wood_curve      !< the tissues' pressure-volume curves
+      real(wp) :: wood_psi50           = 0.0_wp  !< [MPa, < 0] xylem potential at 50 % loss of conductance
+      real(wp) :: wood_kexp            = 0.0_wp  !< [-] vulnerability-curve shape
+      real(wp) :: wood_kmax            = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity
+      real(wp) :: vessel_curl          = 0.0_wp  !< [-] xylem path length per unit height
+      real(wp) :: root_beta            = 0.0_wp  !< [-] the untruncated profile's share below the rooting depth (eq. (13))
+      real(wp) :: root_depth_b1        = 0.0_wp  !< [m] rooting depth = b1 * height[m]^b2
+      real(wp) :: root_depth_b2        = 0.0_wp  !< [-]
+      real(wp) :: specific_root_length = 0.0_wp  !< [m/kgC] fine-root length per unit fine-root carbon
+      real(wp) :: fine_root_radius     = 0.0_wp  !< [m] fine-root radius
+   end type plant_hydraulics_t
+
+   !----- The Kirchhoff lookup table for a general vulnerability exponent: G(r) on a       !
+   !      uniform grid (docs/science/plant_hydraulics.md §3), built by                     !
+   !      build_kirchhoff_table (meds_pft_derive). A fixed-size record, so a PFT's         !
+   !      parameters copy as plain data. ------------------------------------------------!
+   integer,  parameter :: KIRCHHOFF_TABLE_NTAB = 512        !< intervals over [0, KIRCHHOFF_TABLE_RMAX]
+   real(wp), parameter :: KIRCHHOFF_TABLE_RMAX = 8.0_wp     !< [-] table domain in r = psi/psi50
+   type :: kirchhoff_table_t
+      real(wp)    :: kexp  = 0.0_wp                           !< [-] vulnerability exponent the table holds; its tail uses it too
+      real(wp)    :: r_max = KIRCHHOFF_TABLE_RMAX                 !< [-] table domain [0, r_max]
+      real(wp)    :: inv_h = 0.0_wp                           !< [-] 1 / grid spacing
+      integer(ik) :: n     = int(KIRCHHOFF_TABLE_NTAB, ik)        !< number of intervals
+      real(wp)    :: g(0:KIRCHHOFF_TABLE_NTAB) = 0.0_wp           !< g(j) = integral_0^{j*h} du/(1+u^kexp)
+   end type kirchhoff_table_t
+
    !----- A PFT's hydraulic traits ([hydraulics]) and the Kirchhoff lookup its wood_kexp sets. --!
    type, extends(plant_hydraulics_t) :: hydraulics_pft_t
-      !----- Kirchhoff lookup from wood_kexp (build_hydro_table), read only for wood_kexp outside {1,2}, !
+      !----- Kirchhoff lookup from wood_kexp (build_kirchhoff_table), read only for wood_kexp outside {1,2}, !
       !      where no closed form exists (docs/science/plant_hydraulics.md §3). ----------------------!
-      type(hydro_table_t) :: vuln_table
+      type(kirchhoff_table_t) :: vuln_table
       real(wp) :: rwc_close   !< [-] leaf relative water content at the PFT's stomatal closing potential
    end type hydraulics_pft_t
 
