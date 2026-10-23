@@ -190,7 +190,7 @@ this stand:
 
 | 2009–2010 | MEDS | Target |
 |---|---|---|
-| Leaf litter [kg dry m⁻² yr⁻¹] | 0.49 | 0.5 (litter traps 0.54) |
+| Leaf litter [kg dry m⁻² yr⁻¹] | 0.50 | 0.5 (litter traps 0.54) |
 | AGB growth of trees ≥ 10 cm [kg dry m⁻² yr⁻¹] | 0.47 | 0.3–0.5 |
 | Relative AGB growth, Ds / D / BD / E [% yr⁻¹] | 5.6 / 4.1 / 3.0 / 1.1 | 5 / 2–3 / 2–3 / 1–2 |
 | Lowest leaf cover, Ds / D / BD / E | 0.02 / 0.01 / 0.33 / 0.75 | bare / bare / 0.25–0.5 / ≥ 0.5 |
@@ -212,26 +212,25 @@ and Palo Verde's chronosequence at 20 years (Poorter et al. 2016, *Nature* 530: 
 year's highest and lowest monthly leaf area index; the last ten years' leaf area by PFT; GPP; and the
 trees of 10 cm and more.
 
-The 150-year regrowth, this figure and the table below were made with v0.3.4; they were not repeated
-after the 2026-10 sweep.
-
 | | MEDS, 150 years | 2009 inventory |
 |---|---|---|
-| AGB [MgC ha⁻¹], all / Ds / D / BD / E | 84 / 13 / 4 / 33 / 35 | 88 / 2 / 16 / 56 / 14 |
-| basal area [m² ha⁻¹] | 24.9 | 21.8 |
-| trees ≥ 10 cm [ha⁻¹] | 575 | 460 |
+| AGB [MgC ha⁻¹], all / Ds / D / BD / E | 76 / 25 / 3 / 10 / 38 | 88 / 2 / 16 / 56 / 14 |
+| basal area [m² ha⁻¹] | 24.2 | 21.8 |
+| trees ≥ 10 cm [ha⁻¹] | 526 | 460 |
 
 - **The soft-wooded deciduous PFT takes the bare ground.** Ds holds about 90 % of the biomass for 50
-  years, peaking at 35 MgC ha⁻¹ at 62 years, and thins after; BD and E build up beneath it and pass
-  it at 116 and 120 years. Basal area overshoots to 23 m² ha⁻¹ at 13 years, a dense Ds stand of 1,080
-  trees ≥ 10 cm ha⁻¹, and thins.
-- **After 150 years the biomass is the inventory's, the mix is not.** The evergreen PFT holds 2.5
-  times the inventory's biomass and D a quarter of it; the stand still gains 0.6 MgC ha⁻¹ a year.
-- **The first decades are slow:** 28 MgC ha⁻¹ after 20 years, against 71 on Palo Verde's
+  years, peaking at 37 MgC ha⁻¹ at 62 years, and thins after; E builds up beneath it and passes it
+  at 134 years, while BD stays below 10 MgC ha⁻¹. Basal area reaches 17 m² ha⁻¹ within six years and
+  holds there for 25, a dense Ds stand of up to 1,120 trees ≥ 10 cm ha⁻¹ at 16 years, which thins to
+  220 by 90 years.
+- **After 150 years the biomass is 87 % of the inventory's, and the mix is not the inventory's.** The
+  evergreen PFT holds 2.8 times the inventory's biomass and Ds 13 times, D and BD a sixth of theirs;
+  the stand still gains 0.5 MgC ha⁻¹ a year.
+- **The first decades are slow:** 23 MgC ha⁻¹ after 20 years, against 71 on Palo Verde's
   chronosequence (143 dry Mg ha⁻¹), the same shortfall as across example 06's region.
-- **The canopy grows more evergreen.** The driest month's leaf area rises from below 1 in the
-  Ds decades to 3.0 in the last ten years (the wettest month 5.8); in the 2009 stand it is 2.2
-  (MODIS 1.5). GPP stays near 27 MgC ha⁻¹ yr⁻¹ throughout, and evapotranspiration is 956 mm a year
+- **The canopy grows more evergreen.** The driest month's leaf area rises from below 1 in the first
+  thirty years to 2.8 in the last ten years (the wettest month 5.8); in the 2009 stand it is 2.2
+  (MODIS 1.5). GPP stays near 28 MgC ha⁻¹ yr⁻¹ throughout, and evapotranspiration is 978 mm a year
   in the last ten years.
 
 ### Run
@@ -247,7 +246,7 @@ The archive can also be named by the environment variable `ERA5LAND_ARCHIVE`. Th
 forcing cut into `palo_verde/data/`; the inventory check reads the archive itself, so the script runs a
 copy of `meds_config_inventory.toml` with the archive's folder in `[forcing].data_path`
 (`palo_verde/output/config/inventory.toml`). To run that config by hand, set `data_path` to the folder.
-The forcing cut takes about 4 minutes, the inventory check 2 and the regrowth about an hour on 12
+The forcing cut takes about 6 minutes, the inventory check 2 and the regrowth about 36 minutes on 12
 threads (`[run].n_threads`). Output goes to `palo_verde/output/`.
 
 ## Files
