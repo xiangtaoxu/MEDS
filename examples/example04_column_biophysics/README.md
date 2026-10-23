@@ -26,7 +26,7 @@ python run_example.py --calibrate --workers 40           # ... and redo the cali
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main`, default
 `../../build-ifx/meds_main`). The first full run builds the census file from the census tables, which
 it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The data); later runs
-reuse `data/bci_census2010_meds.csv`. Every step together takes about 20 minutes on 8 threads. The
+reuse `data/bci_census2010_meds.csv`. Every step together takes about 14 minutes on 8 threads. The
 calibration's 836 runs took 28 minutes on 200 cores of five nodes, with the queue workers of
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
@@ -122,11 +122,11 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 
 | | tower | target | default | calibrated |
 |---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.12 | 10.48 | 8.60 |
-| LE [W m⁻²] | 75.5 | 75.5 | 78.7 | 63.8 |
-| H by day [W m⁻²] | 91.3 | 166.6 | 142.4 | 158.1 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.12 | 10.47 | 8.60 |
+| LE [W m⁻²] | 75.5 | 75.5 | 78.8 | 63.8 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 142.3 | 157.9 |
 | NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.74 | −2.87 |
-| net radiation [W m⁻²] | 136.3 | | 122.5 | 123.5 |
+| net radiation [W m⁻²] | 136.3 | | 122.5 | 123.4 |
 
 - **Carbon:** the calibration brings GPP from 29 % above its target to 6 % above.
 - **Energy:** the model's canopy reflects too much (albedo 0.17–0.18 against the tower's 0.13), so
@@ -145,7 +145,7 @@ These are the last days of the 2016 El Niño dry season: four bright dry days, s
 42 mm of rain on the 27th. The figure shows the patch that covers the most ground (7 % of the site,
 LAI 6.0) and its tallest tree.
 - **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2 K above it, and the
-  top tree's leaves 3–6 K above it at midday. The soil at 2.5 cm swings 1–5 K a day.
+  top tree's leaves 3–5 K above it at midday. The soil at 2.5 cm swings 1–5 K a day.
 - **Canopy-air CO₂** falls to about 399 µmol mol⁻¹ by day as the canopy draws it down, and builds up
   again to 404–407 at night, and to 416 in the calm last night.
 - **Leaf water potential** refills to about −0.55 MPa each night of the dry spell (−0.37 after the
