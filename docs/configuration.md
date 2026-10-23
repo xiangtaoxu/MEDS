@@ -342,6 +342,12 @@ freezing point (273.16 K) the soil's water starts as ice, at that temperature. T
 (`[soil].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
 each layer starts at its own field capacity instead, and `soil_theta` is refused.
 
+**A start's canopy air is the air above it.** On a bare-ground or census start the fast loop's first
+window sets each patch's canopy-air temperature, humidity and CO₂ from its site's first forcing
+sample, and holds each cohort's tissues at that temperature. Without forcing that sample is the
+reference climate (288 K, 0.008 kg kg⁻¹, the run's CO₂). A restart keeps the canopy air its state
+file holds ([canopy air](science/canopy_air_space_biophysics.md), The start).
+
 **A new cohort starts in its patch's state**, at setup and at every recruitment: at the canopy-air
 temperature, holding the water its tissues hold at the potential of the patch's top soil layer. At
 setup the fast loop has not seeded the patches yet, so a cohort starts at `soil_temp` and the starting
@@ -374,7 +380,8 @@ a mean.
 
 `[forcing].forcing_on` turns the meteorological driver on; `[site]` says where the site is.
 Without it the fast loop runs against a constant reference climate, `met_forcing_t`'s defaults
-([forcing](science/forcing.md) §2), which is useful for tests and useless for science.
+at the run's CO₂ ([forcing](science/forcing.md) §2), which is useful for tests and useless for
+science.
 
 `[forcing].format` picks the source:
 
@@ -419,8 +426,11 @@ grows with the stand, and the aerodynamics runs from there ([`science/forcing.md
 - **A file may state its heights.** When it carries `tq_height_m`, `wind_height_m` or
   `height_above`, they must agree with `[forcing]`, or the run stops at open.
 
-**CO₂ is set in `[forcing]`, never by the met file.**
-- **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
+**CO₂ is set in `[forcing]`, never by the met file**, with forcing on or off.
+- **`co2_source = "const"`**, the default, holds `co2_const` for the whole run. A forced run must
+  name `co2_const`; without forcing it defaults to 420 µmol mol⁻¹.
+- **Without forcing**, `[forcing]` may hold just `forcing_on = false` and these keys: the reference
+  climate takes its CO₂ from them, and `co2_file` is read at startup with no met file opened.
 - **`co2_source = "file"`** reads `co2_file`, a MEDS CO₂ file looked up on model time, so the CO₂
   keeps rising while recycled met repeats.
   - The repository ships `data/co2/co2_cmip7_global_annual_1000-2022.txt`, CMIP7 global annual

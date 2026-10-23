@@ -40,7 +40,7 @@ module meds_region
    use meds_init,                   only : init_polygon
    use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
    use meds_forcing_params,         only : MET_BACKEND_ERA5LAND
-   use meds_met,             only : met_open, met_close, met_prefetch
+   use meds_met,             only : met_open, met_open_co2, met_close, met_prefetch
    use meds_met_share,       only : MET_OK
    use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
    use meds_maps_params,            only : map_inputs_t
@@ -205,6 +205,11 @@ contains
                write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
             end if
          end if
+      else if (cfg%fast_biophysics_on) then
+         !----- Without forcing the fast loop reads the reference climate at the run's CO2, so only  !
+         !      the CO2 is opened (docs/science/forcing.md §12). ----------------------------------!
+         call met_open_co2(reg%met_src, cfg%forcing, cfg%start_time, cfg%end_time, stat=st)
+         if (st /= MET_OK) return
       end if
       if (.not. region) call site_cell(reg%met_src, cfg, cells)
 
@@ -711,7 +716,7 @@ contains
       end if
 
       if (reg%cfg%output%enabled) call output_close(reg%out_files, reg%out_bufs, flush_partial=.not. failed)
-      if (reg%cfg%fast_biophysics_on .and. reg%cfg%forcing%forcing_on) call met_close(reg%met_src)
+      if (reg%cfg%fast_biophysics_on) call met_close(reg%met_src)
       if (present(status)) status = st
    end subroutine region_finalize
 

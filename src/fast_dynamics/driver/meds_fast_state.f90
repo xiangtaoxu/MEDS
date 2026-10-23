@@ -7,8 +7,9 @@
 ! and its dynamic state (the patch's stores and its cohorts' tissue state); scatter_patch  !
 ! writes the dynamic state back. reset_fast_to_slow and accumulate_fast_to_slow keep the   !
 ! window's sums the slow step reads: GPP, maintenance respiration, light hours, the        !
-! predawn leaf potential and the decomposition scalars. static_state_fixture builds a      !
-! test's static state through the birth path.                                              !
+! predawn leaf potential and the decomposition scalars. seed_start_canopy_air puts a       !
+! start's canopy air at the first forcing sample. static_state_fixture builds a test's     !
+! static state through the birth path.                                                     !
 !==========================================================================================!
 module meds_fast_state
    use meds_kinds,               only : wp, ik
@@ -20,9 +21,10 @@ module meds_fast_state
    use meds_soil_params,         only : soil_profile_t
    use meds_plant_hydraulics,    only : cohort_root_profile, crown_gravity_head
    use meds_plant_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance
-   use meds_therm_lib,           only : tissue_dry_heat_capacity
+   use meds_therm_lib,           only : tissue_dry_heat_capacity, cas_temp_to_enthalpy
    use meds_cohort_state_vars,   only : cohort_block, alloc_cohort_block, init_cohort, cohort_tissue_temps,       &
-                                        set_cohort_tissue_temps
+                                        set_cohort_tissue_temps, hold_cohort_tissue_temps
+   use meds_met_types,           only : met_forcing_t
    use meds_patch_state_vars,    only : decomp_xi_t
    use meds_polygon_state_vars,  only : polygon_t
    use meds_state_defaults,      only : DMAX_PSI_LEAF_ACCUM_RESET
@@ -32,7 +34,7 @@ module meds_fast_state
    implicit none
    private
 
-   public :: reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow
+   public :: reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow, seed_start_canopy_air
    public :: derive_cohort_terms
    public :: static_state_fixture   ! used only by the tests
 
@@ -42,6 +44,29 @@ module meds_fast_state
    real(wp), parameter :: TISSUE_TEMP_TOL    = 1.0e-6_wp
 
 contains
+
+   !----- A start's first window (docs/science/canopy_air_space_biophysics.md, the start): each     !
+   !      patch's canopy air takes its site's first forcing sample -- the air's temperature,        !
+   !      humidity and CO2 -- and each cohort's tissues are held at that temperature, their water   !
+   !      as it is. A restart keeps the canopy air its state file holds. -----------------------!
+   subroutine seed_start_canopy_air(poly, met_first)
+      type(polygon_t),     intent(inout) :: poly
+      type(met_forcing_t), intent(in)    :: met_first(:)   !< (site) each site's first sub-step sample
+      integer(ik) :: ip, i
+      do ip = 1_ik, poly%patch%n
+         associate (cas => poly%patch%cas(ip), m => met_first(poly%patch%owner_site(ip)))
+            cas%can_temp     = m%air_temp
+            cas%can_shv      = m%air_shv
+            cas%can_co2      = m%co2
+            cas%can_enthalpy = cas_temp_to_enthalpy(m%air_temp, m%air_shv)
+            do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
+               poly%cohort%leaf_temp(i) = m%air_temp
+               poly%cohort%wood_temp(i) = m%air_temp
+               call hold_cohort_tissue_temps(poly%cohort, i)
+            end do
+         end associate
+      end do
+   end subroutine seed_start_canopy_air
 
    !----- Open the window: zero the fast->slow sums the slow step reads after it, and roll the        !
    !      predawn water status over. Today's maximum leaf potential becomes the value the slow       !

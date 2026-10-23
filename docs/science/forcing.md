@@ -175,7 +175,7 @@ the last record clamps to the final interval. Without a forcing source the fast 
 record at every sub-step, the `met_forcing_t` defaults unless the caller passes its own (`met_fixed`):
 a reference climate at 288 K and 0.008 kg/kg, whose four shortwave streams sum to 400 W m⁻² with the
 sun 60° from the zenith ($`\cos z`$ = 0.5) and 380 W m⁻² of longwave, so the canopy radiation runs as it
-does on forcing.
+does on forcing, and whose CO₂ is the run's (§12).
 
 **No step reads a file.** Everything a step's sub-samples need is in memory before the step starts
 ([order of processes](order_of_processes.md) §1): a MEDS forcing file's records for the recycle window or the run
@@ -627,11 +627,13 @@ file has it; this exists so a source that lacks the field can drive MEDS at all.
 ## 12. CO₂
 
 Free-atmosphere CO₂ is prescribed like the met, but **not read from the met file**.
-`[forcing].co2_source` gives it, the same way for every backend and every polygon:
+`[forcing].co2_source` gives it, the same way for every backend, every polygon, and a run without
+forcing, whose reference climate takes it (§2):
 
-- **`"const"`** (the default): `co2_const` for the whole run.
-- **`"file"`**: a **MEDS CO₂ file**, named by `co2_file` and read once at `met_open`. The repository
-  ships one (below).
+- **`"const"`** (the default): `co2_const` for the whole run. A run without forcing may leave it at
+  420 µmol mol⁻¹, `met_forcing_t`'s.
+- **`"file"`**: a **MEDS CO₂ file**, named by `co2_file` and read once at `met_open` (without
+  forcing, at `met_open_co2`, which opens nothing else). The repository ships one (below).
 
 The key of the other mode is rejected, not ignored. CO₂ is kept out of the met file for two reasons:
 

@@ -22,17 +22,12 @@ module meds_init
    use meds_init_bare_ground,    only : init_bare_ground, init_bare_sites, seed_bare_ground, N_PATCH_INIT
    use meds_init_census,         only : init_from_census, restructure_census_stand
    use meds_init_restart,        only : read_restart_file
+   use meds_met_types,           only : met_forcing_t
    implicit none
    private
 
    public :: init_polygon
    public :: init_fast_state   ! used only by the tests
-
-   !----- The canopy air a start begins in, the same at every site; the first steps relax it to the  !
-   !      air above. ------------------------------------------------------------------------------!
-   real(wp), parameter :: CAS_TEMP_START = 288.0_wp   !< [K]
-   real(wp), parameter :: CAS_SHV_START  = 0.008_wp   !< [kg/kg]
-   real(wp), parameter :: CAS_CO2_START  = 400.0_wp   !< [umol/mol]
 
 contains
 
@@ -123,18 +118,21 @@ contains
    end subroutine init_polygon
 
    !----- Seed every patch's fast stores to a horizontally uniform equilibrium, and its cohorts with  !
-   !      them as a recruit is born: the soil at its site's theta_start and [init].soil_temp, the    !
-   !      canopy air at the start values above, each cohort's tissues at the canopy-air temperature  !
-   !      holding the water they hold at the top soil layer's potential, and the snowpack            !
-   !      [snow].init_swe asks for. The soil's water starts frozen below the freezing point, so its  !
-   !      stored energy gives back [init].soil_temp (liquid water there would read as half-frozen at !
-   !      the freezing point). ----------------------------------------------------------------!
+   !      them as a recruit is born: the soil at its site's theta_start and [init].soil_temp; the    !
+   !      canopy air at the reference climate (met_forcing_t's air, at the run's CO2), which the     !
+   !      fast loop's first window replaces with the first forcing sample; each cohort's tissues at  !
+   !      the canopy-air temperature, holding the water they hold at the top soil layer's potential; !
+   !      and the snowpack [snow].init_swe asks for. The soil's water starts frozen below the        !
+   !      freezing point, so its stored energy gives back [init].soil_temp (liquid water there would !
+   !      read as half-frozen at the freezing point). ------------------------------------------!
    subroutine init_fast_state(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: ip, k, nsl, i
       real(wp)    :: psi, fliq_start
+      type(met_forcing_t) :: ref   !< the reference climate
       fliq_start = merge(1.0_wp, 0.0_wp, cfg%init%soil_temp >= t_3ple)
+      ref = met_forcing_t()
       do ip = 1_ik, poly%patch%n
          associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
@@ -148,10 +146,10 @@ contains
                se%soil_temp(k)   = cfg%init%soil_temp
                se%soil_fliq(k) = fliq_start
             end do
-            cas%can_shv      = CAS_SHV_START
-            cas%can_co2 = CAS_CO2_START
-            cas%can_enthalpy = cas_temp_to_enthalpy(CAS_TEMP_START, CAS_SHV_START)
-            cas%can_temp     = CAS_TEMP_START
+            cas%can_shv      = ref%air_shv
+            cas%can_co2      = cfg%forcing%co2_const
+            cas%can_enthalpy = cas_temp_to_enthalpy(ref%air_temp, ref%air_shv)
+            cas%can_temp     = ref%air_temp
             psi = top_soil_psi(surf%soil_profile, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
                poly%cohort%leaf_temp(i) = cas%can_temp
