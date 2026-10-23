@@ -495,7 +495,7 @@ contains
       real(wp) :: step_soil(water%nsoil), step_coh(COHORT_STORES, water%ncoh)
       real(wp) :: try_soil(water%nsoil), try_coh(COHORT_STORES, water%ncoh)
       real(wp) :: res2_soil(water%nsoil), res2_coh(COHORT_STORES, water%ncoh)
-      real(wp) :: merit, merit_try, worst, lam, lam_max
+      real(wp) :: merit, merit_try, worst, worst_try, lam, lam_max
       integer(ik) :: it, ib, i_try
       logical  :: ok
 
@@ -509,9 +509,8 @@ contains
          call water_derivs(static, profile, soil, hyd, drive, tau_soil, tau_coh, water%ev(i_sol), water%sys, .true.)
          water%start_ready = .true.
       end if
-      call water_residual(water%state, h, water%ev(i_sol), res_soil, res_coh)
-      merit = residual_merit(atol, h, res_soil, res_coh, scale_soil, scale_coh)
-      worst = residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh)
+      call water_residual(water%state, h, water%ev(i_sol), atol, scale_soil, scale_coh, res_soil, res_coh,      &
+                          merit, worst)
       if (merit /= merit) return
       do it = 1_ik, NEWTON_MAX
          if (worst <= 1.0_wp) exit
@@ -528,8 +527,8 @@ contains
             try_coh = tau_coh + lam * step_coh
             call water_derivs(static, profile, soil, hyd, drive, try_soil, try_coh, water%ev(i_try), water%sys,   &
                               .true.)
-            call water_residual(water%state, h, water%ev(i_try), res2_soil, res2_coh)
-            merit_try = residual_merit(atol, h, res2_soil, res2_coh, scale_soil, scale_coh)
+            call water_residual(water%state, h, water%ev(i_try), atol, scale_soil, scale_coh, res2_soil,          &
+                                res2_coh, merit_try, worst_try)
             if (merit_try == merit_try .and. sufficient_decrease(merit_try, merit, lam)) exit
             lam = 0.5_wp * lam
          end do
@@ -539,43 +538,52 @@ contains
          res_soil = res2_soil
          res_coh = res2_coh
          merit = merit_try
+         worst = worst_try
          i_sol = i_try
-         worst = residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh)
       end do
       !----- Factor the Newton matrix at the solution: the error estimate solves with it. -----------!
       call water_newton_factor(water%sys, h, water%ev(i_sol), ok)
       converged = ok .and. worst <= 1.0_wp
    end subroutine water_newton_substep
 
-   !----- The water-balance residual of every store [kg/m2/s]: (W(tau) - W_start)/h - inflow. ----!
-   pure subroutine water_residual(state, h, ev, res_soil, res_coh)
+   !----- One store's water-balance residual [kg/m2/s]: (W(tau) - W_start)/h - inflow. ------------!
+   elemental real(wp) function store_residual(water, water_start, h, inflow) result(res)
+      real(wp), intent(in) :: water, water_start, h, inflow
+      res = (water - water_start) / h - inflow
+   end function store_residual
+
+   !----- Every store's residual and, in the same pass, two measures of it, each store's imbalance !
+   !      over the sub-step against NEWTON_TOL of its absolute water tolerance: worst, below one,  !
+   !      means the balance is solved; merit, the sum of squares, is what the line search asks to  !
+   !      fall -- a Newton step always points down it, which is not true of the worst store alone. !
+   !      The soil's squares and the cohorts' are summed apart, then added. -----------------------!
+   pure subroutine water_residual(state, h, ev, atol, scale_soil, scale_coh, res_soil, res_coh, merit, worst)
       type(water_state_t), intent(in)  :: state
-      real(wp),            intent(in)  :: h
+      real(wp),            intent(in)  :: h, atol, scale_soil(:), scale_coh(:,:)
       type(water_tend_t),  intent(in)  :: ev
-      real(wp),            intent(out) :: res_soil(:), res_coh(:,:)
-      res_soil = (ev%water_soil - state%water_soil) / h - ev%inflow_soil
-      res_coh  = (ev%water_coh - state%water_coh) / h - ev%inflow_coh
+      real(wp),            intent(out) :: res_soil(:), res_coh(:,:), merit, worst
+      real(wp)    :: tol, x, merit_coh
+      integer(ik) :: c, i, j
+      tol = NEWTON_TOL * atol
+      merit = 0.0_wp
+      worst = 0.0_wp
+      do c = 1_ik, size(res_soil, kind=ik)
+         res_soil(c) = store_residual(ev%water_soil(c), state%water_soil(c), h, ev%inflow_soil(c))
+         x = res_soil(c) * h / (tol * scale_soil(c))
+         merit = merit + x * x
+         worst = max(worst, abs(x))
+      end do
+      merit_coh = 0.0_wp
+      do i = 1_ik, size(res_coh, 2, kind=ik)
+         do j = 1_ik, COHORT_STORES
+            res_coh(j, i) = store_residual(ev%water_coh(j, i), state%water_coh(j, i), h, ev%inflow_coh(j, i))
+            x = res_coh(j, i) * h / (tol * scale_coh(j, i))
+            merit_coh = merit_coh + x * x
+            worst = max(worst, abs(x))
+         end do
+      end do
+      merit = merit + merit_coh
    end subroutine water_residual
-
-   !----- Each store's imbalance over the sub-step against NEWTON_TOL of its absolute water        !
-   !      tolerance. residual_worst, below one, means the balance is solved; residual_merit, the sum of !
-   !      squares, is what the line search asks to fall -- a Newton step always points down it,      !
-   !      which is not true of the worst store alone. ---------------------------------------------!
-   pure real(wp) function residual_worst(atol, h, res_soil, res_coh, scale_soil, scale_coh) result(m)
-      real(wp), intent(in) :: atol, h, res_soil(:), res_coh(:,:), scale_soil(:), scale_coh(:,:)
-      real(wp) :: tol
-      tol = NEWTON_TOL * atol
-      m = max(maxval(abs(res_soil) * h / (tol * scale_soil)), 0.0_wp)
-      if (size(res_coh, 2) > 0) m = max(m, maxval(abs(res_coh) * h / (tol * scale_coh)))
-   end function residual_worst
-
-   pure real(wp) function residual_merit(atol, h, res_soil, res_coh, scale_soil, scale_coh) result(m)
-      real(wp), intent(in) :: atol, h, res_soil(:), res_coh(:,:), scale_soil(:), scale_coh(:,:)
-      real(wp) :: tol
-      tol = NEWTON_TOL * atol
-      m = sum((res_soil * h / (tol * scale_soil)) ** 2)
-      if (size(res_coh, 2) > 0) m = m + sum((res_coh * h / (tol * scale_coh)) ** 2)
-   end function residual_merit
 
    !----- The largest share of a Newton step every store can take: no soil layer or tissue is      !
    !      driven more than STEP_MAX_SHARE of the way to empty, and none on the dry side moves its      !
@@ -796,10 +804,12 @@ contains
          eps = 1.0e-5_wp
          call water_derivs(static, profile, soil, hyd, drive, st%tau_soil + eps * v_soil, st%tau_coh + eps * v_coh, &
                            ev, water%sys, .false.)
-         call water_residual(st, h, ev, rp_soil, rp_coh)
+         rp_soil = store_residual(ev%water_soil, st%water_soil, h, ev%inflow_soil)
+         rp_coh  = store_residual(ev%water_coh, st%water_coh, h, ev%inflow_coh)
          call water_derivs(static, profile, soil, hyd, drive, st%tau_soil - eps * v_soil, st%tau_coh - eps * v_coh, &
                            ev, water%sys, .false.)
-         call water_residual(st, h, ev, rm_soil, rm_coh)
+         rm_soil = store_residual(ev%water_soil, st%water_soil, h, ev%inflow_soil)
+         rm_coh  = store_residual(ev%water_coh, st%water_coh, h, ev%inflow_coh)
       end associate
       rp_soil = (rp_soil - rm_soil) / (2.0_wp * eps)
       rp_coh = (rp_coh - rm_coh) / (2.0_wp * eps)
