@@ -24,7 +24,7 @@ module meds_canopy_types
    !      the sky's longwave and grnd_emiss the ground's emission; in shortwave grnd_emiss = 0. -----!
    type :: rad_forcing_t
       integer(ik) :: n_band = 0_ik
-      real(wp)    :: cosz   = 1.0_wp               !< cosine of solar zenith / incidence (floored > 0)
+      real(wp)    :: cosz   = 1.0_wp               !< cosine of the solar zenith angle (the beam extinction guards cosz -> 0)
       real(wp), allocatable :: incid_beam(:)       !< (band) [W/m2] direct-beam incident at canopy top
       real(wp), allocatable :: incid_diff(:)       !< (band) [W/m2] diffuse incident at canopy top
       real(wp), allocatable :: grnd_refl(:)        !< (band) ground reflectance (albedo, or 1-emiss)
@@ -38,7 +38,7 @@ module meds_canopy_types
       real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
       real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
       real(wp), allocatable :: incid_top(:,:)      !< (band,col_cohort) [W/m2] beam + down diffuse at its layer's top
-      real(wp), allocatable :: albedo(:)           !< (band) canopy+ground albedo (SW) / upward frac
+      real(wp), allocatable :: albedo(:)           !< (band) upward over incident at the top; LW's includes emission (> 1)
       real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
    end type rad_flux_t
@@ -55,12 +55,12 @@ module meds_canopy_types
    !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
    type :: aero_env_t
       real(wp) :: u_ref     = 2.0_wp                !< [m/s]      wind at reference height
-      real(wp) :: zref      = 30.0_wp               !< [m]        reference (measurement) height
+      real(wp) :: zref      = 30.0_wp               !< [m]        reference height: the canopy-air top, where the forcing is sampled
       real(wp) :: theta_atm = 298.15_wp             !< [K]        potential temp, referenced to zref (= the air temperature there)
       real(wp) :: shv_atm   = 0.010_wp              !< [kg/kg]    specific humidity at zref
       real(wp) :: co2_atm   = 400.0_wp              !< [umol/mol] free-atmosphere CO2
       real(wp) :: press     = 101325.0_wp           !< [Pa]
-      real(wp) :: rho_air   = 1.2_wp                !< [kg/m3]    (diagnostic passthrough)
+      real(wp) :: rho_air   = 1.2_wp                !< [kg/m3]    air density at zref (the frozen build's, unread here)
       real(wp) :: can_theta = 298.15_wp             !< [K]        CAS potential temp, referenced to zref (= can_temp)
       real(wp) :: can_temp  = 298.15_wp             !< [K]        CAS actual temp (buoyancy Grashof)
       real(wp) :: can_shv   = 0.010_wp              !< [kg/kg]    CAS specific humidity

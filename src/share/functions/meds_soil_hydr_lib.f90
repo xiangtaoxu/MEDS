@@ -9,7 +9,9 @@
 ! potential or a water content, with floors that keep a diagnostic finite. The water       !
 ! relations (soil_water_relations, pond_water_relations) give the soil-plant water network !
 ! (water_derivs) a store's potential, water and conductivity with their derivatives in     !
-! the variable it solves for, with no floors (docs/science/soil_plant_water.md §2). Flow   !
+! the variable it solves for, with no floors on the curve itself: only a dry layer's start !
+! (SE_MIN), a very dry head (LOG_HEAD_MAX) and an underflowing slope are guarded           !
+! (docs/science/soil_plant_water.md §2). Flow                                              !
 ! between soil layers is in meds_soil_water; the plant's side is meds_plant_hydr_lib.      !
 !==========================================================================================!
 module meds_soil_hydr_lib

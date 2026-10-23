@@ -50,7 +50,7 @@ module meds_plant_hydr_lib
       real(wp) :: wood_kexp            = 0.0_wp  !< [-] vulnerability-curve shape
       real(wp) :: wood_kmax            = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity
       real(wp) :: vessel_curl          = 0.0_wp  !< [-] xylem path length per unit height
-      real(wp) :: root_beta            = 0.0_wp  !< [-] share of the root profile below the rooting depth
+      real(wp) :: root_beta            = 0.0_wp  !< [-] the untruncated profile's share below the rooting depth (eq. (13))
       real(wp) :: root_depth_b1        = 0.0_wp  !< [m] rooting depth = b1 * height[m]^b2
       real(wp) :: root_depth_b2        = 0.0_wp  !< [-]
       real(wp) :: specific_root_length = 0.0_wp  !< [m/kgC] fine-root length per unit fine-root carbon

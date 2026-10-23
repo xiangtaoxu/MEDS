@@ -45,7 +45,7 @@ module meds_plant_types
       real(wp)    :: gs           !< [mol H2O/m2 leaf/s]  stomatal conductance to water vapour
       real(wp)    :: ci           !< [umol/mol]      intercellular CO2 mole fraction
       real(wp)    :: cs           !< [umol/mol]      leaf-surface CO2 mole fraction (= ca if no BL)
-      real(wp)    :: transpiration!< [mol H2O/m2 leaf/s]  E = gs * VPD / pressure
+      real(wp)    :: transpiration!< [mol H2O/m2 leaf/s]  E = g VPD / pressure: g = gs, or gs and gb in series
       real(wp)    :: rd           !< [umol/m2 leaf/s]     leaf respiration used
       integer(ik) :: limitation   !< LIM_* of the binding term
       logical     :: converged    !< .true. if the Ci solve met tolerance
