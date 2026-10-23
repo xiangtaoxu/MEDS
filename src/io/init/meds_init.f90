@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_init
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : rho_h2o, t_3ple
    use meds_time,                only : meds_time_t, time_to_string
    use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_soil_derive,         only : top_soil_psi
@@ -126,12 +126,15 @@ contains
    !      them as a recruit is born: the soil at its site's theta_start and [init].soil_temp, the    !
    !      canopy air at the start values above, each cohort's tissues at the canopy-air temperature  !
    !      holding the water they hold at the top soil layer's potential, and the snowpack            !
-   !      [snow].init_swe asks for. -------------------------------------------------------------!
+   !      [snow].init_swe asks for. The soil's water starts frozen below the freezing point, so its  !
+   !      stored energy gives back [init].soil_temp (liquid water there would read as half-frozen at !
+   !      the freezing point). ----------------------------------------------------------------!
    subroutine init_fast_state(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: ip, k, nsl, i
-      real(wp)    :: psi
+      real(wp)    :: psi, fliq_start
+      fliq_start = merge(1.0_wp, 0.0_wp, cfg%init%soil_temp >= t_3ple)
       do ip = 1_ik, poly%patch%n
          associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
@@ -141,9 +144,9 @@ contains
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
                se%soil_energy(k) = temp_to_internal_energy(surf%soil_profile%dry_heat_capacity(k),             &
-                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, 1.0_wp)
+                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, fliq_start)
                se%soil_temp(k)   = cfg%init%soil_temp
-               se%soil_fliq(k) = 1.0_wp
+               se%soil_fliq(k) = fliq_start
             end do
             cas%can_shv      = CAS_SHV_START
             cas%can_co2 = CAS_CO2_START

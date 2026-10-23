@@ -337,8 +337,8 @@ from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `Runtim
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
 every soil layer of every patch starts there, unless a state checkpoint restores the soil. They
 default to 288 K and 0.30. A run with no spin-up starts from them, so set them to the site: the
-mean annual air temperature, for instance, keeps a warm site's column from starting cold. The
-loader refuses a temperature outside 233–333 K and a water content outside
+mean annual air temperature, for instance, keeps a warm site's column from starting cold. Below the
+freezing point (273.16 K) the soil's water starts as ice, at that temperature. The loader refuses a temperature outside 233–333 K and a water content outside
 (`[soil].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
 each layer starts at its own field capacity instead, and `soil_theta` is refused.
 
