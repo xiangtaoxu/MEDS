@@ -15,7 +15,8 @@ Usage:
   python run_palo_verde.py --skip-inventory                      # the regrowth only (once the forcing is cut)
   python run_palo_verde.py --plot-only
 
-Needs numpy, netCDF4, matplotlib, a built meds_main (--meds-main, default ../../../build-ifx/meds_main) and,
+Needs numpy, netCDF4, matplotlib, a built meds_main (--meds-main, or the environment variable MEDS_MAIN;
+default ../../../build-dev/meds_main, the dev preset's build) and,
 for steps 1 and 2, the processed ED_ERA5land archive (--era5-archive, or the environment variable
 ERA5LAND_ARCHIVE).
 """
@@ -57,7 +58,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"),
                     help="the processed ED_ERA5land archive, to cut the forcing from (step 1)")
-    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main to run (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--skip-inventory", action="store_true", help="skip the 2009 inventory check (step 2)")
     ap.add_argument("--plot-only", action="store_true", help="only redraw the figure")
     args = ap.parse_args(argv)

@@ -21,11 +21,11 @@ module meds_fast_integ_derivs
    use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
-   use meds_soil_types, only : energy_forcing_t
+   use meds_soil_types, only : energy_forcing_t, snow_env_t, snow_flux_t
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_energy, only : soil_energy_time_deriv
    use meds_cas_biophysics, only : cas_box_t, cas_source_t, cas_box_time_deriv
-   use meds_ground_biophysics, only : ground_surface_fluxes
+   use meds_ground_biophysics, only : ground_surface_fluxes, snow_surface_balance
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
@@ -120,6 +120,8 @@ contains
       real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
+      type(snow_env_t)  :: senv        !< the pack's surroundings at this evaluation
+      type(snow_flux_t) :: sfx         !< its exchange with them (zero without a pack)
       !----- Film-evaporation latent terms: frozen conductance, live dqdt and qsat_c - qcas, as for the !
       !      dry pathway. With canopy_water_on off, f_wet_c = 0 and the wet pathway vanishes. --------!
       real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
@@ -199,19 +201,36 @@ contains
          coh_rnet = coh_rnet + drnet_w
       end do
 
-      !----- Ground surface = snowfac-weighted snow + (1 - snowfac) bare soil. The snow terms arrive    !
-      !      snowfac-weighted (advance_snow_stage); soil_evap already carries its snow-free area factor   !
-      !      (ground_evap_env_t%snow_free_frac), so le_soil is added whole. With no snow this is exactly  !
-      !      bare ground, with no branch. --------------------------------------------------------------!
+      !----- The snow pack's exchange at this evaluation's canopy air and soil top, as the tissues'      !
+      !      is at theirs: its surface balance relaxed over the step with its own heat store             !
+      !      (docs/science/snow_biophysics.md, "The snow store"). The fluxes come snowfac-weighted, and  !
+      !      are zero with no pack or no cover. ------------------------------------------------------!
+      senv%abs_sw      = ground%abs_sw_ground
+      senv%abs_lw      = ground%abs_lw_ground
+      senv%can_temp    = tcas
+      senv%can_shv     = qcas
+      senv%ggnet       = ground%ggnet
+      senv%rho_air     = cas%rho
+      senv%press       = cas%press
+      senv%t_soil_top  = t_ground
+      senv%dz_soil_top = snow%dz_soil_top
+      senv%k_soil_top  = snow%k_soil_top
+      call snow_surface_balance(snow%pack, senv, snow%params, snow%dt, snow%snowfac, sfx)
+      !----- Ground surface = snowfac-weighted snow + (1 - snowfac) bare soil. soil_evap already carries  !
+      !      its snow-free area factor (ground_evap_env_t%snow_free_frac), so le_soil is added whole. With !
+      !      no snow this is exactly bare ground, with no branch. ----------------------------------------!
       call ground_surface_fluxes(t_ground, tcas, ground%ggnet, cas%rho, ground%soil_evap, h_bare, le_soil)
-      f%h_ground  = snow%h_snow  + (1.0_wp - snow%snowfac) * h_bare
-      f%le_ground = snow%le_snow + le_soil
-      f%g_top     = snow%g_base                                                                   &
+      f%h_ground  = sfx%h_snow  + (1.0_wp - snow%snowfac) * h_bare
+      f%le_ground = sfx%le_snow + le_soil
+      f%g_top     = sfx%g_base                                                                    &
                     + (1.0_wp - snow%snowfac) * (ground%abs_sw_ground + ground%abs_lw_ground - h_bare)       &
                     - le_soil
+      f%ground_rad   = sfx%rnet + (1.0_wp - snow%snowfac) * (ground%abs_sw_ground + ground%abs_lw_ground)
+      f%snow_enth_in = sfx%energy_in
+      f%snow_vap_out = sfx%w_flux
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
-      f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + snow%subl_rate
+      f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + sfx%w_flux
       f%coh_rnet   = coh_rnet
 
       !----- Smooth condensation sink (dew, fog): supersaturated canopy air relaxes to qsat over TAU_COND. !

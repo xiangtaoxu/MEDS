@@ -4,7 +4,7 @@ A run is described by **two [TOML](https://toml.io) files**, and the first is th
 argument:
 
 ```bash
-./build/meds_main path/to/run_main.toml
+./build-dev/meds_main path/to/run_main.toml
 ```
 
 With no argument, `meds_main` reads `./meds_config_main.toml`. Relative paths inside the config

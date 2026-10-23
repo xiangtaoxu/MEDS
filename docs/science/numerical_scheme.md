@@ -65,8 +65,8 @@ for exactly the same reason. Freezing hydraulics removes the ~20 s mode from the
 which is what makes any of the schemes below affordable.
 
 **Category 1 — stiff, must be treated implicitly**: canopy-air enthalpy / humidity / CO₂, the
-leaf and wood energy balance, the ground surface (snow-free, the top soil layer), the soil thermal
-column, and the soil–plant water network (pond, soil layers, leaf and wood water).
+leaf and wood energy balance, the ground surface (the top soil layer and the snow pack's exchange),
+the soil thermal column, and the soil–plant water network (pond, soil layers, leaf and wood water).
 
 **Category 2 — non-stiff**: canopy surface (film) water, the transpiration and aerodynamic fluxes
 themselves.
@@ -255,7 +255,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 
 | difference | esdirk2 | rk45 | kind |
 |---|---|---|---|
-| snow | shared stage, always active | same | unified |
+| snow | shared stage before the march, its exchange in the march, always active | same | unified |
 | canopy surface water | present | present | unified |
 | sapflow advected enthalpy | present | present | unified |
 | tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
@@ -491,7 +491,7 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `esdirk2` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `esdirk2`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
-| ED2 comparison at the algorithmic level | `rk45` at `rtol` ≤ 1e-4 (but check `mean_work_rk45_rescue_py` first) |
+| ED2 comparison at the algorithmic level | `rk45`, at its default `rtol` or tighter (but check `mean_work_rk45_rescue_py` first) |
 
 **Choosing them for a new site.** Two short runs answer it. The step's error is first order in
 `dt_fast` (§5a), so a run at `dt_fast` and one at `dt_fast/2` give it: e(dt) ≈ 2 [y(dt) − y(dt/2)],
@@ -525,9 +525,20 @@ error stays a large share because the step's error on it is small (0.015–0.06 
 adds 0.010–0.035 K in any hour, RMS. A study that needs canopy-air temperature to a hundredth of a
 kelvin, or one-step accuracy at a storm front, tightens `rtol`; 1e-3 costs 7–18 % more CPU than 2e-3.
 
-The table is for `esdirk2`. **`rk45` needs `rtol` of 1e-4 or tighter.** On example 04's August its
-run-mean H is 50.99 W m⁻² at 1e-4, against the 50.94 both schemes converge to, but 51.9 at 1e-3, 54.3
-at 2e-3 and 73.3 at 5e-3, with LE falling to match; the ledgers close throughout, so nothing flags it.
+The table is for `esdirk2`. **`rk45` takes `rtol` = 1e-4 when the key is absent, and refuses a looser
+one.** Its step is set by stability rather than by `rtol`: from 1e-4 to 1e-3 it saves only 2–4 % of
+the CPU, while its own error grows six- to eightfold. On the same three windows, against `rk45` at 1e-6:
+
+| `rk45` `rtol` | LE, H: march / step error | canopy-air T: march / step | daily GPP bias at Palo Verde: march / step |
+|---|---|---|---|
+| 1e-4 | 2–9 % | 29–72 % | 1 % |
+| 2e-4 | 3–16 % | 57–143 % | 4 % |
+| 5e-4 | 8–28 % | 144–336 % | 13 % |
+| 1e-3 | 17–53 % | 287–680 % | 29 % |
+
+Looser still, the fluxes leave the answer altogether: on example 04's August, run-mean H is 50.99 W m⁻²
+at 1e-4 against the 50.94 both schemes converge to, 54.3 at 2e-3 and 73.3 at 5e-3, with LE falling to
+match. The ledgers close throughout, so nothing else would flag it.
 
 Configuration essentials:
 
@@ -687,7 +698,7 @@ than a convergence proof.
 | the soil–plant water network | `meds_fast_integ_backward_euler.f90` (`water_step`), its flows and Jacobian in `meds_fast_integ_derivs.f90` (`water_derivs`) ([soil_plant_water](soil_plant_water.md)) |
 | the commit and the seven ledgers (§5b) | `src/fast_dynamics/integrator/meds_fast_integ_update.f90` (`update_dynamic_state`, `close_ledgers`) |
 | error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_integ_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
-| shared snow stage | `meds_fast_integ_frozen.f90` (`advance_snow_stage`) |
+| shared snow stage, its exchange and commit | `meds_fast_integ_frozen.f90` (`prepare_snow_stage`); `meds_fast_integ_derivs.f90` (`surface_derivs`); `meds_fast_integ_update.f90` (`update_dynamic_state`) |
 | patch loop, per-thread step data, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | the linear solvers and the conservation test (§9) | `src/share/meds_linear_algebra.f90`, `src/share/meds_numerics.f90` (`conserved`) |
 

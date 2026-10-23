@@ -456,6 +456,21 @@ meds_fortran_flags(meds_driver)
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_main.f90)
 target_link_libraries(meds_main PRIVATE meds_driver)
 
+#----- The C-API shims (src/c_api): the bind(c) procedures Python calls, compiled ONCE, into an #
+#      object library that both of their users link: libmeds.so (below) and the C-API tests.    #
+#      Every source is compiled by exactly one target because a Fortran compile also writes the  #
+#      source's .mod files into the one shared module directory: two targets compiling the same  #
+#      source would write the same .mod at once, and a parallel build would fail at random. It   #
+#      links meds_driver, the whole model, because the run shim holds a whole run.               #
+#                                                                                                #
+#      Plain GLOB, no exclusions: every src/c_api/*.f90 belongs in the one library.              #
+if(MEDS_BUILD_PYLIB OR MEDS_BUILD_TESTS)
+   file(GLOB C_API_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/*.f90)
+   add_library(meds_c_api OBJECT ${C_API_SOURCES})
+   target_link_libraries(meds_c_api PUBLIC meds_driver)
+   meds_fortran_flags(meds_c_api)
+endif()
+
 #----- THE Python C-API shared library (opt-in): ONE libmeds.so for the whole package.        #
 #                                                                                              #
 #      Per-subsystem independence lives at the CALL level (verbs, not libraries), not the LINK #
@@ -466,11 +481,11 @@ target_link_libraries(meds_main PRIVATE meds_driver)
 #      shim carries the whole model, and the wheel declares netCDF4 a runtime dependency       #
 #      rather than vendoring it.                                                               #
 #                                                                                              #
-#      Plain GLOB, no exclusions: every src/c_api/*.f90 belongs in the one library.            #
+#      It compiles nothing of its own: it links the shims' objects (meds_c_api, above), and    #
+#      meds_fortran_flags gives its link the build kind's CPU target.                          #
 if(MEDS_BUILD_PYLIB)
-   file(GLOB C_API_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/*.f90)
-   add_library(meds_py SHARED ${C_API_SOURCES})
-   set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
+   add_library(meds_py SHARED $<TARGET_OBJECTS:meds_c_api>)
+   set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds LINKER_LANGUAGE Fortran)
    target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
    #----- The same numbers as meds_main, in any process. An Intel build calls `exp`, `sin`, `pow`  #
@@ -599,6 +614,12 @@ if(MEDS_BUILD_TESTS)
                     -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
                     -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
+   add_test(NAME config_rk45_loose_rtol_refused
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
+                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_rk45_loose_rtol.toml
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rk45_rtol_refused.cmake)
+   set_tests_properties(config_rk45_loose_rtol_refused PROPERTIES TIMEOUT 120)
    #----- A census or state file that cannot start the run stops it, naming the mode and the     #
    #      file: one that is not there, and a census with no row. The script explains the rule.    #
    foreach(case "census_missing;1;no_such_census.csv;OFF;cannot be opened"
@@ -668,28 +689,26 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
-   #----- C-API shims. Compiling each C-API source INTO a ctest target is the point: a shim        #
+   #----- C-API shims. Linking every C-API shim INTO a ctest target is the point: a shim          #
    #      built only by the optional -DMEDS_BUILD_PYLIB=ON shared library breaks unseen -- a       #
    #      component inserted mid-type in leaf_photo_args_t, or a signature changed under the       #
    #      demography shim, leaves the whole suite green on both back ends while the C API is       #
-   #      broken. Registering it here makes that class of break a normal build failure.            #
-   #      Needs no .so and no Python: the test calls the bind(c) procedures directly. EVERY shim   #
-   #      in src/c_api/ gets one, not just the leaf one.                                           #
-   add_executable(test_c_api_leaf test/test_c_api_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_leaf.f90)
-   target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_fast_kernels)
+   #      broken. Linking it here makes that class of break a normal build failure.                #
+   #      Needs no .so and no Python: the test calls the bind(c) procedures directly. Each test    #
+   #      links meds_c_api, the shims' one compile, so a default build compiles and links every    #
+   #      shim in src/c_api/.                                                                      #
+   add_executable(test_c_api_leaf test/test_c_api_leaf.f90)
+   target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_leaf)
    add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
 
-   add_executable(test_c_api_phenology test/test_c_api_phenology.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_phenology.f90)
-   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_slow_kernels)
+   add_executable(test_c_api_phenology test/test_c_api_phenology.f90)
+   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_phenology)
    add_test(NAME c_api_phenology COMMAND test_c_api_phenology)
 
-   #      The demography shim needs the whole model (config + init + both loops), same as the .so.  #
-   add_executable(test_c_api_demography test/test_c_api_demography.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_demography.f90)
-   target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_model meds_output_stream)
+   add_executable(test_c_api_demography test/test_c_api_demography.f90)
+   target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_demography)
    #      Runs from the SOURCE dir: it loads examples/example03_demography's shipped config, which
    #      gives that config a build-time consumer. A config nothing loads drifts behind the schema
@@ -697,11 +716,8 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_demography COMMAND test_c_api_demography
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-   #      The FULL-MODEL shim: it holds a run (meds_region), so it links the driver library (which
-   #      is meds_model + IO plus the open/step/finalize seam) rather than the model directly.
-   add_executable(test_c_api_run test/test_c_api_run.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_run.f90)
-   target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_driver)
+   add_executable(test_c_api_run test/test_c_api_run.f90)
+   target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_run)
    #      Runs from examples/example04_column_biophysics: it loads both of that example's shipped
    #      configs (the default and the calibrated run), so the build notices when they fall behind

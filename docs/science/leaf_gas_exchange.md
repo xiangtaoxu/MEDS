@@ -375,10 +375,10 @@ drought response (see `docs/ROADMAP.md`).
 ## 5. The coupled solver
 
 `solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_a]`$ and finds the residual's root to a
-tolerance `CI_TOL_PPM` (the module's private `root_ci`) by the Illinois method: regula falsi on
-the bracket, which halves the kept end's residual whenever the same end is kept twice, so both ends
-close in. It takes far fewer residuals than bisection's ~21, and stops, as bisection did, when the
-bracket is within the tolerance:
+tolerance `CI_TOL_PPM` (the module's private `root_ci`, on the Illinois steps of `meds_numerics`) by
+the Illinois method: regula falsi on the bracket, which halves the kept end's residual whenever the
+same end is kept twice, so both ends close in. It takes far fewer residuals than bisection's ~21,
+and stops when the bracket is within the tolerance:
 
 - **Night / closed branch** — if the best-case net rate $A(C_a) \le 0$, stomata sit at $g_0$ and
   the solve returns immediately.
@@ -431,4 +431,4 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 | Leuning / Medlyn / Katul-$\lambda$ | `stomata_gs_leuning`, `stomata_gs_medlyn`, `katul_lambda` |
 | coupled solve | `solve_leaf_gas_exchange` |
 | residuals | `ci_residual` → `residual_explicit_gs`, `residual_optimality` |
-| root finder | `root_ci` (private; the Illinois method) |
+| root finder | `root_ci` (private), on `meds_numerics`' `root_bracket_t`, `regula_falsi_point` and `illinois_narrow` |

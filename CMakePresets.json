@@ -23,9 +23,12 @@
     {
       "name": "dev",
       "inherits": "kind",
-      "displayName": "dev: -O2, any x86-64 CPU (also the default with no build type)",
-      "description": "Everyday work, the tests, comparing outputs between commits: -O2, any x86-64 CPU",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "displayName": "dev: -O2, any x86-64 CPU (the default with no build type); meds_main, libmeds.so and the tests",
+      "description": "Everyday work, the tests, comparing outputs between commits: -O2, any x86-64 CPU; meds_main, libmeds.so and the tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MEDS_BUILD_PYLIB": "ON"
+      }
     },
     {
       "name": "profile",

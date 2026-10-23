@@ -85,9 +85,13 @@ module meds_plant_hydr_lib
    !----- [-] Floor of half-spacing / root radius in the single-root (Gardner)             !
    !      conductance: closer, the roots all but touch and the form fails. ----------------!
    real(wp), parameter :: MIN_SPACING_RATIO = 2.0_wp
-   !----- [MPa] Width over which smooth_max0 rounds root uptake's corner, small against the !
-   !      0.1-1 MPa a root works across (docs/science/soil_plant_water.md eq. (1)). -------!
-   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-3_wp
+   !----- [MPa] Width over which smooth_max0 rounds root uptake's corner. At night the wood  !
+   !      settles towards its wettest layers, which then sit in the corner, where uptake's  !
+   !      slope is small; a narrower corner makes Newton see those layers as almost         !
+   !      unresponsive, overshoot the wood's potential and backtrack. This width is still   !
+   !      10-100 times below the 0.1-1 MPa a root works across, and changes uptake only     !
+   !      where the driving force is below it (docs/science/soil_plant_water.md eq. (1)). --!
+   real(wp), parameter :: UPTAKE_RAMP_WIDTH = 1.0e-2_wp
 
 contains
 

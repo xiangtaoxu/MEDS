@@ -184,7 +184,7 @@ contains
             !----- ground_rad is the snowfac-blended radiation (abs_sw + abs_lw when bare). Infiltration,  !
             !      exfiltration and uptake move enthalpy between tracked stores and cancel; rain and runoff  !
             !      are added once at the outer level (docs/science/numerical_scheme.md §5b). -------------!
-            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat
+            bf%whole_enth_in= surf_tend%coh_rnet + surf_tend%ground_rad - eflux%bottom_heat
             !----- The condensate is not a boundary loss: the caller deposits it in soil layer 1 with the  !
             !      enthalpy surface_derivs debited from the CAS (whole_cond, whole_cond_enth). -----------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%box%atm_enthalpy) + e_drain
@@ -192,6 +192,8 @@ contains
             bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%box%atm_specific_humidity)
             bf%whole_cond   = surf_tend%cond                     ! deposited into soil layer 1, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! exactly what surface_derivs debited from the CAS
+            bf%snow_enth_in = surf_tend%snow_enth_in
+            bf%snow_vap_out = surf_tend%snow_vap_out
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
             bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%box%atm_specific_humidity)

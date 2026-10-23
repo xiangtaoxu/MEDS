@@ -71,10 +71,9 @@ is used; it is not a redistributable manylinux wheel (see the road map below).
 ### Dev loop (edit Python without recompiling)
 
 ```bash
-# 1. Build the library once from the repo root:
-cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-py --target meds_py                 # -> build-py/libmeds.so
+# 1. Build the library once from the repo root, with the dev preset (it builds libmeds.so):
+FC=ifx cmake --preset dev
+cmake --build build-dev --target meds_py                # -> build-dev/libmeds.so
 
 # 2. Run against the source tree (the Fortran runtime must be on LD_LIBRARY_PATH here):
 source /opt/intel/oneapi/setvars.sh
@@ -83,9 +82,10 @@ PYTHONPATH=python pytest python/tests
 ```
 
 `meds._libmeds` finds the library via (in order) the `MEDS_LIB` env var, a copy beside the package
-(how a wheel ships it), then a CMake build dir in the source tree — so both paths above work with no
-configuration. `MEDS_PLANT_LIB` is not read; if it is set when no library is found, the error says
-to use `MEDS_LIB`.
+(how a wheel ships it), then `build-dev/libmeds.so` in the source tree, the dev preset's build — so
+both paths above work with no configuration. To load another build, name it:
+`MEDS_LIB=build-production/libmeds.so`. `MEDS_PLANT_LIB` is not read; if it is set when no library
+is found, the error says to use `MEDS_LIB`.
 
 ## Road to a distributable package
 
