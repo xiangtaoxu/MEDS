@@ -165,7 +165,11 @@ how far the group drifted apart on the last stretch.
   with the patch axis threaded, on the thread schedule. The seed is the step that was accepted, before
   the controller grows it, and the last one the end of the interval did not cut short: a grown
   proposal over-estimates and is rejected more often, and a short remainder would bias the next
-  `dt_fast` small.
+  `dt_fast` small. A step the end cut short can only raise the seed, to the step the controller had
+  asked for before the cut, capped at `dt_fast`. Without that, a seed below `dt_fast` could never grow
+  back: each interval would take one step at the seed and an end-cut one that leaves it alone, two
+  sub-steps for the rest of the run however loose the tolerance. The cut step's own proposal is not
+  used: it comes from a short step, whose small error says little about a full one.
 
 In symbols, with $h$ the sub-step, $f$ the right-hand side of the stiff block and $`\gamma = 1-1/\sqrt{2}`$,
 a step is two backward-Euler solves, the second from the base $`y_n + (Y_2-y_n)(1-\gamma)/\gamma`$:
