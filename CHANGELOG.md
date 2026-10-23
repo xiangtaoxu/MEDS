@@ -90,7 +90,10 @@ rejection, its error norm measures only the states it integrates, the leaf's Ci 
 Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
 or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
 run 24–35 % faster (#490). The soil-plant water network's step costs a simulated day 8–9 % less
-again: four changes leave every result as it was, and three move results at round-off (#488).
+again: four changes leave every result as it was, and three move results at round-off (#488). MEDS builds in four kinds,
+`debug`, `dev`, `profile` and `production`, one CMake preset each: `production` adds interprocedural
+optimisation and code for Cascade Lake and runs 26–29 % faster than dev, and a configure that names no
+build type now builds dev (Release) instead of Debug (#489).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -654,9 +657,30 @@ again: four changes leave every result as it was, and three move results at roun
   `ground_evap_env_t` and before the first rate; it fills the record's new fields `rv_t`, `q_sat`,
   `theta_init`, `theta_span` and `dsl_diffusivity`. `water_step` does this itself, so its `drive`
   argument, and `water_jacobian_error`'s, is now `intent(inout)`.
+- **A configure with no `CMAKE_BUILD_TYPE` now builds Release (dev), not Debug** (#489). Ask for the
+  checked build with `-DCMAKE_BUILD_TYPE=Debug` or `cmake --preset debug`. A build directory configured
+  earlier keeps the build type in its cache.
+- **A production binary runs only on Cascade Lake or newer Xeons** (#489); `-DMEDS_CPU_TARGET=` builds a
+  portable one. On a production build, `meds.model` and `meds_main` agree to round-off rather than bit
+  for bit, and the suite's bit-exact checks fail, so run the suite on dev.
 
 ### Changed
 
+- **Build kinds** (#489; `docs/building.md`, "Build kinds"). `CMakePresets.json` (CMake ≥ 3.21) names
+  four, each in `build-<kind>`:
+  - `debug`;
+  - `dev`: Release, the project's `-O2`, any x86-64 CPU, the reference for comparing outputs;
+  - `profile`: dev with `-g`, whose output is dev's byte for byte;
+  - `production`: Release with `MEDS_IPO=ON` and `MEDS_CPU_TARGET=cascadelake`; it builds `meds_main`
+    and `libmeds.so`, not the tests.
+
+  `MEDS_IPO` (default OFF) turns on interprocedural optimisation and names the link's level, `-O3`.
+  `MEDS_CPU_TARGET` (default empty) maps `cascadelake` and `host` to `-xCORE-AVX512` and `-xHost` (ifx)
+  or `-march=cascadelake` and `-march=native` (gfortran). Both options are for ifx and gfortran only. On
+  example 04's stand, ifx production costs a simulated day 0.836 s on one thread where dev costs 1.133 s
+  (−26 %), and 0.073 s on 20 where dev costs 0.103 s (−29 %), with results within round-off; an edit
+  takes ~35 s to rebuild instead of ~4 s. A dev build's command lines are those of the former explicit
+  Release build.
 - **The water network's step is cheaper** (#488). Per simulated day on example 04's 120-patch stand
   (ifx dev build, `rtol` 2e-3): 1.257 → 1.140 s on one thread (−9 %), 0.113 → 0.104 s on 20 (−8 %).
   Four changes leave results unchanged on gfortran and ifx:
