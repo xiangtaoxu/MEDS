@@ -78,11 +78,11 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Grouped WRMS norm of (a - b), each entry scaled by its group's atol + rtol*|y_ref|:        !
-   ! docs/science/numerical_scheme.md eq. (3). One norm over the whole column state with no    !
-   ! per-scheme opt-outs, so no scheme can leave a state it integrates unmeasured. On ESDIRK2, !
-   ! theta and plant water ride outside the tableau, so their terms are exact zeros that       !
-   ! loosen the norm slightly (§3 `esdirk2`, §7 item 3). Soil moisture is error-controlled on every !
-   ! path anyway: the water network's own sub-step control uses the same GRP_THETA tolerances. !
+   ! docs/science/numerical_scheme.md eq. (3), over the entries the march integrates            !
+   ! (state_entry_rules): the canopy air and the soil heat, on both schemes. The soil and plant  !
+   ! water move at the water network's fixed rate, so their terms would be exact zeros that      !
+   ! dilute the norm by a factor that grows with the cohort count; the network's own sub-step    !
+   ! control holds them to the same GRP_THETA tolerances.                                       !
    !---------------------------------------------------------------------------------------!
    pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
       type(march_state_t), intent(in) :: a, b, y_ref
@@ -99,7 +99,7 @@ contains
       cnt = 0_ik
       do j = 1_ik, size(va, kind=ik)            ! the layout's order is the order the terms are added
          call state_entry_rules(j, n, nsl, grp, counted)
-         if (grp == 0_ik) cycle
+         if (grp == 0_ik .or. .not. counted) cycle
          s = s + ((va(j) - vb(j)) / (tols%atol(grp) + tols%rtol(grp)*abs(vr(j))))**2
          cnt = cnt + 1_ik
       end do

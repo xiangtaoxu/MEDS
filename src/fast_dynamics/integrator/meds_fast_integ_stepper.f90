@@ -210,9 +210,8 @@ contains
                                 site%soil_profile%theta_res(k) - y%theta(k))
                end do
             end if
-            !----- The step and its error under the grouped norm, eq. (3), over the whole column state.  !
-            !      ESDIRK2's theta and plant-water terms are structurally zero and dilute it             !
-            !      (docs/science/numerical_scheme.md §7, item 3). -----------------------------------!
+            !----- The step and its error under the grouped norm, eq. (3), over the states the march   !
+            !      integrates (docs/science/numerical_scheme.md §3 `esdirk2`). ------------------------!
             select case (scheme)
             case (INTEG_RK45)
                call rk45_step(y, frozen, site, n, nsl, dt, y_new, y_err, bf=bfsub, clamp_stage_n=clamp_n)

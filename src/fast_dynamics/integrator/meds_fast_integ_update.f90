@@ -46,7 +46,7 @@ contains
    ! tissue's energy is committed from its time-average temperature over the march, the      !
    ! complement of what the canopy air received (docs/science/vegetation_energy_dynamics.md   !
    ! §One formulation). The condensate, dew and fog, lands inside the column, so it goes,      !
-   ! mass and enthalpy paired, into soil layer 1 (docs/science/numerical_scheme.md §7, item 4) !
+   ! mass and enthalpy paired, into soil layer 1 (docs/science/numerical_scheme.md §7, item 3) !
    ! before the soil's temperatures are diagnosed.                                            !
    !---------------------------------------------------------------------------------------!
    subroutine update_dynamic_state(dt_fast, cfg, site, static, frozen, acc, dt_warm, y_out, dynamic, out, moved)

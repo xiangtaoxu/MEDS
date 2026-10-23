@@ -154,11 +154,13 @@ how far the group drifted apart on the last stretch.
   (`newton_surface_solve`) with a numerical Jacobian — which is what
   lets it carry the tissue heat store.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
-  solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
-  tolerance (`[fast].rtol`, `atol_scale`). ESDIRK2's soil-moisture and plant-water
-  terms in that norm are structurally zero (both ride operator-split maps outside the tableau), so
-  they dilute it slightly — accepted deliberately: one norm with no per-scheme opt-outs means no
-  scheme can leave a state it *integrates* unmeasured.
+  solutions, measured by **one weighted norm over the states the march integrates**, the canopy air
+  and the soil heat, with a per-variable-group tolerance (`[fast].rtol`, `atol_scale`). Soil water
+  and plant water move at the water network's fixed rate on both schemes, so their embedded error is
+  structurally zero; counted, they would dilute the norm by a factor that grows with the cohort count
+  (√((3 + 2·n_soil + 2·n_cohort)/(3 + n_soil)), 2.1× for 13 cohorts on 7 layers), so the same `rtol`
+  would mean a looser march in a richer patch. The water network holds them to the same tolerances
+  in its own sub-step control.
 - Warm-started: the last accepted sub-step size carries over to the next `dt_fast`, which keeps the
   rejection rate under 20% (about 31% when every `dt_fast` starts cold). Each patch keeps its own
   (`adapt_dt_last`), so a patch's first sub-step depends neither on the patch run before it nor,
@@ -460,7 +462,7 @@ both schemes: none of the 8928 whole-column checks fails, and the worst residual
 (ESDIRK2 and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 **Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
-export, because they land inside the column, and are deposited into soil layer 1 (§7, item 4) with
+export, because they land inside the column, and are deposited into soil layer 1 (§7, item 3) with
 the liquid enthalpy the canopy air lost, $b$-weighted at each stage's own canopy-air temperature.
 The deposit lands before the step's soil temperatures are diagnosed, so the top layer's temperature,
 which the next step's ground and respiration read, includes it. Valuing the deposit at the end-of-step temperature instead would leave
@@ -623,22 +625,17 @@ than a convergence proof.
    second difference is −0.06, where a period-2 oscillation gives −1. §5a′ gives the multiplier
    across wind speeds and `dt_fast`. It is scored at one site.
 
-3. **ESDIRK2's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
-   operator-split out of its tableau, so their contributions to the norm are exactly zero and only
-   dilute it — ESDIRK2 therefore runs slightly looser than its stated `rtol`. Measured cost on a
-   summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ESDIRK2
-   tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
-4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
+3. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
    evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
    canopy film, which is optional and carries its enthalpy at a fixed reference temperature, to carry
    its own temperature first.
-5. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
+4. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —
    sweeps at sample points 0, 0.5 and 1 all converge cleanly — but it shifts the error by up to ~3×
    at coarse `dt_fast`. A consistent midpoint freeze would remove the trade; its predictor would have
    to be L-stable rather than explicit.
-6. **Evidence base.** Most of §5 rests on one site and one forcing year per measurement, with no
+5. **Evidence base.** Most of §5 rests on one site and one forcing year per measurement, with no
    confidence intervals. Differences smaller than ~2× should not be read as real. The saturating-column
    checks of §5b run on a *sealed unit fixture* driven at 29 mm h⁻¹, far above Ithaca's rain rates,
    because a forced Ithaca column never saturates: a production-forced test suite is not a substitute

@@ -678,7 +678,7 @@ module meds_fast_integ_types
       real(wp) :: whole_enth_in = 0.0_wp, whole_enth_out = 0.0_wp
       real(wp) :: whole_wat_in  = 0.0_wp, whole_wat_out  = 0.0_wp
       !----- Condensate, apart from whole_wat_out: dew and fog land inside the column, and the caller  !
-      !      deposits them into soil layer 1 (docs/science/numerical_scheme.md §7, item 4). ---------!
+      !      deposits them into soil layer 1 (docs/science/numerical_scheme.md §7, item 3). ---------!
       real(wp) :: whole_cond    = 0.0_wp   !< [kg/m2] condensed vapour over the step (>= 0)
       !----- ...and the liquid enthalpy it left the CAS with, b-weighted at each stage's own CAS     !
       !      temperature, as surface_derivs debited it; the deposit carries this, not u_liq(T_end). -!
@@ -972,10 +972,12 @@ contains
       v(o+2) = 0.0_wp
    end subroutine tend_to_array
 
-   !----- How entry j of the flat array is treated: norm_group, its group in the step-size error norm !
-   !      (0: not counted), and in_embedded_error. The films and the pond are outside the norm; the    !
-   !      plant water, films and pond ride operator-split maps outside the stages, so their embedded    !
-   !      difference is set to 0 rather than left as the extrapolation's rounding noise. ------------!
+   !----- How entry j of the flat array is treated: norm_group, its group's tolerances (0: none), and  !
+   !      in_embedded_error, whether the march integrates it and so has an error to measure: the     !
+   !      canopy air and the soil heat. The soil and plant water move at the water network's fixed   !
+   !      rate on both schemes, and the films and the pond by operator-split maps, so their embedded  !
+   !      difference is structurally zero: it is set to 0, not left as rounding noise, and the norm  !
+   !      leaves them out. -----------------------------------------------------------------------!
    pure subroutine state_entry_rules(j, n, nsl, norm_group, in_embedded_error)
       integer(ik), intent(in)  :: j, n, nsl
       integer(ik), intent(out) :: norm_group
@@ -996,7 +998,7 @@ contains
          in_embedded_error = .true.
       else if (j <= o) then
          norm_group = GRP_THETA
-         in_embedded_error = .true.
+         in_embedded_error = .false.
       else if (j <= o + 2_ik*n) then
          norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik)
          in_embedded_error = .false.
