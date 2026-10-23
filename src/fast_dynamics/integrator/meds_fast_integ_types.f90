@@ -1149,24 +1149,21 @@ contains
    end subroutine state_extrap
 
    !----- Clamp the extrapolated CAS enthalpy and humidity into a wide physical range, so an overshoot  !
-   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows; in range it !
-   !      is an identity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). ---------!
+   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows. A state  !
+   !      in range is left as it is, bit for bit; one out of range keeps its temperature (clamped)   !
+   !      at its clamped humidity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). -!
    pure subroutine clamp_cas(s, nfire)
       type(march_state_t), intent(inout) :: s
       integer(ik), optional, intent(inout) :: nfire
-      real(wp) :: t, shv_c, enth_in
+      real(wp) :: t, shv_c
       real(wp), parameter :: SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
-      enth_in = s%cas_enthalpy
       shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
       t     = cas_enthalpy_to_temp(s%cas_enthalpy, shv_c)
+      if (shv_c == s%cas_shv .and. t >= STATE_TEMP_MIN .and. t <= STATE_TEMP_MAX) return
       t     = min(max(t, STATE_TEMP_MIN), STATE_TEMP_MAX)
       s%cas_shv      = shv_c
       s%cas_enthalpy = cas_temp_to_enthalpy(t, shv_c)
-      !----- An in-range state round-trips, so compare with the input: that also catches a          !
-      !      humidity-only clamp, which moves the enthalpy. ------------------------------------------!
-      if (present(nfire)) then
-         if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
-      end if
+      if (present(nfire)) nfire = nfire + 1_ik
    end subroutine clamp_cas
 
    !----- Is a temperature at or beyond a state bound? Within a microkelvin counts as at it, since a !
