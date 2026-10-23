@@ -493,6 +493,13 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` at `rtol` ≤ 1e-4 (but check `mean_work_rk45_rescue_py` first) |
 
+**Choosing them for a new site.** Two short runs answer it. The step's error is first order in
+`dt_fast` (§5a), so a run at `dt_fast` and one at `dt_fast/2` give it: e(dt) ≈ 2 [y(dt) − y(dt/2)],
+hour by hour, for whatever y the study reads. Take the longest `dt_fast` whose e(dt) the study can
+accept. Then `rtol`: a third run at that `dt_fast` with `rtol = 1e-6` is the march without its own
+error, so y(rtol) − y(1e-6) is that error; aim it at 10–20 % of e(dt), the error that no `rtol` can
+remove. Tightening further buys nothing the step does not take back.
+
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
 reference, and the latent heat within 0.2 W m⁻² in the mean and 1.9 W m⁻² in any hour of the diurnal
 cycle on BCI's dry season. Soil-surface temperature is the loosest at 0.70 K. Under drought the fast
