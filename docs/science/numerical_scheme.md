@@ -233,8 +233,9 @@ option is to take smaller steps.
   problem, which is exactly what its Newton solves. Two signs trigger it: the march gives up after 64
   trial sub-steps, which bounds the explicit work spent on a step that will be redone, or it finishes
   on a railed state — its fifth- and fourth-order solutions can rail together, so the error estimate
-  alone would accept it. The whole `dt_fast` is marched again rather than resumed from the failure:
-  a resume would sum two schemes' boundary fluxes in one step's ledger, and a railed final state has
+  alone would accept it. A state is railed when the canopy air or a soil layer ends at or beyond the
+  bounds the stage clamp holds the canopy air inside, 180 and 350 K. The whole `dt_fast` is marched
+  again rather than resumed from the failure: a resume would sum two schemes' boundary fluxes in one step's ledger, and a railed final state has
   no sub-step to resume from. Nothing needs rolling back: the dynamic state is written only by the
   update, after the march that is kept.
 
