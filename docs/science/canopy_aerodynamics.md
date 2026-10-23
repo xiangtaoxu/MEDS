@@ -44,7 +44,8 @@ sets the CAS air mass per ground area, hence every twin's storage capacity.
 It is seeded by the analytic **MoninObukIni** bulk-Richardson guess and then does a **fixed** number of
 sweeps (`n_iter_mo`, default 4) — no data-dependent exit, so it is warp-uniform on the GPU and needs no
 root-find or I/O. Using virtual potential temperatures
-$`\theta_v=\theta\,(1+0.61\,q)`$ and the CAS↔atmosphere differences $`\Delta\theta_v`$:
+$`\theta_v=\theta\,(1+0.60783\,q)`$ (the factor is $`M_{dry}/M_{h2o}-1`$, `virtual_temp_factor`) and the
+CAS↔atmosphere differences $`\Delta\theta_v`$:
 
 ```math
 \mathrm{Rib} = \frac{g\,z_{ldis}\,\Delta\theta_v}{\theta_{v,atm}\,u_m^2}, \qquad

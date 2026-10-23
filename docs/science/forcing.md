@@ -378,10 +378,13 @@ to $[0,1]$ first. The model's own inverse, `specific_humidity_to_vpd`, is the ex
 so a saturated record reads back as a vapour-pressure deficit of zero.
 
 ```math
-q = \frac{0.622\,e}{P-0.378\,e}, \qquad
+q = \frac{\varepsilon\,e}{P-(1-\varepsilon)\,e}, \qquad
 e = e_{sat}(T_d)\ \text{(dewpoint)}, \qquad
 e = \mathrm{RH}\cdot e_{sat}(T)\ \text{(relative humidity)} \qquad(11)
 ```
+
+with $`\varepsilon = M_{h2o}/M_{dry} = 0.62196`$, water's molar mass over dry air's (`h2o_dry_ratio` in
+`meds_constants`).
 
 The file carries one total precipitation rate, and so does the forcing record; the model needs rain and
 snow separately. The split is made once, where each patch's forcing is filled, at that patch's

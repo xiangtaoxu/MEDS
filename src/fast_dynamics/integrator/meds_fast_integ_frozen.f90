@@ -52,7 +52,7 @@ module meds_fast_integ_frozen
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, snow_energy_step
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
                                      cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure,               &
-                                     soil_thermal_conductivity
+                                     soil_thermal_conductivity, specific_humidity_to_vapor_pressure
    use meds_numerics,         only : weighted_mean
    implicit none
    private
@@ -362,7 +362,7 @@ contains
       ra_leaf = 0.0_wp
       gpp_coh(1:n)       = 0.0_wp
       leaf_resp_coh(1:n) = 0.0_wp
-      e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant
+      e_air = specific_humidity_to_vapor_pressure(qcas, press)     ! loop-invariant
       do i = 1_ik, n
          rho_mol_arr(i)  = press / (r_gas * dynamic%leaf_temp(i))
          par_arr(i)      = cohort_leaf_par(forcing%abs_par(i), static%lai(i), forcing%par_per_w)

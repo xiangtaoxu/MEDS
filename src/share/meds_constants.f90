@@ -31,6 +31,10 @@ module meds_constants
    real(wp), parameter :: r_wv   = 461.5_wp                   !< [J/kg/K] water-vapour gas constant
    real(wp), parameter :: cp_air = 1004.6_wp                  !< [J/kg/K] dry-air specific heat
    real(wp), parameter :: cp_vap = 1859.0_wp                  !< [J/kg/K] water-vapour specific heat
+   !----- The molar-mass ratios moist air needs: vapour pressure from specific humidity, and the  !
+   !      virtual temperature T (1 + virtual_temp_factor q). ----------------------------------!
+   real(wp), parameter :: h2o_dry_ratio       = mmh2o / mmdry           !< [-] 0.62196
+   real(wp), parameter :: virtual_temp_factor = mmdry / mmh2o - 1.0_wp  !< [-] 0.60783
 
    !----- Physical constants: liquid water and ice. ---------------------------------------!
    real(wp), parameter :: rho_h2o            = 1000.0_wp      !< [kg/m3] liquid-water density

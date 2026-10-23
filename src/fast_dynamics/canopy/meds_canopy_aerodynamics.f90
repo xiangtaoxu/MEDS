@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp
+   use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp, virtual_temp_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_params, only : aero_params_t
    implicit none
@@ -163,8 +163,8 @@ contains
       uref    = max(u_ref, cfg%ubmin)
       z0m     = rough
       zldis   = max(zref - displace, 2.0_wp * z0m)
-      thv_atm = theta_atm * (1.0_wp + 0.61_wp * shv_atm)
-      thv_can = can_theta * (1.0_wp + 0.61_wp * can_shv)
+      thv_atm = theta_atm * (1.0_wp + virtual_temp_factor * shv_atm)
+      thv_can = can_theta * (1.0_wp + virtual_temp_factor * can_shv)
       dthv    = thv_atm - thv_can
       dth     = theta_atm - can_theta
       dqh     = shv_atm   - can_shv
@@ -190,7 +190,8 @@ contains
       do it = 1_ik, cfg%n_iter_mo
          ustar   = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
          temp1   = von_karman / d_heat(zeta, zldis, z0m, cfg)
-         thvstar = (temp1 * dth) * (1.0_wp + 0.61_wp * shv_atm) + 0.61_wp * theta_atm * (temp1 * dqh)
+         thvstar = (temp1 * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
+                 + virtual_temp_factor * theta_atm * (temp1 * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
       end do
       !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!

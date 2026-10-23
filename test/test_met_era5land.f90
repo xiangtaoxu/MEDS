@@ -11,6 +11,7 @@
 program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
+   use meds_constants,       only : h2o_dry_ratio
    use meds_time,            only : meds_time_t
    use meds_forcing_params,  only : forcing_params_t, MET_BACKEND_ERA5LAND, METAVG_END, CLAMP_ERROR
    use meds_radiation_lib,   only : SWPART_CLEARIDX, SWPART_PASSTHROUGH, clear_sky_emissivity
@@ -280,8 +281,9 @@ contains
       t1  = t0 - 0.0042_wp * 500.0_wp ; p1 = lapse_pressure(p0, t0, 500.0_wp, 0.0042_wp)
       call check('lapse: T by January''s rate', met%air_temp, t1, 1.0e-9_wp)
       call check('lapse: P hydrostatic', met%air_pressure, p1, 1.0e-6_wp)
-      rh0 = q0 * p0 / (0.622_wp + 0.378_wp * q0) / sat_vapor_pressure(t0)
-      rh1 = met%air_shv * met%air_pressure / (0.622_wp + 0.378_wp * met%air_shv) / sat_vapor_pressure(met%air_temp)
+      rh0 = q0 * p0 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * q0) / sat_vapor_pressure(t0)
+      rh1 = met%air_shv * met%air_pressure / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * met%air_shv)            &
+            / sat_vapor_pressure(met%air_temp)
       call check('lapse: relative humidity held', rh1, rh0, 1.0e-12_wp)
       call check_true('lapse: the colder site holds less vapour', met%air_shv < q0, met%air_shv - q0)
       call check('lapse: file longwave scaled by eps*T^4', met%lw_down,                              &

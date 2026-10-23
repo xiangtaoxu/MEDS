@@ -15,6 +15,7 @@
 program test_site_terrain
    use meds_test_assert,     only : check_true, test_report
    use meds_kinds,           only : wp
+   use meds_constants,       only : h2o_dry_ratio
    use meds_time,            only : meds_time_t, seconds_into_day, solar_cosz_utc, slope_incidence_cosz
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_params,  only : forcing_params_t
@@ -94,7 +95,8 @@ contains
    !----- Relative humidity of a forcing sample: its vapour pressure over saturation. ----------!
    real(wp) function rh(m)
       type(met_forcing_t), intent(in) :: m
-      rh = m%air_shv * m%air_pressure / (0.622_wp + 0.378_wp * m%air_shv) / sat_vapor_pressure(m%air_temp)
+      rh = m%air_shv * m%air_pressure / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * m%air_shv)               &
+           / sat_vapor_pressure(m%air_temp)
    end function rh
 
 end program test_site_terrain
