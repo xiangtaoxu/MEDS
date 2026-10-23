@@ -90,7 +90,14 @@ rejection, its error norm measures only the states it integrates, the leaf's Ci 
 Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
 or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
 run 24–35 % faster (#490). The soil-plant water network's step costs a simulated day 8–9 % less
-again: four changes leave every result as it was, and three move results at round-off (#488).
+again: four changes leave every result as it was, and three move results at round-off (#488). MEDS builds in four kinds,
+`debug`, `dev`, `profile` and `production`, one CMake preset each: `production` adds interprocedural
+optimisation and code for Cascade Lake and runs 26–29 % faster than dev, and a configure that names no
+build type now builds dev (Release) instead of Debug (#489). The snow pack exchanges with the canopy
+air inside the march; the surface layer's convective velocity follows each sweep's buoyancy flux, as
+in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10⁻² MPa wide; RK45 takes
+`rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
+to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -654,9 +661,79 @@ again: four changes leave every result as it was, and three move results at roun
   `ground_evap_env_t` and before the first rate; it fills the record's new fields `rv_t`, `q_sat`,
   `theta_init`, `theta_span` and `dsl_diffusivity`. `water_step` does this itself, so its `drive`
   argument, and `water_jacobian_error`'s, is now `intent(inout)`.
+- **A configure with no `CMAKE_BUILD_TYPE` now builds Release (dev), not Debug** (#489). Ask for the
+  checked build with `-DCMAKE_BUILD_TYPE=Debug` or `cmake --preset debug`. A build directory configured
+  earlier keeps the build type in its cache.
+- **A production binary runs only on Cascade Lake or newer Xeons** (#489); `-DMEDS_CPU_TARGET=` builds a
+  portable one. On a production build, `meds.model` and `meds_main` agree to round-off rather than bit
+  for bit, and the suite's bit-exact checks fail, so run the suite on dev.
+- **RK45 refuses an `rtol` above 1e-4** (#492), and takes 1e-4 when the key is absent. An `rk45`
+  configuration that sets a looser `rtol` (1e-3 was the old default) now stops at the check: remove the
+  key or tighten it.
+- **A source-tree run looks for `build-dev`** (#492). The Python package no longer finds libmeds.so in
+  `build-py`, `build-pylib`, `build` or `build-ifx`, nor the scripts `meds_main` in `build-ifx`: build
+  with `cmake --preset dev`, or point them elsewhere with `MEDS_LIB`, `--meds-main` or `MEDS_MAIN`.
+- **Fortran: the snow stage before the march only takes in and drains** (#492).
+  `advance_snow_stage` is `prepare_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top,
+  snowfall, rainfall, t_air, dt_fast, st)`, and `snow_stage_t` no longer holds the step's fluxes
+  (`h_snow`, `le_snow`, `g_base`, `subl_rate`, `ground_rad`) or the pack after them (`swe1`, `enth1`):
+  the march computes them with `snow_surface_balance`, and the update commits them with
+  `snow_take_exchange`.
 
 ### Changed
 
+- **The snow pack exchanges with the canopy air inside the march** (#492). The pack's sensible, latent
+  and vapour exchange and its conduction to the soil top were set once before the march, against the
+  step's start; the march now solves the pack's surface balance at every evaluation against that
+  evaluation's canopy air and top soil node, as it does each tissue's, and the pack then takes the time
+  integral of its exchange. The stage before the march keeps the step's snowfall and rain and drains the
+  liquid the pack holds, so meltwater reaches the pond the step after it melts. On Ithaca's January the
+  canopy-air temperature rises 0.06 K in the mean (5.3 K in its worst hour), H moves −0.16 %, LE
+  −0.31 %, SWE +0.3 %, and ESDIRK2 takes 10 % fewer sub-steps (1.84 → 1.65 per `dt_fast`).
+  Snow-free runs are unchanged on gfortran.
+- **The surface layer's convective velocity follows each sweep's buoyancy flux, as in CLM5** (#492).
+  The Monin–Obukhov solve kept its first guess's fixed `wc` = 0.5 m/s for every sweep when the air was
+  unstable, so the wind jumped from u to √(u² + 0.25) at neutral, 26 % at the 0.65 m/s floor. Each
+  sweep now takes w_c = β w_* from its own buoyancy flux (β = 1, a 1000 m mixed layer;
+  `canopy_aerodynamics.md` eq. (3b)), which vanishes at neutral. A convective daytime layer couples
+  more strongly: example 04's August H +1.0 %, LE +0.6 %, GPP +0.45 %; the regeneration run's GPP
+  +1.7 %; the region test's LE +1.7–1.9 %; ESDIRK2's sub-steps +1–2 %.
+- **Root uptake's rounded corner is 10⁻² MPa wide** (#492), where it was 10⁻³. At night the wood
+  settles towards its wettest layers, which sat in the narrow corner's near-flat slope, so Newton
+  overshot and backtracked at dawn and in changing rain. The wider corner is still 10–100 times below
+  the 0.1–1 MPa a root works across (`soil_plant_water.md` eq. (1)); results move little (the region
+  test's means by ≤ 5e-4 relative), and it gives most of this release's last speed-up: a simulated day
+  on example 04's stand costs 1.053 s on one thread where it cost 1.134 s, and 0.100 s on 20 where it
+  cost 0.105 s, together with the next two entries.
+- **RK45 takes `rtol` 1e-4 by default and refuses a looser one** (#492). Its step is set by stability,
+  not by `rtol`: from 1e-4 to 1e-3 it saves 2–4 % of the CPU while its own error grows six- to
+  eightfold, and looser still its fluxes leave the answer (`numerical_scheme.md` §6).
+- **The Illinois steps of a bracketed root live in `meds_numerics`** (#492): `root_bracket_t`,
+  `regula_falsi_point` and `illinois_narrow`, with `root_ci` keeping its loop and its own residual. No
+  change to any result.
+- **The C-API shims compile once** (#492), into the object library `meds_c_api` that libmeds.so and the
+  C-API tests link.
+- **`build-dev` is the default build** (#492): the dev preset builds libmeds.so, the scripts run
+  `build-dev/meds_main`, and the Python package loads `build-dev/libmeds.so`.
+- **`docs/building.md` says why the suite runs on dev, and how far production lands from dev** (#492).
+  With the tests on, production fails 4 of the 84 tests with ifx and 2 with gfortran, each a bit-exact
+  or near-exact check that IPO, FMA under LTO or AVX-512 vectorisation parts at round-off; on ten runs
+  its LE, H and GPP run means stay within 2.1e-5 relative of dev's.
+- **Build kinds** (#489; `docs/building.md`, "Build kinds"). `CMakePresets.json` (CMake ≥ 3.21) names
+  four, each in `build-<kind>`:
+  - `debug`;
+  - `dev`: Release, the project's `-O2`, any x86-64 CPU, the reference for comparing outputs;
+  - `profile`: dev with `-g`, whose output is dev's byte for byte;
+  - `production`: Release with `MEDS_IPO=ON` and `MEDS_CPU_TARGET=cascadelake`; it builds `meds_main`
+    and `libmeds.so`, not the tests.
+
+  `MEDS_IPO` (default OFF) turns on interprocedural optimisation and names the link's level, `-O3`.
+  `MEDS_CPU_TARGET` (default empty) maps `cascadelake` and `host` to `-xCORE-AVX512` and `-xHost` (ifx)
+  or `-march=cascadelake` and `-march=native` (gfortran). Both options are for ifx and gfortran only. On
+  example 04's stand, ifx production costs a simulated day 0.836 s on one thread where dev costs 1.133 s
+  (−26 %), and 0.073 s on 20 where dev costs 0.103 s (−29 %), with results within round-off; an edit
+  takes ~35 s to rebuild instead of ~4 s. A plain Release configure's command lines are those of the
+  former explicit Release build; the dev preset also builds libmeds.so (#492), which adds `-fPIC`.
 - **The water network's step is cheaper** (#488). Per simulated day on example 04's 120-patch stand
   (ifx dev build, `rtol` 2e-3): 1.257 → 1.140 s on one thread (−9 %), 0.113 → 0.104 s on 20 (−8 %).
   Four changes leave results unchanged on gfortran and ifx:
@@ -1324,6 +1401,9 @@ again: four changes leave every result as it was, and three move results at roun
 
 ### Fixed
 
+- **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
+  targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
+  `-j 16`). The shims now compile in one target.
 - **Example 05's census check stopped at import** (#490). `calibrate_growth.py` read `aboveground_frac`
   from the PFT file's `[pft]` table after it had moved to `[allometry]`, so every mode stopped with a
   `KeyError`. It now reads `[allometry]`.

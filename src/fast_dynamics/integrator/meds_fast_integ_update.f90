@@ -16,6 +16,7 @@ module meds_fast_integ_update
                                      step_report_t, march_state_t, frozen_t, boundary_flux_t,              &
                                      tissue_coefficients_t, diagnose_soil_temps
    use meds_diag_vars,        only : CO_TRANSP
+   use meds_ground_biophysics, only : snow_take_exchange
    use meds_therm_lib,        only : internal_energy_liquid, cas_enthalpy_to_temp, tissue_energy_to_temp
    use meds_budget_check,     only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR,           &
                                      BUDGET_CO2_RATE_FLOOR
@@ -27,12 +28,14 @@ module meds_fast_integ_update
 
    !----- What the update moved besides the march, which the ledgers book: the films' overflow at   !
    !      their capacity and deficit below zero, the condensate deposited in the top soil layer with  !
-   !      its enthalpy, and the tissue store before and after. -----------------------------------!
+   !      its enthalpy, the tissue store before and after, and the snow pack after its exchange. ----!
    type :: commit_amounts_t
       real(wp) :: surf_overflow = 0.0_wp, surf_deficit = 0.0_wp   !< [kg/m2]
       real(wp) :: cond_mass     = 0.0_wp                          !< [kg/m2]
       real(wp) :: cond_enth     = 0.0_wp                          !< [J/m2]
       real(wp) :: tissue_store0 = 0.0_wp, tissue_store1 = 0.0_wp  !< [J/m2]
+      real(wp) :: snow_swe1     = 0.0_wp                          !< [kg/m2] the pack's mass at the step's end
+      real(wp) :: snow_enth1    = 0.0_wp                          !< [J/m2]  its internal energy then
    end type commit_amounts_t
 
 contains
@@ -95,8 +98,13 @@ contains
       if (out%capture .and. allocated(acc%transp_coh))                                                       &
          out%cdiag(CO_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, static%nplant(1:n),     &
                                                           static%leaf_area(1:n))
-      !----- The pack the snow stage advanced, and the warm start of the next march. --------------!
-      dynamic%snow          = frozen%snow%pack
+      !----- The pack takes its exchange over the march, the energy and vapour the canopy air and the  !
+      !      soil received from it (docs/science/snow_biophysics.md §The snow store); and the warm start !
+      !      of the next march. -------------------------------------------------------------------!
+      dynamic%snow = frozen%snow%pack
+      call snow_take_exchange(dynamic%snow, acc%snow_enth_in, acc%snow_vap_out, frozen%snow%params)
+      moved%snow_swe1       = dynamic%snow%swe(1)
+      moved%snow_enth1      = dynamic%snow%snow_energy(1)
       dynamic%adapt_dt_last = dt_warm
    end subroutine update_dynamic_state
 
@@ -182,7 +190,7 @@ contains
       call budget_check(report%ledgers%whole_water,                                                                &
                         w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
                         w_soil1 + cas_mass_capacity*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 &
-                        + frozen%snow%swe1,                                                                &
+                        + moved%snow_swe1,                                                                 &
                         acc%whole_wat_in + (forcing%rainfall + forcing%snowfall + static%shed_water_rate)*dt_fast, &
                         acc%whole_wat_out + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast  &
                         + moved%surf_overflow - moved%surf_deficit,                                        &
@@ -191,7 +199,7 @@ contains
       call budget_check(report%ledgers%whole_energy,                                                               &
                         e_soil0 + cas_mass_capacity*enth0 + surf_enth0 + frozen%snow%enth0 + e_pond0               &
                         + moved%tissue_store0,                                                             &
-                        e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + frozen%snow%enth1 + e_pond1               &
+                        e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + moved%snow_enth1 + e_pond1                &
                         + moved%tissue_store1,                                                             &
                         acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%t_film_valuation) &
                                           + frozen%snow%acc_enth + frozen%hydrology%ground_inflow_enth*dt_fast, &

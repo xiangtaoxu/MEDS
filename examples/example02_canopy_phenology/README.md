@@ -54,8 +54,8 @@ first (about 45 minutes on 40 cores). The records are short, so the fits capture
 seasonal cycle, not its year-to-year variation, and each fit holds the leaves shed per year to a
 literature value (one canopy for the broadleaf forests, 0.3 for the pine).
 
-The hours of light in `drivers/` are committed. Remaking them needs a built `meds_main` (`--meds-main`,
-default `build-ifx/meds_main`) and the processed ERA5-Land archive
+The hours of light in `drivers/` are committed. Remaking them needs a built `meds_main` (`--meds-main`
+or `MEDS_MAIN`, default `build-dev/meds_main`) and the processed ERA5-Land archive
 ([`scripts/prepare_era5`](../../scripts/prepare_era5)), named by `--archive` or the environment
 variable `ERA5LAND_ARCHIVE`:
 

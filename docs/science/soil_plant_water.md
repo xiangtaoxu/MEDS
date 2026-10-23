@@ -50,8 +50,17 @@ Every switch in a flow is smoothed (C¹), so Newton never meets a corner:
 
 ```math
 r(x) = \begin{cases} 0 & x \le 0\\ x\,t\,(2-t),\ t = x/w & 0 < x < w\\ x & x \ge w \end{cases}
-\qquad w = 10^{-3}\ \text{MPa (uptake)} \qquad(1)
+\qquad w = 10^{-2}\ \text{MPa (uptake)} \qquad(1)
 ```
+
+The uptake corner's width is a numerical choice. At night the wood comes into equilibrium with its
+wettest layers, which then sit inside the corner, where the slope $r'$ is small. The narrower the
+corner, the more Newton linearises those layers as almost unresponsive, so at dawn or in changing rain
+it moves the wood's potential too far and backtracks. At $`10^{-2}`$ MPa the corner is still 10–100
+times smaller than the 0.1–1 MPa a root works across, and it changes uptake only where the driving
+force is below 0.01 MPa, mainly the last approach to the night's equilibrium. Against $`10^{-3}`$ MPa
+it cuts the water network's evaluations in a wet BCI month by about a quarter, and moves hourly LE by
+a few hundredths of a W m⁻².
 
 ## 2. The stores and their unknowns
 

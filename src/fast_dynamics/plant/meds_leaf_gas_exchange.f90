@@ -14,7 +14,7 @@ module meds_leaf_gas_exchange
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_pft_params,  only : leaf_photo_pft_t, leaf_photo_table_t
    use meds_therm_lib,     only : temp_response, arrhenius_scale
-   use meds_numerics,      only : quadratic_smaller_root
+   use meds_numerics,      only : quadratic_smaller_root, root_bracket_t, regula_falsi_point, illinois_narrow
    implicit none
 
    !----- The O2 mole fraction and pressure gstar25 is stated at (Bernacchi et al. 2001); Gamma* scales !
@@ -460,53 +460,39 @@ contains
           - gsw_2_gsc * prob%ddef * prob%lambda * (dAn_dci * (cs_surf - ci) + An_loc)
    end function residual_optimality
 
-   !----- The root of ci_residual on [lo, hi], to CI_TOL_PPM, by the Illinois method: regula falsi  !
-   !      on the bracket, halving the kept end's residual when the same end is kept twice, so both   !
-   !      ends close in (superlinear; far fewer residuals than bisection's ~21). An estimate that   !
-   !      rounding puts outside the bracket is replaced by the midpoint. It stops when the bracket  !
-   !      is within CI_TOL_PPM, the bisection's own guarantee: a small move alone is not enough, as !
-   !      regula falsi can creep. A same-sign bracket returns the midpoint with converged =        !
-   !      .false., so the caller can change the conductance rule and retry. ----------------------!
+   !----- The root of ci_residual on [lo, hi], to CI_TOL_PPM, by the Illinois method            !
+   !      (meds_numerics: superlinear, far fewer residuals than bisection's ~21). It stops when   !
+   !      the bracket is within CI_TOL_PPM: a small move alone is not enough, as regula falsi can !
+   !      creep. A same-sign bracket returns the midpoint with converged = .false., so the caller !
+   !      can change the conductance rule and retry. ---------------------------------------------!
    pure subroutine root_ci(prob, lo, hi, ci, converged)
       type(ci_problem_t), intent(in)  :: prob
       real(wp),           intent(in)  :: lo, hi
       real(wp),           intent(out) :: ci
       logical,            intent(out) :: converged
-      real(wp)    :: a, b, fa, fb, c, fc
-      integer(ik) :: it, kept      !< kept: the end kept last time (-1 left, +1 right, 0 none)
-      a = lo
-      b = hi
-      fa = ci_residual(prob, a)
-      fb = ci_residual(prob, b)
+      type(root_bracket_t) :: br
+      real(wp)    :: fc
+      integer(ik) :: it
+      br%a  = lo
+      br%b  = hi
+      br%fa = ci_residual(prob, br%a)
+      br%fb = ci_residual(prob, br%b)
       converged = .false.
-      ci = 0.5_wp * (a + b)
-      if (fa * fb > 0.0_wp) return
+      ci = 0.5_wp * (br%a + br%b)
+      if (br%fa * br%fb > 0.0_wp) return
       converged = .true.
-      if (fa == 0.0_wp .or. fb == 0.0_wp) then
-         ci = merge(a, b, fa == 0.0_wp)
+      if (br%fa == 0.0_wp .or. br%fb == 0.0_wp) then
+         ci = merge(br%a, br%b, br%fa == 0.0_wp)
          return
       end if
-      kept = 0_ik
       do it = 1_ik, MAX_ITER
-         c = (a * fb - b * fa) / (fb - fa)
-         if (.not. (c > a .and. c < b)) c = 0.5_wp * (a + b)
-         fc = ci_residual(prob, c)
+         ci = regula_falsi_point(br)
+         fc = ci_residual(prob, ci)
          if (fc == 0.0_wp) exit
-         if (fa * fc < 0.0_wp) then           ! the root is in (a, c): the left end is kept
-            b = c
-            fb = fc
-            if (kept == -1_ik) fa = 0.5_wp * fa
-            kept = -1_ik
-         else                                 ! the root is in (c, b): the right end is kept
-            a = c
-            fa = fc
-            if (kept == 1_ik) fb = 0.5_wp * fb
-            kept = 1_ik
-         end if
-         if (b - a < CI_TOL_PPM) exit
+         call illinois_narrow(br, ci, fc)
+         if (br%b - br%a < CI_TOL_PPM) exit
       end do
-      ci = c
-      converged = fc == 0.0_wp .or. b - a < CI_TOL_PPM
+      converged = fc == 0.0_wp .or. br%b - br%a < CI_TOL_PPM
    end subroutine root_ci
 
    !----- leaf_params_at_capacity -- a PFT's table entry with one leaf's plastic capacities on top:   !

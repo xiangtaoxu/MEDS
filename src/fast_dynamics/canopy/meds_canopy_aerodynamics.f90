@@ -21,6 +21,11 @@ module meds_canopy_aerodynamics
    real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp
    real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp
    real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp
+   !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the       !
+   !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own   !
+   !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). --------------------------!
+   real(wp), parameter :: CONVECTIVE_BETA   = 1.0_wp      !< [-]
+   real(wp), parameter :: MIXED_LAYER_DEPTH = 1000.0_wp   !< [m]
    !----- The under-canopy stability parameter of the dense-canopy ground conductance (CLM4's, whose  !
    !      cs_dense and gamma_g it uses) is capped at 10 there; above it the conductance is ~0 anyway. -!
    real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp
@@ -157,7 +162,7 @@ contains
       real(wp),            intent(in)  :: u_ref, zref, displace, rough, theta_atm, shv_atm
       real(wp),            intent(in)  :: can_theta, can_shv
       real(wp),            intent(out) :: ustar, temp1, zeta, rib, obu
-      real(wp)    :: uref, zldis, z0m, thv_atm, thv_can, dthv, dth, dqh, um, thvstar
+      real(wp)    :: uref, zldis, z0m, thv_atm, thv_can, dthv, dth, dqh, um, thvstar, wc
       integer(ik) :: it
 
       uref    = max(u_ref, cfg%ubmin)
@@ -169,7 +174,8 @@ contains
       dth     = theta_atm - can_theta
       dqh     = shv_atm   - can_shv
 
-      !----- MoninObukIni: convective velocity if unstable, then analytic Rib -> zeta guess. -!
+      !----- MoninObukIni: a first convective velocity if unstable, then analytic Rib -> zeta  !
+      !      guess. ----------------------------------------------------------------------------!
       if (dthv >= 0.0_wp) then
          um = uref                                    ! already at least cfg%ubmin
       else
@@ -193,6 +199,14 @@ contains
          thvstar = (temp1 * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
                  + virtual_temp_factor * theta_atm * (temp1 * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
+         !----- The convective velocity follows this sweep's buoyancy flux, so it fades to zero as   !
+         !      the air turns neutral and the wind has no jump there. --------------------------------!
+         if (zeta >= 0.0_wp) then
+            um = uref
+         else
+            wc = CONVECTIVE_BETA * (-grav * ustar * thvstar * MIXED_LAYER_DEPTH / thv_atm) ** (1.0_wp / 3.0_wp)
+            um = sqrt(uref * uref + wc * wc)
+         end if
       end do
       !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!
       ustar = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))

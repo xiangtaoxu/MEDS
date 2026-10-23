@@ -35,9 +35,10 @@ configuration once, at load, onto the PFT table (`config/meds_pft_derive`).
 
 ## Python
 
-The `src/c_api/meds_c_api_*.f90` shims go into the single optional `libmeds.so`
-(`-DMEDS_BUILD_PYLIB=ON`) **and** into one mandatory ctest target each, so an ABI or signature
-change is a build failure in a default build rather than a silent break in an optional one.
+The `src/c_api/meds_c_api_*.f90` shims compile once, into the object library `meds_c_api`, which the
+single optional `libmeds.so` (`-DMEDS_BUILD_PYLIB=ON`) **and** the mandatory C-API ctest targets
+link, so an ABI or signature change is a build failure in a default build rather than a silent break
+in an optional one.
 
 Exposed through process-oriented packages in `python/meds/`:
 

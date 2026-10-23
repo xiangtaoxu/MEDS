@@ -22,8 +22,9 @@ Usage:
   python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch --exclusive"
   python run_regions.py --regions 1 --years 1 --threads 8      # a quick check, here
 
-Needs numpy, netCDF4, a built meds_main (--meds-main, default ../../build-ifx/meds_main) and the data paths
-(--era5-archive, --soil-maps, --chave-e-map, or ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP).
+Needs numpy, netCDF4, a built meds_main (--meds-main, or MEDS_MAIN; default ../../build-dev/meds_main, the dev
+preset's build) and the data paths (--era5-archive, --soil-maps, --chave-e-map, or ERA5LAND_ARCHIVE, ED_SOIL_MAPS
+and CHAVE_E_MAP).
 """
 import argparse
 import os
@@ -180,7 +181,8 @@ def main(argv=None):
     ap.add_argument("--stack", default="512M", help="OMP_STACKSIZE: each worker thread's stack")
     ap.add_argument("--submit", default="", help='a batch command for each region, e.g. "sbatch --exclusive"; '
                                                  'empty: run them here, one after another')
-    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main each region runs (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     ap.add_argument("--soil-maps", default=os.environ.get("ED_SOIL_MAPS"), help="the ED soil maps (v2)")
     ap.add_argument("--chave-e-map", default=os.environ.get("CHAVE_E_MAP"), help="Chave's E on the forcing grid")

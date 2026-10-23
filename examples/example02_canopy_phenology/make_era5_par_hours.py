@@ -13,7 +13,10 @@ from ERA5-Land). Regenerating needs the archive (--archive, or the environment v
 and a MEDS build whose shortwave split uses the interval-mean sun, so a sunrise or sunset hour still
 splits its light (docs/science/forcing.md §6):
 
-    python make_era5_par_hours.py --meds-main ../../build-ifx/meds_main --archive /path/to/ED_ERA5land
+    python make_era5_par_hours.py --archive /path/to/ED_ERA5land
+
+It runs build-dev/meds_main, the dev preset's build, unless --meds-main (or the environment variable
+MEDS_MAIN) names another, such as build-production/meds_main from the repository root.
 """
 import argparse
 import glob
@@ -94,7 +97,8 @@ def count(site, work):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--meds-main", default=os.path.join(ROOT, "build-ifx", "meds_main"))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main to run (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     ap.add_argument("--work", default=os.path.join(HERE, "data", "era5_par_runs"))
     ap.add_argument("sites", nargs="*", default=list(SITES))

@@ -256,9 +256,9 @@ contains
       call root_water_uptake(g, k * (1.0_wp - 1.0e-6_wp), ps, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(duk, (up - um) / (2.0e-6_wp * k), 1.0e-6_wp, 0.0_wp)) ok = .false.
       !----- On the ramp: half a width of driving force. --------------------------------------!
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp, z, pw, u, dus, duw, duk)
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp + h, z, pw, up, dum, dum, dum)
-      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp - h, z, pw, um, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp, z, pw, u, dus, duw, duk)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp + h, z, pw, up, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-3_wp - h, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(dus, (up - um) / (2*h), 1.0e-5_wp, 0.0_wp)) ok = .false.
       call check_true('root: derivatives match finite differences, on and off the ramp', ok)
       call root_water_uptake(g, k, -2.0_wp, z, pw, u, dus, duw, duk)

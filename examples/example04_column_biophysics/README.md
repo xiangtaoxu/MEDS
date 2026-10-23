@@ -23,12 +23,12 @@ python run_example.py --census-dir /path/to/bci_census   # every step, with the 
 python run_example.py --calibrate --workers 40           # ... and redo the calibration first
 ```
 
-It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main`, default
-`../../build-ifx/meds_main`). The first full run builds the census file from the census tables, which
-it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The data); later runs
-reuse `data/bci_census2010_meds.csv`. Every step together takes about 14 minutes on 8 threads. The
-calibration's 836 runs took 28 minutes on 200 cores of five nodes, with the queue workers of
-[`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
+It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main` or `MEDS_MAIN`,
+default `../../build-dev/meds_main`). The first full run builds the census file from the census
+tables, which it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The
+data); later runs reuse `data/bci_census2010_meds.csv`. Every step together takes about 14 minutes
+on 8 threads. The calibration's 836 runs took 28 minutes on 200 cores of five nodes, with the queue
+workers of [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
 ## The data
 

@@ -55,8 +55,9 @@ integrators (`[fast].time_integrator`); [numerical_scheme](numerical_scheme.md) 
 says why an operator-split stepper is not among them.
 
 Whichever runs, the step first builds the **frozen record** (`build_frozen`: aerodynamics; leaf gas
-exchange → GPP/$g_s$/$R_d$; stem, root and heterotrophic respiration; CAS capacities; the snow stage
-and canopy interception) and steps the soil-plant water network (`water_step`), whose time-mean flows
+exchange → GPP/$g_s$/$R_d$; stem, root and heterotrophic respiration; CAS capacities; the snow stage's
+snowfall, rain and meltwater drainage, whose exchange with the canopy air is the march's; and canopy
+interception) and steps the soil-plant water network (`water_step`), whose time-mean flows
 are handed on as constants (`record_water_flows`) and whose θ is committed. After the march,
 `update_dynamic_state` commits the step and `close_ledgers` closes the ledgers, the same for both
 schemes. The canopy radiation transfer runs before it, in the fast-loop driver
@@ -180,7 +181,7 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | leaf/wood energy | `meds_plant_biophysics`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; per patch and sub-step, `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
-| snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
+| snow energy / base conductance | `meds_ground_biophysics`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | the step, the march + RK45→ESDIRK2 rescue | `meds_fast_integ_stepper`: `fast_step`, `adaptive_march` |
 | the frozen record | `meds_fast_integ_frozen`: `build_frozen`, `record_water_flows` |
