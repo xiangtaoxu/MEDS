@@ -287,6 +287,23 @@ contains
       end if
    end function kirchhoff_potential
 
+   !----- Phi(psi_a) - Phi(psi_b) [MPa], the Kirchhoff potential's difference across a     !
+   !      path. For exponent 2 with both ends at or below zero it is one arctangent, psi50 !
+   !      atan((r_a - r_b) / (1 + r_a r_b)), not two: half the cost, and it keeps the      !
+   !      digits two close potentials share. ----------------------------------------------!
+   pure real(wp) function kirchhoff_difference(psi_a, psi_b, psi50, kexp, table) result(dphi)
+      real(wp),            intent(in) :: psi_a, psi_b, psi50, kexp
+      type(hydro_table_t), intent(in) :: table
+      real(wp) :: r_a, r_b
+      if (psi_a <= 0.0_wp .and. psi_b <= 0.0_wp .and. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+         r_a  = psi_a / psi50
+         r_b  = psi_b / psi50
+         dphi = psi50 * atan((r_a - r_b) / (1.0_wp + r_a * r_b))
+      else
+         dphi = kirchhoff_potential(psi_a, psi50, kexp, table) - kirchhoff_potential(psi_b, psi50, kexp, table)
+      end if
+   end function kirchhoff_difference
+
    !----- dPhi/dpsi of exactly the potential kirchhoff_potential computes (the retained    !
    !      fraction, the slope of the table's linear piece, or the tail's), so the solver's !
    !      Jacobian is the derivative of the flow it moves. --------------------------------!
@@ -457,8 +474,7 @@ contains
       real(wp) :: dpsi, keff, dk_dw, dk_dl, mid, drive
       dpsi = psi_w - psi_l
       if (abs(dpsi) > KIRCHHOFF_EPS) then
-         keff  = k_cond * (kirchhoff_potential(psi_w, psi50, kexp, table)                          &
-                          - kirchhoff_potential(psi_l, psi50, kexp, table)) / dpsi
+         keff  = k_cond * kirchhoff_difference(psi_w, psi_l, psi50, kexp, table) / dpsi
          dk_dw = (k_cond * kirchhoff_slope(psi_w, psi50, kexp, table) - keff) / dpsi
          dk_dl = (keff - k_cond * kirchhoff_slope(psi_l, psi50, kexp, table)) / dpsi
       else

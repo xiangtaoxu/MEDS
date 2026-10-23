@@ -145,7 +145,10 @@ of a desiccated leaf a negative conductance.
 
 **In the flow.** Above zero potential nothing is embolised, so the sapflow takes $\Phi(\psi) = \psi$
 there. When the two ends of eq. (9) are within 10⁻⁶ MPa, the conductance and its slopes are taken at
-their midpoint, where the difference quotient loses its digits. The slopes in the solver's Jacobian
+their midpoint, where the difference quotient loses its digits. Farther apart, for $a=2$ with both
+ends at or below zero, the difference is one arctangent,
+$`\Phi(\psi_{up})-\Phi(\psi_{down})=\psi_{50}\arctan\big((r_{up}-r_{down})/(1+r_{up}\,r_{down})\big)`$,
+which keeps the digits two close potentials share. The slopes in the solver's Jacobian
 are those of exactly the $\Phi$ computed (the retained fraction for the closed forms, the slope of
 the table's linear piece inside the table, the tail's beyond it), so the Jacobian is the derivative
 of the flow that moves the water. A fully embolised cohort keeps a 10⁻¹² share of $k_{\text{cond}}$,
@@ -259,7 +262,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 |---|---|
 | PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
 | a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_water_to_rwc` |
-| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `conductance_retained_fraction`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow` |
+| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `conductance_retained_fraction`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow`, from `kirchhoff_difference` |
 | Kirchhoff table | `meds_plant_hydr_lib`: `build_hydro_table` (one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`; `kirchhoff_tail` past the table) |
 | xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`; the leaves' supply limit `supply_limited_transpiration` is in `meds_plant_hydraulics` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
