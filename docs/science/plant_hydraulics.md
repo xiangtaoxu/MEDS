@@ -266,9 +266,11 @@ flows themselves, so the plant and soil water budgets close to round-off.
 |---|---|
 | PV curves / capacitance | `meds_plant_hydr_lib`: one `water_curve_t` record per tissue; `tissue_psi_to_water`, `tissue_capacitance`, `tissue_water_to_psi`, `tissue_psi_tlp`, `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
 | a tissue's water relations in $R$ | `meds_plant_hydr_lib`: `tissue_water_relations`, `tissue_water_to_rwc` |
-| vulnerability + Kirchhoff | `meds_plant_hydr_lib`: `conductance_retained_fraction`, `kirchhoff_potential` (closed forms, or the table from `build_hydro_table`); the Kirchhoff mean conductance inside `xylem_sapflow`, from `kirchhoff_difference` |
-| Kirchhoff table | `meds_plant_hydr_lib`: `build_hydro_table` (one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`; `kirchhoff_tail` past the table) |
-| xylem and root flows | `meds_plant_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`; the leaves' supply limit `supply_limited_transpiration` is in `meds_plant_hydraulics` |
+| vulnerability curve | `meds_plant_hydr_lib`: `conductance_retained_fraction` |
+| Kirchhoff potential and mean | `meds_plant_hydraulics`: `kirchhoff_potential` (closed forms, or the PFT's table); the Kirchhoff mean conductance inside `xylem_sapflow`, from `kirchhoff_difference` |
+| Kirchhoff table | `kirchhoff_table_t` (`meds_pft_params`), built at load by `build_kirchhoff_table` (`meds_pft_derive`: one 7-point Gauss–Legendre panel per interval, written out in `kirchhoff_panel`); `kirchhoff_tail` past the table (`meds_plant_hydraulics`) |
+| xylem and root conductances | `meds_plant_hydr_lib`: `xylem_max_conductance`, `rhizosphere_conductance`, `root_fraction_profile` |
+| xylem and root flows | `meds_plant_hydraulics`: `xylem_sapflow`, `root_water_uptake`, `root_water_uptake_profile`, and the leaves' supply limit `supply_limited_transpiration` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
 | the solve | `meds_fast_integ_backward_euler`: `water_step` ([soil_plant_water](soil_plant_water.md)) |
 | the per-PFT table (`cfg%pft%hydraulics`) | `meds_pft_derive`: `derive_pft_tables` |
