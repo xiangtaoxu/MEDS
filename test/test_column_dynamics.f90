@@ -329,11 +329,11 @@ program test_column_dynamics
    call test_report('test_column_dynamics')
 
    !=====================================================================================!
-   !  RUN 8 -- SNOW ON: the snow stage's COUPLING, integrated. test_snow.f90 exercises the    !
-   !  kernels standalone; this run covers the stage both integrators share                    !
-   !  (advance_snow_stage: accumulate -> surface balance -> meltwater drain ->                !
-   !  snowfac-blended ground -> sublimation into the CAS) and the pack's mass and energy      !
-   !  terms in the whole-column ledgers.                                                      !
+   !  RUN 8 -- SNOW ON: the snow's COUPLING, integrated. test_snow.f90 exercises the         !
+   !  kernels standalone; this run covers what both integrators share (prepare_snow_stage:   !
+   !  accumulate -> meltwater drain; then in the march the surface balance against the live  !
+   !  canopy air -> snowfac-blended ground -> sublimation into the CAS; then the commit) and !
+   !  the pack's mass and energy terms in the whole-column ledgers.                          !
    !                                                                                          !
    !  A snow-free run only proves the snow-off path, which is the half that cannot break. The !
    !  two budget assertions below are the regression net: a dropped swe delta, pack rainfall  !

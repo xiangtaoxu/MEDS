@@ -17,37 +17,41 @@ The `snow_*` kernels live in `meds_ground_biophysics`; the pack is a single bulk
 `docs/ROADMAP.md` for multi-layer snow). The prognostic state is water-equivalent mass `swe`
 [kg m⁻²] and **extensive** internal energy [J m⁻²]; temperature and liquid fraction are read-offs of
 `internal_energy_to_temp` (`dry_hcap=0`), so **melt/refreeze is the internal-energy plateau**, exactly
-as for soil. The fast-loop driver orchestrates **accumulate → energy step → drain**:
+as for soil. Each `dt_fast` runs **accumulate → drain** before the march, the **exchange** inside it,
+and the **commit** after it:
 
 - **Accumulate** (`snow_accumulate`): snowfall lands as ice at $`\min(T_{3ple},T_{air})`$, rain-on-snow
   as liquid at $`T_{air}`$ (refreezing later via the inverter). A layer is created only above
   `min_new_snow_mass`; sub-threshold snow is folded into the soil store by the caller.
-- **Energy step** (`snow_energy_step`): a linearized backward-Euler step on the pack's enthalpy — net SW
+- **Drain** (`snow_drain_meltwater`): the free liquid the pack then holds above its holding capacity, the
+  last step's melt and this step's rain, percolates out as a paired (mass, enthalpy) hand-off to the
+  pond, which it reaches at the melt temperature and infiltrates from in this step's water network;
+  full melt-out dumps the residual and reverts to bare ground. Meltwater therefore leaves the pack
+  the step after it melts, 15 minutes at the default `dt_fast`.
+- **Exchange** (`snow_surface_balance`, called by `surface_derivs` at every evaluation of the march):
+  a linearized backward-Euler balance of the pack's enthalpy over the step, against the canopy air and
+  the top soil node the march holds at that evaluation, as each tissue's is against them — net SW
   (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, each linearized about
   the pack's temperature $`T^n`$, so the net flux $R(T)$ is linear and falls as $T$ rises. The pack's
   enthalpy $`E(T)`$ rises with $T$ along the ice line, across the melt plateau and along the liquid
   line, so the balance $`E(T) = E^n + \Delta t\,f_{snow}\,R(T)`$ has one root, found in closed form on
-  the plateau when its enthalpy range holds it, else on the ice or the liquid line. The pack ends at
-  that root exactly: a thin pack under an open patch's bare-ground conductance relaxes toward its
+  the plateau when its enthalpy range holds it, else on the ice or the liquid line, and the fluxes are
+  taken at that root: a thin pack under an open patch's bare-ground conductance relaxes toward its
   balance and cannot overshoot it, and a melting pack under cold air freezes through the plateau and
-  stops where the balance does. Sublimation takes its latent heat from the balance, and the mass
-  that leaves takes the pack's specific energy with it, so the rest keeps $T$; a pack that would
-  sublimate whole does, the vapour taking all the energy left. The vapour flux is set against the
-  canopy air's humidity over the step, not at its start: the pack and the canopy air exchange vapour
-  within minutes, so the step's humidity is taken from one backward-Euler balance of the canopy air
-  with the atmosphere and the pack alone,
-  $`q^* = (W\,q^n/\Delta t + G_a q_a + G_s q_s)/(W/\Delta t + G_a + G_s)`$ ($`W`$ the canopy air's mass,
-  $`G_a`$ its vapour conductance to the atmosphere, $`G_s = \rho\,g_{net} f_{snow}`$ the pack's, $`q_s`$ the
-  pack's saturation humidity). Against the start value, a deposition from warm saturated air onto a
-  melting pack could take more vapour in one step than the canopy air holds. The **snow-base →
-  soil-top conductance** is the series resistance of the half snow layer and the top soil node;
-  $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
-  winter soil surface, and it becomes the soil's top BC. The top node's $`k_{soil}`$ is the soil heat
-  solver's own conductivity of layer 1 at the step's start (its water, ice fraction and texture), so
-  a frozen or a dry top layer conducts as the soil column says it does.
-- **Drain** (`snow_drain_meltwater`): free liquid above the holding capacity percolates out as a paired
-  (mass, enthalpy) hand-off to the pond, which it reaches at the melt temperature and infiltrates
-  from; full melt-out dumps the residual and reverts to bare ground.
+  stops where the balance does. Sublimation takes its latent heat from the balance, and the mass that
+  leaves takes the pack's specific energy with it, so the rest keeps $T$; a pack that would sublimate
+  whole does, the vapour taking all the energy left. Because the canopy air's temperature and humidity
+  are the march's own at each evaluation, the pack's sensible, latent and vapour exchange is as
+  implicit in them as the canopy air's other sources: a deposition from warm saturated air cannot take
+  more vapour than the canopy air holds. The **snow-base → soil-top conductance** is the series
+  resistance of the half snow layer and the top soil node; $`k_{snow}\ll k_{soil}`$ throttles it as the
+  pack deepens, the physical decoupling that caps the winter soil surface, and it becomes the soil's
+  top BC against the march's own top-node temperature. The top node's $`k_{soil}`$ is the soil heat
+  solver's own conductivity of layer 1 at the step's start (its water, ice fraction and texture), so a
+  frozen or a dry top layer conducts as the soil column says it does.
+- **Commit** (`snow_take_exchange`): the pack takes the march's time integral of the exchange, the
+  energy and vapour the canopy air and the soil received from it, so the pack, the canopy air and the
+  soil close together in the whole-column ledgers; its temperature reads off the new energy.
 
 ### Sublimation saturates over ice
 
@@ -100,7 +104,8 @@ and full cover. The aerodynamic roughness does not see the pack: the driver pass
 
 | Concept | Routine |
 |---|---|
-| snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
+| snow energy / base conductance | `meds_ground_biophysics`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` (`snow_energy_step`, the two in one step, for the tests) |
+| the stage before the march, the exchange in it, the commit | `meds_fast_integ_frozen`: `prepare_snow_stage`; `meds_fast_integ_derivs`: `surface_derivs`; `meds_fast_integ_update`: `update_dynamic_state` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | prognostic snow type | `meds_patch_state_vars`: `snow_state_t` |
 

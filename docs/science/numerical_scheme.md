@@ -65,8 +65,8 @@ for exactly the same reason. Freezing hydraulics removes the ~20 s mode from the
 which is what makes any of the schemes below affordable.
 
 **Category 1 — stiff, must be treated implicitly**: canopy-air enthalpy / humidity / CO₂, the
-leaf and wood energy balance, the ground surface (snow-free, the top soil layer), the soil thermal
-column, and the soil–plant water network (pond, soil layers, leaf and wood water).
+leaf and wood energy balance, the ground surface (the top soil layer and the snow pack's exchange),
+the soil thermal column, and the soil–plant water network (pond, soil layers, leaf and wood water).
 
 **Category 2 — non-stiff**: canopy surface (film) water, the transpiration and aerodynamic fluxes
 themselves.
@@ -255,7 +255,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 
 | difference | esdirk2 | rk45 | kind |
 |---|---|---|---|
-| snow | shared stage, always active | same | unified |
+| snow | shared stage before the march, its exchange in the march, always active | same | unified |
 | canopy surface water | present | present | unified |
 | sapflow advected enthalpy | present | present | unified |
 | tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
@@ -698,7 +698,7 @@ than a convergence proof.
 | the soil–plant water network | `meds_fast_integ_backward_euler.f90` (`water_step`), its flows and Jacobian in `meds_fast_integ_derivs.f90` (`water_derivs`) ([soil_plant_water](soil_plant_water.md)) |
 | the commit and the seven ledgers (§5b) | `src/fast_dynamics/integrator/meds_fast_integ_update.f90` (`update_dynamic_state`, `close_ledgers`) |
 | error norm and step controller, eqs. (3)–(4) | `src/fast_dynamics/integrator/meds_fast_integ_control.f90` (`state_wrms_grouped`, `step_control_factor`); the tolerance set and the error control from config: `build_tol_set`, `build_error_control` there |
-| shared snow stage | `meds_fast_integ_frozen.f90` (`advance_snow_stage`) |
+| shared snow stage, its exchange and commit | `meds_fast_integ_frozen.f90` (`prepare_snow_stage`); `meds_fast_integ_derivs.f90` (`surface_derivs`); `meds_fast_integ_update.f90` (`update_dynamic_state`) |
 | patch loop, per-thread step data, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
 | the linear solvers and the conservation test (§9) | `src/share/meds_linear_algebra.f90`, `src/share/meds_numerics.f90` (`conserved`) |
 
