@@ -163,7 +163,8 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
   met, config ──→ maps ──────────────────────────┐
   output_stream ─────────────────────────────────┤
   model ─────────────────────────────────────────┴──→ driver ──→ meds_main
-                                                               └→ meds_py (libmeds.so)
+                                                               └→ c_api ──→ meds_py (libmeds.so)
+                                                                        └→ the C-API tests
 ```
 
 One edge is worth knowing because it is easy to get wrong:
