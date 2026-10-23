@@ -153,7 +153,7 @@ program test_column_rk45
    !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (a 30-yr         !
    !       Ithaca run's first recruitment event) guards two RK45-only failure modes a mature-canopy          !
    !       cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp overflowing           !
-   !       through a near-zero veg_energy_balance denominator, which cannot happen because the forcing,      !
+   !       through a near-zero tissue_energy_balance denominator, which cannot happen because the forcing,   !
    !       the coupling and the heat capacity all scale with the tissue's area                               !
    !       (docs/science/vegetation_energy_dynamics.md eqs. (1), (8)), and (2) the canopy air or the soil    !
    !       leaving its physical domain within a single explicit stage for a near-bare patch, which the       !
