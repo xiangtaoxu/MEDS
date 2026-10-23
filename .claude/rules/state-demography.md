@@ -34,7 +34,7 @@ for ED2's "forgot to reallocate one array" bug class.
 Patch fields work the same way in `state/meds_patch_state_vars.f90`: `alloc_patch_block`,
 `expand_patch_block`, `reorder_patch_block` and `free_patch_block`, in the patch block's section order.
 `sort_patches` and `patch_compact` build a permutation and call `reorder_patch_block`; a new patch field
-also needs its blend in `fuse_2_patches` and its value in a new gap (`apply_patch_disturbance`).
+also needs its blend in `fuse_patch_into` and its value in a new gap (`apply_patch_disturbance`).
 `polygon_t` (`state/meds_polygon_state_vars.f90`) holds the site, patch and cohort blocks and the
 routines that need more than one (`rebuild_patch_map`, `rebuild_cohort_map`, the id counters,
 `patch_polygon_area`). A patch's area is a fraction of its site and a site's a fraction of the

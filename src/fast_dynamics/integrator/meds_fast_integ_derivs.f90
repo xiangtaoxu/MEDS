@@ -22,7 +22,7 @@ module meds_fast_integ_derivs
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
    use meds_soil_types, only : energy_forcing_t
-   use meds_patch_state_vars,   only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_energy, only : soil_energy_time_deriv
    use meds_cas_biophysics, only : cas_box_t, cas_source_t, cas_box_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
@@ -276,7 +276,7 @@ contains
 
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
-      type(soil_energy_column_t) :: soil_energy
+      type(soil_energy_state_t)  :: soil_energy
       type(energy_forcing_t)     :: eforc
       real(wp)                   :: t_ground, fliq1, wmass1, transp_i, e_drain, water_heat(nsl)
       integer(ik)                :: i

@@ -28,7 +28,7 @@ module meds_patch_state_vars
    implicit none
    private
 
-   public :: cas_state_t, snow_column_t, soil_water_column_t, soil_energy_column_t, soil_carbon_t
+   public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_t
    public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
    public :: blend_decomp_xi, blend_litter_input
@@ -54,31 +54,31 @@ module meds_patch_state_vars
    !----- Snow, or temporary surface water: mass and energy per ground area, with          !
    !      temperature and liquid fraction read off them; nlayer = 0 is no snow             !
    !      (docs/science/snow_biophysics.md). ----------------------------------------------!
-   type :: snow_column_t
+   type :: snow_state_t
       real(wp) :: swe(n_snow_layer_max)         = 0.0_wp   !< [kg/m2] water-equivalent mass (prognostic)
       real(wp) :: snow_energy(n_snow_layer_max) = 0.0_wp   !< [J/m2]  internal energy (prognostic)
       real(wp) :: snow_depth(n_snow_layer_max)  = 0.0_wp   !< [m]     swe over the snow density
       real(wp) :: snow_temp(n_snow_layer_max)   = t_3ple   !< [K]     diagnosed
       real(wp) :: snow_fliq(n_snow_layer_max)   = 0.0_wp   !< [-]     liquid fraction, diagnosed
       integer(ik) :: nlayer                     = 0_ik     !< layers in use (0 = no snow)
-   end type snow_column_t
+   end type snow_state_t
 
    !----- Soil water, and the pond on top of it. The pond holds its own energy, so water   !
    !      that crosses into or out of it carries heat (docs/science/numerical_scheme.md,   !
    !      "The pond holds heat"). ---------------------------------------------------------!
-   type :: soil_water_column_t
+   type :: soil_water_state_t
       real(wp) :: theta(n_soil_layer_max) = 0.0_wp   !< [m3/m3] volumetric water content (prognostic)
       real(wp) :: w_surface = 0.0_wp                 !< [kg/m2] ponded water (prognostic)
       real(wp) :: w_surface_energy = 0.0_wp          !< [J/m2]  ponded water's internal energy (prognostic)
-   end type soil_water_column_t
+   end type soil_water_state_t
 
    !----- Soil heat: internal energy per volume of each layer, with temperature and liquid !
    !      fraction read off it. -----------------------------------------------------------!
-   type :: soil_energy_column_t
+   type :: soil_energy_state_t
       real(wp) :: soil_energy(n_soil_layer_max) = 0.0_wp    !< [J/m3] internal energy (prognostic)
       real(wp) :: soil_temp(n_soil_layer_max)   = 0.0_wp    !< [K]    diagnosed
       real(wp) :: soil_fliq(n_soil_layer_max)   = 1.0_wp    !< [-]    liquid fraction, diagnosed
-   end type soil_energy_column_t
+   end type soil_energy_state_t
 
    !----- The soil-carbon pools, the matrix state vector X (docs/science/soil_carbon.md    !
    !      §2): written daily by soil_carbon_step, held fixed for the fast loop's           !
@@ -158,12 +158,12 @@ module meds_patch_state_vars
       !==========================================================================================!
       ! 5. SNOW                                                                                  !
       !==========================================================================================!
-      type(snow_column_t),        allocatable :: snow(:)         !< snow, or temporary surface water
+      type(snow_state_t),         allocatable :: snow(:)         !< snow, or temporary surface water
       !==========================================================================================!
       ! 6. SOIL WATER AND HEAT                                                                   !
       !==========================================================================================!
-      type(soil_water_column_t),  allocatable :: soil_water(:)   !< soil water and the pond
-      type(soil_energy_column_t), allocatable :: soil_energy(:)  !< soil heat
+      type(soil_water_state_t),   allocatable :: soil_water(:)   !< soil water and the pond
+      type(soil_energy_state_t),  allocatable :: soil_energy(:)  !< soil heat
       !==========================================================================================!
       ! 7. SOIL CARBON                                                                           !
       !==========================================================================================!
@@ -187,6 +187,9 @@ module meds_patch_state_vars
       !----- Per patch, so a patch's first sub-step does not depend on which patch ran before    !
       !      it, or on the thread schedule (docs/science/numerical_scheme.md §3). ---------------!
       real(wp),    allocatable :: adapt_dt_last(:)     !< [s] last accepted fast-loop sub-step
+      !----- The patch's wall time in the last fast window, which orders the next window's patch   !
+      !      loop costliest first. Scheduling only: no result reads it, and it is never restarted. --!
+      real(wp),    allocatable :: fast_cost(:)         !< [s]
       !==========================================================================================!
       ! 11. OUTPUT ACCUMULATORS (meds_diag_vars; never restarted)                                !
       !==========================================================================================!
@@ -257,8 +260,8 @@ contains
    !----- nlayer is the larger; the caller sets it to 0 when no snow is left. -------------!
    pure function blend_snow(w1, a, w2, b) result(c)
       real(wp),            intent(in) :: w1, w2
-      type(snow_column_t), intent(in) :: a, b
-      type(snow_column_t)             :: c
+      type(snow_state_t),  intent(in) :: a, b
+      type(snow_state_t)              :: c
       c%swe         = w1 * a%swe         + w2 * b%swe
       c%snow_energy = w1 * a%snow_energy + w2 * b%snow_energy
       c%snow_depth  = w1 * a%snow_depth  + w2 * b%snow_depth
@@ -269,8 +272,8 @@ contains
 
    pure function blend_soil_water(w1, a, w2, b) result(c)
       real(wp),                  intent(in) :: w1, w2
-      type(soil_water_column_t), intent(in) :: a, b
-      type(soil_water_column_t)             :: c
+      type(soil_water_state_t),  intent(in) :: a, b
+      type(soil_water_state_t)              :: c
       c%theta     = w1 * a%theta     + w2 * b%theta
       c%w_surface = w1 * a%w_surface + w2 * b%w_surface
       c%w_surface_energy = w1 * a%w_surface_energy + w2 * b%w_surface_energy
@@ -278,8 +281,8 @@ contains
 
    pure function blend_soil_energy(w1, a, w2, b) result(c)
       real(wp),                  intent(in) :: w1, w2
-      type(soil_energy_column_t), intent(in) :: a, b
-      type(soil_energy_column_t)             :: c
+      type(soil_energy_state_t),  intent(in) :: a, b
+      type(soil_energy_state_t)              :: c
       c%soil_energy = w1 * a%soil_energy + w2 * b%soil_energy
       c%soil_temp   = w1 * a%soil_temp   + w2 * b%soil_temp
       c%soil_fliq   = w1 * a%soil_fliq   + w2 * b%soil_fliq
@@ -367,8 +370,9 @@ contains
       !----- 9. Within-step accumulators --------------------------------------------------------!
       allocate(patch%decomp_xi(cap), patch%litter_in(cap))       ! default-initialised by its type
       !----- 10. Solver memory ------------------------------------------------------------------!
-      allocate(patch%adapt_dt_last(cap))
+      allocate(patch%adapt_dt_last(cap), patch%fast_cost(cap))
       patch%adapt_dt_last = 0.0_wp
+      patch%fast_cost     = 0.0_wp
    end subroutine alloc_patch_block
 
    !----- Make room for at least `need` patches, growing 1.5x; a no-op when there is room  !
@@ -415,6 +419,7 @@ contains
       tmp%litter_in(1:m) = patch%litter_in(1:m)
       !----- 10. Solver memory ------------------------------------------------------------------!
       tmp%adapt_dt_last(1:m) = patch%adapt_dt_last(1:m)
+      tmp%fast_cost(1:m)     = patch%fast_cost(1:m)
       patch%n = tmp%n
       patch%cap = tmp%cap
       !----- 1. Identity and area ---------------------------------------------------------------!
@@ -446,6 +451,7 @@ contains
       call move_alloc(tmp%litter_in, patch%litter_in)
       !----- 10. Solver memory ------------------------------------------------------------------!
       call move_alloc(tmp%adapt_dt_last, patch%adapt_dt_last)
+      call move_alloc(tmp%fast_cost, patch%fast_cost)
    end subroutine expand_patch_block
 
    !----- Put old patch perm(k) at position k, k = 1..m, in every per-patch array and the  !
@@ -483,6 +489,7 @@ contains
       patch%litter_in(1:m) = patch%litter_in(perm(1:m))
       !----- 10. Solver memory ------------------------------------------------------------------!
       patch%adapt_dt_last(1:m) = patch%adapt_dt_last(perm(1:m))
+      patch%fast_cost(1:m)     = patch%fast_cost(perm(1:m))
       !----- 11. Output accumulators ------------------------------------------------------------!
       call reorder_patch_diag(patch%diag, perm, m)
       patch%n = m
@@ -499,7 +506,8 @@ contains
                                             patch%cas, patch%snow, patch%soil_water, patch%soil_energy,        &
                                             patch%soil_carbon, patch%shed_water_rate, patch%shed_water_enth,   &
                                             patch%slow_co2_rate,                                               &
-                                            patch%decomp_xi, patch%litter_in, patch%adapt_dt_last)
+                                            patch%decomp_xi, patch%litter_in, patch%adapt_dt_last,      &
+                                            patch%fast_cost)
    end subroutine free_patch_block
 
    !=======================================================================================!
@@ -514,7 +522,7 @@ contains
    !      has seeded their patch. `surf` is the patch's site's surface. --------------------!
    pure subroutine patch_physical_state(cas, soil_water, cfg, surf, temp, psi)
       type(cas_state_t),         intent(in)  :: cas          !< the patch's canopy air
-      type(soil_water_column_t), intent(in)  :: soil_water   !< the patch's soil water
+      type(soil_water_state_t), intent(in)  :: soil_water   !< the patch's soil water
       type(meds_config_t),       intent(in)  :: cfg
       type(site_surface_t),      intent(in)  :: surf
       real(wp),                  intent(out) :: temp, psi

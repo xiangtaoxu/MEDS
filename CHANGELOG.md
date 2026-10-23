@@ -73,7 +73,13 @@ soil-plant water network's step, the march, and one update through which both sc
 their ledgers. Each site's soil-layer curves and the cohorts' water paths are computed once rather than
 every step, and the implicit scheme's `[fast].time_integrator` value and its two keys are named
 `esdirk2`. The condensate now lands before the soil temperatures are diagnosed, which moves ESDIRK2's
-results a little on dew steps and RK45's within its tolerance (#484).
+results a little on dew steps and RK45's within its tolerance (#484). The forcing record names its
+fields by quantity (`air_temp`, `air_shv`, `air_pressure`, `air_density`, `lw_down`, `sw_down()`, `rain`),
+and the patch's soil and snow stores are `<store>_state_t`. The fast step keeps its frozen record from
+step to step, the canopy radiation finds each PFT's beam extinction once and skips a band with no light,
+the fast loop hands its patches to the threads costliest first, and a patch-fusion pass regroups the
+cohorts once instead of after every fusion, with no change to any result; a lint keeps the integrator
+to one patch's records (#485).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -593,6 +599,19 @@ results a little on dew steps and RK45's within its tolerance (#484).
     `test_column_esdirk2` (ctest `water_network`, `column_esdirk2`).
 
   No netCDF variable name or C API changes.
+- **Fortran names in the forcing record and the stores** (#485), for code built against MEDS's modules:
+  - `met_forcing_t`'s `tair_k`, `qair`, `psurf_pa`, `rho_air` and `lwdown` are `air_temp`, `air_shv`,
+    `air_pressure`, `air_density` and `lw_down`, and its `swdown()` is `sw_down()` (`met_sw_down`);
+    `met_record_t`'s `rainf` is `rain`;
+  - `snow_column_t`, `soil_water_column_t` and `soil_energy_column_t` are `snow_state_t`,
+    `soil_water_state_t` and `soil_energy_state_t`;
+  - the frozen record is the workspace's, `work%frozen`. `prepare_frozen(n, nsl, frozen)` sizes it and
+    resets it each step, where `allocate_frozen` built a new one, and `build_frozen` takes the
+    aerodynamic environment and the water network's records (`aenv`, `water`) in place of the workspace;
+  - the patch block gains `fast_cost`, the wall time of the patch's last fast-loop window. The state file
+    does not hold it.
+
+  No netCDF variable name, TOML key or C API changes.
 
 ### Changed
 
@@ -626,6 +645,25 @@ results a little on dew steps and RK45's within its tolerance (#484).
   from #483's by 0.011 K in canopy-air temperature at the median hour and 0.24 K at most, and by
   0.8 W/m² in H or LE at the median hour and 28 W/m² at most; the month's mean H and LE change by
   −0.07 and +0.07 W/m². On ifx, results also move at round-off with the code layout.
+- **The fast loop does less work for the same answer** (#485). No result changes, on gfortran or ifx:
+  - the fast step keeps its frozen record, one per thread, and resets it in place each step, where each
+    step allocated and freed its 37 arrays;
+  - the canopy radiation computes a PFT's beam extinction once per band, where it computed it once per
+    cohort, and skips a band with no light from the sky, the ground or the leaves (the night's
+    shortwave);
+  - the fast loop hands its patches to the threads costliest first. Each patch keeps the wall time of its
+    last window (`patch%fast_cost`), so the slowest patch starts at once instead of arriving last and
+    running alone while the other threads wait (`docs/science/numerical_scheme.md` §6a);
+  - a patch-fusion pass regroups the cohort block by patch once, at its end, where it regrouped it after
+    every fused pair. A one-day run from the BCI 2010 census, whose
+    1,250 quadrat patches fuse to 120, takes 12.3 s serial where it took 34.7 s.
+
+  On ifx, a 31-day BCI run from a restart takes 43.4 s serial where it took 46.1 s (−6 %), and 4.25 s
+  on 20 threads where it took 4.35 s.
+- **A lint holds the integrator to one patch's records** (#485). The ctest `integrator_boundary`
+  (`scripts/lint/check_integrator_boundary.py`) fails if a module of `src/fast_dynamics/integrator` uses
+  the polygon or its blocks, the driver, the clock, the forcing reader or the output: the integrator
+  sees one patch's five records, its site and the configuration.
 
 - **One record per configuration block** (#482). `[soil]` was read into three records, two of which
   also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its
@@ -1169,6 +1207,10 @@ results a little on dew steps and RK45's within its tolerance (#484).
 
 ### Fixed
 
+- **`test_several_sites` checked to its tolerance squared** (#485). It passed `RTOL × value` to
+  `check_close`, which scales the tolerance by the value itself, and a looser 10⁻⁷ covered an
+  optimized ifx build's difference on the mixed-soil sites. Every check is now 10⁻¹² relative, and
+  gfortran, ifx and an ifx Debug build all meet it: the ifx difference is gone.
 - **A restart re-seeded the snowpack** (#479). With `[snow].init_swe > 0`, a restart overwrote the pack
   its state file had restored with the initial one. The initial pack is now seeded only on a bare-ground
   or census start.

@@ -85,7 +85,7 @@ and full cover. The aerodynamic roughness does not see the pack: the driver pass
 
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
-| Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
+| Snow / surface water | `snow_state_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
 
 ## Code map
 
@@ -93,7 +93,7 @@ and full cover. The aerodynamic roughness does not see the pack: the driver pass
 |---|---|
 | snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_ground_biophysics`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
-| prognostic snow type | `meds_patch_state_vars`: `snow_column_t` |
+| prognostic snow type | `meds_patch_state_vars`: `snow_state_t` |
 
 ## References
 - Murphy & Koop (2005), *Q. J. R. Meteorol. Soc.* 131:1539 — vapour pressure over ice.

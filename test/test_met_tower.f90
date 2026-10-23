@@ -202,7 +202,7 @@ contains
       call check_true('an RHair file opens', st == MET_OK, real(st, wp))
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
-      call check('RHair -> q by rh_to_specific_humidity at the record''s T and P', met%qair,           &
+      call check('RHair -> q by rh_to_specific_humidity at the record''s T and P', met%air_shv,           &
                  rh_to_specific_humidity(rh_at(K), tair_at(K), PSURF), 1.0e-15_wp)
       call met_close(src)
 
@@ -211,7 +211,7 @@ contains
       call check_true('a Tdew file opens', st == MET_OK, real(st, wp))
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
-      call check('Tdew -> q by sat_specific_humidity', met%qair,                              &
+      call check('Tdew -> q by sat_specific_humidity', met%air_shv,                              &
                  sat_specific_humidity(tair_at(K) - 3.0_wp, PSURF), 1.0e-15_wp)
       call met_close(src)
 
@@ -220,7 +220,7 @@ contains
       call check_true('a Qair file opens', st == MET_OK, real(st, wp))
       call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
       met = sample(src, cur, stamp_seconds(K))
-      call check('Qair is used as it is', met%qair, 0.018_wp, 1.0e-15_wp)
+      call check('Qair is used as it is', met%air_shv, 0.018_wp, 1.0e-15_wp)
       call met_close(src)
 
       call write_tower_file('begin', 'RHair+Qair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
@@ -373,22 +373,22 @@ contains
       do k = 1, NT - 1
          if (k == SATURATED_REC) cycle
          met = sample(src, cur, stamp_seconds(k))
-         vpd = specific_humidity_to_vpd(met%tair_k, met%qair, met%psurf_pa)
-         rh_model = 1.0_wp - vpd / sat_vapor_pressure(met%tair_k)
+         vpd = specific_humidity_to_vpd(met%air_temp, met%air_shv, met%air_pressure)
+         rh_model = 1.0_wp - vpd / sat_vapor_pressure(met%air_temp)
          worst = max(worst, abs(rh_model - rh_at(k)))
       end do
       call check('the model''s RH at the forcing temperature is RHair at every stamp', worst, 0.0_wp, 1.0e-12_wp)
       met = sample(src, cur, stamp_seconds(SATURATED_REC))
-      vpd = specific_humidity_to_vpd(met%tair_k, met%qair, met%psurf_pa)
+      vpd = specific_humidity_to_vpd(met%air_temp, met%air_shv, met%air_pressure)
       call check('a saturated tower record reads back as VPD = 0', vpd, 0.0_wp, 1.0e-9_wp)
 
       !----- The move to the top of a 25 m stand's canopy air (30 m) from 41 m above the ground. ----!
       met = sample(src, cur, stamp_seconds(40))
       z_top = 30.0_wp ; displace = 0.63_wp * 25.0_wp ; rough = 0.13_wp * 25.0_wp
       top = met_to_cas_top(met, fc, z_top, displace, rough)
-      call check('the canopy-air top is warmer along the dry adiabat', top%tair_k - met%tair_k,         &
+      call check('the canopy-air top is warmer along the dry adiabat', top%air_temp - met%air_temp,         &
                  -(grav / cp_air) * (z_top - TOWER_HEIGHT), 1.0e-12_wp)
-      call check('specific humidity is carried unchanged', top%qair, met%qair, 1.0e-15_wp)
+      call check('specific humidity is carried unchanged', top%air_shv, met%air_shv, 1.0e-15_wp)
       factor = log((z_top - displace) / rough) / log((TOWER_HEIGHT - displace) / rough)
       call check('the wind follows the patch log profile from the tower height', top%wind,           &
                  factor * met%wind, 1.0e-12_wp)

@@ -228,6 +228,9 @@ contains
       real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
       integer(ik) :: lyr(max(ncoh,1)), nmemb(max(ncoh,1))
       integer(ik) :: nlayer, il
+      !----- Each PFT's beam extinction coefficient, computed once for the cohorts that share it. -------!
+      real(wp)    :: kdir_pft(size(optics%lidf, 2))
+      logical     :: kdir_done(size(optics%lidf, 2))
       real(wp)    :: gc_l, dn_ground, up_ground, albedo, incid_tot
       integer(ik) :: b, i, ip
 
@@ -269,16 +272,27 @@ contains
          nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik
       end do
 
-      !----- Ross-G beam extinction is band-independent: compute once per cohort, reuse each band. -!
+      !----- Ross-G beam extinction depends only on the PFT's leaf angles and the sun, not the band:  !
+      !      once per PFT present, shared by its cohorts and every band. -----------------------------!
       kdir_coh(1:ncoh) = 0.0_wp
       if (any(optics%has_beam(1:forcing%n_band))) then
+         kdir_done = .false.
          do i = 1_ik, ncoh
-            kdir_coh(i) = gfun_direct(optics%lidf(:, pft(i)), forcing%cosz) / max(forcing%cosz, tiny_num)
+            ip = pft(i)
+            if (.not. kdir_done(ip)) then
+               kdir_pft(ip)  = gfun_direct(optics%lidf(:, ip), forcing%cosz) / max(forcing%cosz, tiny_num)
+               kdir_done(ip) = .true.
+            end if
+            kdir_coh(i) = kdir_pft(ip)
          end do
       end if
 
-      !----- Loop the configured bands. ---------------------------------------------------!
+      !----- Loop the configured bands. A band with no light and no emission (VIS and NIR at night)   !
+      !      absorbs, reflects and passes nothing: its fluxes keep the zeros alloc_rad_flux set, which  !
+      !      are what the solve would return. -------------------------------------------------------!
       do b = 1_ik, forcing%n_band
+         if (.not. optics%has_emission(b) .and. forcing%incid_beam(b) == 0.0_wp .and.                    &
+             forcing%incid_diff(b) == 0.0_wp .and. forcing%grnd_emiss(b) == 0.0_wp) cycle
          call blend_cohort_optics(optics, b, ncoh, pft, elai(1:ncoh), ewai(1:ncoh), kdir_coh(1:ncoh), &
                                   omega(1:ncoh), beta(1:ncoh), beta0(1:ncoh), kdir(1:ncoh),         &
                                   leaf_frac(1:ncoh))

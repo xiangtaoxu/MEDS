@@ -133,14 +133,14 @@ contains
       real(wp),           intent(out)   :: humidity_value, sw_total
       integer(ik) :: h
       call locate_record(src, irec, h)
-      rec%tair_k   = archive_value(src, cur, h, ERA_TAIR)
-      rec%psurf_pa = archive_value(src, cur, h, ERA_PSURF)
+      rec%air_temp   = archive_value(src, cur, h, ERA_TAIR)
+      rec%air_pressure = archive_value(src, cur, h, ERA_PSURF)
       humidity_value = archive_value(src, cur, h, ERA_TDEW)
       rec%wind_u   = archive_value(src, cur, h, ERA_U10)
       rec%wind_v   = archive_value(src, cur, h, ERA_V10)
       rec%wind     = sqrt(rec%wind_u**2 + rec%wind_v**2)
-      rec%rainf    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
-      rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
+      rec%rain    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
+      rec%lw_down   = archive_value(src, cur, h, ERA_LWDOWN)
       sw_total     = archive_value(src, cur, h, ERA_SWDOWN)
    end subroutine era5land_record
 

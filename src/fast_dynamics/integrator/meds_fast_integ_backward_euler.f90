@@ -15,7 +15,7 @@ module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
-   use meds_patch_state_vars,   only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs, assemble_soil_energy_forcing
    use meds_fast_integ_control, only : water_scales
    use meds_cas_biophysics, only : cas_box_step_implicit, cas_source_t
@@ -85,7 +85,7 @@ contains
 
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with this stage's conductances
-      type(soil_energy_column_t) :: se
+      type(soil_energy_state_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2

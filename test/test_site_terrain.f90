@@ -55,34 +55,34 @@ program test_site_terrain
    !=== 3. A site above its polygon. ===========================================================!
    f%apply_elevation_lapse = .true.
    f%lapse_rate_tair = 0.0065_wp
-   met%tair_k = 290.0_wp
-   met%psurf_pa = 95000.0_wp
-   met%qair = 0.010_wp
-   met%lwdown = 350.0_wp
+   met%air_temp = 290.0_wp
+   met%air_pressure = 95000.0_wp
+   met%air_shv = 0.010_wp
+   met%lw_down = 350.0_wp
    met%par_beam = 200.0_wp
    met%nir_beam = 220.0_wp
    met%par_diffuse = 60.0_wp
-   met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
+   met%air_density = air_density(met%air_temp, met%air_pressure, met%air_shv)
    site = met_at_site(met, f, 1, 500.0_wp, 1.0_wp)
-   call check_true('500 m up is 500 m x the lapse rate colder', abs(site%tair_k - (290.0_wp - 3.25_wp)) < 1.0e-12_wp)
-   call check_true('and at a lower pressure', site%psurf_pa < met%psurf_pa)
+   call check_true('500 m up is 500 m x the lapse rate colder', abs(site%air_temp - (290.0_wp - 3.25_wp)) < 1.0e-12_wp)
+   call check_true('and at a lower pressure', site%air_pressure < met%air_pressure)
    call check_true('at the same relative humidity',                                               &
                    abs(rh(site) - rh(met)) < 1.0e-9_wp)
-   call check_true('under less longwave', site%lwdown < met%lwdown)
+   call check_true('under less longwave', site%lw_down < met%lw_down)
    call check_true('with its air density from its own air',                                       &
-                   site%rho_air == air_density(site%tair_k, site%psurf_pa, site%qair))
+                   site%air_density == air_density(site%air_temp, site%air_pressure, site%air_shv))
    call check_true('the light is the polygon''s on level ground',                                  &
                    site%par_beam == met%par_beam .and. site%par_diffuse == met%par_diffuse)
    site = met_at_site(met, f, 1, 0.0_wp, 1.0_wp)
    call check_true('a site at the polygon''s elevation on level ground keeps its forcing exactly',  &
-                   site%tair_k == met%tair_k .and. site%psurf_pa == met%psurf_pa .and.                &
-                   site%qair == met%qair .and. site%lwdown == met%lwdown .and.                        &
+                   site%air_temp == met%air_temp .and. site%air_pressure == met%air_pressure .and.                &
+                   site%air_shv == met%air_shv .and. site%lw_down == met%lw_down .and.                        &
                    site%par_beam == met%par_beam .and. site%nir_beam == met%nir_beam .and.            &
-                   site%rho_air == met%rho_air)
+                   site%air_density == met%air_density)
    f%apply_elevation_lapse = .false.
    site = met_at_site(met, f, 1, 500.0_wp, 1.5_wp)
    call check_true('without the lapse the air is the polygon''s',                                  &
-                   site%tair_k == met%tair_k .and. site%psurf_pa == met%psurf_pa)
+                   site%air_temp == met%air_temp .and. site%air_pressure == met%air_pressure)
    call check_true('and the slope scales the beam alone',                                          &
                    site%par_beam == 1.5_wp * met%par_beam .and. site%nir_beam == 1.5_wp * met%nir_beam &
                    .and. site%par_diffuse == met%par_diffuse)
@@ -94,7 +94,7 @@ contains
    !----- Relative humidity of a forcing sample: its vapour pressure over saturation. ----------!
    real(wp) function rh(m)
       type(met_forcing_t), intent(in) :: m
-      rh = m%qair * m%psurf_pa / (0.622_wp + 0.378_wp * m%qair) / sat_vapor_pressure(m%tair_k)
+      rh = m%air_shv * m%air_pressure / (0.622_wp + 0.378_wp * m%air_shv) / sat_vapor_pressure(m%air_temp)
    end function rh
 
 end program test_site_terrain

@@ -172,9 +172,9 @@ contains
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(inout) :: rec
       real(wp),           intent(out)   :: humidity_value, sw_total
-      rec%tair_k   = series_value(src, FLD_TAIR,  irec)
+      rec%air_temp   = series_value(src, FLD_TAIR,  irec)
       humidity_value = series_value(src, humidity_field(src%humidity), irec)
-      rec%psurf_pa = series_value(src, FLD_PSURF, irec)
+      rec%air_pressure = series_value(src, FLD_PSURF, irec)
       if (src%has_wind_vector) then
          rec%wind_u = series_value(src, FLD_U10, irec)
          rec%wind_v = series_value(src, FLD_V10, irec)
@@ -182,13 +182,13 @@ contains
       else
          rec%wind   = series_value(src, FLD_WIND,  irec)
       end if
-      rec%rainf    = series_value(src, FLD_RAINF, irec)              ! total rainfall rate [kg/m2/s]
+      rec%rain    = series_value(src, FLD_RAINF, irec)              ! total rainfall rate [kg/m2/s]
       !----- LWdown is optional under lwdown_source = "synthesize", which replaces it             !
       !      (docs/science/forcing.md §11). ------------------------------------------------------!
       if (src%fcfg%lwdown_source == LW_SYNTHESIZE) then
-         rec%lwdown = series_value(src, FLD_LWDOWN, irec, default=0.0_wp)
+         rec%lw_down = series_value(src, FLD_LWDOWN, irec, default=0.0_wp)
       else
-         rec%lwdown = series_value(src, FLD_LWDOWN, irec)
+         rec%lw_down = series_value(src, FLD_LWDOWN, irec)
       end if
       sw_total = 0.0_wp
       if (src%fcfg%sw_partition == SWPART_PASSTHROUGH) then

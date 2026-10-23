@@ -262,15 +262,15 @@ contains
       ! noon (17 UTC): SW positive, Tair follows the diurnal input
       now = time_advance_seconds(base, 17.0_wp*3600.0_wp)
       call met_advance(src, cur, now) ; met_noon = met_instant(src, cur, now)
-      call check_true('noon SWdown > 0', met_noon%swdown() > 100.0_wp, met_noon%swdown())
+      call check_true('noon SWdown > 0', met_noon%sw_down() > 100.0_wp, met_noon%sw_down())
       call check_true('noon cosz > 0.5', met_noon%cosz > 0.5_wp, met_noon%cosz)
-      call check_true('Tair in [285,305]', met_noon%tair_k > 285.0_wp .and. met_noon%tair_k < 305.0_wp, met_noon%tair_k)
-      sw_g1 = met_noon%swdown()
+      call check_true('Tair in [285,305]', met_noon%air_temp > 285.0_wp .and. met_noon%air_temp < 305.0_wp, met_noon%air_temp)
+      sw_g1 = met_noon%sw_down()
 
       ! night (04 UTC): SW exactly 0
       now = time_advance_seconds(base, 4.0_wp*3600.0_wp)
       call met_advance(src, cur, now) ; met_night = met_instant(src, cur, now)
-      call check('night SWdown = 0', met_night%swdown(), 0.0_wp, 1.0e-12_wp)
+      call check('night SWdown = 0', met_night%sw_down(), 0.0_wp, 1.0e-12_wp)
       call check_true('an instant from a Wind-only file has no vector', .not. met_night%has_wind_vector)
       call met_close(src)
 
@@ -293,7 +293,7 @@ contains
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = time_advance_seconds(base, 17.0_wp*3600.0_wp)
       call met_advance(src, cur, now) ; met_g2 = met_instant(src, cur, now)
-      call check_true('grid 2 SW differs from grid 1', abs(met_g2%swdown() - sw_g1) > 1.0_wp, met_g2%swdown()-sw_g1)
+      call check_true('grid 2 SW differs from grid 1', abs(met_g2%sw_down() - sw_g1) > 1.0_wp, met_g2%sw_down()-sw_g1)
       call met_close(src)
 
       call test_edge_paths(base)
@@ -337,7 +337,7 @@ contains
       do k = 1, 60                                                     ! one-minute mid-points
          now = time_advance_seconds(base, (real(hsun - 1, wp) + (real(k, wp) - 0.5_wp) / 60.0_wp) * 3600.0_wp)
          call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
-         mean_sw = mean_sw + met%swdown() / 60.0_wp
+         mean_sw = mean_sw + met%sw_down() / 60.0_wp
       end do
       call check('sunrise hour: its instants average to the hour''s SW', mean_sw, SW, 0.1_wp * SW)
       call met_close(src)
@@ -417,11 +417,11 @@ contains
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = time_advance_seconds(base, -12.0_wp*3600.0_wp)          ! 12 h before the first record
       call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
-      call check('hold before t0 -> record 1', met%tair_k, tair0, 1.0e-4_wp)
+      call check('hold before t0 -> record 1', met%air_temp, tair0, 1.0e-4_wp)
       now = time_advance_seconds(base, 0.5_wp*3600.0_wp)            ! 00:30 -> midpoint of [t0,t1)
       call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
       expect_hold = 0.5_wp*(tair0 + tair1)
-      call check('march into [t0,t1) interpolates (not stuck at rec1)', met%tair_k, expect_hold, 1.0e-4_wp)
+      call check('march into [t0,t1) interpolates (not stuck at rec1)', met%air_temp, expect_hold, 1.0e-4_wp)
       call met_close(src)
 
       ! (b) A 25-record (24 h span) file CANNOT be recycled: a sub-year window drifts both
@@ -489,9 +489,9 @@ contains
       call site_cursor(src, cur, fc)
       call met_advance(src, cur, meds_time_t(2021_ik,9_ik,17_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,9_ik,17_ik))
       call met_advance(src, cur, meds_time_t(2049_ik,9_ik,17_ik)) ; m_map = met_instant(src, cur, meds_time_t(2049_ik,9_ik,17_ik))
-      call check('29 yr later reads the same calendar day', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call check('29 yr later reads the same calendar day', m_map%air_temp, m_ref%air_temp, 1.0e-9_wp)
       call met_advance(src, cur, meds_time_t(2013_ik,9_ik,17_ik)) ; m_map = met_instant(src, cur, meds_time_t(2013_ik,9_ik,17_ik))
-      call check('a model year BEFORE the window maps in too', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call check('a model year BEFORE the window maps in too', m_map%air_temp, m_ref%air_temp, 1.0e-9_wp)
       call met_close(src)
    end subroutine test_recycle_anchor_phase
 
@@ -677,18 +677,18 @@ contains
       call check('ERA5 wind: open-terrain step, then the patch profile', fac,                     &
                  log(40.0_wp/0.03_wp) / log(10.0_wp/0.03_wp) * log((ZC - D)/Z0) / log(40.0_wp/Z0), 1.0e-12_wp)
       call check('ERA5 wind: ~0.73 u10 at the top of a 25 m canopy', fac, 0.729_wp, 1.0e-3_wp)
-      m%tair_k = 290.0_wp
+      m%air_temp = 290.0_wp
       top = met_to_cas_top(m, f, ZC, D, Z0)
-      call check('temperature conserves theta from d + 2 m', top%tair_k, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
+      call check('temperature conserves theta from d + 2 m', top%air_temp, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
       call check('theta at the top equals theta at the forcing height',                            &
-                 top%tair_k + GC * ZC, 290.0_wp + GC * (D + 2.0_wp), 1.0e-9_wp)
+                 top%air_temp + GC * ZC, 290.0_wp + GC * (D + 2.0_wp), 1.0e-9_wp)
       !----- A flux tower: local wind at 40 m above the ground; the 2 z0 floor on a tall stand. --!
       f%height_above = HEIGHT_ABOVE_GROUND ; f%wind_exposure = WIND_EXPOSURE_LOCAL
       f%tq_height = 40.0_wp ; f%wind_height = 40.0_wp
       call check('tower wind: the patch profile from 40 m above the ground', cas_top_wind_factor(f, ZC, D, Z0), &
                  log((ZC - D)/Z0) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
       top = met_to_cas_top(m, f, ZC, D, Z0)
-      call check('tower temperature: along the dry adiabat from 40 m', top%tair_k, 290.0_wp + GC * 10.0_wp, 1.0e-12_wp)
+      call check('tower temperature: along the dry adiabat from 40 m', top%air_temp, 290.0_wp + GC * 10.0_wp, 1.0e-12_wp)
       call check('tower at the top: no change', cas_top_wind_factor(f, 40.0_wp, D, Z0), 1.0_wp, 1.0e-15_wp)
       call check('heights floored at 2 z0 above d', cas_top_wind_factor(f, D + 1.0_wp, D, Z0),       &
                  log(2.0_wp) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
@@ -696,25 +696,25 @@ contains
       f%height_above = HEIGHT_ABOVE_ZERO_PLANE ; f%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN
       f%tq_height = 2.0_wp ; f%wind_height = 10.0_wp
       m%wind = 5.0_wp ; m%wind_u = 3.0_wp ; m%wind_v = -4.0_wp ; m%has_wind_vector = .true.
-      m%tair_k = 290.0_wp ; m%qair = 0.009_wp ; m%psurf_pa = 98000.0_wp
+      m%air_temp = 290.0_wp ; m%air_shv = 0.009_wp ; m%air_pressure = 98000.0_wp
       top = met_to_cas_top(m, f, ZC, D, Z0)
       fac = cas_top_wind_factor(f, ZC, D, Z0)
       call check('record: wind speed scaled', top%wind, 5.0_wp * fac, 1.0e-12_wp)
       call check('record: vector scaled (u)', top%wind_u, 3.0_wp * fac, 1.0e-12_wp)
       call check('record: vector scaled (v)', top%wind_v, -4.0_wp * fac, 1.0e-12_wp)
-      call check('record: temperature moved', top%tair_k, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
-      call check('record: humidity conserved', top%qair, 0.009_wp, 1.0e-15_wp)
-      call check('record: pressure stays at the ground', top%psurf_pa, 98000.0_wp, 1.0e-12_wp)
-      call check('record: shortwave unchanged', top%swdown(), m%swdown(), 1.0e-12_wp)
-      call check('record: air density re-derived', top%rho_air, air_density(top%tair_k, 98000.0_wp, 0.009_wp), 1.0e-12_wp)
+      call check('record: temperature moved', top%air_temp, 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
+      call check('record: humidity conserved', top%air_shv, 0.009_wp, 1.0e-15_wp)
+      call check('record: pressure stays at the ground', top%air_pressure, 98000.0_wp, 1.0e-12_wp)
+      call check('record: shortwave unchanged', top%sw_down(), m%sw_down(), 1.0e-12_wp)
+      call check('record: air density re-derived', top%air_density, air_density(top%air_temp, 98000.0_wp, 0.009_wp), 1.0e-12_wp)
       !----- The record carries total precipitation, unchanged by the move; the rain/snow split is made  !
       !      from the moved temperature where the column's forcing is filled. At freezing, the cooler top  !
       !      air turns some of the rain to snow. ---------------------------------------------------------!
-      m%tair_k = t_3ple ; m%precip = 1.0e-3_wp
+      m%air_temp = t_3ple ; m%precip = 1.0e-3_wp
       top = met_to_cas_top(m, f, ZC, D, Z0)
       call check('record: total precipitation unchanged', top%precip, 1.0e-3_wp, 1.0e-15_wp)
-      call precip_phase(m%precip, m%tair_k, rain_ref, snow_ref)
-      call precip_phase(top%precip, top%tair_k, rain_top, snow_top)
+      call precip_phase(m%precip, m%air_temp, rain_ref, snow_ref)
+      call precip_phase(top%precip, top%air_temp, rain_top, snow_top)
       call check_true('record: at freezing, the cooler top air turns some rain to snow', snow_top > snow_ref, &
                       snow_top - snow_ref)
    end subroutine test_cas_top
@@ -741,11 +741,11 @@ contains
       !----- recycle identity: model 2023-07-01 reads the 2021-07-01 record (day-of-year exact). --!
       call met_advance(src, cur, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,1_ik))
       call met_advance(src, cur, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,1_ik))
-      call check('recycle: 2023-07-01 reads the 2021-07-01 record', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call check('recycle: 2023-07-01 reads the 2021-07-01 record', m_map%air_temp, m_ref%air_temp, 1.0e-9_wp)
       !----- Feb-29 reconciliation: model 2024-02-29 (leap) maps to file 2021-02-28. --------------!
       call met_advance(src, cur, meds_time_t(2021_ik,2_ik,28_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,2_ik,28_ik))
       call met_advance(src, cur, meds_time_t(2024_ik,2_ik,29_ik)) ; m_map = met_instant(src, cur, meds_time_t(2024_ik,2_ik,29_ik))
-      call check('Feb-29 (leap model) maps to file Feb-28', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+      call check('Feb-29 (leap model) maps to file Feb-28', m_map%air_temp, m_ref%air_temp, 1.0e-9_wp)
       call met_close(src)
    end subroutine test_multiyear_cycling
 
@@ -876,7 +876,7 @@ contains
          m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
          call met_advance(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
          m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
-         call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+         call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%air_temp, m_ref%air_temp, 1.0e-9_wp)
          call check('recycle: 2021 CO2', m_ref%co2, 400.0_wp, 1.0e-9_wp)
          call check('recycle: the CO2 does not repeat (2023 CO2)', m_map%co2, 420.0_wp, 1.0e-9_wp)
          call met_close(src)

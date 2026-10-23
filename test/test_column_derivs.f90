@@ -24,7 +24,7 @@ program test_column_derivs
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,      only : soil_profile_t, soil_params_t
    use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
-   use meds_patch_state_vars,   only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_pft_params,  only : hydraulics_pft_t
@@ -284,7 +284,7 @@ contains
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
       type(soil_params_t)         :: eopts
-      type(soil_energy_column_t)  :: col, col0
+      type(soil_energy_state_t)   :: col, col0
       type(energy_flux_t)         :: eflux
       real(wp)    :: dedt(n_soil_layer_max), dt, worst, fd
       integer(ik) :: k, nsl
@@ -323,7 +323,7 @@ contains
       type(surface_state_t)      :: y_stage
       type(surface_tend_t)       :: surf_tend
       type(energy_forcing_t)     :: eforc_chk
-      type(soil_energy_column_t) :: se_chk
+      type(soil_energy_state_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
       integer(ik) :: k, i, n, nsl
       logical     :: all_finite

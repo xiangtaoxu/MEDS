@@ -21,7 +21,7 @@ program test_snow
    use meds_constants,          only : t_3ple
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
-   use meds_patch_state_vars,   only : snow_column_t
+   use meds_patch_state_vars,   only : snow_state_t
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_params,  only : snow_params_t
    use meds_ground_biophysics,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
@@ -88,7 +88,7 @@ contains
 
    !----- Build a cold pack by accumulation; assert growth, sub-freezing, and closed ledgers. -----!
    subroutine test_accumulate()
-      type(snow_column_t) :: snow
+      type(snow_state_t) :: snow
       type(snow_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_flux_t)   :: fx
@@ -97,7 +97,7 @@ contains
       integer(ik) :: k
       print '(a)', 'test_accumulate:'
       call default_params(p) ; call cold_env(env)
-      snow = snow_column_t()
+      snow = snow_state_t()
       dt = 900.0_wp ; snowfall = 1.0e-3_wp                 ! [kg/m2/s] ~ 3.6 mm SWE/hr
       mass_in = 0.0_wp ; mass_out = 0.0_wp ; e_in = 0.0_wp ; e_out = 0.0_wp ; worst_resid = 0.0_wp
       do k = 1_ik, 40_ik
@@ -122,7 +122,7 @@ contains
 
    !----- Warm a cold pack: temp pins at t_3ple, fliq rises, melt drains, swe -> melt-out. --------!
    subroutine test_melt_event()
-      type(snow_column_t) :: snow
+      type(snow_state_t) :: snow
       type(snow_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_flux_t)   :: fx
@@ -133,7 +133,7 @@ contains
       print '(a)', 'test_melt_event:'
       call default_params(p) ; call cold_env(env)
       ! seed a 20 kg/m2 cold pack directly (all ice at 270 K)
-      snow = snow_column_t()
+      snow = snow_state_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 20.0_wp
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 20.0_wp, 270.0_wp, 0.0_wp)
       snow%snow_depth(1)  = 20.0_wp / p%rho_snow
@@ -168,7 +168,7 @@ contains
 
    !----- Isothermal cold pack in radiative/turbulent equilibrium with the CAS + soil: steady. ----!
    subroutine test_isothermal()
-      type(snow_column_t) :: snow
+      type(snow_state_t) :: snow
       type(snow_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_flux_t)   :: fx
@@ -177,7 +177,7 @@ contains
       integer(ik) :: k
       print '(a)', 'test_isothermal:'
       call default_params(p)
-      snow = snow_column_t()
+      snow = snow_state_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 15.0_wp
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 15.0_wp, 268.0_wp, 0.0_wp)
       snow%snow_depth(1)  = 15.0_wp / p%rho_snow
@@ -221,12 +221,12 @@ contains
 
    !----- Rain on a sub-freezing pack: adds mass + liquid enthalpy, refreezes (energy rises). -----!
    subroutine test_rain_on_snow()
-      type(snow_column_t) :: snow
+      type(snow_state_t) :: snow
       type(snow_params_t) :: p
       real(wp) :: e0, swe0
       print '(a)', 'test_rain_on_snow:'
       call default_params(p)
-      snow = snow_column_t()
+      snow = snow_state_t()
       snow%nlayer = 1_ik ; snow%swe(1) = 10.0_wp
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 10.0_wp, 265.0_wp, 0.0_wp)   ! cold pack
       snow%snow_depth(1)  = 10.0_wp / p%rho_snow
@@ -242,7 +242,7 @@ contains
    !      flux at t_3ple, or the nonlinear sublimation at a linearized temperature, would drive it   !
    !      hundreds of kelvin past its balance. -----------------------------------------------------!
    subroutine test_stiff_coupling()
-      type(snow_column_t) :: snow
+      type(snow_state_t) :: snow
       type(snow_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_flux_t)   :: fx
@@ -256,7 +256,7 @@ contains
       env%t_soil_top = t_3ple ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.025_wp
 
       !----- (a) A cold pack (243 K) under warm, moist canopy air: it warms toward the air, not past it. -!
-      snow = snow_column_t()
+      snow = snow_state_t()
       snow%nlayer = 1_ik ; snow%swe(1) = SWE
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, 243.0_wp, 0.0_wp)
       snow%snow_depth(1)  = SWE / p%rho_snow
@@ -271,7 +271,7 @@ contains
 
       !----- (b) A melting pack (10 % liquid) under cold, dry canopy air: it freezes through the plateau and !
       !      cools toward the air; over a day it stays near the air, and both ledgers close. --------------!
-      snow = snow_column_t()
+      snow = snow_state_t()
       snow%nlayer = 1_ik ; snow%swe(1) = SWE
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, t_3ple, 0.1_wp)
       snow%snow_depth(1)  = SWE / p%rho_snow

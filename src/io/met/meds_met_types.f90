@@ -47,9 +47,9 @@ module meds_met_types
    !  without forcing reads at every sub-step (the four streams sum to 400 W/m2).                 !
    !==========================================================================================!
    type :: met_forcing_t
-      real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height
-      real(wp) :: qair         = 0.008_wp     !< [kg/kg]    specific humidity
-      real(wp) :: psurf_pa     = 101325.0_wp  !< [Pa]       surface pressure
+      real(wp) :: air_temp     = 288.0_wp     !< [K]        air temperature at reference height
+      real(wp) :: air_shv      = 0.008_wp     !< [kg/kg]    specific humidity
+      real(wp) :: air_pressure = 101325.0_wp  !< [Pa]       surface pressure
       !----- Total precipitation, split into rain and snow per patch (docs/science/forcing.md §7). ---!
       real(wp) :: precip       = 0.0_wp       !< [kg/m2/s]  total precipitation rate
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
@@ -57,24 +57,24 @@ module meds_met_types
       real(wp) :: wind_u       = 2.0_wp       !< [m/s]      eastward component at reference height
       real(wp) :: wind_v       = 0.0_wp       !< [m/s]      northward component at reference height
       logical  :: has_wind_vector = .false.   !< .true. when the source supplied components, not just speed
-      real(wp) :: lwdown       = 380.0_wp     !< [W/m2]     downwelling longwave (positive down)
+      real(wp) :: lw_down      = 380.0_wp     !< [W/m2]     downwelling longwave (positive down)
       real(wp) :: par_beam     = 180.0_wp     !< [W/m2]     direct-beam PAR at canopy top
       real(wp) :: par_diffuse  = 40.0_wp      !< [W/m2]     diffuse PAR
       real(wp) :: nir_beam     = 150.0_wp     !< [W/m2]     direct-beam NIR
       real(wp) :: nir_diffuse  = 30.0_wp      !< [W/m2]     diffuse NIR   (Sigma = 400 W/m2)
       real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2 ([forcing].co2_source)
       real(wp) :: cosz         = 0.5_wp       !< [-]        cos(solar zenith); derived each sub-step
-      real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    derived from tair_k, psurf_pa and qair
+      real(wp) :: air_density  = 1.2_wp       !< [kg/m3]    derived from air_temp, air_pressure and air_shv
    contains
-      procedure :: swdown         => met_swdown          !< total downward SW = sum of the four streams
+      procedure :: sw_down        => met_sw_down         !< total downward SW = sum of the four streams
    end type met_forcing_t
 
    !----- One record as ingested (read_record), before interpolation: converted, lapsed when the run !
    !      lapses, its shortwave in four streams. No CO2 (docs/science/forcing.md §12). ------------!
    type :: met_record_t
       type(meds_time_t) :: when
-      real(wp) :: tair_k = 288.0_wp, qair = 0.008_wp, psurf_pa = 101325.0_wp
-      real(wp) :: rainf = 0.0_wp, wind = 2.0_wp, lwdown = 380.0_wp
+      real(wp) :: air_temp = 288.0_wp, air_shv = 0.008_wp, air_pressure = 101325.0_wp
+      real(wp) :: rain = 0.0_wp, wind = 2.0_wp, lw_down = 380.0_wp
       real(wp) :: wind_u = 2.0_wp, wind_v = 0.0_wp          !< wind vector (only when the source has it)
       real(wp) :: par_beam = 180.0_wp, par_diffuse = 40.0_wp, nir_beam = 150.0_wp, nir_diffuse = 30.0_wp
    end type met_record_t
@@ -199,10 +199,10 @@ module meds_met_types
 
 contains
 
-   pure real(wp) function met_swdown(met) result(sw)
+   pure real(wp) function met_sw_down(met) result(sw)
       class(met_forcing_t), intent(in) :: met
       sw = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
-   end function met_swdown
+   end function met_sw_down
 
 
 end module meds_met_types

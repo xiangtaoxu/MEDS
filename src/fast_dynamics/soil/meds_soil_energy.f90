@@ -13,7 +13,7 @@ module meds_soil_energy
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
-   use meds_patch_state_vars,   only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid, soil_thermal_conductivity,  &
                                      soil_volumetric_heat_capacity
    use meds_linear_algebra,   only : thomas_solve
@@ -97,7 +97,7 @@ contains
    ! The soil seam: advance one patch's soil thermal column over dt (implicit backward-Euler).!
    !---------------------------------------------------------------------------------------!
    subroutine soil_energy_step_implicit(col, forcing, profile, soil, dt, flux)
-      type(soil_energy_column_t),  intent(inout) :: col
+      type(soil_energy_state_t),   intent(inout) :: col
       type(energy_forcing_t),      intent(in)    :: forcing
       type(soil_profile_t),        intent(in)    :: profile
       type(soil_params_t),         intent(in)    :: soil
@@ -170,7 +170,7 @@ contains
    ! Commits nothing; bottom_face returns the bottom face's flux for the caller's ledger.  !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_energy_time_deriv(col, forcing, profile, soil, dedt, bottom_face)
-      type(soil_energy_column_t),  intent(in)  :: col
+      type(soil_energy_state_t),   intent(in)  :: col
       type(energy_forcing_t),      intent(in)  :: forcing
       type(soil_profile_t),        intent(in)  :: profile
       type(soil_params_t),         intent(in)  :: soil

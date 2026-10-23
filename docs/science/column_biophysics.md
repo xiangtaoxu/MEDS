@@ -110,9 +110,9 @@ machine precision — the invariant that makes the coupled surface model trustwo
 | Store | Type | Prognostic variable(s) | Diagnosed |
 |---|---|---|---|
 | Canopy air space | `cas_state_t` | `can_enthalpy`, `can_shv`, `can_co2` (`can_depth` is set by the slow step) | `can_temp` |
-| Soil water | `soil_water_column_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
-| Soil thermal | `soil_energy_column_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
-| Snow / surface water | `snow_column_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
+| Soil water | `soil_water_state_t` | `theta(:)`, `w_surface`, `w_surface_energy` [J m⁻²] | `psi_soil` |
+| Soil thermal | `soil_energy_state_t` | `soil_energy(:)` [J m⁻³] | `soil_temp`, `soil_fliq` |
+| Snow / surface water | `snow_state_t` | `swe`, `snow_energy` [J m⁻²], `snow_depth` | `snow_temp`, `snow_fliq` |
 | Leaf / wood tissue | `fast_dynamic_state_t` | `leaf_energy`, `wood_energy` [J m⁻²; on the cohort block, J plant⁻¹] (exact exponential relaxation) | `leaf_temp`, `wood_temp` |
 | Plant water | `fast_dynamic_state_t` | `leaf_water_mass`, `wood_water_mass` [kg plant⁻¹] | leaf and wood ψ |
 | Canopy surface water | `fast_dynamic_state_t` | `leaf_surf_water`, `wood_surf_water` [kg m⁻²; on the cohort block, kg plant⁻¹] | — |
@@ -190,4 +190,4 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | Cash–Karp step (config `rk45`) | `meds_fast_integ_rk45`: `rk45_step`, `rk45_state_railed` |
 | whole-column tendency RHS | `meds_fast_integ_derivs`: `march_derivs` (`rk45`), `surface_derivs` (both) |
 | explicit tendency siblings | `meds_soil_energy`: `soil_energy_time_deriv`; the soil and plant water tendencies are the water network's rates, set in `march_derivs` |
-| prognostic column types | `meds_patch_state_vars`: `cas_state_t`, `snow_column_t`, `soil_water_column_t`, `soil_energy_column_t` |
+| prognostic column types | `meds_patch_state_vars`: `cas_state_t`, `snow_state_t`, `soil_water_state_t`, `soil_energy_state_t` |

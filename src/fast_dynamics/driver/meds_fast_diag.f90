@@ -343,14 +343,14 @@ contains
       real(wp),              intent(in)    :: dt     !< [s] sample weight
       type(met_forcing_t),   intent(in)    :: met    !< the site's forcing
       real(wp) :: f(N_SI_ROWS)
-      f(SI_SW_IN)    = met%swdown()
+      f(SI_SW_IN)    = met%sw_down()
       f(SI_PAR_BEAM) = met%par_beam
       f(SI_NIR_BEAM) = met%nir_beam
-      f(SI_LWDOWN)   = met%lwdown
-      f(SI_TAIR)     = met%tair_k
-      f(SI_QAIR)     = met%qair
-      f(SI_PSURF)    = met%psurf_pa
-      f(SI_RHO_AIR)  = met%rho_air
+      f(SI_LWDOWN)   = met%lw_down
+      f(SI_TAIR)     = met%air_temp
+      f(SI_QAIR)     = met%air_shv
+      f(SI_PSURF)    = met%air_pressure
+      f(SI_RHO_AIR)  = met%air_density
       d%v(:, is) = d%v(:, is) + f * dt
       d%w(is)    = d%w(is) + dt
    end subroutine accumulate_site_diag
@@ -361,13 +361,13 @@ contains
       type(met_forcing_t), intent(in)  :: met
       real(wp),            intent(in)  :: rainf, snowfall   !< [kg/m2/s] the split the patches used, area-weighted
       real(wp),            intent(out) :: f(N_PY_ROWS)
-      f(PY_SW_IN)       = met%swdown()
+      f(PY_SW_IN)       = met%sw_down()
       f(PY_PRECIP)      = met%precip
-      f(PY_TAIR)        = met%tair_k
-      f(PY_QAIR)        = met%qair
-      f(PY_PSURF)       = met%psurf_pa
+      f(PY_TAIR)        = met%air_temp
+      f(PY_QAIR)        = met%air_shv
+      f(PY_PSURF)       = met%air_pressure
       f(PY_WIND)        = met%wind
-      f(PY_LWDOWN)      = met%lwdown
+      f(PY_LWDOWN)      = met%lw_down
       f(PY_PAR_BEAM)    = met%par_beam
       f(PY_PAR_DIFFUSE) = met%par_diffuse
       f(PY_NIR_BEAM)    = met%nir_beam
@@ -375,7 +375,7 @@ contains
       f(PY_SNOWFALL)    = snowfall
       f(PY_CO2)         = met%co2
       f(PY_COSZ)        = met%cosz
-      f(PY_RHO_AIR)     = met%rho_air
+      f(PY_RHO_AIR)     = met%air_density
       f(PY_RAINF)       = rainf
    end subroutine forcing_echo
 

@@ -14,7 +14,7 @@ module meds_ground_biophysics
    use meds_therm_lib,          only : internal_energy_to_temp, sat_specific_humidity,                        &
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_liquid, precip_enthalpy
-   use meds_patch_state_vars,   only : snow_column_t
+   use meds_patch_state_vars,   only : snow_state_t
    use meds_soil_types, only : snow_env_t, snow_flux_t, snow_melt_t
    use meds_biophysics_params,  only : snow_params_t
    implicit none
@@ -66,7 +66,7 @@ contains
    !      A layer is created only from min_new_snow_mass of new snow; with no layer and less, the      !
    !      caller routes the precipitation to the ground with the throughfall. -----------------------!
    pure subroutine snow_accumulate(snow, snowfall, rainf, air_temp, dt, params)
-      type(snow_column_t), intent(inout) :: snow
+      type(snow_state_t), intent(inout) :: snow
       real(wp),            intent(in)    :: snowfall, rainf, air_temp, dt
       type(snow_params_t), intent(in)    :: params
       real(wp) :: dm_snow, dm_rain
@@ -84,7 +84,7 @@ contains
    !----- Percolation after the energy step: drain the free liquid above the holding capacity as a   !
    !      paired (mass, enthalpy) hand-off to the pond (melt_*), and dump the residual at melt-out. --!
    pure subroutine snow_drain_meltwater(snow, params, melt)
-      type(snow_column_t), intent(inout) :: snow
+      type(snow_state_t), intent(inout) :: snow
       type(snow_params_t), intent(in)    :: params
       type(snow_melt_t),   intent(out)   :: melt
       real(wp) :: wmass_free, hold
@@ -127,7 +127,7 @@ contains
 
    !----- Revert to the empty "no snow" state (nlayer = 0). ----------------------------------------!
    pure subroutine clear_layer(snow)
-      type(snow_column_t), intent(inout) :: snow
+      type(snow_state_t), intent(inout) :: snow
       snow%swe(1)         = 0.0_wp
       snow%snow_energy(1) = 0.0_wp
       snow%snow_depth(1)  = 0.0_wp
@@ -170,7 +170,7 @@ contains
    !      swe e(T) = E^n + dt af R(T) has one root, found in closed form on the plateau or the ice or  !
    !      liquid line. Sublimating mass leaves with the pack's specific energy, so the rest keeps T. -!
    pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
-      type(snow_column_t), intent(inout) :: snow
+      type(snow_state_t), intent(inout) :: snow
       type(snow_env_t),    intent(in)    :: env
       type(snow_params_t), intent(in)    :: params
       real(wp),            intent(in)    :: dt

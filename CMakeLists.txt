@@ -516,6 +516,11 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME kernels_no_site_state
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
                        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+      #----- The integrator steps one patch: it takes the site's surface and the per-patch store     #
+      #      types, never the polygon, the forcing reader, the output or the driver.                #
+      add_test(NAME integrator_boundary
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_integrator_boundary.py
+                       ${CMAKE_CURRENT_SOURCE_DIR}/src)
       #----- A named constant is spelled by its kind: lower case in meds_constants and meds_kinds,     #
       #      UPPER everywhere else. scripts/lint/check_constant_case.py explains the rule.             #
       add_test(NAME constants_named
