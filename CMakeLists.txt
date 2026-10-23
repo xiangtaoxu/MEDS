@@ -105,6 +105,62 @@ set(MEDS_AUTO_LOCALS OFF)
 if(MEDS_OPENMP_ACTIVE OR NOT MEDS_GPU STREQUAL "none")
    set(MEDS_AUTO_LOCALS ON)
 endif()
+
+#----- THE BUILD KINDS (docs/building.md, "Build kinds"): debug and dev are the Debug and Release   #
+#      build types; production is Release plus the two options below; CMakePresets.json names all   #
+#      four. Both options are offered for ifx and gfortran only.                                    #
+#                                                                                                   #
+#      MEDS_IPO optimises across files. Each file compiles to an intermediate form at the project's #
+#      -O2 and the link generates the code for the whole program at once, so the link names its     #
+#      own level, -O3, rather than inheriting whatever CMAKE_Fortran_FLAGS_RELEASE holds. The level #
+#      is ifx's: gfortran keeps each file's -O2 through the link, and its binary is the same with   #
+#      the link at -O2 or -O3. Every link redoes the whole program: with ifx an edit to one file    #
+#      takes ~35 s to rebuild instead of ~4 s, which is why everyday work builds without it.        #
+#      MEDS_CPU_TARGET names the CPU family to generate code for, so nobody writes a compiler's     #
+#      flag by hand: empty is any x86-64 CPU, `cascadelake` the AVX-512 Xeons, `host` the machine   #
+#      that builds. Such a binary may not start on an older CPU.                                    #
+option(MEDS_IPO "Optimise across files, generating the code at the link at -O3 (the production kind)" OFF)
+set(MEDS_CPU_TARGET "" CACHE STRING "CPU family to generate code for: empty (any x86-64), cascadelake or host")
+set_property(CACHE MEDS_CPU_TARGET PROPERTY STRINGS "" cascadelake host)
+if(MEDS_IPO OR NOT MEDS_CPU_TARGET STREQUAL "")
+   if(NOT (CMAKE_Fortran_COMPILER_ID MATCHES "^Intel" OR CMAKE_Fortran_COMPILER_ID STREQUAL "GNU"))
+      message(FATAL_ERROR "MEDS: MEDS_IPO and MEDS_CPU_TARGET are offered for ifx and gfortran, not "
+                          "${CMAKE_Fortran_COMPILER_ID}. Configure without them.")
+   endif()
+endif()
+#      Each CPU target's flag: ifx's, then gfortran's.
+set(meds_cpu_cascadelake -xCORE-AVX512 -march=cascadelake)
+set(meds_cpu_host        -xHost        -march=native)
+set(MEDS_CPU_FLAG "")
+if(NOT MEDS_CPU_TARGET STREQUAL "")
+   if(NOT MEDS_CPU_TARGET MATCHES "^(cascadelake|host)$")
+      message(FATAL_ERROR "MEDS: MEDS_CPU_TARGET=${MEDS_CPU_TARGET} is not a CPU target MEDS knows. Use "
+                          "cascadelake or host, or leave it empty for a binary that runs on any x86-64 CPU.")
+   endif()
+   if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+      list(GET meds_cpu_${MEDS_CPU_TARGET} 1 MEDS_CPU_FLAG)
+   else()
+      list(GET meds_cpu_${MEDS_CPU_TARGET} 0 MEDS_CPU_FLAG)
+   endif()
+   message(STATUS "MEDS: code for the ${MEDS_CPU_TARGET} CPU family (${MEDS_CPU_FLAG})")
+endif()
+if(MEDS_IPO)
+   include(CheckIPOSupported)
+   check_ipo_supported(RESULT meds_ipo_supported OUTPUT meds_ipo_output LANGUAGES Fortran)
+   if(NOT meds_ipo_supported)
+      message(FATAL_ERROR "MEDS: MEDS_IPO=ON, but ${CMAKE_Fortran_COMPILER_ID} "
+                          "${CMAKE_Fortran_COMPILER_VERSION} cannot optimise across files here:\n"
+                          "${meds_ipo_output}")
+   endif()
+   #      Set before any target is made: each target takes its INTERPROCEDURAL_OPTIMIZATION from it.
+   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+   #      A link line carries the build type's flags but none of a target's compile options, so the
+   #      project's -O2 never reaches it. The level goes last in the Release flags, where it wins over
+   #      whatever they held; files still compile at -O2, which follows them on every compile line.
+   string(APPEND CMAKE_Fortran_FLAGS_RELEASE " -O3")
+   message(STATUS "MEDS: interprocedural optimisation, the code generated at the link at -O3")
+endif()
+
 function(meds_fortran_flags tgt)
    set(id ${CMAKE_Fortran_COMPILER_ID})
    if(id STREQUAL "IntelLLVM" OR id STREQUAL "Intel")
@@ -125,6 +181,11 @@ function(meds_fortran_flags tgt)
          $<$<BOOL:${MEDS_AUTO_LOCALS}>:-frecursive>
          $<$<CONFIG:Debug>:-O0;-g;-fcheck=all;-ffpe-trap=invalid,zero,overflow;-fbacktrace>
          $<$<CONFIG:Release>:-O2>)
+   endif()
+   #  The build kind's CPU target goes on the link too: under IPO the link generates the code.
+   if(NOT MEDS_CPU_FLAG STREQUAL "")
+      target_compile_options(${tgt} PRIVATE ${MEDS_CPU_FLAG})
+      target_link_options(${tgt} PRIVATE ${MEDS_CPU_FLAG})
    endif()
 endfunction()
 
