@@ -18,13 +18,13 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
-   use meds_plant_hydr_lib, only : conductance_retained_fraction, kirchhoff_potential, hydro_table_t,            &
-                                   build_hydro_table, root_fraction_profile,                                     &
-                                   xylem_max_conductance, rhizosphere_conductance, xylem_sapflow,                &
+   use meds_plant_hydr_lib, only : conductance_retained_fraction, root_fraction_profile,                         &
+                                   xylem_max_conductance, rhizosphere_conductance,                               &
                                    tissue_psi_tlp, tissue_psi_to_rwc, tissue_rwc_to_psi, tissue_psi_to_water,    &
                                    tissue_capacitance, tissue_water_to_psi, tissue_capped_water, water_curve_t
-   use meds_pft_params,  only : hydraulics_pft_t
-   use meds_plant_hydraulics, only : leaf_node_psi
+   use meds_pft_params,  only : hydraulics_pft_t, kirchhoff_table_t
+   use meds_pft_derive,  only : build_kirchhoff_table
+   use meds_plant_hydraulics, only : leaf_node_psi, kirchhoff_potential, xylem_sapflow
    use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
    implicit none
 
@@ -89,10 +89,10 @@ contains
    !=======================================================================================!
    subroutine test_xylem_kirchhoff_mean()
       real(wp), parameter :: PSI50 = -2.0_wp, KEXP = 2.0_wp, KCOND = 3.0e-3_wp
-      type(hydro_table_t) :: tab
+      type(kirchhoff_table_t) :: tab
       real(wp) :: psi_l, psi_w, avg_plc, s, s0, dum1, dum2, pmid
       print '(a)', '-- Kirchhoff mean conductance of the xylem --'
-      call build_hydro_table(tab, KEXP)
+      call build_kirchhoff_table(tab, KEXP)
       psi_l = -1.2_wp ; psi_w = -0.4_wp
       !----- With no gravity head the sapflow over the drop is the Kirchhoff mean conductance. ---!
       call xylem_sapflow(KCOND, psi_w, psi_l, 0.0_wp, PSI50, KEXP, tab, s, dum1, dum2)
@@ -133,18 +133,18 @@ contains
    end function kirchhoff_reference
 
    !=======================================================================================!
-   ! The precomputed lookup table (build_hydro_table, read through kirchhoff_potential)            !
+   ! The precomputed lookup table (build_kirchhoff_table, read through kirchhoff_potential)            !
    ! reproduces a Simpson reference of the Kirchhoff potential for a general (non-{1,2})           !
    ! exponent, and the table-backed xylem conductance matches the reference's. kexp is stamped for !
    ! the staleness guard, and psi50 is a runtime scale (one table serves any psi50).               !
    !=======================================================================================!
    subroutine test_hydro_table()
       real(wp), parameter :: KEXP = 3.0_wp, PSI50 = -2.0_wp, KCOND = 3.0e-3_wp
-      type(hydro_table_t) :: tab
+      type(kirchhoff_table_t) :: tab
       real(wp) :: psi, err, emax, psi_l, psi_w, s, dum1, dum2
       integer(ik) :: i
       print '(a)', '-- Kirchhoff lookup table --'
-      call build_hydro_table(tab, KEXP)
+      call build_kirchhoff_table(tab, KEXP)
       call check('table stamps kexp (staleness guard)', tab%kexp, KEXP, 0.0_wp)
       !----- The table matches the reference across the operating range. -----------------------!
       emax = 0.0_wp
@@ -327,10 +327,10 @@ contains
    !=======================================================================================!
    subroutine test_kirchhoff_far_tail()
       real(wp), parameter :: KEXP = 4.0_wp, PSI50 = -3.209_wp, KCOND = 5.0e-3_wp
-      type(hydro_table_t) :: tab
+      type(kirchhoff_table_t) :: tab
       real(wp) :: g_inf, psi_far, s, dum1, dum2
       print '(a)', '-- Kirchhoff potential far beyond the table --'
-      call build_hydro_table(tab, KEXP)
+      call build_kirchhoff_table(tab, KEXP)
       g_inf   = (pi/KEXP) / sin(pi/KEXP)
       psi_far = -25040.0_wp
       call check('table reaches the asymptote', kirchhoff_potential(psi_far, PSI50, KEXP, tab), PSI50*g_inf,   &

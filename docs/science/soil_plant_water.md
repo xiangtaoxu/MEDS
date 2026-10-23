@@ -283,7 +283,7 @@ Each is a mean per fast step over the record's period.
 | the soil layers' curves and face weights, once per site | `meds_soil_derive`: `build_profile_hydraulics_layers` |
 | the linear solve (block arrowhead, Schur complement) | `meds_linear_algebra`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
 | the stores' water relations in their unknowns | `meds_soil_hydr_lib`: `soil_water_relations`, `pond_water_relations` and their inverses, `VG_PORE_CONNECTIVITY`; `meds_plant_hydr_lib`: `tissue_water_relations` and its inverses |
-| plant flows | `meds_plant_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`; the leaves' supply limit `supply_limited_transpiration` (`meds_plant_hydraulics`); the flows' rounded corner `smooth_max0` (`meds_numerics`) |
+| plant flows | `meds_plant_hydraulics`: `root_water_uptake`, `root_water_uptake_profile`, `xylem_sapflow` (through the Kirchhoff mean, the PFT's table from `meds_pft_derive`) and the leaves' supply limit `supply_limited_transpiration`; their conductances `rhizosphere_conductance` and `xylem_max_conductance` (`meds_plant_hydr_lib`); the flows' rounded corner `smooth_max0` (`meds_numerics`) |
 | soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate` (its per-step terms from `ground_evaporation_setup`), `bottom_flux` |
 | one patch's step | `meds_fast_integ_frozen`: `ground_inflow` (the drive), then `fast_step` calls `water_step` and `record_water_flows` |
 | plant water over the step | `meds_fast_integ_backward_euler`: `advance_plant_water` (ESDIRK2; constant rates, RK45 integrates the same rates in its stages) |

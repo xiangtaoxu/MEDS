@@ -36,8 +36,8 @@ module meds_fast_integ_derivs
    use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
                                   pond_water_to_head
    use meds_plant_hydr_lib, only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,            &
-                                   tissue_psi_to_rwc, root_water_uptake_profile, xylem_sapflow
-   use meds_plant_hydraulics, only : supply_limited_transpiration
+                                   tissue_psi_to_rwc
+   use meds_plant_hydraulics, only : supply_limited_transpiration, root_water_uptake_profile, xylem_sapflow
    use meds_soil_water, only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_linear_algebra, only : arrowhead_system_t
    use meds_soil_params, only : soil_profile_t, soil_params_t

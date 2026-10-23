@@ -98,7 +98,8 @@ air inside the march; the surface layer's convective velocity follows each sweep
 in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10⁻² MPa wide; RK45 takes
 `rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
 to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492). The fast
-kernels' comments and science pages say what the code computes, with no change to any result (#495).
+kernels' comments and science pages say what the code computes, with no change to any result (#495). The
+Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -683,6 +684,14 @@ kernels' comments and science pages say what the code computes, with no change t
 
 ### Changed
 
+- **The Kirchhoff mean and the plant's flows move to `meds_plant_hydraulics`; the Kirchhoff table is
+  config's** (#496). The Kirchhoff potential is the vulnerability curve integrated, used only as the
+  sapflow's path-mean conductance, so its evaluation, `xylem_sapflow` and `root_water_uptake(_profile)`
+  leave `share/functions/meds_plant_hydr_lib` for the fast plant-hydraulics module, beside the soil's
+  Darcy flux. Each PFT's lookup stays on the PFT table: `hydro_table_t` is `kirchhoff_table_t` in
+  `meds_pft_params`, built by `build_kirchhoff_table` (was `build_hydro_table`) in `meds_pft_derive`;
+  `plant_hydraulics_t` moves to `meds_pft_params`. `meds_plant_hydr_lib` keeps the laws. Every
+  variable of the 10 harness cases is identical on gfortran and ifx.
 - **The fast kernels' comments and science pages say what the code computes** (#495). Sixteen comments
   stated something the code does not do and are fixed, among them the surface layer's "converged" last
   sweep, the leaf PAR's `leaf_absorptance`, stem and root respiration's response (always peaked) and the

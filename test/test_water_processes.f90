@@ -28,10 +28,12 @@ program test_water_processes
                                     SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,   &
                                     SOIL_RETENTION_CAMPBELL, soil_head_to_theta, VG_PORE_CONNECTIVITY
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, rhizosphere_conductance,  &
-                                    root_water_uptake, xylem_sapflow, xylem_max_conductance, hydro_table_t, &
-                                    build_hydro_table, kirchhoff_potential, conductance_retained_fraction, &
+                                    xylem_max_conductance, conductance_retained_fraction,                  &
                                     water_curve_t, tissue_rwc_to_psi, tissue_psi_to_water
-   use meds_plant_hydraulics, only : supply_limited_transpiration
+   use meds_plant_hydraulics, only : supply_limited_transpiration, root_water_uptake, xylem_sapflow,      &
+                                     kirchhoff_potential
+   use meds_pft_params,      only : kirchhoff_table_t
+   use meds_pft_derive,      only : build_kirchhoff_table
    use meds_numerics,    only : smooth_max0
    use meds_soil_water, only : ground_evaporation_rate, ground_evaporation_setup, soil_water_flux, ground_evap_env_t
    use meds_constants,  only : pi, grav, r_wv, p_std
@@ -267,12 +269,12 @@ contains
 
    !=======================================================================================!
    subroutine test_xylem()
-      type(hydro_table_t) :: tab3, tab2
+      type(kirchhoff_table_t) :: tab3, tab2
       real(wp) :: kc, s, dsw, dsl, sp, sm, dum, h, pw, pl, ref, grav
       integer  :: i
       logical  :: ok2, ok3, okv
-      call build_hydro_table(tab3, 3.0_wp)
-      call build_hydro_table(tab2, 2.0_wp)
+      call build_kirchhoff_table(tab3, 3.0_wp)
+      call build_kirchhoff_table(tab2, 2.0_wp)
       kc = xylem_max_conductance(3.3_wp, 2.0e-3_wp, 18.0_wp, 1.0_wp) * 0.05_wp
       grav = grav_head * 18.0_wp
       ok2 = .true. ; ok3 = .true. ; okv = .true.
@@ -316,7 +318,7 @@ contains
    !      ends. ----------------------------------------------------------------------------------!
    pure real(wp) function kirchhoff_mean(psi_up, psi_down, k, psi50, kexp, tab) result(keff)
       real(wp),            intent(in) :: psi_up, psi_down, k, psi50, kexp
-      type(hydro_table_t), intent(in) :: tab
+      type(kirchhoff_table_t), intent(in) :: tab
       if (abs(psi_up - psi_down) <= 1.0e-6_wp) then
          keff = k * conductance_retained_fraction(0.5_wp * (psi_up + psi_down), psi50, kexp)
       else

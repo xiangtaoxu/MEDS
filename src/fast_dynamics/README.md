@@ -51,9 +51,10 @@ so every symbol has exactly one legal spelling.
   processes stay with their owners: **`meds_soil_water`** has the soil water flux between layers,
   the dry-surface-layer ground evaporation and the bottom boundary (drainage at a factor of free
   drainage, from 1 to 0 for bedrock, or an aquifer);
-  `meds_plant_hydr_lib` the plant's flows and tissue water relations, and `meds_soil_hydr_lib` the
-  soil layers' and the pond's (both in `src/share/functions/`). Closes a machine-precision water
-  budget.
+  **`meds_plant_hydraulics`** the plant's flows (sapflow through the Kirchhoff mean of the
+  vulnerability curve, root uptake, the leaves' supply limit); `meds_plant_hydr_lib` the tissues'
+  water relations and the plant's conductances, and `meds_soil_hydr_lib` the soil layers' and the
+  pond's (both in `src/share/functions/`). Closes a machine-precision water budget.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store as prognostic **internal energy**,
   not temperature, so freeze/thaw is a read-off of the shared inverter. An implicit
   backward-Euler Thomas heat-diffusion solve, with an explicit tendency sibling.
