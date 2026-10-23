@@ -10,15 +10,17 @@ and exits.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix to use
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_PREFIX_PATH=$CONDA_PREFIX   # the dev kind
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, as `cmake --preset dev` makes it
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 
-./build/meds_main examples/example03_demography/example_config_main.toml
+./build-dev/meds_main examples/example03_demography/example_config_main.toml
 ```
 
 With no build type a configure builds dev, the everyday kind; the others, and the presets that name
-all four, are under [Build kinds](#build-kinds).
+all four, are under [Build kinds](#build-kinds). `build-dev` is where the example scripts look for
+`meds_main` and the Python package for `libmeds.so`, which `-DMEDS_BUILD_PYLIB=ON` adds.
 
 If the run cannot find `libnetcdf` or the compiler runtime, put both on the loader path:
 `LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH`. Note the `:$LD_LIBRARY_PATH` — replacing the
@@ -85,7 +87,7 @@ each bitten at least once, and each was invisible to ifx:
 | Kind | Use it for | Configure |
 |---|---|---|
 | `debug` | writing or fixing engine code: every bounds, uninitialised-value and floating-point check is on | `cmake --preset debug` |
-| `dev` | everyday work: the tests, short runs, comparing outputs between commits | `cmake --preset dev` |
+| `dev` | everyday work: the tests, short runs, the Python package, comparing outputs between commits | `cmake --preset dev` |
 | `profile` | finding where the time goes (VTune, perf) | `cmake --preset profile` |
 | `production` | long runs: the examples, calibration, regional runs | `cmake --preset production` |
 
@@ -102,8 +104,19 @@ ctest --test-dir build-dev --output-on-failure
 A `-D` after `--preset` overrides the preset, and `-B` its directory:
 `cmake --preset dev -DCMAKE_PREFIX_PATH=<netCDF prefix>`. Without presets, the same kinds are
 `-DCMAKE_BUILD_TYPE=Debug|Release`, plus `-DCMAKE_Fortran_FLAGS=-g` for profile and
-`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production. **A configure that names no build type
-builds dev.** The per-compiler flags live in the `meds_fortran_flags()` function in `CMakeLists.txt`.
+`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production, and `-DMEDS_BUILD_PYLIB=ON` for every
+kind but debug. **A configure that names no build type builds dev**, without `libmeds.so` unless it
+adds `-DMEDS_BUILD_PYLIB=ON`. The per-compiler flags live in the `meds_fortran_flags()` function in
+`CMakeLists.txt`.
+
+**`build-dev` is the default build.** dev builds `meds_main`, `libmeds.so` and the tests, and the
+example scripts run `build-dev/meds_main` and the Python package loads `build-dev/libmeds.so`, unless
+`--meds-main` (or `MEDS_MAIN`) or `MEDS_LIB` names another build. The library costs dev no
+measurable build time, because the tests compile its sources anyway and it adds one link: with or
+without it, a clean configure and build at `-j 16` takes 44–50 s with ifx and 52–56 s with gfortran,
+and the rebuild after an edit 3–4 s. It compiles every library position-independent (`-fPIC`),
+which leaves every output value of `meds_main` as it is, on ifx and gfortran, and its run time
+within noise. The suite gains the Python package's tests: 83 tests.
 
 **dev is the reference.** It is the project's `-O2`, for any x86-64 CPU. Outputs are compared between
 commits on dev builds; gfortran dev builds of two commits that change no arithmetic give
@@ -126,8 +139,8 @@ a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 5 of 83 tes
 3 with gfortran. Run the suite on dev. For the same reason `meds.model` and `meds_main` agree to
 round-off on a production build, not bit for bit: each is optimised as a whole program of its own.
 To run the examples or a calibration on a production build, point them at it: a script that runs
-`meds_main` takes `--meds-main` (or `MEDS_MAIN`) and otherwise looks for `build-ifx/meds_main`, and
-the Python API takes `MEDS_LIB=build-production/libmeds.so`.
+`meds_main` takes `--meds-main` (or `MEDS_MAIN`) and otherwise runs `build-dev/meds_main`, and the
+Python API takes `MEDS_LIB=build-production/libmeds.so` and otherwise loads `build-dev/libmeds.so`.
 
 **Why development uses dev.** With ifx, a production build relinks the whole program at every link:
 an edit to one file takes ~35 s to rebuild instead of ~4 s, and rebuilding the tests ~85 s instead of
@@ -146,8 +159,7 @@ are exercising.
 region run its polygons (`docs/configuration.md`, "Regional runs"):
 
 ```bash
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+FC=ifx cmake --preset dev
 # then set [run].n_threads in the TOML (default 1), and give the job that many cores.
 ```
 
@@ -243,7 +255,8 @@ conda activate meds
 ```
 
 To drive the model from Python, `pip install python/` compiles the Fortran and bundles
-`libmeds.so` beside the package. See [`../python/README.md`](../python/README.md).
+`libmeds.so` beside the package; from the source tree, `PYTHONPATH=python` and a dev build are
+enough. See [`../python/README.md`](../python/README.md).
 
 ## Running the tests
 

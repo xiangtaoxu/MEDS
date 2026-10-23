@@ -22,10 +22,11 @@ Usage:
   python run_example.py --census-dir /path/to/bci_census  # everything (the census tables: once, for step 3)
   python run_example.py --copy-from ~/BCI_flux            # take the tower data from a local copy
   python run_example.py --forcing-only                    # steps 1-2: no model run
-  python run_example.py --meds-main ../../build-ifx/meds_main
+  python run_example.py --meds-main ../../build-production/meds_main   # the production build, not build-dev's
   python run_example.py --calibrate --workers 40          # redo the fit: 836 runs; a cluster's queue: scripts/calibrate_fast
 
-Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
+Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main (--meds-main, or the environment variable
+MEDS_MAIN; default ../../build-dev/meds_main, the dev preset's build).
 """
 import argparse
 import os
@@ -97,7 +98,8 @@ def main(argv=None):
     ap.add_argument("--copy-from", help="a folder holding BCI_v5.1.csv and README.txt")
     ap.add_argument("--census-dir", default=os.environ.get("BCI_CENSUS_DIR"),
                     help="the folder holding the BCI census tables bci_2010.csv and bci_2005.csv (step 3)")
-    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main to run (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--forcing-only", action="store_true", help="stop after the forcing and its figures")
     ap.add_argument("--force", action="store_true", help="remake the forcing and the census file")
     ap.add_argument("--calibrate", action="store_true", help="redo the fast-parameter fit (step 5)")

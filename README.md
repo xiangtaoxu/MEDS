@@ -74,10 +74,10 @@ moved.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, the default
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, as `cmake --preset dev` makes it
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 
 # A forest regrowing from near-bare ground for 300 years (example 03's demography; about a minute)
 PYTHONPATH=python python examples/example03_demography/run_demography.py --start bare
@@ -89,9 +89,11 @@ netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. D
 the four build kinds (debug, dev, profile, and production for long runs), the parallel builds and the
 compiler traps that cost real time, are in [`docs/building.md`](docs/building.md).
 `-DMEDS_BUILD_PYLIB=ON` adds the library the Python front end loads
-([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. A run of
-`meds_main` itself takes a config, `./build/meds_main CONFIG.toml`: the examples' READMEs say which
-data each needs, and [`post_proc/README.md`](post_proc/README.md) which plots read its output.
+([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. The
+example scripts run `build-dev/meds_main` and the Python front end loads `build-dev/libmeds.so`
+unless told otherwise. A run of `meds_main` itself takes a config,
+`./build-dev/meds_main CONFIG.toml`: the examples' READMEs say which data each needs, and
+[`post_proc/README.md`](post_proc/README.md) which plots read its output.
 
 ## Where to go next
 
