@@ -88,7 +88,8 @@ RK45's railed check share one pair of bounds and the clamp leaves a state in ran
 air takes its molar-mass ratios exactly (#486). The fast march's warm-start seed can grow back after a
 rejection, its error norm measures only the states it integrates, the leaf's Ci root is found by the
 Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
-or on 20 (#487).
+or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
+run 24–35 % faster (#490).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -649,6 +650,18 @@ or on 20 (#487).
 
 ### Changed
 
+- **Examples 04 and 05 are rerun** on the fast-loop follow-up at `rtol` 2e-3 (#490):
+  - **Example 04** (against v0.3.5): the tower-period means move by at most 0.2 % (GPP 10.48 → 10.47
+    µmol m⁻² s⁻¹ default, 8.60 calibrated; H by day 158.11 → 157.94 W m⁻² calibrated), and the window's
+    sunlit top leaves run about 0.2 K cooler. Every step takes 13.5 min on 8 threads, where it took 20.7.
+  - **Example 05's census check** (against v0.3.5): the stand budget moves by under 1 % (GPP 31.25 →
+    31.32 MgC ha⁻¹ yr⁻¹); 4.1 min, where it took 6.2. **The Palo Verde inventory check** moves by under
+    0.5 % (leaf litter 0.494 → 0.496 kg dry m⁻² yr⁻¹).
+  - **BCI 1600–2020 and the Palo Verde regrowth** are measured against v0.3.4, their last runs, so these
+    moves include every change since. BCI's AGB in 2020 is 127.4 → 129.8 MgC ha⁻¹, with the early PFT
+    33.4 → 22.9 and the mid 91.3 → 104.4; 151 min on 20 threads, where it took 200. Palo Verde's AGB at
+    150 years is 84.3 → 76.1 MgC ha⁻¹, with BD 33.2 → 10.0 and Ds 12.6 → 25.3, and the early basal-area
+    overshoot is gone; 36 min on 12 threads.
 - **The fast march is 10 % cheaper** (#487). Measured on example 04's
   120-patch stand, ifx dev build, a simulated day costs 1.253 s on one thread where it cost 1.399 s, and
   0.115 s on 20 threads where it cost 0.129 s. Against a 60 s truth, the hourly RMSE of LE and H falls
@@ -1285,6 +1298,9 @@ or on 20 (#487).
 
 ### Fixed
 
+- **Example 05's census check stopped at import** (#490). `calibrate_growth.py` read `aboveground_frac`
+  from the PFT file's `[pft]` table after it had moved to `[allometry]`, so every mode stopped with a
+  `KeyError`. It now reads `[allometry]`.
 - **The snow's deposition could drain the canopy air below zero** (#486). The pack's sublimation or
   deposition was fixed at the step's start against the canopy air's start humidity, and the pack and
   the canopy air exchange vapour within minutes: in warm saturated air over a melting pack it took up to

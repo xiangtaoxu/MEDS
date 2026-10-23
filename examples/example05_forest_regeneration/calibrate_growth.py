@@ -88,9 +88,9 @@ MIN_N = 5                            # cohorts a class needs to count
 MIN_TREES = 20                       # census trees a class needs to count
 
 with open(os.path.join(HERE, "pft_parameters.toml"), "rb") as _fh:
-    _PFT = tomllib.load(_fh)["pft"]
-AGF = _PFT["aboveground_frac"][0]       # the coarse roots' share of wood is 1 - AGF
-GRF = _PFT["growth_resp_factor"][0]     # construction cost, charged on growth
+    _PFT_FILE = tomllib.load(_fh)
+AGF = _PFT_FILE["allometry"]["aboveground_frac"][0]   # the coarse roots' share of wood is 1 - AGF
+GRF = _PFT_FILE["pft"]["growth_resp_factor"][0]       # construction cost, charged on growth
 
 
 def plasticity_slopes(vcmax25, rd_vcmax_ratio):
