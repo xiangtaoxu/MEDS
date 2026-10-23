@@ -93,13 +93,24 @@ contains
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip
       real(wp),            intent(out) :: light(:)         ! size cfg%n_height_layers
+      call light_profile_of(poly, cfg, ip, poly%patch%cohort_offset(ip),                                   &
+                            poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik, light)
+   end subroutine patch_light_profile
+
+   !----- The light profile of patch ip's cohorts among positions i0..i1 of the cohort block: its     !
+   !      slice, or, inside a fusion pass, the slice widened to the patches already fused into it,    !
+   !      whose cohorts follow in block order. -------------------------------------------------------!
+   subroutine light_profile_of(poly, cfg, ip, i0, i1, light)
+      type(polygon_t),     intent(in)  :: poly
+      type(meds_config_t), intent(in)  :: cfg
+      integer(ik),         intent(in)  :: ip, i0, i1
+      real(wp),            intent(out) :: light(:)         ! size cfg%n_height_layers
       real(wp)    :: cum_lai(cfg%n_height_layers)
-      integer(ik) :: i, i0, i1, ihgt, nl
+      integer(ik) :: i, ihgt, nl
       nl = cfg%n_height_layers
       cum_lai = 0.0_wp
-      i0 = poly%patch%cohort_offset(ip)
-      i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
+         if (poly%cohort%owner_patch(i) /= ip) cycle
          ihgt = min(nl, max(1_ik, count(cfg%height_edges < poly%cohort%height(i)) + 1_ik))
          cum_lai(ihgt) = cum_lai(ihgt) + poly%cohort%nplant(i) * poly%cohort%leaf_area(i)
       end do
@@ -110,7 +121,7 @@ contains
       do ihgt = 1_ik, nl
          light(ihgt) = exp(-cfg%light_ext_coeff_fusefiss * cum_lai(ihgt))
       end do
-   end subroutine patch_light_profile
+   end subroutine light_profile_of
 
    !---------------------------------------------------------------------------------------!
    ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to             !
@@ -138,7 +149,11 @@ contains
       end do
    end subroutine new_fuse_patches
 
-   !----- One patch-fusion sweep at a fixed tolerance, comparing light profiles. ----------!
+   !----- One patch-fusion sweep at a fixed tolerance, comparing light profiles. A receptor only    !
+   !      absorbs patches after it, in order, and an absorbed patch absorbs nothing, so the cohort    !
+   !      block is left as it is until the pass ends: a receptor's cohorts are the ones it owns       !
+   !      between its first and the last of its last donor's (last), in the order a regrouping by     !
+   !      patch would give them, and patch_compact regroups once, to the same block. -----------------!
    subroutine patch_fuse_pass(poly, cfg, tol, force)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
@@ -146,6 +161,7 @@ contains
       logical,             intent(in)    :: force
       logical,     allocatable :: alive(:)
       real(wp),    allocatable :: prof(:,:), lr(:), ld(:)
+      integer(ik), allocatable :: last(:), ncoh(:)   !< each patch's last cohort position and its count
       real(wp)    :: davg, dmax, dif
       integer(ik) :: np, recp, donp, ihgt, npop, nl
       logical     :: similar, both_empty
@@ -153,10 +169,12 @@ contains
       np = poly%patch%n
       if (np < 2_ik) return
       nl = cfg%n_height_layers
-      allocate(alive(np), prof(nl, np), lr(nl), ld(nl))
+      allocate(alive(np), prof(nl, np), lr(nl), ld(nl), last(np), ncoh(np))
       alive = .true.
       do recp = 1_ik, np
-         call patch_light_profile(poly, cfg, recp, prof(:, recp))
+         ncoh(recp) = poly%patch%cohort_count(recp)
+         last(recp) = poly%patch%cohort_offset(recp) + ncoh(recp) - 1_ik
+         call light_profile_of(poly, cfg, recp, poly%patch%cohort_offset(recp), last(recp), prof(:, recp))
       end do
 
       do recp = 1_ik, np - 1_ik
@@ -165,7 +183,7 @@ contains
             if (.not. alive(donp)) cycle
             if (poly%patch%owner_site(donp) /= poly%patch%owner_site(recp)) cycle
             if (poly%patch%dist_type(donp) /= poly%patch%dist_type(recp)) cycle
-            both_empty = (poly%patch%cohort_count(recp) == 0_ik .and. poly%patch%cohort_count(donp) == 0_ik)
+            both_empty = (ncoh(recp) == 0_ik .and. ncoh(donp) == 0_ik)
             if (both_empty) then
                similar = .true.
             else
@@ -183,9 +201,10 @@ contains
                similar = (davg <= tol) .and. (dmax <= tol * cfg%patch_light_maxdev_factor)
             end if
             if (force .or. similar) then
-               call fuse_2_patches(poly, recp, donp)
-               call rebuild_cohort_map(poly)          ! recp slice now holds merged cohorts
-               call patch_light_profile(poly, cfg, recp, prof(:, recp))
+               call fuse_patch_into(poly, recp, donp, poly%patch%cohort_offset(recp), last(recp))
+               last(recp) = max(last(recp), last(donp))
+               ncoh(recp) = ncoh(recp) + ncoh(donp)
+               call light_profile_of(poly, cfg, recp, poly%patch%cohort_offset(recp), last(recp), prof(:, recp))
                alive(donp) = .false.
             end if
          end do
@@ -201,6 +220,16 @@ contains
    subroutine fuse_2_patches(poly, recp, donp)
       type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: recp, donp
+      call fuse_patch_into(poly, recp, donp, poly%patch%cohort_offset(recp),                               &
+                           poly%patch%cohort_offset(recp) + poly%patch%cohort_count(recp) - 1_ik)
+   end subroutine fuse_2_patches
+
+   !----- fuse_2_patches with the receptor's cohorts given as the ones it owns among positions       !
+   !      r0..r1 of the cohort block (its slice, or the widened slice of a fusion pass). The donor    !
+   !      has absorbed nothing, so its own slice holds its cohorts. --------------------------------!
+   subroutine fuse_patch_into(poly, recp, donp, r0, r1)
+      type(polygon_t), intent(inout) :: poly
+      integer(ik),     intent(in)    :: recp, donp, r0, r1
       real(wp)    :: ar, ad, anew, rawgt, dawgt
       integer(ik) :: i, i0, i1
 
@@ -245,10 +274,9 @@ contains
          !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
          !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
          call blend_patch_diag(patch%diag, recp, donp, ar, ad)
-         !----- Rescale receptor cohort densities (slice currently holds all recp cohorts). Their !
-         !      per-plant amounts need nothing. --------------------------------------------------!
-         i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
-         do i = i0, i1
+         !----- Rescale receptor cohort densities. Their per-plant amounts need nothing. -------------!
+         do i = r0, r1
+            if (cohort%owner_patch(i) /= recp) cycle
             cohort%nplant(i) = cohort%nplant(i) * rawgt
          end do
          !----- Rescale and reassign donor cohorts to the receptor. -----------------------!
@@ -260,7 +288,7 @@ contains
          patch%area(recp) = anew
          patch%area(donp) = 0.0_wp
       end associate
-   end subroutine fuse_2_patches
+   end subroutine fuse_patch_into
 
    !---------------------------------------------------------------------------------------!
    ! Remove patches with area below the floor, site by site; renormalize each site's areas !
