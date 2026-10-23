@@ -85,7 +85,10 @@ fast loop on or off; the `[forcing]` CO₂ keys apply without forcing too. Under
 conducts into the top soil layer's own conductivity and its vapour exchange is set against the canopy
 air's humidity over the step, which closes the water ledger at Ithaca in January. The stage clamp and
 RK45's railed check share one pair of bounds and the clamp leaves a state in range as it is, and moist
-air takes its molar-mass ratios exactly (#486).
+air takes its molar-mass ratios exactly (#486). The fast march's warm-start seed can grow back after a
+rejection, its error norm measures only the states it integrates, the leaf's Ci root is found by the
+Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
+or on 20 (#487).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -639,9 +642,32 @@ air takes its molar-mass ratios exactly (#486).
     (0), the caller sets it.
 
   No netCDF variable name or C API changes; state files written before restart.
+- **The default `[fast].rtol` is 2e-3** (#487), where it was 1e-3. A configuration that sets `rtol`
+  keeps its value; the shipped ones (examples 04 and 05, `test/region`) now set 2e-3. 1e-3 still gives
+  the earlier march, a little tighter than before for a patch with many cohorts (the norm below). An
+  `rk45` run wants 1e-4 or tighter (`docs/science/numerical_scheme.md` §6).
 
 ### Changed
 
+- **The fast march is 10 % cheaper** (#487). Measured on example 04's
+  120-patch stand, ifx dev build, a simulated day costs 1.253 s on one thread where it cost 1.399 s, and
+  0.115 s on 20 threads where it cost 0.129 s. Against a 60 s truth, the hourly RMSE of LE and H falls
+  (BCI wet: LE 4.36 → 4.26 W/m², H 3.15 → 3.05; BCI dry: 3.63 → 3.44, 2.83 → 2.61; Palo Verde's drought:
+  4.76 → 4.70, 3.38 → 3.19), that of the canopy-air temperature rises by 0.01–0.03 K (BCI wet 0.019 →
+  0.028 K, Palo Verde 0.056 → 0.088 K), and Palo Verde's daily GPP bias goes 1.95 → 1.81 %. Four parts:
+  - **the warm-start seed can grow back** after a rejection. An accepted step the interval's end cut
+    short now raises the next interval's seed to the step the controller asked for before the cut,
+    capped at `dt_fast`; before, a seed below 900 s never grew back, so the patch took two sub-steps
+    for the rest of the run;
+  - **the error norm measures only the states the march integrates**, the canopy air and the soil heat.
+    Soil and plant water move at the water network's fixed rate, so their exact zeros diluted the norm
+    by a factor that grew with the cohort count (2.1× at 13 cohorts on 7 layers, 2.8× at 30);
+  - **the leaf's Ci root is found by the Illinois method**, on the same bracket and to the same
+    tolerance as the bisection it replaces, with fewer residuals: 2–5 % less CPU, hourly LE within
+    4e-4 W/m²;
+  - **the default `rtol` is 2e-3**, the loosest that holds the march's own share of the LE and H error
+    near 10–20 % of the 900 s step's (`docs/science/numerical_scheme.md` §6 gives the table and the
+    recipe for a new site).
 - **A start's canopy air is the air of the first forcing sample** (#486). A bare-ground or census start
   put every patch's canopy air at 288 K, 0.008 kg/kg and 400 µmol/mol, and its tissues at 288 K,
   whatever the site's air. At the start's first window the fast loop now sets each patch's canopy air
