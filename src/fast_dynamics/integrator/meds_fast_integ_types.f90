@@ -18,7 +18,7 @@ module meds_fast_integ_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : t_3ple, n_soil_layer_max, rho_h2o
    use meds_pft_params, only : leaf_photo_table_t
-   use meds_patch_state_vars,   only : cas_state_t, soil_water_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_water_state_t, soil_energy_state_t, snow_state_t, soil_carbon_t
    use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, internal_energy_to_temp
    use meds_biophysics_params, only : aero_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
@@ -184,9 +184,9 @@ module meds_fast_integ_types
    !      scatter_patch). -------------------------------------------------------------------------!
    type :: fast_dynamic_state_t
       type(cas_state_t)          :: cas               !< canopy-air-space twins (enthalpy/shv/co2)
-      type(soil_energy_column_t) :: soil_energy       !< soil thermal column (internal energy; temp diagnosed)
-      type(soil_water_column_t)  :: soil_water        !< soil water column (theta; psi_soil diagnosed)
-      type(snow_column_t)        :: snow              !< temporary-surface-water / snow store (swe + energy)
+      type(soil_energy_state_t)  :: soil_energy       !< soil thermal column (internal energy; temp diagnosed)
+      type(soil_water_state_t)   :: soil_water        !< soil water column (theta; psi_soil diagnosed)
+      type(snow_state_t)         :: snow              !< temporary-surface-water / snow store (swe + energy)
       real(wp), allocatable      :: leaf_energy(:)    !< [J/m2 ground] per-cohort leaf internal energy
       real(wp), allocatable      :: wood_energy(:)    !< [J/m2 ground] per-cohort wood internal energy
       real(wp), allocatable      :: leaf_temp(:)      !< [K] derived from leaf_energy
@@ -528,7 +528,7 @@ module meds_fast_integ_types
       real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
       !----- The pack after the stage, which the update commits: the frozen build only reads the      !
       !      dynamic state, so the stage advances a copy. ---------------------------------------------!
-      type(snow_column_t) :: pack
+      type(snow_state_t) :: pack
    end type snow_stage_t
 
    !----- What drives the soil-plant water network over the step, held fixed across it: the water   !

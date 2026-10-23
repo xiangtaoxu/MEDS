@@ -31,7 +31,7 @@ program test_column_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, pi, n_soil_layer_max
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
-   use meds_patch_state_vars,   only : soil_energy_column_t
+   use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
@@ -126,7 +126,7 @@ contains
       type(energy_forcing_t)      :: forcing
       type(soil_params_t)         :: opts
       type(energy_flux_t)         :: eflux
-      type(soil_energy_column_t)  :: col
+      type(soil_energy_state_t)   :: col
       real(wp)    :: tmin(n_soil_layer_max), tmax(n_soil_layer_max), tnow, kap, cef
       integer(ik) :: k, istep, nstep_yr, iyr
 
@@ -271,7 +271,7 @@ contains
    end subroutine soil_setup
 
    subroutine init_col(col, soil, forcing, t_init)
-      type(soil_energy_column_t),  intent(out) :: col
+      type(soil_energy_state_t),   intent(out) :: col
       type(soil_profile_t),        intent(in)  :: soil
       type(energy_forcing_t),      intent(in)  :: forcing
       real(wp),                    intent(in)  :: t_init
@@ -285,7 +285,7 @@ contains
    subroutine test_soil_conserve()
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(soil_energy_column_t)  :: col
+      type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step
@@ -314,7 +314,7 @@ contains
    subroutine test_soil_steady()
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(soil_energy_column_t)  :: col
+      type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       integer(ik) :: step, k
@@ -367,7 +367,7 @@ contains
    subroutine test_freeze_plateau()
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(soil_energy_column_t)  :: col
+      type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
@@ -402,7 +402,7 @@ contains
    subroutine test_thaw_plateau()
       type(soil_profile_t)        :: soil
       type(energy_forcing_t)      :: forcing
-      type(soil_energy_column_t)  :: col
+      type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(energy_flux_t)         :: flux
       real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp

@@ -40,7 +40,7 @@ module meds_fast_integ_frozen
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t, snow_params_t
-   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_column_t
+   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, intercept_canopy_layer, &
@@ -85,7 +85,7 @@ contains
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
-      type(snow_column_t) :: pack   !< the snow pack the stage advances
+      type(snow_state_t) :: pack   !< the snow pack the stage advances
       integer(ik) :: n, nsl
 
       n   = static%n
@@ -510,7 +510,7 @@ contains
    subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, abs_sw_ground, abs_lw_ground, &
                                  snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, qcas,    &
                                  rho, press, st)
-      type(snow_column_t),  intent(inout) :: snow           !< the pack, advanced in place
+      type(snow_state_t),   intent(inout) :: snow           !< the pack, advanced in place
       type(snow_params_t),  intent(in)    :: snow_params
       real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
       real(wp),             intent(in)    :: dz_soil_top    !< [m]       top soil-node depth |z_node(1)|

@@ -27,7 +27,7 @@ module meds_demography_patch_fusefiss
    use meds_diag_vars,        only : blend_patch_diag, inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_patch_state_vars,   only : expand_patch_block, reorder_patch_block, blend_cas, blend_soil_water,      &
-                                       blend_soil_energy, blend_snow, snow_column_t, blend_soil_carbon,          &
+                                       blend_soil_energy, blend_snow, snow_state_t, blend_soil_carbon,          &
                                        blend_litter_input, blend_decomp_xi
    use meds_litter_partition, only : necromass_to_litter
    implicit none
