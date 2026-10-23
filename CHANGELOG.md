@@ -79,7 +79,13 @@ and the patch's soil and snow stores are `<store>_state_t`. The fast step keeps 
 step to step, the canopy radiation finds each PFT's beam extinction once and skips a band with no light,
 the fast loop hands its patches to the threads costliest first, and a patch-fusion pass regroups the
 cohorts once instead of after every fusion, with no change to any result; a lint keeps the integrator
-to one patch's records (#485).
+to one patch's records (#485). A start below freezing seeds its soil water as ice, and a start's canopy
+air is the air of its first forcing sample, its patches' stores seeded as they are laid out with the
+fast loop on or off; the `[forcing]` CO₂ keys apply without forcing too. Under snow, the pack's base
+conducts into the top soil layer's own conductivity and its vapour exchange is set against the canopy
+air's humidity over the step, which closes the water ledger at Ithaca in January. The stage clamp and
+RK45's railed check share one pair of bounds and the clamp leaves a state in range as it is, and moist
+air takes its molar-mass ratios exactly (#486).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -612,11 +618,57 @@ to one patch's records (#485).
     does not hold it.
 
   No netCDF variable name, TOML key or C API changes.
+- **A run without forcing reads the `[forcing]` CO₂ keys** (#486). `co2_source`, `co2_const` and
+  `co2_file` apply with `forcing_on = false` too, so one key sets a constant CO₂ for every run and the
+  CO₂ file works without a met file. With forcing off `co2_const` is optional, at 420 µmol/mol; a run
+  that named the keys before was refused, and one that did not now starts its canopy air at 420, not
+  400. With forcing on they are required as before.
+- **Fortran names at the start and in the fast step** (#486), for code built against MEDS's modules:
+  - `init_bare_sites` seeds each patch's stores (`seed_patch_stores`, `meds_init_bare_ground`), and
+    `init_fast_state` seeds the final stand again, settles its cohorts and lays the snow, with the fast
+    loop on or off. `patch_physical_state(cas, soil_water, surf, temp, psi)` drops its `cfg` and its
+    fallback to `[init]`;
+  - `fast_dynamics` and `advance_one_step` take an optional `seed_canopy_air`, which
+    `polygon_run_t%seed_canopy_air` carries; `meds_fast_state`'s `seed_start_canopy_air` does the
+    seeding. `meds_met` gains `met_open_co2` and `met_co2`;
+  - `meds_constants` gains `h2o_dry_ratio` and `virtual_temp_factor`; therm_lib's private
+    `H2O_DRY_RATIO` and `ONE_MINUS_H2O_DRY_RATIO` go;
+  - `meds_fast_integ_types` gains `STATE_TEMP_MIN`, `STATE_TEMP_MAX` and `at_temp_bound`;
+  - `advance_snow_stage` takes the top soil layer's conductivity and the canopy air's mass, its vapour
+    conductance to the atmosphere and the atmosphere's humidity; `snow_env_t%k_soil_top` has no default
+    (0), the caller sets it.
+
+  No netCDF variable name or C API changes; state files written before restart.
 
 ### Changed
 
-- **The fast step takes the configuration, the site and five records, and the fast driver is four
-  modules** (#483). The step reads `cfg` and its site in place of the copies a fast context made; the
+- **A start's canopy air is the air of the first forcing sample** (#486). A bare-ground or census start
+  put every patch's canopy air at 288 K, 0.008 kg/kg and 400 µmol/mol, and its tissues at 288 K,
+  whatever the site's air. At the start's first window the fast loop now sets each patch's canopy air
+  from its site's first sub-step sample and holds the tissues at that temperature; a restart keeps the
+  canopy air its file holds. Example 04's ten-day census start moves most: LE +0.86 % and H +0.81 % over
+  the window, 6.8 K in canopy-air temperature in its first hours; examples 05's runs move 6e-5 in LE,
+  the region test 4e-4.
+- **A start seeds its patches' stores as it lays them out, with the fast loop on or off** (#486). The
+  soil and the canopy air were seeded only with the fast loop on and after the setup cohorts were born,
+  so a cohort born in an unseeded patch took `[init].soil_temp` instead. `init_bare_sites` now seeds
+  them, so every cohort is born in its patch's state, and `init_fast_state` seeds the final stand again.
+  With the fast loop on no result moves; with it off, the stores are seeded and a cohort is born at the canopy air's 288 K
+  (example 03 after 50 years: every carbon and stand variable identical).
+- **The snow's base conducts into the top soil layer's own conductivity** (#486), the soil heat
+  solver's conductivity of layer 1 at the step's start, where it took a fixed 1.5 W/m/K. Only steps
+  with a snowpack move: Ithaca, December 2010 – January 2011, the top soil −0.01 K on average and
+  0.41 K at most in an hour, LE +0.21 %, H +0.16 %.
+- **One pair of temperature bounds for the stage clamp and RK45's railed check** (#486), 180 and 350 K,
+  where the railed check used 185 and 345 K; a state at or beyond a bound is railed. No harness case
+  moves.
+- **Moist air takes its molar-mass ratios exactly** (#486): `h2o_dry_ratio` = 0.62196 and
+  `virtual_temp_factor` = 0.60783, from `mmh2o` and `mmdry`, where the conversions used 0.622 and 0.378,
+  the virtual temperature 0.61 and the air density 0.608. Every humidity conversion moves by ~7e-5
+  relative and the virtual temperature by ~4e-5: GPP by ~1e-4, LE by a few 1e-5.
+- **A test case at Ithaca in January** joins the harness (`ithaca_jan`): ERA5-Land, bare ground, a pack
+  that peaks at 36 kg/m².
+ The step reads `cfg` and its site in place of the copies a fast context made; the
   per-PFT tables are the PFT table's, built at load, and each site holds its leaf table, acclimated by the
   slow step. The driver's modules are `meds_fast_dynamics` (the window), `meds_fast_state` (the gather and
   the scatter, and the sums the slow step reads), `meds_fast_forcing` and `meds_fast_diag`; the cohorts'
@@ -1207,6 +1259,21 @@ to one patch's records (#485).
 
 ### Fixed
 
+- **The snow's deposition could drain the canopy air below zero** (#486). The pack's sublimation or
+  deposition was fixed at the step's start against the canopy air's start humidity, and the pack and
+  the canopy air exchange vapour within minutes: in warm saturated air over a melting pack it took up to
+  twice the canopy air's vapour in one 900 s step, and the stage clamp created the water the ledgers
+  then reported (Ithaca: 6 whole-column water breaches in 23,808 checks on beta, worst 1.6e-2 kg/m²). It
+  is now set against the canopy air's humidity over the step, from one backward-Euler balance with the
+  atmosphere and the pack: no breach. Ithaca over the two months: the canopy air +0.04 K, H −1.4 %,
+  LE +0.55 %, SWE +1.3 %, and 36 % fewer ESDIRK2 sub-steps, which the frozen deposition had made stiff.
+- **A start below freezing read as half-frozen** (#486). The soil's water was seeded liquid at any
+  `[init].soil_temp`, which below the freezing point the first step diagnosed at the freezing point. It
+  starts as ice there now. No shipped configuration starts below freezing.
+- **`clamp_cas` moved and counted states in range** (#486). It rebuilt every state's enthalpy, so every
+  RK45 stage input and ESDIRK2 stage-3 base moved at round-off and `mean_work_clamp_stage_py` counted
+  each as a clamp: 0.7–0.9 per fast step under ESDIRK2, now 0, and 5.6 → 0.02 under RK45 on example 04.
+  Results move at round-off.
 - **`test_several_sites` checked to its tolerance squared** (#485). It passed `RTOL × value` to
   `check_close`, which scales the tolerance by the value itself, and a looser 10⁻⁷ covered an
   optimized ifx build's difference on the mixed-soil sites. Every check is now 10⁻¹² relative, and
