@@ -3,7 +3,7 @@
 ! meds_leaf_gas_exchange -- leaf photosynthesis, stomatal conductance and the coupled Ci   !
 ! solve, docs/science/leaf_gas_exchange.md §1-§5, eqs. (1)-(10): FvCB C3 / Collatz C4      !
 ! demand, the Leuning / Medlyn / Katul stomatal models, the two water-stress controls, and !
-! solve_leaf_gas_exchange (bracketed bisection on Ci). leaf_gas_exchange_batch runs it     !
+! solve_leaf_gas_exchange (a bracketed root on Ci). leaf_gas_exchange_batch runs it     !
 ! over n leaves.                                                                          !
 !==========================================================================================!
 module meds_leaf_gas_exchange
@@ -37,7 +37,7 @@ module meds_leaf_gas_exchange
 
    real(wp),    parameter :: CI_TOL_PPM = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: LO_EPS_PPM = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
-   integer(ik), parameter :: MAX_ITER   = 100_ik       !< bisection iteration cap (safety net)
+   integer(ik), parameter :: MAX_ITER   = 100_ik       !< root iteration cap (safety net)
 
    !----- Which stomatal conductance a pass of the Ci solve uses (solve_leaf_gas_exchange). -----!
    integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
@@ -292,13 +292,13 @@ contains
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca] and bisect. With no sign change (Katul under strong stress) !
+      !----- Bracket Ci in (Gamma*, Ca] and find the root. With no sign change (Katul under strong stress) !
       !       fall back to the cuticular g0, which always brackets when net A(Ca) > 0 (§5). ---------!
       lo0 = gstar_ppm + LO_EPS_PPM
       hi0 = ca_ppm
       prob%gs_rule = GS_FROM_MODEL
       do                                                 ! at most two passes: model, then g0-pinned
-         call bisect_ci(prob, lo0, hi0, ci_sol, converged)
+         call root_ci(prob, lo0, hi0, ci_sol, converged)
          !----- No sign change -> retry with the cuticular floor g0. ----------------------------!
          if (.not. converged .and. prob%gs_rule /= GS_CUTICULAR) then
             prob%gs_rule = GS_CUTICULAR
@@ -460,37 +460,54 @@ contains
           - gsw_2_gsc * prob%ddef * prob%lambda * (dAn_dci * (cs_surf - ci) + An_loc)
    end function residual_optimality
 
-   !----- Bisect ci_residual on [lo, hi] to CI_TOL_PPM. A same-sign bracket returns the midpoint  !
-   !      with converged = .false., so the caller can change the conductance rule and retry. ----!
-   pure subroutine bisect_ci(prob, lo, hi, ci, converged)
+   !----- The root of ci_residual on [lo, hi], to CI_TOL_PPM, by the Illinois method: regula falsi  !
+   !      on the bracket, halving the kept end's residual when the same end is kept twice, so both   !
+   !      ends close in (superlinear; far fewer residuals than bisection's ~21). An estimate that   !
+   !      rounding puts outside the bracket is replaced by the midpoint. It stops when the bracket  !
+   !      is within CI_TOL_PPM, the bisection's own guarantee: a small move alone is not enough, as !
+   !      regula falsi can creep. A same-sign bracket returns the midpoint with converged =        !
+   !      .false., so the caller can change the conductance rule and retry. ----------------------!
+   pure subroutine root_ci(prob, lo, hi, ci, converged)
       type(ci_problem_t), intent(in)  :: prob
       real(wp),           intent(in)  :: lo, hi
       real(wp),           intent(out) :: ci
       logical,            intent(out) :: converged
-      real(wp)    :: a, b, flo, fhi, mid, fmid
-      integer(ik) :: it
+      real(wp)    :: a, b, fa, fb, c, fc
+      integer(ik) :: it, kept      !< kept: the end kept last time (-1 left, +1 right, 0 none)
       a = lo
       b = hi
-      flo = ci_residual(prob, a)
-      fhi = ci_residual(prob, b)
+      fa = ci_residual(prob, a)
+      fb = ci_residual(prob, b)
       converged = .false.
       ci = 0.5_wp * (a + b)
-      if (flo * fhi <= 0.0_wp) then
-         do it = 1_ik, MAX_ITER
-            mid = 0.5_wp * (a + b)
-            fmid = ci_residual(prob, mid)
-            if (flo * fmid <= 0.0_wp) then
-               b = mid
-            else
-               a = mid
-               flo = fmid
-            end if
-            if (b - a < CI_TOL_PPM) exit
-         end do
-         ci = 0.5_wp * (a + b)
-         converged = (b - a < CI_TOL_PPM)
+      if (fa * fb > 0.0_wp) return
+      converged = .true.
+      if (fa == 0.0_wp .or. fb == 0.0_wp) then
+         ci = merge(a, b, fa == 0.0_wp)
+         return
       end if
-   end subroutine bisect_ci
+      kept = 0_ik
+      do it = 1_ik, MAX_ITER
+         c = (a * fb - b * fa) / (fb - fa)
+         if (.not. (c > a .and. c < b)) c = 0.5_wp * (a + b)
+         fc = ci_residual(prob, c)
+         if (fc == 0.0_wp) exit
+         if (fa * fc < 0.0_wp) then           ! the root is in (a, c): the left end is kept
+            b = c
+            fb = fc
+            if (kept == -1_ik) fa = 0.5_wp * fa
+            kept = -1_ik
+         else                                 ! the root is in (c, b): the right end is kept
+            a = c
+            fa = fc
+            if (kept == 1_ik) fb = 0.5_wp * fb
+            kept = 1_ik
+         end if
+         if (b - a < CI_TOL_PPM) exit
+      end do
+      ci = c
+      converged = fc == 0.0_wp .or. b - a < CI_TOL_PPM
+   end subroutine root_ci
 
    !----- leaf_params_at_capacity -- a PFT's table entry with one leaf's plastic capacities on top:   !
    !      Jmax25 and TPU25 scale with the overriding Vcmax25. The one place a cohort's capacities meet !
