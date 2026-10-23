@@ -611,8 +611,8 @@ module meds_fast_integ_types
    end type frozen_t
 
    !----- Storage one thread's fast step reuses from step to step: the aerodynamic environment, the  !
-   !      soil-plant water network and the ESDIRK2 march's states and stages, filled in place and      !
-   !      reallocated only when the cohort count changes. The stages are their own record so the     !
+   !      soil-plant water network, the frozen record, and the ESDIRK2 march's states and stages,      !
+   !      filled in place and reallocated only when the cohort count changes. The stages are their own record so the     !
    !      march passes them beside its states. ------------------------------------------------------!
    type :: esdirk2_stages_t
       type(march_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
@@ -622,6 +622,7 @@ module meds_fast_integ_types
    type :: fast_workspace_t
       type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(water_work_t)    :: water                         !< the soil-plant water network
+      type(frozen_t)        :: frozen                        !< the frozen record (prepare_frozen resets it)
       type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ESDIRK2 march's state and trial step
       type(esdirk2_stages_t)    :: stages                        !< the ESDIRK2 step's stages
    end type fast_workspace_t

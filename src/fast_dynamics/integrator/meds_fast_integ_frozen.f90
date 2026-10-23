@@ -33,7 +33,7 @@ module meds_fast_integ_frozen
    use meds_canopy_types,     only : aero_env_t, aero_geom_t, aero_out_t, set_aero_env_atm
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
-                                     fast_workspace_t, march_state_t, frozen_t, surface_state_t,          &
+                                     march_state_t, frozen_t, surface_state_t,                            &
                                      surface_tend_t, snow_stage_t, cas_boundary_t, tissue_coefficients_t,         &
                                      canopy_film_capacity_t, ground_boundary_t, plant_water_t, step_exports_t,   &
                                      water_work_t, POND, WOOD, WORK_WATER_NFAIL
@@ -62,13 +62,14 @@ module meds_fast_integ_frozen
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! build_frozen -- the frozen record both schemes march against, as named steps, and !
-   ! the water network's and the march's start states. It only reads the dynamic state: the  !
-   ! snow stage advances a copy of the pack, which the update commits. out receives the       !
-   ! aerodynamics, the per-cohort rates, the step's GPP, NEE and decomposition scalars, and,  !
-   ! with out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).!
+   ! build_frozen -- the frozen record both schemes march against, as named steps, and the !
+   ! water network's and the march's start states. It only reads the dynamic state: the    !
+   ! snow stage advances a copy of the pack, which the update commits. The record is the   !
+   ! thread's, reused step to step (prepare_frozen). out receives the aerodynamics, the    !
+   ! per-cohort rates, the step's GPP, NEE and decomposition scalars, and, with            !
+   ! out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).  !
    !---------------------------------------------------------------------------------------!
-   subroutine build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+   subroutine build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, aenv, water, frozen, y)
       real(wp),                   intent(in)    :: dt_fast
       type(meds_config_t),        intent(in)    :: cfg
       type(site_surface_t),       intent(in)    :: site
@@ -76,8 +77,9 @@ contains
       type(fast_forcing_t),       intent(in)    :: forcing
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       type(fast_output_t),        intent(inout) :: out
-      type(fast_workspace_t),     intent(inout) :: work     !< its aerodynamic environment and water network
-      type(frozen_t),      intent(out)   :: frozen
+      type(aero_env_t),           intent(inout) :: aenv     !< the aerodynamic environment
+      type(water_work_t),         intent(inout) :: water    !< the soil-plant water network
+      type(frozen_t),             intent(inout) :: frozen
       type(march_state_t),       intent(out)   :: y
       !----- The canopy air's temperature and humidity at the start state, the air's pressure and     !
       !      density, and the ground's temperature, which the later steps read. ---------------------!
@@ -90,10 +92,10 @@ contains
 
       n   = static%n
       nsl = site%soil_profile%n_active
-      call allocate_frozen(n, nsl, frozen)
+      call prepare_frozen(n, nsl, frozen)
 
       !----- The processes' rates at the start state. --------------------------------------------!
-      call refresh_canopy_aerodynamics(cfg%aero, work%aenv, static, forcing, dynamic%cas,                    &
+      call refresh_canopy_aerodynamics(cfg%aero, aenv, static, forcing, dynamic%cas,                         &
                                        dynamic%soil_energy%soil_temp(1), dynamic%leaf_temp, dynamic%wood_temp, &
                                        out%aero, tcas, qcas, press, rho, t_ground)
       call root_zone_environment(site%soil_profile, static%root_frac_patch(1:nsl), dynamic%soil_energy%soil_temp, &
@@ -134,7 +136,7 @@ contains
       call intercept_rain(dt_fast, cfg, static, forcing, dynamic, frozen%snow%exists, frozen%film, throughfall)
       call tissue_coefficients(dt_fast, cfg, static, forcing, dynamic, out%aero, rho, frozen%tissue, frozen%film, &
                                frozen%plant)
-      call canopy_air_boundary(cfg%aero, work%aenv, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
+      call canopy_air_boundary(cfg%aero, aenv, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
       call transpiration_demand(dt_fast, cfg%canopy_water_on, n, dynamic, t_ground, frozen)
       call ground_inflow(static, forcing, dynamic, out%aero%ggnet, throughfall, tcas, qcas, rho, t_ground, nsl,    &
                          frozen)
@@ -142,36 +144,116 @@ contains
       !----- The start states: the water network's, from the stores' state^n water, and the march's. --!
       call set_water_state(static, site%soil_profile, cfg%pft%hydraulics, dynamic%soil_water%theta(1:nsl),       &
                            dynamic%soil_water%w_surface, dynamic%soil_water%w_surface_energy,                    &
-                           dynamic%leaf_water_mass(1:n), dynamic%wood_water_mass(1:n), work%water)
+                           dynamic%leaf_water_mass(1:n), dynamic%wood_water_mass(1:n), water)
       call pack_march_start(dynamic, n, nsl, y)
    end subroutine build_frozen
 
-   !----- Size the frozen record's per-cohort and per-layer arrays. The plant water's heat terms     !
-   !      start at zero: the start-of-step surface solves read them (as q_extra, whose default is 0)  !
-   !      before the water network's flows give them their values. -------------------------------!
-   subroutine allocate_frozen(n, nsl, frozen)
-      integer(ik),           intent(in)    :: n, nsl
+   !----- The frozen record for a step, reused from the last: every scalar back at its default, as  !
+   !      a fresh record has it, and the per-cohort and per-layer arrays kept when their sizes still  !
+   !      fit. The plant water's heat terms start at zero: the start-of-step surface solves read them !
+   !      (as q_extra, whose default is 0) before the water network's flows give them their values. -!
+   subroutine prepare_frozen(n, nsl, frozen)
+      integer(ik),    intent(in)    :: n, nsl
       type(frozen_t), intent(inout) :: frozen
-      allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),          &
-               frozen%tissue%abs_lw(n), frozen%tissue%lai(n))
-      allocate(frozen%tissue%h_coeff_w(n), frozen%tissue%abs_sw_wood(n), frozen%tissue%abs_lw_wood(n),          &
-               frozen%tissue%wai(n))
-      allocate(frozen%tissue%wood_dry_hcap(n), frozen%tissue%wood_wmass(n))
-      allocate(frozen%tissue%leaf_dry_hcap(n), frozen%tissue%leaf_wmass(n))
-      allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                            &
-               frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
-      allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
-      allocate(frozen%tissue%leaf_water_enth(n), frozen%tissue%wood_water_enth(n))
-      allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
+      type(frozen_t) :: defaults   !< default-initialised and never written: the defaults
+      type(frozen_t) :: arrays     !< holds the arrays while the scalars are reset
+      call move_frozen_arrays(frozen, arrays)
+      frozen = defaults
+      call move_frozen_arrays(arrays, frozen)
+      call fit(frozen%tissue%h_coeff_leaf, n)
+      call fit(frozen%tissue%g_transp_leaf, n)
+      call fit(frozen%tissue%abs_sw, n)
+      call fit(frozen%tissue%abs_lw, n)
+      call fit(frozen%tissue%lai, n)
+      call fit(frozen%tissue%h_coeff_w, n)
+      call fit(frozen%tissue%abs_sw_wood, n)
+      call fit(frozen%tissue%abs_lw_wood, n)
+      call fit(frozen%tissue%wai, n)
+      call fit(frozen%tissue%wood_dry_hcap, n)
+      call fit(frozen%tissue%wood_wmass, n)
+      call fit(frozen%tissue%leaf_dry_hcap, n)
+      call fit(frozen%tissue%leaf_wmass, n)
+      call fit(frozen%tissue%leaf_hcap_per_dt, n)
+      call fit(frozen%tissue%wood_hcap_per_dt, n)
+      call fit(frozen%tissue%t_leaf0, n)
+      call fit(frozen%tissue%t_wood0, n)
+      call fit(frozen%tissue%qwflux_wl, n)
+      call fit(frozen%tissue%q_wood_net, n)
+      call fit(frozen%tissue%leaf_water_enth, n)
+      call fit(frozen%tissue%wood_water_enth, n)
+      call fit(frozen%tissue%leaf_emiss, n)
+      call fit(frozen%tissue%wood_emiss, n)
+      call fit(frozen%tissue%transp_net, n)
+      call fit(frozen%film%f_wet_c, n)
+      call fit(frozen%film%g_film_leaf, n)
+      call fit(frozen%film%g_film_w, n)
+      call fit(frozen%film%intercept_leaf, n)
+      call fit(frozen%film%intercept_wood, n)
+      call fit(frozen%roots%root_share, nsl)
+      call fit(frozen%roots%qloss_frozen, n)
+      call fit(frozen%roots%root_heat, nsl)
+      call fit(frozen%plant%nplant, n)
+      call fit(frozen%plant%sapflow_frozen, n)
+      call fit(frozen%plant%uptake_frozen, n)
+      call fit(frozen%hydrology%theta1, nsl)
+      call fit(frozen%water_drive%e_demand, n)
       frozen%tissue%qwflux_wl(1:n)  = 0.0_wp
       frozen%tissue%q_wood_net(1:n) = 0.0_wp
-      allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
-      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
-      allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
-      allocate(frozen%roots%root_heat(nsl), frozen%tissue%transp_net(n))
-      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
-      allocate(frozen%hydrology%theta1(nsl), frozen%water_drive%e_demand(n))
-   end subroutine allocate_frozen
+   end subroutine prepare_frozen
+
+   !----- Move every array of the frozen record from one record to another (the list prepare_frozen !
+   !      sizes). An array this list missed would be freed by the reset and allocated afresh. -------!
+   subroutine move_frozen_arrays(from, to)
+      type(frozen_t), intent(inout) :: from, to
+      call move_alloc(from%tissue%h_coeff_leaf, to%tissue%h_coeff_leaf)
+      call move_alloc(from%tissue%g_transp_leaf, to%tissue%g_transp_leaf)
+      call move_alloc(from%tissue%abs_sw, to%tissue%abs_sw)
+      call move_alloc(from%tissue%abs_lw, to%tissue%abs_lw)
+      call move_alloc(from%tissue%lai, to%tissue%lai)
+      call move_alloc(from%tissue%h_coeff_w, to%tissue%h_coeff_w)
+      call move_alloc(from%tissue%abs_sw_wood, to%tissue%abs_sw_wood)
+      call move_alloc(from%tissue%abs_lw_wood, to%tissue%abs_lw_wood)
+      call move_alloc(from%tissue%wai, to%tissue%wai)
+      call move_alloc(from%tissue%wood_dry_hcap, to%tissue%wood_dry_hcap)
+      call move_alloc(from%tissue%wood_wmass, to%tissue%wood_wmass)
+      call move_alloc(from%tissue%leaf_dry_hcap, to%tissue%leaf_dry_hcap)
+      call move_alloc(from%tissue%leaf_wmass, to%tissue%leaf_wmass)
+      call move_alloc(from%tissue%leaf_hcap_per_dt, to%tissue%leaf_hcap_per_dt)
+      call move_alloc(from%tissue%wood_hcap_per_dt, to%tissue%wood_hcap_per_dt)
+      call move_alloc(from%tissue%t_leaf0, to%tissue%t_leaf0)
+      call move_alloc(from%tissue%t_wood0, to%tissue%t_wood0)
+      call move_alloc(from%tissue%qwflux_wl, to%tissue%qwflux_wl)
+      call move_alloc(from%tissue%q_wood_net, to%tissue%q_wood_net)
+      call move_alloc(from%tissue%leaf_water_enth, to%tissue%leaf_water_enth)
+      call move_alloc(from%tissue%wood_water_enth, to%tissue%wood_water_enth)
+      call move_alloc(from%tissue%leaf_emiss, to%tissue%leaf_emiss)
+      call move_alloc(from%tissue%wood_emiss, to%tissue%wood_emiss)
+      call move_alloc(from%tissue%transp_net, to%tissue%transp_net)
+      call move_alloc(from%film%f_wet_c, to%film%f_wet_c)
+      call move_alloc(from%film%g_film_leaf, to%film%g_film_leaf)
+      call move_alloc(from%film%g_film_w, to%film%g_film_w)
+      call move_alloc(from%film%intercept_leaf, to%film%intercept_leaf)
+      call move_alloc(from%film%intercept_wood, to%film%intercept_wood)
+      call move_alloc(from%roots%root_share, to%roots%root_share)
+      call move_alloc(from%roots%qloss_frozen, to%roots%qloss_frozen)
+      call move_alloc(from%roots%root_heat, to%roots%root_heat)
+      call move_alloc(from%plant%nplant, to%plant%nplant)
+      call move_alloc(from%plant%sapflow_frozen, to%plant%sapflow_frozen)
+      call move_alloc(from%plant%uptake_frozen, to%plant%uptake_frozen)
+      call move_alloc(from%hydrology%theta1, to%hydrology%theta1)
+      call move_alloc(from%water_drive%e_demand, to%water_drive%e_demand)
+   end subroutine move_frozen_arrays
+
+   !----- Make a an array of m elements, keeping it when it already is one. ----------------------!
+   pure subroutine fit(a, m)
+      real(wp), allocatable, intent(inout) :: a(:)
+      integer(ik),           intent(in)    :: m
+      if (allocated(a)) then
+         if (size(a, kind=ik) == m) return
+         deallocate(a)
+      end if
+      allocate(a(m))
+   end subroutine fit
 
    !---------------------------------------------------------------------------------------!
    ! refresh_canopy_aerodynamics -- the aerodynamic environment: its atmosphere from the        !

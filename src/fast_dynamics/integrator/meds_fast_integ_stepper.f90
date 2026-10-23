@@ -56,7 +56,6 @@ contains
       type(fast_dynamic_state_t), intent(inout) :: dynamic
       type(fast_output_t),        intent(inout) :: out       !< sized by the caller (ensure_output_capacity)
       type(fast_workspace_t),     intent(inout) :: work      !< this thread's step storage, reused step to step
-      type(frozen_t)  :: frozen
       type(march_state_t)   :: y, y_out
       type(boundary_flux_t)   :: acc
       type(commit_amounts_t) :: moved
@@ -85,7 +84,8 @@ contains
       !----- The frozen record, with the soil-plant water network stepped between its two parts: its  !
       !      time-mean flows are constants of the march (operator splitting; docs/science/            !
       !      numerical_scheme.md §2). ---------------------------------------------------------------!
-      call build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work, frozen, y)
+      associate (frozen => work%frozen)
+      call build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work%aenv, work%water, frozen, y)
       call water_step(dt_fast, static, site%soil_profile, site%soil, cfg%pft%hydraulics, frozen%water_drive,     &
                       ec%tols, work%water, out%report%work)
       call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)
@@ -140,6 +140,7 @@ contains
       call update_dynamic_state(dt_fast, cfg, site, static, frozen, acc, dt_warm, y_out, dynamic, out, moved)
       call close_ledgers(dt_fast, site, forcing, static, frozen, y, y_out, acc, moved, ec%debug_error, out%report)
       call atm_fluxes(out%report%exports, dt_fast, out%le_flux, out%h_flux)
+      end associate
    end subroutine fast_step
 
    !---------------------------------------------------------------------------------------!
