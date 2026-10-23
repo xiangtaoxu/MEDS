@@ -154,18 +154,24 @@ how far the group drifted apart on the last stretch.
   (`newton_surface_solve`) with a numerical Jacobian — which is what
   lets it carry the tissue heat store.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
-  solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
-  tolerance (`[fast].rtol`, `atol_scale`). ESDIRK2's soil-moisture and plant-water
-  terms in that norm are structurally zero (both ride operator-split maps outside the tableau), so
-  they dilute it slightly — accepted deliberately: one norm with no per-scheme opt-outs means no
-  scheme can leave a state it *integrates* unmeasured.
+  solutions, measured by **one weighted norm over the states the march integrates**, the canopy air
+  and the soil heat, with a per-variable-group tolerance (`[fast].rtol`, `atol_scale`). Soil water
+  and plant water move at the water network's fixed rate on both schemes, so their embedded error is
+  structurally zero; counted, they would dilute the norm by a factor that grows with the cohort count
+  (√((3 + 2·n_soil + 2·n_cohort)/(3 + n_soil)), 2.1× for 13 cohorts on 7 layers), so the same `rtol`
+  would mean a looser march in a richer patch. The water network holds them to the same tolerances
+  in its own sub-step control.
 - Warm-started: the last accepted sub-step size carries over to the next `dt_fast`, which keeps the
   rejection rate under 20% (about 31% when every `dt_fast` starts cold). Each patch keeps its own
   (`adapt_dt_last`), so a patch's first sub-step depends neither on the patch run before it nor,
   with the patch axis threaded, on the thread schedule. The seed is the step that was accepted, before
   the controller grows it, and the last one the end of the interval did not cut short: a grown
   proposal over-estimates and is rejected more often, and a short remainder would bias the next
-  `dt_fast` small.
+  `dt_fast` small. A step the end cut short can only raise the seed, to the step the controller had
+  asked for before the cut, capped at `dt_fast`. Without that, a seed below `dt_fast` could never grow
+  back: each interval would take one step at the seed and an end-cut one that leaves it alone, two
+  sub-steps for the rest of the run however loose the tolerance. The cut step's own proposal is not
+  used: it comes from a short step, whose small error says little about a full one.
 
 In symbols, with $h$ the sub-step, $f$ the right-hand side of the stiff block and $`\gamma = 1-1/\sqrt{2}`$,
 a step is two backward-Euler solves, the second from the base $`y_n + (Y_2-y_n)(1-\gamma)/\gamma`$:
@@ -456,7 +462,7 @@ both schemes: none of the 8928 whole-column checks fails, and the worst residual
 (ESDIRK2 and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 **Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
-export, because they land inside the column, and are deposited into soil layer 1 (§7, item 4) with
+export, because they land inside the column, and are deposited into soil layer 1 (§7, item 3) with
 the liquid enthalpy the canopy air lost, $b$-weighted at each stage's own canopy-air temperature.
 The deposit lands before the step's soil temperatures are diagnosed, so the top layer's temperature,
 which the next step's ground and respiration read, includes it. Valuing the deposit at the end-of-step temperature instead would leave
@@ -485,13 +491,43 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `esdirk2` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `esdirk2`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
-| ED2 comparison at the algorithmic level | `rk45` (but check `mean_work_rk45_rescue_py` first) |
+| ED2 comparison at the algorithmic level | `rk45` at `rtol` ≤ 1e-4 (but check `mean_work_rk45_rescue_py` first) |
+
+**Choosing them for a new site.** Two short runs answer it. The step's error is first order in
+`dt_fast` (§5a), so a run at `dt_fast` and one at `dt_fast/2` give it: e(dt) ≈ 2 [y(dt) − y(dt/2)],
+hour by hour, for whatever y the study reads. Take the longest `dt_fast` whose e(dt) the study can
+accept. Then `rtol`: a third run at that `dt_fast` with `rtol = 1e-6` is the march without its own
+error, so y(rtol) − y(1e-6) is that error; aim it at 10–20 % of e(dt), the error that no `rtol` can
+remove. Tightening further buys nothing the step does not take back.
 
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
 reference, and the latent heat within 0.2 W m⁻² in the mean and 1.9 W m⁻² in any hour of the diurnal
 cycle on BCI's dry season. Soil-surface temperature is the loosest at 0.70 K. Under drought the fast
 water-stress limb reads the step-start leaf potential, which runs Palo Verde's February–April GPP and
 ET 5.5–6 % high at 900 s, 1.7 % over the season and 0.8 % over the year (§5a).
+
+**Choosing `rtol`.** The step's total error is mostly the split's, first order in `dt_fast` (§5a),
+and `rtol` sets only the march's own share of it. The default, 2e-3, is the loosest that holds the
+march's share of the fluxes' error near 10–20 % of the 900 s step's: measured on BCI's wet
+(September 2012) and dry (February 2013) months and Palo Verde's drought (December 2008 – April 2009),
+against a 60 s, rtol 1e-4 truth for the step's error and a 900 s, rtol 1e-6 run for the march's own:
+
+| `rtol` | LE, H: march / step error | daily GPP bias at Palo Verde: march / step | canopy-air T: march / step | CPU against 1e-3 |
+|---|---|---|---|---|
+| 1e-3 | 4–8 % (H at Palo Verde 16 %) | 2 % | 29–50 % | – |
+| 2e-3 | 7–13 % (22 %) | 6 % | 46–87 % | −7 to −15 % |
+| 5e-3 | 10–21 % (26 %) | 9 % | 71–120 % | −12 to −25 % |
+| 1e-2 | 10–22 % (26 %) | 9 % | 71–125 % | −12 to −25 % |
+
+From 5e-3 up the march takes one step per `dt_fast` almost everywhere (1.01–1.06), so it is the
+900 s step with no error control left; looser settings buy nothing. The canopy-air temperature's own
+error stays a large share because the step's error on it is small (0.015–0.06 K): at 2e-3 the march
+adds 0.010–0.035 K in any hour, RMS. A study that needs canopy-air temperature to a hundredth of a
+kelvin, or one-step accuracy at a storm front, tightens `rtol`; 1e-3 costs 7–18 % more CPU than 2e-3.
+
+The table is for `esdirk2`. **`rk45` needs `rtol` of 1e-4 or tighter.** On example 04's August its
+run-mean H is 50.99 W m⁻² at 1e-4, against the 50.94 both schemes converge to, but 51.9 at 1e-3, 54.3
+at 2e-3 and 73.3 at 5e-3, with LE falling to match; the ledgers close throughout, so nothing flags it.
 
 Configuration essentials:
 
@@ -501,7 +537,7 @@ time_integrator     = "esdirk2"  # "esdirk2" (default) | "rk45" (explicit Cash-K
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
                                  # range; canopy-air temperature is not the constraint. 300 s for
                                  # the timing of dry-season leaf habits.
-rtol                = 1.0e-3     # relative accuracy of every group (adaptive schemes only)
+rtol                = 2.0e-3     # relative accuracy of every group (adaptive schemes only)
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
 step_controller     = "i"        # "pi" damps step oscillation on stiff transients
 forcing_sample_frac = 0.5        # where in the sub-step the meteorology is sampled
@@ -619,22 +655,17 @@ than a convergence proof.
    second difference is −0.06, where a period-2 oscillation gives −1. §5a′ gives the multiplier
    across wind speeds and `dt_fast`. It is scored at one site.
 
-3. **ESDIRK2's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
-   operator-split out of its tableau, so their contributions to the norm are exactly zero and only
-   dilute it — ESDIRK2 therefore runs slightly looser than its stated `rtol`. Measured cost on a
-   summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ESDIRK2
-   tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
-4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
+3. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
    evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
    canopy film, which is optional and carries its enthalpy at a fixed reference temperature, to carry
    its own temperature first.
-5. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
+4. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —
    sweeps at sample points 0, 0.5 and 1 all converge cleanly — but it shifts the error by up to ~3×
    at coarse `dt_fast`. A consistent midpoint freeze would remove the trade; its predictor would have
    to be L-stable rather than explicit.
-6. **Evidence base.** Most of §5 rests on one site and one forcing year per measurement, with no
+5. **Evidence base.** Most of §5 rests on one site and one forcing year per measurement, with no
    confidence intervals. Differences smaller than ~2× should not be read as real. The saturating-column
    checks of §5b run on a *sealed unit fixture* driven at 29 mm h⁻¹, far above Ithaca's rain rates,
    because a forced Ithaca column never saturates: a production-forced test suite is not a substitute

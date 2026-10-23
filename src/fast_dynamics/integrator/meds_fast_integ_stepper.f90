@@ -167,7 +167,8 @@ contains
       integer(ik),           intent(out) :: nsteps, nrej
       type(boundary_flux_t), optional, intent(out) :: acc  !< accumulated boundary-flux amounts (ledger)
       !----- Warm start (docs/science/numerical_scheme.md §3 `esdirk2`): the last accepted step that the     !
-      !      interval's end did not cut short, to seed the next call. -------------------------------!
+      !      interval's end did not cut short, or larger, what an end-cut step's controller proposes, !
+      !      to seed the next call. ------------------------------------------------------------------!
       real(wp),    optional, intent(out) :: dt_warm_out
       !----- Stage-clamp count over the march, rejected trials included: a clamp still says the        !
       !      controller probed too far. Accumulated, so the caller zeroes it. ------------------------!
@@ -209,9 +210,8 @@ contains
                                 site%soil_profile%theta_res(k) - y%theta(k))
                end do
             end if
-            !----- The step and its error under the grouped norm, eq. (3), over the whole column state.  !
-            !      ESDIRK2's theta and plant-water terms are structurally zero and dilute it             !
-            !      (docs/science/numerical_scheme.md §7, item 3). -----------------------------------!
+            !----- The step and its error under the grouped norm, eq. (3), over the states the march   !
+            !      integrates (docs/science/numerical_scheme.md §3 `esdirk2`). ------------------------!
             select case (scheme)
             case (INTEG_RK45)
                call rk45_step(y, frozen, site, n, nsl, dt, y_new, y_err, bf=bfsub, clamp_stage_n=clamp_n)
@@ -245,8 +245,15 @@ contains
                nsteps = nsteps + 1_ik
                err_prev = err                                        ! remember for the PI controller
                !----- The warm-start seed is the step just accepted, before the growth factor: a grown   !
-               !      proposal over-estimates (docs/science/numerical_scheme.md §3 `esdirk2`). ---------------!
-               if (.not. clamped) dt_warm = dt
+               !      proposal over-estimates (docs/science/numerical_scheme.md §3 `esdirk2`). A step the    !
+               !      interval's end cut short can only raise it, to the step the controller asked for     !
+               !      before the cut, capped at the interval: otherwise a seed below the interval stays    !
+               !      there, every later interval taking a step at the seed and an end-cut one. -----------!
+               if (clamped) then
+                  dt_warm = max(dt_warm, min(dt_try, t_end))
+               else
+                  dt_warm = dt
+               end if
                dt = dt * fac
             else
                nrej = nrej + 1_ik

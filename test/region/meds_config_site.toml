@@ -14,7 +14,7 @@ fast_biophysics_on  = true
 dt_fast             = "900s"
 time_integrator     = "esdirk2"
 esdirk2_adaptive    = true
-rtol                = 1.0e-3
+rtol                = 2.0e-3
 
 [demography]
 demography_on             = true

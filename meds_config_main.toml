@@ -31,7 +31,7 @@ dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is t
 # time_integrator     = "esdirk2"    # "esdirk2" (default) | "rk45" (explicit, for comparison)
 # esdirk2_adaptive    = true         # adaptive sub-steps; false: esdirk2_fixed_substep of them
 # esdirk2_fixed_substep   = 4            # [-]  sub-steps per dt_fast when not adaptive
-# rtol                = 1.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
+# rtol                = 2.0e-3       # [-]  relative tolerance of every error-controlled store, the march's
 #                                    #   and the soil-plant water network's
 # atol_scale          = 1.0          # [-]  multiplier on every absolute tolerance (rtol alone saturates)
 # step_controller     = "i"          # "i" (integral) | "pi" (proportional-integral, damps step hunting)
