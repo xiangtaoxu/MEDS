@@ -2,9 +2,9 @@
 !==========================================================================================!
 ! meds_numerics -- small numerical helpers every layer shares: clamps, a smooth step, the  !
 ! smooth minimum of two limits, a rounded max(x, 0), the step-size factor, the Newton      !
-! solvers' step safeguards, linear interpolation, weighted means, an ordering, and the     !
-! test that an operator kept what it only moves. The linear solvers are in                 !
-! meds_linear_algebra.                                                                     !
+! solvers' step safeguards, the Illinois steps of a bracketed root, linear interpolation,  !
+! weighted means, an ordering, and the test that an operator kept what it only moves. The  !
+! linear solvers are in meds_linear_algebra.                                               !
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
@@ -15,6 +15,7 @@ module meds_numerics
 
    public :: quadratic_smaller_root, adaptive_step_update, smooth_max0
    public :: sufficient_decrease, fraction_to_boundary
+   public :: root_bracket_t, regula_falsi_point, illinois_narrow
    public :: logistic, clamp01, clamp, linear_interpolate, weighted_mean
    public :: ascending_order
    public :: conserved, pair_mean
@@ -22,6 +23,19 @@ module meds_numerics
    !----- A line-search step is accepted when the merit falls by at least this share of    !
    !      the step taken (Armijo's sufficient-decrease condition). ------------------------!
    real(wp), parameter :: ARMIJO_C = 1.0e-4_wp
+
+   !----- A bracket [a, b] on a root of a continuous function, with residuals fa and fb of    !
+   !      opposite signs, for the Illinois method: regula falsi that halves the kept end's     !
+   !      residual when the same end is kept twice, so both ends close in. The caller          !
+   !      evaluates the function: regula_falsi_point gives the next point to try, and          !
+   !      illinois_narrow narrows the bracket with that point's residual. -------------------!
+   type :: root_bracket_t
+      real(wp)    :: a  = 0.0_wp      !< the left end
+      real(wp)    :: fa = 0.0_wp      !< the residual at a (the Illinois step may have halved it)
+      real(wp)    :: b  = 0.0_wp      !< the right end
+      real(wp)    :: fb = 0.0_wp      !< the residual at b (likewise)
+      integer(ik) :: kept = 0_ik      !< the end kept last time: -1 left, +1 right, 0 none
+   end type root_bracket_t
 
 contains
 
@@ -98,6 +112,33 @@ contains
          df = 1.0_wp
       end if
    end subroutine smooth_max0
+
+   !----- Regula falsi's point on a bracket: where the line through its two ends crosses    !
+   !      zero, or the midpoint when rounding puts that outside (a, b). ----------------------!
+   elemental pure real(wp) function regula_falsi_point(br) result(c)
+      type(root_bracket_t), intent(in) :: br
+      c = (br%a * br%fb - br%b * br%fa) / (br%fb - br%fa)
+      if (.not. (c > br%a .and. c < br%b)) c = 0.5_wp * (br%a + br%b)
+   end function regula_falsi_point
+
+   !----- The bracket narrowed to the side of c, with fc the residual at c, by the Illinois   !
+   !      rule: the end kept a second time in a row has its residual halved, which pulls the   !
+   !      next point towards it so that end moves too. --------------------------------------!
+   elemental pure subroutine illinois_narrow(br, c, fc)
+      type(root_bracket_t), intent(inout) :: br
+      real(wp),             intent(in)    :: c, fc
+      if (br%fa * fc < 0.0_wp) then           ! the root is in (a, c): the left end is kept
+         br%b  = c
+         br%fb = fc
+         if (br%kept == -1_ik) br%fa = 0.5_wp * br%fa
+         br%kept = -1_ik
+      else                                    ! the root is in (c, b): the right end is kept
+         br%a  = c
+         br%fa = fc
+         if (br%kept == 1_ik) br%fb = 0.5_wp * br%fb
+         br%kept = 1_ik
+      end if
+   end subroutine illinois_narrow
 
    !----- Armijo's test for a backtracking line search: true when the merit at a trial     !
    !      step of `step_share` of the Newton step has fallen to (1 - ARMIJO_C step_share)  !
