@@ -146,7 +146,7 @@ split into the layer's up-source $`\beta_{0,i}S_i`$ and down-source $`(1-\beta_{
 thermal band each layer adds a blackbody source $`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. The
 emission temperature is the cohort's effective radiative temperature,
 $`T=\big(f_l\,T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$ with $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
-from the start-of-step tissue temperatures (`apply_rt_forcing`), so the longwave field sees both tissues.
+from the start-of-step tissue temperatures (`radiative_temperature`), so the longwave field sees both tissues.
 
 **The recursion.** A bottom-up sweep builds the reflectance $`r_{bel}`$ and upward source $`s_{bel}`$
 of the growing stack {ground + layers $1..i$}, seeded by the ground reflectance and its upward source
@@ -286,4 +286,6 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | public per-patch seam (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
-| fast-loop join (PAR renorm, LW emission temperature, snow on the ground) | `meds_fast_forcing`: `apply_rt_forcing` |
+| fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
+| LW emission temperature | `meds_canopy_radiation`: `radiative_temperature` |
+| the ground's optics under snow | `meds_surface`: `snow_blend_ground_optics` |

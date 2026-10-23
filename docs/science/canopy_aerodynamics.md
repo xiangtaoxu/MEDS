@@ -128,8 +128,8 @@ boundary layers, radiation, hydraulics — is **frozen once per `dt_fast`** (see
 [numerical_scheme](numerical_scheme.md) §2). The conductances of eq. (5) are the exception:
 `mo_surface_layer` is re-solved at each stage of the time integrator — under `rk45` at the stage's own
 canopy-air temperature and humidity, under `esdirk2` at the state the stage starts from, held through
-its Newton solve — and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated
-(`refresh_cas_conductances`). The per-cohort boundary layers around it stay frozen.
+its Newton solve — and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated (`canopy_air_conductances`, from
+the step's reference level and canopy geometry). The per-cohort boundary layers around it stay frozen.
 
 The reason is a feedback loop that runs entirely through this kernel. A warmer canopy air makes the
 surface layer **more unstable**, which raises $`u_*`$ *and* $`\mathrm{temp1}`$, which vents the canopy
@@ -199,9 +199,9 @@ u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(8)
 ```
 
 so the cascade walks **top → bottom**. The kernel's cohort arrays run bottom → top (the radiation
-convention) while the cohort block is gathered tallest first, so `aero_bottom_to_top` permutes them by
-the gather's ascending order (`static%order`) at the call site; the permutation is the identity for
-$n\le1$.
+convention) while the cohort block is gathered tallest first, so `canopy_aerodynamics` takes the
+gather's ascending order (`static%order`), puts the cohorts bottom to top, and puts its outputs back;
+the permutation is the identity for $n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
 Nusselt kernel `boundary_layer_conductance`, the parallel sum of forced (Reynolds) and free (Grashof) convection
@@ -277,6 +277,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_layer_conductance` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
-| per-stage re-solve of eq. (5) | `meds_fast_integ_derivs`: `refresh_cas_conductances` |
+| per-stage re-solve of eq. (5) | `canopy_air_conductances`, called by `meds_fast_integ_derivs`' `cas_conductances` |
 | types (params / env / args / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_args_t`, `aero_out_t` |
-| bottom→top cohort reversal | `meds_fast_integ_frozen`: `aero_bottom_to_top` |
+| filling the environment | `set_aero_env_atm` (the reference level), `set_aero_env_canopy` (the canopy air and ground) |
+| bottom→top cohort order | `canopy_aerodynamics` (takes `static%order`); the ascending solve `aerodynamics_bottom_to_top` |
