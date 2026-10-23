@@ -502,8 +502,9 @@ contains
 
 
    !----- [forcing] and [site] (docs/configuration.md, "The forcing file"). forcing.forcing_on    !
-   !      is off by default (constant forcing); on, the keys the source, the location and the     !
-   !      switches pick are required, and check_key_use refuses the rest. ------------------------!
+   !      is off by default (constant forcing), which reads only the CO2 keys; on, the keys the     !
+   !      source, the location and the switches pick are required, and check_key_use refuses the   !
+   !      rest. ----------------------------------------------------------------------------------!
    subroutine load_forcing_params(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -512,6 +513,7 @@ contains
       integer(ik) :: nout
       cfg%forcing = forcing_params_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! off by default
+      call load_co2_params(t, cfg, m)
       if (.not. cfg%forcing%forcing_on) return
       call req_choice(t, 'forcing.format', [character(len=NAME_LEN) :: 'default', 'ERA5land'],                   &
                       [MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND], cfg%forcing%format, m)
@@ -551,14 +553,6 @@ contains
          call req_date(t, 'forcing.recycle_start', cfg%forcing%recycle_start, m)
          call req_date(t, 'forcing.recycle_end',   cfg%forcing%recycle_end,   m)
       end if
-      !----- CO2 (docs/science/forcing.md §12): one source for every backend, never the met file. ---!
-      call opt_choice(t, 'forcing.co2_source', [character(len=NAME_LEN) :: 'const', 'file'],                   &
-                      [CO2_SOURCE_CONST, CO2_SOURCE_FILE], cfg%forcing%co2_source, m)
-      if (cfg%forcing%co2_source == CO2_SOURCE_CONST) then
-         call req_r(t, 'forcing.co2_const', cfg%forcing%co2_const, m)
-      else
-         call req_s(t, 'forcing.co2_file', cfg%forcing%co2_file, m)
-      end if
       !----- The location: a region's polygons each take theirs from their cell. -----------------!
       if (cfg%mode /= RUN_MODE_REGION) then
          call req_r(t, 'site.latitude',  cfg%forcing%latitude,  m)
@@ -595,6 +589,24 @@ contains
       if (cfg%forcing%format /= MET_BACKEND_ERA5LAND)                                           &
          call req_r(t, 'site.grid_elevation', cfg%forcing%grid_elevation, m)
    end subroutine load_forcing_params
+
+   !----- CO2 (docs/science/forcing.md §12): one source for every run, forced or not, and every   !
+   !      backend, never the met file. A forced run with co2_source = "const" names its co2_const; !
+   !      a run without forcing may leave it at met_forcing_t's 420 umol/mol. ----------------------!
+   subroutine load_co2_params(t, cfg, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      call opt_choice(t, 'forcing.co2_source', [character(len=NAME_LEN) :: 'const', 'file'],                   &
+                      [CO2_SOURCE_CONST, CO2_SOURCE_FILE], cfg%forcing%co2_source, m)
+      if (cfg%forcing%co2_source == CO2_SOURCE_FILE) then
+         call req_s(t, 'forcing.co2_file', cfg%forcing%co2_file, m)
+      else if (cfg%forcing%forcing_on) then
+         call req_r(t, 'forcing.co2_const', cfg%forcing%co2_const, m)
+      else
+         cfg%forcing%co2_const = toml_real(t, 'forcing.co2_const', cfg%forcing%co2_const)
+      end if
+   end subroutine load_co2_params
 
    !----- [maps] (docs/configuration.md, "Input maps"): the static maps' paths. The three soil      !
    !      maps go together, and check_key_use refuses each key they provide. -----------------------!

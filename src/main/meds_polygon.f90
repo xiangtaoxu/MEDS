@@ -19,7 +19,7 @@
 !==========================================================================================!
 module meds_polygon
    use meds_kinds,                  only : wp, ik
-   use meds_config,                 only : meds_config_t
+   use meds_config,                 only : meds_config_t, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_to_string
    use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_t
@@ -63,6 +63,9 @@ module meds_polygon
       character(len=40)      :: label = ''        !< how messages name it ('' for a site run)
       !----- Threads for the polygon's patch loop: [run].n_threads in a site run, 1 in a region. ----!
       integer(ik)            :: patch_threads = 1_ik
+      !----- A bare-ground or census start's first window seeds the canopy air from the forcing; a  !
+      !      restart's state file holds it. ----------------------------------------------------------!
+      logical                :: seed_canopy_air = .false.
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run. Kept beside the two above              !
@@ -117,6 +120,7 @@ contains
       run%fast_step_total = 0_ik ; run%status = DRIVER_OK
       run%area_start = total_area(poly)
       run%patch_threads = patch_threads
+      run%seed_canopy_air = cfg%init%init_mode /= INIT_RESTART
 
       if (cfg%fast_biophysics_on) then
          if (cfg%forcing%forcing_on) then
@@ -317,7 +321,8 @@ contains
                                run_water_budget=run%water_budget,                                   &
                                run_face_budget=run%face_budget,                                     &
                                slow_ledger=run%slow_ledger, seam=run%seam,                          &
-                               latitude_deg=poly%latitude_deg, patch_threads=run%patch_threads)
+                               latitude_deg=poly%latitude_deg, patch_threads=run%patch_threads,     &
+                               seed_canopy_air=run%seed_canopy_air)
       end subroutine stepper
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !

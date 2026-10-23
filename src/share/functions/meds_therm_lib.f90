@@ -17,7 +17,8 @@ module meds_therm_lib
    use meds_kinds,     only : wp, ik
    use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,  &
                               t_3ple, tsupercool_liq, tsupercool_vap, r_dry, rho_h2o, k_water,      &
-                              k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin, grav
+                              k_ice, c2b_wood, r_gas, t_ref_photo, safe_exp, t_kelvin, grav,        &
+                              h2o_dry_ratio, virtual_temp_factor
    implicit none
    private
 
@@ -51,11 +52,6 @@ module meds_therm_lib
    real(wp), parameter :: CLM_GRAIN_DENSITY = 2700.0_wp   !< [kg/m3]
    !----- [-] Floor on the relative saturation, where Johansen's log10 form holds. --------!
    real(wp), parameter :: SR_FLOOR = 0.05_wp
-
-   !----- Water's molar mass over dry air's, rounded (mmh2o/mmdry = 0.62198), as the      !
-   !      vapour pressure <-> specific humidity conversions take it. -------------------!
-   real(wp), parameter :: H2O_DRY_RATIO           = 0.622_wp
-   real(wp), parameter :: ONE_MINUS_H2O_DRY_RATIO = 0.378_wp
 
    !----- [K] Half-width of the rain/snow band about the triple point. -------------------!
    real(wp), parameter :: PHASE_BAND_K = 1.0_wp
@@ -162,7 +158,7 @@ contains
       real(wp), intent(in)           :: t_k
       real(wp), intent(in), optional :: fliq    !< liquid fraction of the surface (absent = 1, all liquid)
       real(wp)                       :: esat, tc, fl
-      tc   = t_k - 273.15_wp
+      tc   = t_k - t_kelvin
       esat = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
       if (present(fliq)) then
          fl = min(1.0_wp, max(0.0_wp, fliq))
@@ -171,8 +167,8 @@ contains
       end if
    end function sat_vapor_pressure
 
-   !----- Saturation specific humidity [kg/kg]: q = 0.622 e / (p - 0.378 e), the           !
-   !      conversion of docs/science/forcing.md eq. (11). ---------------------------------!
+   !----- Saturation specific humidity [kg/kg]: q = eps e / (p - (1 - eps) e), eps =        !
+   !      h2o_dry_ratio, the conversion of docs/science/forcing.md eq. (11). --------------!
    elemental function sat_specific_humidity(t_k, p_pa, fliq) result(qs)
       real(wp), intent(in)           :: t_k, p_pa
       real(wp), intent(in), optional :: fliq
@@ -186,17 +182,18 @@ contains
    end function sat_specific_humidity
 
    !----- Specific humidity [kg/kg] of air at pressure p_pa holding vapour at pressure e_vap  !
-   !      [Pa]: q = 0.622 e / (p - 0.378 e) (docs/science/forcing.md eq. (11)). -------------!
+   !      [Pa]: q = eps e / (p - (1 - eps) e), eps = h2o_dry_ratio (docs/science/forcing.md    !
+   !      eq. (11)). -----------------------------------------------------------------------!
    elemental real(wp) function vapor_pressure_to_specific_humidity(e_vap, p_pa) result(q)
       real(wp), intent(in) :: e_vap, p_pa
-      q = H2O_DRY_RATIO * e_vap / max(p_pa - ONE_MINUS_H2O_DRY_RATIO * e_vap, tiny_num)
+      q = h2o_dry_ratio * e_vap / max(p_pa - (1.0_wp - h2o_dry_ratio) * e_vap, tiny_num)
    end function vapor_pressure_to_specific_humidity
 
    !----- Its inverse: the vapour pressure [Pa] of air at pressure p_pa holding specific      !
-   !      humidity q, e = q p / (0.622 + 0.378 q). ------------------------------------------!
+   !      humidity q, e = q p / (eps + (1 - eps) q). ----------------------------------------!
    elemental real(wp) function specific_humidity_to_vapor_pressure(q, p_pa) result(e_vap)
       real(wp), intent(in) :: q, p_pa
-      e_vap = q * p_pa / max(H2O_DRY_RATIO + ONE_MINUS_H2O_DRY_RATIO * q, tiny_num)
+      e_vap = q * p_pa / max(h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * q, tiny_num)
    end function specific_humidity_to_vapor_pressure
 
    !----- Specific humidity [kg/kg] from relative humidity (a fraction, held to [0, 1]) at    !
@@ -212,7 +209,7 @@ contains
       real(wp), intent(in)           :: t_k
       real(wp), intent(in), optional :: fliq
       real(wp)                       :: desat, tc, fl, e_liq, e_ice
-      tc    = t_k - 273.15_wp
+      tc    = t_k - t_kelvin
       e_liq = 611.2_wp * exp(17.67_wp * tc / (tc + 243.5_wp))
       desat = e_liq * 17.67_wp * 243.5_wp / (tc + 243.5_wp) ** 2
       if (present(fliq)) then
@@ -238,7 +235,7 @@ contains
          esat  = sat_vapor_pressure(t_k)
          desat = sat_vapor_pressure_temp_deriv(t_k)
       end if
-      dqsdt = H2O_DRY_RATIO * p_pa / max((p_pa - ONE_MINUS_H2O_DRY_RATIO * esat) ** 2, tiny_num) * desat
+      dqsdt = h2o_dry_ratio * p_pa / max((p_pa - (1.0_wp - h2o_dry_ratio) * esat) ** 2, tiny_num) * desat
    end function sat_specific_humidity_temp_deriv
 
    !----- VPD [Pa] from temperature and the actual vapour pressure. -----------------------!
@@ -249,7 +246,7 @@ contains
    end function air_vpd
 
    !----- VPD [Pa] from temperature, specific humidity and pressure. The vapour pressure e !
-   !      = q p / (0.622 + 0.378 q) is the exact inverse of docs/science/forcing.md eq.    !
+   !      = q p / (eps + (1 - eps) q) is the exact inverse of docs/science/forcing.md eq.  !
    !      (11), so a saturated forcing record reads back as VPD = 0. ----------------------!
    pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
       real(wp), intent(in) :: temp      !< [K]
@@ -264,7 +261,7 @@ contains
    elemental function air_density(t_k, p_pa, shv) result(rho)
       real(wp), intent(in) :: t_k, p_pa, shv
       real(wp)             :: rho
-      rho = p_pa / (r_dry * t_k * (1.0_wp + 0.608_wp * shv))
+      rho = p_pa / (r_dry * t_k * (1.0_wp + virtual_temp_factor * shv))
    end function air_density
 
    !----- Canopy-air specific enthalpy [J/kg] from temperature and specific humidity: dry  !

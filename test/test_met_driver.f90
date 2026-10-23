@@ -8,7 +8,7 @@
 program test_met_driver
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_constants,       only : t_3ple
+   use meds_constants,       only : t_3ple, h2o_dry_ratio
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
                                     solar_cosz_utc
    use meds_therm_lib,          only : sat_vapor_pressure, air_density, sat_specific_humidity,                    &
@@ -135,7 +135,7 @@ contains
       td = 285.0_wp ; p = 98000.0_wp
       q  = sat_specific_humidity(td, p)
       e  = sat_vapor_pressure(td)
-      call check('q from dewpoint == 0.622 e/(p-0.378e)', q, 0.622_wp*e/(p-0.378_wp*e), 1.0e-14_wp)
+      call check('q from dewpoint == eps e/(p-(1-eps)e)', q, h2o_dry_ratio*e/(p-(1.0_wp-h2o_dry_ratio)*e), 1.0e-14_wp)
       call check_true('q in physical range', q > 0.001_wp .and. q < 0.02_wp, q)
       ! RH=100% at T=Td gives the same q as dewpoint=T
       call check('rh=1 at T=Td matches dewpoint q', rh_to_specific_humidity(1.0_wp, td, p), q, 1.0e-14_wp)
@@ -649,7 +649,8 @@ contains
       print '(a)', '-- test: terrain lapse (RH-held humidity, longwave) --'
       t1 = lapse_air_temperature(T0, DZ, G) ; p1 = lapse_pressure(P0, T0, DZ, G)
       q1 = lapse_specific_humidity(Q0, T0, P0, t1, p1)
-      e0 = Q0 * P0 / (0.622_wp + 0.378_wp * Q0) ; e1 = q1 * p1 / (0.622_wp + 0.378_wp * q1)
+      e0 = Q0 * P0 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * Q0)
+      e1 = q1 * p1 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * q1)
       call check('relative humidity is held', e1 / sat_vapor_pressure(t1), e0 / sat_vapor_pressure(T0), 1.0e-12_wp)
       call check_true('a site 500 m below its cell is warmer and holds more vapour', q1 > Q0, q1 - Q0)
       call check('dz = 0 leaves q unchanged', lapse_specific_humidity(Q0, T0, P0, T0, P0), Q0, 1.0e-15_wp)

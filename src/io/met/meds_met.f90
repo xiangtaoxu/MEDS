@@ -7,7 +7,8 @@
 ! access; met_at_site moves a sample to a site and met_to_cas_top to a patch's canopy-air top.      !
 ! read_record is the one ingest for both file sources (meds_met_default,                !
 ! meds_met_era5land): it checks, converts, lapses and partitions a record, and a missing      !
-! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file.  !
+! value stops the run. CO2 comes from [forcing].co2_source on model time, never from the met file  !
+! (met_co2); a run without forcing opens only the CO2 (met_open_co2).                              !
 !==========================================================================================!
 module meds_met
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
@@ -36,7 +37,7 @@ module meds_met
    implicit none
    private
 
-   public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
+   public :: met_open, met_open_co2, met_co2, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
    public :: met_at_site, met_to_cas_top, cas_top_wind_factor
    public :: cosz_reconstruct_factor, disaggregate_sw
 
@@ -93,6 +94,38 @@ contains
          error stop 'met_open: the forcing cannot drive this run (see the messages above)'
       end if
    end subroutine met_open
+
+   !----- A run without forcing reads only the CO2 its reference climate takes (docs/science/   !
+   !      forcing.md §12): the series with co2_source = "file", nothing with "const". A rejection    !
+   !      prints the reason and returns its code with `stat` present, and stops the run without. ---!
+   subroutine met_open_co2(src, fcfg, run_start, run_end, stat)
+      type(met_source_t),     intent(inout) :: src
+      type(forcing_params_t), intent(in)    :: fcfg
+      type(meds_time_t),      intent(in)    :: run_start, run_end
+      integer(ik), optional,  intent(out)   :: stat
+      integer(ik) :: vstat
+      character(len=:), allocatable :: why
+      why = ''
+      src%fcfg = fcfg
+      call open_co2(src, run_start, run_end, vstat, why)
+      if (present(stat)) stat = vstat
+      if (vstat == MET_OK) return
+      write(*,'(a)') why
+      if (present(stat)) return
+      error stop 'met_open_co2: the CO2 cannot drive this run (see the messages above)'
+   end subroutine met_open_co2
+
+   !----- The free atmosphere's CO2 [umol/mol] at `now`, one way for every run (docs/science/      !
+   !      forcing.md eq. (18)): the series with co2_source = "file", else co2_const. --------------!
+   pure real(wp) function met_co2(src, now) result(co2)
+      type(met_source_t), intent(in) :: src
+      type(meds_time_t),  intent(in) :: now
+      if (src%fcfg%co2_source == CO2_SOURCE_FILE) then
+         co2 = co2_series_at(src%co2, now)
+      else
+         co2 = src%fcfg%co2_const
+      end if
+   end function met_co2
 
    !----- CO2 (docs/science/forcing.md §12): with co2_source = "file", read the MEDS CO2 file   !
    !      and check it covers the run. MEDS does not extrapolate CO2, so a run the file does not  !
@@ -268,11 +301,7 @@ contains
       met%cosz = cosz_now
 
       !----- CO2 on model time, one way for every backend (docs/science/forcing.md eq. (18)). ----!
-      if (f%co2_source == CO2_SOURCE_FILE) then
-         met%co2 = co2_series_at(src%co2, now)
-      else
-         met%co2 = f%co2_const
-      end if
+      met%co2 = met_co2(src, now)
 
       !----- The weight within the bracket, on the same recycle-mapped seconds as met_advance. -!
       now_sec = file_lookup_sec(src, now)

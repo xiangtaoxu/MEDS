@@ -37,7 +37,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(poly, cfg, met_src, met_cur, step_start, out_bufs,                   &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
-                               seam, latitude_deg, patch_threads)
+                               seam, latitude_deg, patch_threads, seed_canopy_air)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
@@ -58,6 +58,7 @@ contains
       type(soilc_seam_t), intent(inout), optional :: seam
       real(wp),           intent(in),    optional :: latitude_deg  !< the polygon's (default [site])
       integer(ik),        intent(in),    optional :: patch_threads !< the fast loop's patch threads (default 1)
+      logical,            intent(inout), optional :: seed_canopy_air !< a start's first window (the fast loop's)
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. Every optional is handed  !
       !      straight on: the fast loop takes the forcing only when forcing_on and the source, cursor  !
@@ -71,7 +72,8 @@ contains
          call fast_dynamics(poly, cfg, met_src=met_src, met_cur=met_cur,                            &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
-                            run_face_budget=run_face_budget, patch_threads=patch_threads)
+                            run_face_budget=run_face_budget, patch_threads=patch_threads,        &
+                            seed_canopy_air=seed_canopy_air)
       end if
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the  !

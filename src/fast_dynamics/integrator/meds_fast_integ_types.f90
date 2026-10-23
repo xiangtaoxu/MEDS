@@ -53,8 +53,13 @@ module meds_fast_integ_types
    public :: state_to_array, state_entry_rules
    public :: state_init, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight
-   public :: clamp_cas, diagnose_soil_temps
+   public :: clamp_cas, diagnose_soil_temps, at_temp_bound, STATE_TEMP_MIN, STATE_TEMP_MAX
    public :: state_size, array_to_state, state_axpy   ! used only by the tests
+
+   !----- The temperature bounds of a march state [K]: clamp_cas holds a stage's canopy air inside  !
+   !      them, and a march that ends at one has railed (at_temp_bound). -----------------------------!
+   real(wp), parameter :: STATE_TEMP_MIN = 180.0_wp
+   real(wp), parameter :: STATE_TEMP_MAX = 350.0_wp
 
    !----- The tolerance groups, one per kind of state, each scaling its entries in the error norm    !
    !      (docs/science/numerical_scheme.md eq. (3)). GRP_THETA also sets the soil-plant water       !
@@ -1144,25 +1149,30 @@ contains
    end subroutine state_extrap
 
    !----- Clamp the extrapolated CAS enthalpy and humidity into a wide physical range, so an overshoot  !
-   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows; in range it !
-   !      is an identity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). ---------!
+   !      of the ARS base (b = 1 + sqrt(2)) cannot reach a temperature where qsat overflows. A state  !
+   !      in range is left as it is, bit for bit; one out of range keeps its temperature (clamped)   !
+   !      at its clamped humidity. nfire counts the calls that moved the state (WORK_CLAMP_STAGE). -!
    pure subroutine clamp_cas(s, nfire)
       type(march_state_t), intent(inout) :: s
       integer(ik), optional, intent(inout) :: nfire
-      real(wp) :: t, shv_c, enth_in
-      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp, SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
-      enth_in = s%cas_enthalpy
+      real(wp) :: t, shv_c
+      real(wp), parameter :: SHV_LO = 1.0e-8_wp, SHV_HI = 0.06_wp
       shv_c = min(max(s%cas_shv, SHV_LO), SHV_HI)
       t     = cas_enthalpy_to_temp(s%cas_enthalpy, shv_c)
-      t     = min(max(t, T_LO), T_HI)
+      if (shv_c == s%cas_shv .and. t >= STATE_TEMP_MIN .and. t <= STATE_TEMP_MAX) return
+      t     = min(max(t, STATE_TEMP_MIN), STATE_TEMP_MAX)
       s%cas_shv      = shv_c
       s%cas_enthalpy = cas_temp_to_enthalpy(t, shv_c)
-      !----- An in-range state round-trips, so compare with the input: that also catches a          !
-      !      humidity-only clamp, which moves the enthalpy. ------------------------------------------!
-      if (present(nfire)) then
-         if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
-      end if
+      if (present(nfire)) nfire = nfire + 1_ik
    end subroutine clamp_cas
+
+   !----- Is a temperature at or beyond a state bound? Within a microkelvin counts as at it, since a !
+   !      clamped canopy air's temperature comes back from its enthalpy a few bits off the bound. -----!
+   elemental logical function at_temp_bound(t)
+      real(wp), intent(in) :: t
+      real(wp), parameter :: AT_BOUND = 1.0e-6_wp   !< [K]
+      at_temp_bound = t <= STATE_TEMP_MIN + AT_BOUND .or. t >= STATE_TEMP_MAX - AT_BOUND
+   end function at_temp_bound
 
    !----- The embedded error estimate of the ARS(2,2,2) step, err = (Y3 - base3) - (Y2 - y)          !
    !      (docs/science/numerical_scheme.md eq. (2)), for the entries state_entry_rules counts, and  !

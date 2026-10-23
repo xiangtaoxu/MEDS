@@ -16,7 +16,7 @@ module meds_fast_integ_rk45
    use meds_site_state_vars,  only : site_surface_t
    use meds_fast_integ_types,       only : march_state_t, frozen_t, march_tend_t, surface_tend_t, stage_bflux_t, &
                                      boundary_flux_t, state_init, state_accum, state_sub, clamp_cas,               &
-                                     diagnose_soil_temps
+                                     diagnose_soil_temps, at_temp_bound
    implicit none
    private
 
@@ -258,17 +258,16 @@ contains
    !----- Did the explicit march end on a railed state? Its 5th- and 4th-order solutions can rail  !
    !      together, so the controller sees err ~ 0 and accepts an impossible temperature; the     !
    !      stepper then marches the step again with ESDIRK2. The canopy air's and each soil layer's !
-   !      temperature at the march's end. --------------------------------------------------------!
+   !      temperature at the march's end, at or beyond the bounds the stage clamp holds. ----------!
    pure function rk45_state_railed(y_out, site, nsl) result(railed)
       type(march_state_t), intent(in) :: y_out
       type(site_surface_t), intent(in) :: site
       integer(ik),          intent(in) :: nsl
       logical :: railed
-      real(wp), parameter :: T_LO = 185.0_wp, T_HI = 345.0_wp
       real(wp) :: t_cas, t_soil(nsl), f_liq(nsl)
       t_cas = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
       call diagnose_soil_temps(y_out, site%soil_profile%dry_heat_capacity, nsl, t_soil, f_liq)
-      railed = t_cas <= T_LO .or. t_cas >= T_HI .or. any(t_soil <= T_LO) .or. any(t_soil >= T_HI)
+      railed = at_temp_bound(t_cas) .or. any(at_temp_bound(t_soil))
    end function rk45_state_railed
 
 end module meds_fast_integ_rk45

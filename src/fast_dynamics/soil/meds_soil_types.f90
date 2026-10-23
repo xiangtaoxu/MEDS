@@ -50,7 +50,7 @@ module meds_soil_types
       real(wp) :: ggnet    = 0.0_wp                     !< [m/s] ground<->CAS conductance (heat = vapour)
       real(wp) :: rho_air  = 1.2_wp, press = 101325.0_wp !< [kg/m3],[Pa] CAS air
       real(wp) :: t_soil_top = 273.16_wp                !< [K] top soil-node temperature (snow-base conduction target)
-      real(wp) :: k_soil_top = 1.5_wp                   !< [W/m/K] top soil thermal conductivity (k_face geom-mean)
+      real(wp) :: k_soil_top = 0.0_wp                   !< [W/m/K] top soil layer's thermal conductivity (the caller's)
       real(wp) :: dz_soil_top = 0.05_wp                 !< [m] top soil node depth |z_node(1)| (interface spacing)
    end type snow_env_t
 

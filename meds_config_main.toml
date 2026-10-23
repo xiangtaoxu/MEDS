@@ -303,8 +303,9 @@ phi_psii         = 0.74    # [-] electrons per absorbed photon in low light, tim
 
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (docs/configuration.md "The forcing file", docs/science/forcing.md). With
-# forcing_on false or absent the fast loop runs against a constant reference climate; on, every key
-# below is required unless marked optional or of another source. Every forcing clock is UTC.
+# forcing_on false or absent the fast loop runs against a constant reference climate, at the CO2 the
+# co2 keys give; on, every key below is required unless marked optional or of another source. Every
+# forcing clock is UTC.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
 # longitude             = -76.50         # [deg +E] it gives local solar time
@@ -343,9 +344,9 @@ phi_psii         = 0.74    # [-] electrons per absorbed photon in low light, tim
 # lwdown_source         = "file"         # "file" | "synthesize" (from T, q and cloudiness)
 # lw_clear_form         = "brutsaert"    # optional, with "synthesize": "brutsaert" | "idso"
 # lw_cloud_a            = 0.22           # [-] optional, with "synthesize": the cloud term (1 + a(1-kt))
-#   ---- CO2, on model time, never from the met file (forcing.md §12). ----
+#   ---- CO2, on model time, never from the met file; read with forcing on or off (forcing.md §12). ----
 # co2_source            = "const"        # optional: "const" | "file"
-# co2_const             = 420.0          # [umol/mol] co2_source = "const"
+# co2_const             = 420.0          # [umol/mol] co2_source = "const" (required with forcing on)
 # co2_file              = "data/co2/co2_cmip7_global_annual_1000-2022.txt"   # co2_source = "file"
 #   ---- Recycling, declared: a window of whole calendar years (forcing.md §9). ----
 # recycle               = true           # repeat the window when the run outruns it

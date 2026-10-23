@@ -3,12 +3,16 @@
 ! meds_init_bare_ground -- init_mode 0, a near-bare-ground start, and the builders every   !
 ! start that makes cohorts shares (docs/science/order_of_processes.md §1, setup step 2;    !
 ! docs/configuration.md, How a run starts). init_bare_ground (one site) and                !
-! init_bare_sites (several) lay out empty patches; seed_bare_ground plants each PFT's      !
-! nbg_init_density; add_cohort appends a cohort and finalize_init maps and sorts them.     !
+! init_bare_sites (several) lay out empty patches and seed their stores; seed_bare_ground  !
+! plants each PFT's nbg_init_density; add_cohort appends a cohort and finalize_init maps   !
+! and sorts them.                                                                          !
 !==========================================================================================!
 module meds_init_bare_ground
    use meds_kinds,      only : wp, ik
+   use meds_constants,  only : rho_h2o, t_3ple
    use meds_config,     only : meds_config_t, growth_window_steps
+   use meds_therm_lib,  only : temp_to_internal_energy, cas_temp_to_enthalpy
+   use meds_met_types,  only : met_forcing_t
    use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
    use meds_site_state_vars,       only : make_site_surface
@@ -19,7 +23,7 @@ module meds_init_bare_ground
    implicit none
    private
 
-   public :: init_bare_ground, init_bare_sites, seed_bare_ground, add_cohort, finalize_init
+   public :: init_bare_ground, init_bare_sites, seed_bare_ground, add_cohort, finalize_init, seed_patch_stores
    public :: N_PATCH_INIT
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< a bare-ground start's patches per site
@@ -40,7 +44,9 @@ contains
    ! A near-bare-ground polygon of several sites: site `is` takes its share `site_area(is)` of !
    ! the polygon, its surface from `site_cfg(is)` (its soil, from [soil] or its own maps) and  !
    ! n_patch(is) identical empty patches sharing its area. The patches are numbered site by    !
-   ! site, so the block is sorted by site. Everything else comes from `cfg`, the run's.        !
+   ! site, so the block is sorted by site, and their stores are seeded (seed_patch_stores), so  !
+   ! every cohort set up on them is born in its patch's state. Everything else comes from      !
+   ! `cfg`, the run's.                                                                         !
    !-------------------------------------------------------------------------------------------!
    subroutine init_bare_sites(poly, cfg, n_patch, site_cfg, site_area)
       type(polygon_t),     intent(out) :: poly
@@ -71,7 +77,43 @@ contains
       poly%cohort%n = 0_ik
       call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
+      call seed_patch_stores(poly, cfg)
    end subroutine init_bare_sites
+
+   !----- A start's patch stores, the same on every patch of a site: the soil at its site's        !
+   !      theta_start and [init].soil_temp, its water as ice below the freezing point so the       !
+   !      stored energy gives back that temperature (liquid there would read as half-frozen at the !
+   !      freezing point); the pond dry; and the canopy air at the reference climate              !
+   !      (met_forcing_t's air, at the run's CO2), which the fast loop's first window replaces with !
+   !      the first forcing sample (docs/science/canopy_air_space_biophysics.md, The start). -----!
+   subroutine seed_patch_stores(poly, cfg)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      type(met_forcing_t) :: ref   !< the reference climate
+      real(wp)    :: fliq_start
+      integer(ik) :: ip, k, nsl
+      ref = met_forcing_t()
+      fliq_start = merge(1.0_wp, 0.0_wp, cfg%init%soil_temp >= t_3ple)
+      do ip = 1_ik, poly%patch%n
+         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
+                    surf => poly%site%surface(poly%patch%owner_site(ip)))
+            nsl = surf%soil_profile%n_active
+            sw%theta(1:nsl)     = surf%theta_start(1:nsl)
+            sw%w_surface        = 0.0_wp
+            sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
+            do k = 1_ik, nsl
+               se%soil_energy(k) = temp_to_internal_energy(surf%soil_profile%dry_heat_capacity(k),             &
+                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, fliq_start)
+               se%soil_temp(k)   = cfg%init%soil_temp
+               se%soil_fliq(k)   = fliq_start
+            end do
+            cas%can_shv      = ref%air_shv
+            cas%can_co2      = cfg%forcing%co2_const
+            cas%can_enthalpy = cas_temp_to_enthalpy(ref%air_temp, ref%air_shv)
+            cas%can_temp     = ref%air_temp
+         end associate
+      end do
+   end subroutine seed_patch_stores
 
    !---------------------------------------------------------------------------------------!
    ! A near-bare-ground start's seedlings: every patch gets one cohort of each PFT with    !
@@ -106,9 +148,8 @@ contains
       real(wp)    :: t_birth, psi_birth
       call expand_cohort_block(poly%cohort, poly%cohort%n + 1_ik)
       m = poly%cohort%n + 1_ik
-      !----- Born in its patch's state (patch_physical_state); at setup the patch is not seeded yet, so !
-      !      that is the run's starting state, and init_fast_state re-seeds it from the patch. ------!
-      call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip), cfg,                   &
+      !----- Born in its patch's state (patch_physical_state), which init_bare_sites seeded. ----------!
+      call patch_physical_state(poly%patch%cas(ip), poly%patch%soil_water(ip),                         &
                                 poly%site%surface(poly%patch%owner_site(ip)), t_birth, psi_birth)
       call init_cohort(poly%cohort, m, cfg%pft, ipft, ip, nplant, dbh, t_birth, psi_birth)
       call assign_cohort_id(poly, m)

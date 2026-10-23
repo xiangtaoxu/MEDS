@@ -51,7 +51,9 @@ module meds_fast_integ_frozen
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, snow_energy_step
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
-                                     cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure
+                                     cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure,               &
+                                     soil_thermal_conductivity, specific_humidity_to_vapor_pressure,            &
+                                     sat_specific_humidity
    use meds_numerics,         only : weighted_mean
    implicit none
    private
@@ -87,6 +89,7 @@ contains
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
+      real(wp)    :: k_soil_top    !< [W/m/K] the top soil layer's conductivity, under the snow's base
       type(snow_state_t) :: pack   !< the snow pack the stage advances
       integer(ik) :: n, nsl
 
@@ -128,10 +131,15 @@ contains
       !      canopy air, air properties and ground conductance it reads; before the water network,  !
       !      so this step's meltwater reaches the pond this step. A no-op without a pack. -----------!
       pack = dynamic%snow
-      call advance_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, max(-site%soil_profile%z_node(1), tiny_num),        &
-                              forcing%abs_sw_ground, forcing%abs_lw_ground, forcing%snowfall, forcing%rainfall,       &
-                              forcing%air_temp, out%aero%ggnet, dynamic%soil_energy%soil_temp(1), dt_fast, tcas,      &
-                              qcas, rho, press, frozen%snow)
+      associate (prof => site%soil_profile)
+         k_soil_top = soil_thermal_conductivity(dynamic%soil_water%theta(1), dynamic%soil_energy%soil_fliq(1),     &
+                                                prof%theta_sat(1), prof%solid_conductivity(1), prof%dry_conductivity(1))
+         call advance_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, max(-prof%z_node(1), tiny_num), k_soil_top,   &
+                                 forcing%abs_sw_ground, forcing%abs_lw_ground, forcing%snowfall, forcing%rainfall,    &
+                                 forcing%air_temp, out%aero%ggnet, dynamic%soil_energy%soil_temp(1), dt_fast, tcas,   &
+                                 qcas, rho, press, frozen%cas%box%air_mass_capacity,                                  &
+                                 frozen%cas%box%atm_conductance_vapor, forcing%shv_atm, frozen%snow)
+      end associate
 
       call intercept_rain(dt_fast, cfg, static, forcing, dynamic, frozen%snow%exists, frozen%film, throughfall)
       call tissue_coefficients(dt_fast, cfg, static, forcing, dynamic, out%aero, rho, frozen%tissue, frozen%film, &
@@ -356,7 +364,7 @@ contains
       ra_leaf = 0.0_wp
       gpp_coh(1:n)       = 0.0_wp
       leaf_resp_coh(1:n) = 0.0_wp
-      e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant
+      e_air = specific_humidity_to_vapor_pressure(qcas, press)     ! loop-invariant
       do i = 1_ik, n
          rho_mol_arr(i)  = press / (r_gas * dynamic%leaf_temp(i))
          par_arr(i)      = cohort_leaf_par(forcing%abs_par(i), static%lai(i), forcing%par_per_w)
@@ -589,13 +597,14 @@ contains
    ! transfer, reported as melt_rate and t_melt (docs/science/snow_biophysics.md §The snow store).    !
    ! Advances the pack it is given (the build's copy) and reports the rest, the pack included, in st.  !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, abs_sw_ground, abs_lw_ground, &
-                                 snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, qcas,    &
-                                 rho, press, st)
+   subroutine advance_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top, abs_sw_ground,      &
+                                 abs_lw_ground, snowfall, rainfall, t_air, ggnet, t_soil_top, dt_fast, tcas, &
+                                 qcas, rho, press, cas_capacity, g_atm_vapour, shv_atm, st)
       type(snow_state_t),   intent(inout) :: snow           !< the pack, advanced in place
       type(snow_params_t),  intent(in)    :: snow_params
       real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
       real(wp),             intent(in)    :: dz_soil_top    !< [m]       top soil-node depth |z_node(1)|
+      real(wp),             intent(in)    :: k_soil_top     !< [W/m/K]   top soil layer's thermal conductivity
       real(wp),             intent(in)    :: abs_sw_ground  !< [W/m2]    shortwave reaching the ground
       real(wp),             intent(in)    :: abs_lw_ground  !< [W/m2]    net longwave at the ground
       real(wp),             intent(in)    :: snowfall       !< [kg/m2/s] frozen precipitation
@@ -604,12 +613,15 @@ contains
       real(wp),             intent(in)    :: ggnet          !< [m/s]     ground <-> CAS conductance
       real(wp),             intent(in)    :: t_soil_top     !< [K]       top soil-node temperature
       real(wp),             intent(in)    :: dt_fast, tcas, qcas, rho, press
+      real(wp),             intent(in)    :: cas_capacity   !< [kg/m2]   the canopy air's mass
+      real(wp),             intent(in)    :: g_atm_vapour   !< [kg/m2/s] its vapour conductance to the atmosphere
+      real(wp),             intent(in)    :: shv_atm        !< [kg/kg]   the atmosphere's humidity
       type(snow_stage_t),   intent(out)   :: st
 
       type(snow_env_t)  :: senv
       type(snow_flux_t) :: sfx
       type(snow_melt_t) :: smelt
-      real(wp)          :: snow_e0
+      real(wp)          :: snow_e0, g_snow, q_snow
 
       !----- Default: the bare-ground boundary (snowfac = 0). The stage always runs; with no pack and    !
       !      snowfall under min_new_snow_mass, snow_accumulate returns at once, and these defaults make  !
@@ -631,12 +643,20 @@ contains
          senv%abs_sw      = abs_sw_ground
          senv%abs_lw = abs_lw_ground
          senv%can_temp    = tcas
-         senv%can_shv = qcas
+         !----- The pack exchanges vapour with the canopy air in minutes, far inside a dt_fast, so its    !
+         !      frozen flux is set against the humidity the canopy air takes over the step with only the !
+         !      atmosphere and the pack exchanging (one backward-Euler balance), not its start value: a  !
+         !      deposition against the start value can take more vapour than the canopy air holds.  ---!
+         g_snow = rho * ggnet * st%snowfac
+         q_snow = sat_specific_humidity(snow%snow_temp(1), press, snow%snow_fliq(1))
+         senv%can_shv = (cas_capacity / dt_fast * qcas + g_atm_vapour * shv_atm + g_snow * q_snow)       &
+                        / max(cas_capacity / dt_fast + g_atm_vapour + g_snow, tiny_num)
          senv%ggnet = ggnet
          senv%rho_air     = rho
          senv%press = press
          senv%t_soil_top  = t_soil_top
          senv%dz_soil_top = dz_soil_top
+         senv%k_soil_top  = k_soil_top
          call snow_energy_step(snow, senv, snow_params, dt_fast, st%snowfac, sfx)
          call snow_drain_meltwater(snow, snow_params, smelt)
          st%h_snow  = sfx%h_snow

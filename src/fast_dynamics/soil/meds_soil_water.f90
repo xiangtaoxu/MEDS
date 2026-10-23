@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_soil_water
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
+   use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp, t_kelvin
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_AQUIFER
    use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
@@ -125,7 +125,7 @@ contains
                                        profile%curve_par_a(1), profile%curve_par_n(1))
       theta_init = soil%dsl_theta_init * profile%theta_sat(1)
       call smooth_max0(theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
-      dvap    = 2.12e-5_wp * (forcing%t_ground / 273.15_wp) ** 1.75_wp
+      dvap    = 2.12e-5_wp * (forcing%t_ground / t_kelvin) ** 1.75_wp
       phi     = profile%theta_sat(1)
       phi_air = max(phi - theta_air, tiny_num)
       tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)

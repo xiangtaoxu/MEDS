@@ -16,6 +16,8 @@ module meds_fast_dynamics
    use meds_time,               only : meds_time_t
    use meds_output_types,       only : output_buffers_t
    use meds_met_types,          only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_met,                only : met_co2
+   use meds_forcing_params,     only : CO2_SOURCE_FILE
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,   &
                                        fast_workspace_t, step_report_t, ensure_static_capacity,                  &
@@ -24,7 +26,8 @@ module meds_fast_dynamics
                                        WORK_WATER_NEWTON, WORK_WATER_REJECT, WORK_WATER_NFAIL, WORK_RK45_RESCUE, &
                                        WORK_CLAMP_STAGE
    use meds_fast_integ_stepper,          only : fast_step
-   use meds_fast_state,         only : reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow
+   use meds_fast_state,         only : reset_fast_to_slow, gather_patch, scatter_patch, accumulate_fast_to_slow,  &
+                                       seed_start_canopy_air
    use meds_fast_forcing,       only : sample_window, site_forcing, patch_forcing
    use meds_fast_diag,          only : size_staging, record_substep, fold_window
    !$ use omp_lib,               only : omp_get_thread_num
@@ -69,11 +72,13 @@ contains
    !  Advance every patch of the polygon by one slow step of fast biophysics:              !
    !  n_fast_per_slow sub-steps on the forcing source's samples, or on one fixed record    !
    !  without one. The optional outputs report the worst whole-column budget residuals and !
-   !  the failure count, for a caller that asserts conservation.                           !
+   !  the failure count, for a caller that asserts conservation. With seed_canopy_air set   !
+   !  (a start's first window), the canopy air starts at the window's first sample, and the !
+   !  flag is cleared.                                                                     !
    !=======================================================================================!
    subroutine fast_dynamics(poly, cfg, met_src, met_cur, step_start, worst_energy, worst_water,  &
                             n_budget_fail, out_bufs, run_energy_budget, run_water_budget,      &
-                            run_face_budget, met_fixed, patch_threads)
+                            run_face_budget, met_fixed, patch_threads, seed_canopy_air)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t), optional, intent(in)    :: met_src       !< the run's forcing source (read-only here)
@@ -92,6 +97,7 @@ contains
       type(met_forcing_t), optional, intent(in) :: met_fixed
       !----- Threads for the patch loop: [run].n_threads in a one-polygon run, else 1 (the default). --!
       integer(ik),         optional, intent(in) :: patch_threads
+      logical,             optional, intent(inout) :: seed_canopy_air   !< a start's first window
 
       !----- The window's samples, each site's after its terrain, and their times: the same for every  !
       !      patch, made before the patch loop. Without forcing, every one is the fixed record. -------!
@@ -123,11 +129,17 @@ contains
 
       !----- Live forcing drives the sub-steps when it is on and a source, cursor and step time are   !
       !      given; otherwise every sub-step reads one record: met_fixed, or met_forcing_t's defaults,  !
-      !      the reference climate (docs/science/forcing.md §2). -----------------------------------!
+      !      the reference climate, at the run's CO2 (docs/science/forcing.md §2, §12). -------------!
       do_forcing = cfg%forcing%forcing_on .and. present(met_src) .and. present(met_cur)          &
                    .and. present(step_start)
       met_ref = met_forcing_t()
-      if (present(met_fixed)) met_ref = met_fixed
+      if (present(met_fixed)) then
+         met_ref = met_fixed
+      else
+         met_ref%co2 = cfg%forcing%co2_const
+         if (cfg%forcing%co2_source == CO2_SOURCE_FILE .and. present(met_src) .and. present(step_start))    &
+            met_ref%co2 = met_co2(met_src, step_start)
+      end if
       npatch   = poly%patch%n
       nsub     = cfg%n_fast_per_slow
       n_thread = 1_ik
@@ -147,6 +159,14 @@ contains
       else
          met_sample = met_ref
          met_site   = met_ref
+      end if
+      !----- A start's canopy air is the air of the window's first sample (docs/science/            !
+      !      canopy_air_space_biophysics.md, the start). -------------------------------------------!
+      if (present(seed_canopy_air)) then
+         if (seed_canopy_air) then
+            call seed_start_canopy_air(poly, met_site(1, :))
+            seed_canopy_air = .false.
+         end if
       end if
 
       !----- The per-(sub-step, patch) reduction staging; every cell is assigned, so none is zeroed. -!

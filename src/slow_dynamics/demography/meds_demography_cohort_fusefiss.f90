@@ -474,7 +474,7 @@ contains
                recruit_dbh = height_to_dbh(cohort%pft_table%allom(pf), pft%min_cohort_height)
                !----- Born in its patch's state: at the canopy-air temperature, holding the water     !
                !      its tissues hold at the top soil layer's potential (patch_physical_state). -------!
-               call patch_physical_state(patch%cas(ip), patch%soil_water(ip), cfg,                     &
+               call patch_physical_state(patch%cas(ip), patch%soil_water(ip),                          &
                                          poly%site%surface(patch%owner_site(ip)), t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
                                 t_birth, psi_birth)

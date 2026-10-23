@@ -41,6 +41,10 @@ LW_CLOUD_A = 0.22          # [-] the model's default cloud coefficient ([forcing
 # Humidity and pressure (meds_therm_lib): docs/science/forcing.md
 # eq. (11), and the isothermal limit of eq. (13).
 # ---------------------------------------------------------------------------------------------
+#: Water's molar mass over dry air's (meds_constants: h2o_dry_ratio = mmh2o / mmdry).
+H2O_DRY_RATIO = 0.01801528 / 0.0289655
+
+
 def sat_vapor_pressure(t_k):
     """Saturation vapour pressure [Pa] over liquid water at t_k [K]: Bolton (1980)."""
     tc = np.asarray(t_k, dtype=float) - 273.15
@@ -50,19 +54,19 @@ def sat_vapor_pressure(t_k):
 def rh_to_specific_humidity(rh, t_k, p_pa):
     """q [kg/kg] from relative humidity (a fraction, clipped to [0, 1]), temperature and pressure."""
     e = np.clip(rh, 0.0, 1.0) * sat_vapor_pressure(t_k)
-    return 0.622 * e / (np.asarray(p_pa, dtype=float) - 0.378 * e)
+    return H2O_DRY_RATIO * e / (np.asarray(p_pa, dtype=float) - (1.0 - H2O_DRY_RATIO) * e)
 
 
 def dewpoint_to_specific_humidity(td_k, p_pa):
     """q [kg/kg] from dewpoint and pressure: the actual vapour pressure is e_sat(Td)."""
     e = sat_vapor_pressure(td_k)
-    return 0.622 * e / (np.asarray(p_pa, dtype=float) - 0.378 * e)
+    return H2O_DRY_RATIO * e / (np.asarray(p_pa, dtype=float) - (1.0 - H2O_DRY_RATIO) * e)
 
 
 def specific_humidity_to_vapor_pressure(q, p_pa):
     """e [Pa] from q and pressure: the exact inverse of the two conversions above."""
     q = np.asarray(q, dtype=float)
-    return q * np.asarray(p_pa, dtype=float) / (0.622 + 0.378 * q)
+    return q * np.asarray(p_pa, dtype=float) / (H2O_DRY_RATIO + (1.0 - H2O_DRY_RATIO) * q)
 
 
 def pressure_at_height(p_pa, t_k, dz):

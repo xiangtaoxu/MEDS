@@ -77,8 +77,8 @@ Each store is solved in the unknown in which its curve is best behaved:
   of its pressure–volume curve (about −1.5×10⁴ MPa), which would close its stomata for the first
   step. A cohort is born in its patch's state (`patch_physical_state`): at the canopy-air temperature,
   holding the water its tissues hold at the potential of the patch's top soil layer, the one the
-  stomatal predawn potential is seeded with. Cohorts made at setup start from the run's `[init]`
-  state and are re-seeded from their patch when the fast loop seeds it. A recruit's water, like its
+  stomatal predawn potential is seeded with. Cohorts made at setup are born in the patches' seeded
+  stores, and settled again once the stand is final (`init_fast_state`). A recruit's water, like its
   carbon, is drawn from outside the model, and the slow ledger declares it.
   Tissue lost to turnover takes its water with it, in proportion to the carbon lost
   (`shed_turnover_water`): shed leaves take that share of the leaf store, and shed fine roots that

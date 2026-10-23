@@ -15,7 +15,8 @@
 program test_column_derivs
    use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : latent_heat_vap, stefan_boltzmann, cp_air, tiny_num, rho_h2o, n_soil_layer_max
+   use meds_constants,      only : latent_heat_vap, stefan_boltzmann, cp_air, tiny_num, rho_h2o, n_soil_layer_max, &
+                                   h2o_dry_ratio
    use meds_therm_lib,         only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, sat_specific_humidity,  &
                                       sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
                                       temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
@@ -152,7 +153,8 @@ contains
       qcas   = y%cas_shv
       qsat_c = sat_specific_humidity(tcas, frozen%cas%press)
       esat   = sat_vapor_pressure(tcas)
-      dqdt   = 0.622_wp * frozen%cas%press / max((frozen%cas%press - 0.378_wp * esat) ** 2, tiny_num)          &
+      dqdt   = h2o_dry_ratio * frozen%cas%press                                                                  &
+               / max((frozen%cas%press - (1.0_wp - h2o_dry_ratio) * esat) ** 2, tiny_num)                       &
                * sat_vapor_pressure_temp_deriv(tcas)
       worst = 0.0_wp
       do i = 1_ik, n

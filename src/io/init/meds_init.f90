@@ -5,21 +5,22 @@
 ! that start's own finishing: a census stand is restructured and its plastic traits        !
 ! acclimated at once, a restart's traits re-acclimated when [init].reacclimate_traits asks !
 ! (docs/science/order_of_processes.md §1, setup step 2). Bare ground and a census then     !
-! seed the fast loop's stores (init_fast_state); a restart read them from its file.        !
+! settle their cohorts in their patches (init_fast_state); a restart read them from its    !
+! file.                                                                                    !
 !==========================================================================================!
 module meds_init
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
    use meds_time,                only : meds_time_t, time_to_string
    use meds_config,              only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_soil_derive,         only : top_soil_psi
-   use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp, cas_temp_to_enthalpy
+   use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp
    use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
    use meds_demography_update,   only : update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics, only : advance_plant_traits, reacclimate_plant_traits
-   use meds_init_bare_ground,    only : init_bare_ground, init_bare_sites, seed_bare_ground, N_PATCH_INIT
+   use meds_init_bare_ground,    only : init_bare_ground, init_bare_sites, seed_bare_ground, seed_patch_stores, &
+                                         N_PATCH_INIT
    use meds_init_census,         only : init_from_census, restructure_census_stand
    use meds_init_restart,        only : read_restart_file
    implicit none
@@ -27,12 +28,6 @@ module meds_init
 
    public :: init_polygon
    public :: init_fast_state   ! used only by the tests
-
-   !----- The canopy air a start begins in, the same at every site; the first steps relax it to the  !
-   !      air above. ------------------------------------------------------------------------------!
-   real(wp), parameter :: CAS_TEMP_START = 288.0_wp   !< [K]
-   real(wp), parameter :: CAS_SHV_START  = 0.008_wp   !< [kg/kg]
-   real(wp), parameter :: CAS_CO2_START  = 400.0_wp   !< [umol/mol]
 
 contains
 
@@ -113,8 +108,9 @@ contains
          call reacclimate_plant_traits(poly, cfg)
          if (verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
-      !----- The fast loop's stores, once the stand is final; a restart read them instead. -------!
-      if (cfg%fast_biophysics_on .and. cfg%init%init_mode /= INIT_RESTART) then
+      !----- The final stand's cohorts in their patches, and the snowpack, with the fast loop on or   !
+      !      off; a restart read them instead. -----------------------------------------------------!
+      if (cfg%init%init_mode /= INIT_RESTART) then
          call init_fast_state(poly, cfg)
          if (verbose .and. cfg%snow_init_swe > 0.0_wp)                                             &
             write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ', cfg%snow_init_swe, ' kg/m2'
@@ -122,33 +118,21 @@ contains
       ok = .true.
    end subroutine init_polygon
 
-   !----- Seed every patch's fast stores to a horizontally uniform equilibrium, and its cohorts with  !
-   !      them as a recruit is born: the soil at its site's theta_start and [init].soil_temp, the    !
-   !      canopy air at the start values above, each cohort's tissues at the canopy-air temperature  !
-   !      holding the water they hold at the top soil layer's potential, and the snowpack            !
-   !      [snow].init_swe asks for. -------------------------------------------------------------!
+   !----- The final stand's fast stores: each patch's soil and canopy air seeded again             !
+   !      (seed_patch_stores, as init_bare_sites did when it laid the patches out, so a census       !
+   !      stand's fusion leaves no blend behind); each cohort settled in its patch as a recruit is  !
+   !      born, its tissues at the canopy-air temperature holding the water they hold at the top   !
+   !      soil layer's potential (the restructuring and the traits' acclimation change the tissues !
+   !      the setup cohorts were born with); and the snowpack [snow].init_swe asks for. ---------!
    subroutine init_fast_state(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      integer(ik) :: ip, k, nsl, i
+      integer(ik) :: ip, i
       real(wp)    :: psi
+      call seed_patch_stores(poly, cfg)
       do ip = 1_ik, poly%patch%n
-         associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
+         associate (cas => poly%patch%cas(ip), sw => poly%patch%soil_water(ip),                       &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
-            nsl = surf%soil_profile%n_active
-            sw%theta(1:nsl)  = surf%theta_start(1:nsl)
-            sw%w_surface = 0.0_wp
-            sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
-            do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_internal_energy(surf%soil_profile%dry_heat_capacity(k),             &
-                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, 1.0_wp)
-               se%soil_temp(k)   = cfg%init%soil_temp
-               se%soil_fliq(k) = 1.0_wp
-            end do
-            cas%can_shv      = CAS_SHV_START
-            cas%can_co2 = CAS_CO2_START
-            cas%can_enthalpy = cas_temp_to_enthalpy(CAS_TEMP_START, CAS_SHV_START)
-            cas%can_temp     = CAS_TEMP_START
             psi = top_soil_psi(surf%soil_profile, sw%theta(1))
             do i = poly%patch%cohort_offset(ip), poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik
                poly%cohort%leaf_temp(i) = cas%can_temp

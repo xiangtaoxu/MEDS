@@ -183,7 +183,12 @@ contains
       integer(ik) :: i
       if (cfg%mode /= RUN_MODE_REGION .and. toml_has_section(tm, 'region'))                       &
          call add_line(report, '[region] (in '//trim(tm%source)//') needs [run].mode = "region"')
-      !----- [forcing]/[site]: the keys of the other source, location or mode. ---------------------!
+      !----- [forcing]/[site]: the keys of the other source, location or mode. The CO2 keys apply   !
+      !      with forcing on or off. -----------------------------------------------------------------!
+      if (cfg%forcing%co2_source == CO2_SOURCE_CONST)                                                 &
+         call refuse(report, tm, 'forcing.co2_file', 'needs forcing.co2_source = "file"')
+      if (cfg%forcing%co2_source == CO2_SOURCE_FILE)                                                  &
+         call refuse(report, tm, 'forcing.co2_const', 'does not apply to forcing.co2_source = "file"')
       if (cfg%forcing%forcing_on) then
          if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
             call refuse(report, tm, 'forcing.path', ARCHIVE)
@@ -197,10 +202,6 @@ contains
             call refuse(report, tm, 'site.elevation', CELL)
             call refuse(report, tm, 'forcing.max_distance_km', CELL)
          end if
-         if (cfg%forcing%co2_source == CO2_SOURCE_CONST)                                              &
-            call refuse(report, tm, 'forcing.co2_file', 'needs forcing.co2_source = "file"')
-         if (cfg%forcing%co2_source == CO2_SOURCE_FILE)                                               &
-            call refuse(report, tm, 'forcing.co2_const', 'does not apply to forcing.co2_source = "file"')
          if (cfg%forcing%wind_exposure == WIND_EXPOSURE_LOCAL) then
             call refuse(report, tm, 'forcing.wind_exposure_z0', 'applies only to wind_exposure = "open_terrain"')
             call refuse(report, tm, 'forcing.wind_blending_height',                                   &

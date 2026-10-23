@@ -161,7 +161,7 @@ contains
       files%fast_interval_steps = cfg%output%fast_interval_steps
       if (cfg%forcing%forcing_on .and. cfg%forcing%format == MET_BACKEND_ERA5LAND)                   &
          files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
-                            'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
+                            'pressure P: q = 0.62196 e / (P - 0.37804 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
 
       !----- The derived diagnostics' parameters (diag_setup_t). n_pft is the run-time PFT count,  !
