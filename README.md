@@ -74,8 +74,8 @@ moved.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, the default
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
@@ -86,11 +86,12 @@ python post_proc/plot_site_timeseries.py \
 ```
 
 netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. Details, including
-the parallel builds and three compiler traps that cost real time, are in
-[`docs/building.md`](docs/building.md). `-DMEDS_BUILD_PYLIB=ON` adds the library the Python front end
-loads ([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. A
-run of `meds_main` itself takes a config, `./build/meds_main CONFIG.toml`: the examples' READMEs say
-which data each needs, and [`post_proc/README.md`](post_proc/README.md) which plots read its output.
+the four build kinds (debug, dev, profile, and production for long runs), the parallel builds and the
+compiler traps that cost real time, are in [`docs/building.md`](docs/building.md).
+`-DMEDS_BUILD_PYLIB=ON` adds the library the Python front end loads
+([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. A run of
+`meds_main` itself takes a config, `./build/meds_main CONFIG.toml`: the examples' READMEs say which
+data each needs, and [`post_proc/README.md`](post_proc/README.md) which plots read its output.
 
 ## Where to go next
 

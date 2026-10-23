@@ -163,8 +163,9 @@ Done. To use ifx, activate the oneAPI environment in your shell:
     source ${SETVARS}
 Add that line to ~/.bashrc to make ifx available in every new terminal.
 
-To build MEDS with ifx via CMake (needs CMake >= 3.20):
+To build MEDS with ifx via CMake (needs CMake >= 3.20; the dev kind, the others
+are in docs/building.md, "Build kinds"):
     source ${SETVARS}
-    cmake -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug
+    cmake -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_PREFIX_PATH=<netCDF prefix>
     cmake --build build -j
 EOF

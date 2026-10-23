@@ -16,8 +16,10 @@ genmod.f90
 genmod.mod
 
 # ---- Build trees ----
-# CMake out-of-source builds (build/, build-rel/, build-debug/, ...)
+# CMake out-of-source builds (build/, build-ifx/, and the presets' build-<kind>/: build-dev/, ...)
 /build*/
+# A user's own presets beside CMakePresets.json: machine-local, never shared.
+CMakeUserPresets.json
 # In case CMake is ever run in-source (discouraged):
 CMakeCache.txt
 CMakeFiles/

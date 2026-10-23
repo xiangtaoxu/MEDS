@@ -10,13 +10,15 @@ and exits.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix to use
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_PREFIX_PATH=$CONDA_PREFIX   # the dev kind
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
 ./build/meds_main examples/example03_demography/example_config_main.toml
 ```
+
+With no build type a configure builds dev, the everyday kind; the others, and the presets that name
+all four, are under [Build kinds](#build-kinds).
 
 If the run cannot find `libnetcdf` or the compiler runtime, put both on the loader path:
 `LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH`. Note the `:$LD_LIBRARY_PATH` — replacing the
@@ -78,21 +80,65 @@ each bitten at least once, and each was invisible to ifx:
   error. Assign a default-initialised local that is never written, or reset through an
   `intent(out)` dummy.
 
-## Build types
+## Build kinds
+
+| Kind | Use it for | Configure |
+|---|---|---|
+| `debug` | writing or fixing engine code: every bounds, uninitialised-value and floating-point check is on | `cmake --preset debug` |
+| `dev` | everyday work: the tests, short runs, comparing outputs between commits | `cmake --preset dev` |
+| `profile` | finding where the time goes (VTune, perf) | `cmake --preset profile` |
+| `production` | long runs: the examples, calibration, regional runs | `cmake --preset production` |
+
+Each preset builds in `build-<kind>` and takes netCDF from the active conda environment
+(`$CONDA_PREFIX`). Run it from the repository root, and choose the compiler with `FC=ifx` (or
+`gfortran`) before `cmake --preset`; presets need CMake ≥ 3.21.
 
 ```bash
-# Release -- production runs and the netCDF layer.
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-
-# Debug -- strict checking (-stand f18 -check all -fpe0). Use it for engine work.
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+FC=ifx cmake --preset dev
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 ```
 
-Debug emits one harmless `arg_temp_created` remark per netCDF call, so prefer Release when the
-output layer is what you are exercising. Per-compiler flags live in the `meds_fortran_flags()`
-function in `CMakeLists.txt`.
+A `-D` after `--preset` overrides the preset, and `-B` its directory:
+`cmake --preset dev -DCMAKE_PREFIX_PATH=<netCDF prefix>`. Without presets, the same kinds are
+`-DCMAKE_BUILD_TYPE=Debug|Release`, plus `-DCMAKE_Fortran_FLAGS=-g` for profile and
+`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production. **A configure that names no build type
+builds dev.** The per-compiler flags live in the `meds_fortran_flags()` function in `CMakeLists.txt`.
+
+**dev is the reference.** It is the project's `-O2`, for any x86-64 CPU. Outputs are compared between
+commits on dev builds; gfortran dev builds of two commits that change no arithmetic give
+byte-identical output. A profile build gives dev's output byte for byte. A production build gives
+the same results to round-off (hourly LE within ~1e-5 W m⁻²), so do not compare a production run's
+output byte for byte with a dev run's.
+
+**production is 26–29 % faster than dev** (ifx, example 04's 120-patch stand, 1 and 20 threads). Two
+things give it: inlining across modules (`MEDS_IPO`), and code for the CPU family
+(`MEDS_CPU_TARGET=cascadelake`, which gains more with more threads; it covers cbsuxu 01–10). Under
+IPO the files compile at `-O2`, and ifx generates the code at the link at `-O3`, which the build
+names; gfortran keeps each file's `-O2` through the link. A production binary may not start on an
+older CPU: build with `-DMEDS_CPU_TARGET=` (empty) for a portable one, or `host` for the machine you
+build on. Use ifx: gfortran's production build is only 4–8 % faster than ifx dev. IPO and the CPU
+target are offered for ifx and gfortran; nvfortran builds debug and dev.
+
+**production builds `meds_main` and `libmeds.so`, not the tests.** Under IPO each of the ~80 test
+programs is a whole-program link of its own, and several tests assert results to the last bit, which
+a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 5 of 83 tests fail with ifx and
+3 with gfortran. Run the suite on dev. For the same reason `meds.model` and `meds_main` agree to
+round-off on a production build, not bit for bit: each is optimised as a whole program of its own.
+To run the examples or a calibration on a production build, point them at it: a script that runs
+`meds_main` takes `--meds-main` (or `MEDS_MAIN`) and otherwise looks for `build-ifx/meds_main`, and
+the Python API takes `MEDS_LIB=build-production/libmeds.so`.
+
+**Why development uses dev.** With ifx, a production build relinks the whole program at every link:
+an edit to one file takes ~35 s to rebuild instead of ~4 s, and rebuilding the tests ~85 s instead of
+~11 s. It needs under 3 GB of memory, tests included. For a long run without that cost, add
+`-DMEDS_CPU_TARGET=cascadelake` to a dev build in a directory of its own (`-B build-dev-cascadelake`):
+most of the gain at 20 threads, none of the relink.
+
+**profile** is dev with `-g`, which VTune and perf read; gprof also needs `-pg`
+(`cmake --preset profile -DCMAKE_Fortran_FLAGS="-g -pg"`). **debug** is many times slower and prints
+one harmless `arg_temp_created` remark per netCDF call; prefer dev when the output layer is what you
+are exercising.
 
 ## Parallel builds
 
@@ -202,7 +248,7 @@ To drive the model from Python, `pip install python/` compiles the Fortran and b
 ## Running the tests
 
 ```bash
-ctest --test-dir build-ifx --output-on-failure          # all of them
+ctest --test-dir build-dev --output-on-failure          # all of them
 ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one, by regex
 ```
 

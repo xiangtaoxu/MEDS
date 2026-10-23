@@ -36,20 +36,24 @@ fast loop, state and demography, output, config, and the docs math rules.
 
 ## Build and test
 
-netCDF is a hard dependency; every configure needs `-DCMAKE_PREFIX_PATH`. Toolchain activation for
-this machine is in `CLAUDE.local.md`.
+netCDF is a hard dependency; every configure needs `-DCMAKE_PREFIX_PATH`, which the presets take
+from `$CONDA_PREFIX`. Toolchain activation for this machine is in `CLAUDE.local.md`.
 
 ```bash
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 72 tests (73 with the Python library), ~70 s; -j 5: 25 s
+FC=ifx cmake --preset dev               # the dev kind (Release, -O2) in build-dev
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure          # 82 tests (83 with the Python library), ~95 s; -j 5: 30 s
 
-# Debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+# debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
+FC=ifx cmake --preset debug
 ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test by regex
 ```
+
+Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`
+(dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–36 % faster, for long runs; it builds
+`meds_main` and `libmeds.so`, not the tests, whose bit-exact checks it breaks at round-off). A
+configure that names no build type builds dev. dev is the reference: compare outputs between commits
+on dev builds, never on production ones.
 
 CMake auto-resolves Fortran module dependencies. This is the deliberate fix for ED2's "run `make`
 six times" hack — **never reintroduce manual object lists or repeated builds.**

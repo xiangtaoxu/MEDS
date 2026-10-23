@@ -125,8 +125,9 @@ fi
 
 cat <<'EOF'
 
-Done. gfortran is ready. To build MEDS with it via CMake:
-    cmake -B build -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Debug
+Done. gfortran is ready. To build MEDS with it via CMake (the dev kind; the
+others are in docs/building.md, "Build kinds"):
+    cmake -B build -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_PREFIX_PATH=<netCDF prefix>
     cmake --build build -j
 
 Ubuntu 20.04 ships gfortran 9 (good Fortran 2018 coverage). For newer standards
