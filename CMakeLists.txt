@@ -599,6 +599,12 @@ if(MEDS_BUILD_TESTS)
                     -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
                     -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
+   add_test(NAME config_rk45_loose_rtol_refused
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
+                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_rk45_loose_rtol.toml
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rk45_rtol_refused.cmake)
+   set_tests_properties(config_rk45_loose_rtol_refused PROPERTIES TIMEOUT 120)
    #----- A census or state file that cannot start the run stops it, naming the mode and the     #
    #      file: one that is not there, and a census with no row. The script explains the rule.    #
    foreach(case "census_missing;1;no_such_census.csv;OFF;cannot be opened"

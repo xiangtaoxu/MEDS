@@ -491,7 +491,7 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `esdirk2` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
 | the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `esdirk2`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
-| ED2 comparison at the algorithmic level | `rk45` at `rtol` ≤ 1e-4 (but check `mean_work_rk45_rescue_py` first) |
+| ED2 comparison at the algorithmic level | `rk45`, at its default `rtol` or tighter (but check `mean_work_rk45_rescue_py` first) |
 
 **Choosing them for a new site.** Two short runs answer it. The step's error is first order in
 `dt_fast` (§5a), so a run at `dt_fast` and one at `dt_fast/2` give it: e(dt) ≈ 2 [y(dt) − y(dt/2)],
@@ -525,9 +525,20 @@ error stays a large share because the step's error on it is small (0.015–0.06 
 adds 0.010–0.035 K in any hour, RMS. A study that needs canopy-air temperature to a hundredth of a
 kelvin, or one-step accuracy at a storm front, tightens `rtol`; 1e-3 costs 7–18 % more CPU than 2e-3.
 
-The table is for `esdirk2`. **`rk45` needs `rtol` of 1e-4 or tighter.** On example 04's August its
-run-mean H is 50.99 W m⁻² at 1e-4, against the 50.94 both schemes converge to, but 51.9 at 1e-3, 54.3
-at 2e-3 and 73.3 at 5e-3, with LE falling to match; the ledgers close throughout, so nothing flags it.
+The table is for `esdirk2`. **`rk45` takes `rtol` = 1e-4 when the key is absent, and refuses a looser
+one.** Its step is set by stability rather than by `rtol`: from 1e-4 to 1e-3 it saves only 2–4 % of
+the CPU, while its own error grows six- to eightfold. On the same three windows, against `rk45` at 1e-6:
+
+| `rk45` `rtol` | LE, H: march / step error | canopy-air T: march / step | daily GPP bias at Palo Verde: march / step |
+|---|---|---|---|
+| 1e-4 | 2–9 % | 29–72 % | 1 % |
+| 2e-4 | 3–16 % | 57–143 % | 4 % |
+| 5e-4 | 8–28 % | 144–336 % | 13 % |
+| 1e-3 | 17–53 % | 287–680 % | 29 % |
+
+Looser still, the fluxes leave the answer altogether: on example 04's August, run-mean H is 50.99 W m⁻²
+at 1e-4 against the 50.94 both schemes converge to, 54.3 at 2e-3 and 73.3 at 5e-3, with LE falling to
+match. The ledgers close throughout, so nothing else would flag it.
 
 Configuration essentials:
 
