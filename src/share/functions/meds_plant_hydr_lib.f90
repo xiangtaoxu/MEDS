@@ -514,13 +514,25 @@ contains
    !----- A cohort's root water uptake [kg/m2/s] from one soil layer: g_rhizo K_soil times !
    !      the driving force psi_soil + grav_head z_soil - psi_wood (z_soil < 0), through   !
    !      the ramp, so a root never loses water to drier soil                              !
-   !      (docs/science/plant_hydraulics.md eq. (15)). ------------------------------------!
+   !      (docs/science/plant_hydraulics.md eq. (15)). Outside its rounded corner the ramp !
+   !      is the force itself or zero, written out here: this runs for every cohort and    !
+   !      layer at every evaluation of the water network, and smooth_max0 is a call into   !
+   !      another module. -----------------------------------------------------------------!
    elemental subroutine root_water_uptake(g_rhizo, k_soil, psi_soil, z_soil, psi_wood, u,             &
                                           du_dpsi_soil, du_dpsi_wood, du_dk)
       real(wp), intent(in)  :: g_rhizo, k_soil, psi_soil, z_soil, psi_wood
       real(wp), intent(out) :: u, du_dpsi_soil, du_dpsi_wood, du_dk
-      real(wp) :: drive, dramp
-      call smooth_max0(psi_soil + grav_head * z_soil - psi_wood, UPTAKE_RAMP_WIDTH, drive, dramp)
+      real(wp) :: force, drive, dramp
+      force = psi_soil + grav_head * z_soil - psi_wood
+      if (force >= UPTAKE_RAMP_WIDTH) then
+         drive = force
+         dramp = 1.0_wp
+      else if (force <= 0.0_wp) then
+         drive = 0.0_wp
+         dramp = 0.0_wp
+      else
+         call smooth_max0(force, UPTAKE_RAMP_WIDTH, drive, dramp)
+      end if
       u            = g_rhizo * k_soil * drive
       du_dpsi_soil = g_rhizo * k_soil * dramp
       du_dpsi_wood = -du_dpsi_soil
