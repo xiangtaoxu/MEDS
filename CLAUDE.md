@@ -42,7 +42,7 @@ from `$CONDA_PREFIX`. Toolchain activation for this machine is in `CLAUDE.local.
 ```bash
 FC=ifx cmake --preset dev               # the dev kind (Release, -O2) in build-dev
 cmake --build build-dev -j
-ctest --test-dir build-dev --output-on-failure          # 83 tests, ~110 s; -j 5: 32 s
+ctest --test-dir build-dev --output-on-failure          # 84 tests, ~110 s; -j 5: 32 s
 
 # debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
 FC=ifx cmake --preset debug
@@ -51,7 +51,8 @@ ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test b
 
 Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`
 (dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–36 % faster, for long runs; it builds
-`meds_main` and `libmeds.so`, not the tests, whose bit-exact checks it breaks at round-off). A
+`meds_main` and `libmeds.so`, not the tests, whose bit-exact checks it breaks at round-off; the
+failures and production's output against dev's are in `docs/building.md`, "Running the tests"). A
 configure that names no build type builds dev. dev is the reference: compare outputs between commits
 on dev builds, never on production ones. dev builds `meds_main`, `libmeds.so` and the tests, and
 `build-dev` is the default: the example scripts run `build-dev/meds_main` and the Python package loads
