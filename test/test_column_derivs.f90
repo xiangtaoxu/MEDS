@@ -2,15 +2,26 @@
 !==========================================================================================!
 ! test_column_derivs -- unit tests for the pure fast-loop right-hand side f(y) = dy/dt               !
 ! (surface_derivs, march_derivs) and the steppers built on it (docs/science/numerical_scheme.md     !
-! §3). Both integrators evaluate this side-effect-free RHS, so these tests pin it, starting with:    !
+! §3). Both integrators evaluate this side-effect-free RHS. The tests, in the order they run:       !
 !   1. LEAF DIAGNOSTIC CLOSURE   -- the diagnosed leaf temperature zeroes the linearized leaf        !
 !                                    energy balance it was solved from (multi-cohort).               !
-!   2. ANALYTIC LEAF TEMPERATURE -- a hand-computable no-latent / no-LW-forcing case matches.        !
+!   2. ANALYTIC LEAF TEMPERATURE -- a hand-computable no-latent / no-LW-forcing case matches; and a  !
+!                                    falling leaf that passes its film to its wood is charged nothing.!
 !   3. CAS BACKWARD-EULER CONSISTENCY -- the CAS box's committed enth1/shv1/co21 (the BE-in-atm      !
 !                                    solution of the tendencies) satisfy the implicit relation        !
 !                                    (y1-y0)/dt = f(y1); i.e. d_cas_* is the correct RHS.             !
 !   4. CONSERVATION MARCH        -- marching the CAS twins with the RHS closes the energy/water        !
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
+!   6. SOIL ENERGY TENDENCY      -- the tendency is the dt -> 0 limit of the soil heat step.         !
+!   9. ASSEMBLER                 -- march_derivs wires the surface and soil-heat parts correctly.    !
+!  11-12b. BACKWARD-EULER STAGE -- stable at 900 s and close to RK45 at 4 s; the coupled stage      !
+!                                    keeps the canopy air physical; its Newton stays sub-saturated    !
+!                                    near saturation.                                                 !
+!  13. ADAPTIVE MARCH            -- the error controller responds to rtol.                          !
+!  14. ESDIRK2                   -- 2nd order on the decoupled CO2 twin, at least 1st on the coupled  !
+!                                    soil-top temperature, physical plant water, stiff-stable.        !
+!  15. RK45                      -- 5th order on the CO2 twin and on the soil-top temperature.       !
+!  16. DOMAIN SAFETY             -- the explicit RHS stays finite off the constitutive domain.       !
 !==========================================================================================!
 program test_column_derivs
    use meds_test_assert, only : check, check_true, check_close, test_report
@@ -526,7 +537,7 @@ contains
                       yc%cas_shv - qsat_coup)
    end subroutine test_be_coupled
 
-   !----- 12b. the arrowhead Newton surface solve: robust near saturation (clamp + line search), and  !
+   !----- 12b. the stage's surface Newton: robust near saturation (its line search), and              !
    !           close to the RK45 reference at small dt (converges to the coupled surface solution). ---!
    subroutine test_arrowhead()
       type(march_state_t)  :: y, yi, yr, ytmp
@@ -537,8 +548,8 @@ contains
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_arrowhead:'
 
-      !----- (a) START the CAS at 99% saturation under harsh noon: exercises the supersaturation      !
-      !          clamp + line search. the Newton must keep it physical + sub-saturated at 900 s. !
+      !----- (a) START the CAS at 99% saturation under harsh noon: exercises the Newton's line       !
+      !          search. The Newton must keep it physical + sub-saturated at 900 s. ----------------!
       call make_column(y, frozen, n, nsl)
       tcas = 297.0_wp ; qsat = sat_specific_humidity(tcas, frozen%cas%press)
       y%cas_enthalpy = cas_temp_to_enthalpy(tcas, 0.99_wp*qsat) ; y%cas_shv = 0.99_wp*qsat
@@ -723,8 +734,10 @@ contains
       call check_true('ESDIRK2 tableau is 2nd order on the decoupled CO2 twin (p >= 1.9)', &
                       p_lo >= 1.9_wp .and. p_hi >= 1.9_wp, p_hi)
 
-      !----- (a2) On the operator-split-COUPLED soil-top temperature (soil water and plant water mass  !
-      !      are split out of the ESDIRK stages; see docs/ROADMAP.md) the effective order is about 1:  !
+      !----- (a2) On the coupled soil-top temperature the effective order is about 1: the BE stage   !
+      !      holds the ground temperature at its value at the stage's start through its surface        !
+      !      Newton (meds_fast_integ_backward_euler), so the surface and the soil top are coupled with  !
+      !      a lag of one stage.                                                                         !
       !      ESDIRK2's error against the fine reference falls at least first order with dt (450, 225,  !
       !      112.5 s). The first-order BE step's error is printed beside it: its constant is the       !
       !      fixture's and can nearly cancel (it does with the longwave about the tissue's emission    !
@@ -776,10 +789,10 @@ contains
    end subroutine test_esdirk2
 
    !----- 15. RK45 (Cash-Karp 5(4)): order-of-accuracy self-convergence.                                    !
-   !          Unlike ESDIRK2's split-degraded ~1.2 order on the coupled soil-top temperature                !
-   !          (test_esdirk2's part a2 -- soil water/mass are operator-split OUT of the ESDIRK stages), RK45 !
-   !          carries every store in its tableau (docs/science/numerical_scheme.md §3), so the FULL         !
-   !          5th-order should show up on a genuinely-coupled variable too, not just a decoupled scalar.    !
+   !          Unlike ESDIRK2's first order on the coupled soil-top temperature (test_esdirk2's part    !
+   !          a2: its stage holds the ground temperature), RK45 evaluates the surface and the soil      !
+   !          energy together in every stage (docs/science/numerical_scheme.md §3), so the FULL         !
+   !          5th order should show up on a coupled variable too, not just a decoupled scalar.          !
    !          Same reference-vs-halvings technique as test_esdirk2's part (a): observed order               !
    !          p = log2(e(dt)/e(dt/2)) should approach 5 as dt shrinks (some slack for pre-asymptotic         !
    !          effects: p >= 4.5). ---------------------------------------------------------------------!
@@ -812,9 +825,9 @@ contains
       call check_true('RK45 tableau is 5th order on the decoupled CO2 twin (p >= 4.5)', &
                       p_lo >= 4.5_wp .and. p_hi >= 4.5_wp, p_hi)
 
-      !----- (b) COUPLED: soil-top temperature (the SAME variable test_esdirk2 part a2 shows degraded to !
-      !          ~1.2 order under ESDIRK2's operator split). RK45 integrates soil energy/water/mass ALL  !
-      !          in its stages (no split), so this should ALSO be ~5th order. ---------------------------!
+      !----- (b) COUPLED: soil-top temperature (the SAME variable test_esdirk2 part a2 shows at first !
+      !          order under ESDIRK2). RK45 integrates the soil energy in its stages with the surface,  !
+      !          so this should ALSO be ~5th order. ----------------------------------------------------!
       !----- FOUR test points here, not three, and the assertion is on the two FINEST pairs. The soil-  !
       !      top temperature is the most strongly coupled variable in the column, so its coarse-h error  !
       !      carries a visible h^6 contamination and p measured across the coarsest pair is simply not   !
