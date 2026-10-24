@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_surface_maps -- the one module that reads static per-cell maps (docs/configuration.md §Input  !
+! test_maps -- meds_maps, the one module that reads static per-cell maps (docs/configuration.md §Input !
 ! maps), on the synthetic archive's 4 x 18 grid.                                                      !
 !                                                                                          !
 ! A 2-D map is read at a box's cells, each at its own (row, col); a cell the map leaves empty reads  !
@@ -16,7 +16,7 @@
 ! cell's f_leak, a free one at 1 and a sealed one at 0, and a leaky f_leak outside (0, 1] is refused. !
 ! The work directory is the first argument.                                                          !
 !==========================================================================================!
-program test_surface_maps
+program test_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
@@ -53,7 +53,7 @@ program test_surface_maps
    real(wp) :: ts, tr, al, vn, ks, kso, kd, cv
 
    call get_command_argument(1, work)
-   if (len_trim(work) == 0) error stop 'test_surface_maps: pass the work directory'
+   if (len_trim(work) == 0) error stop 'test_maps: pass the work directory'
    call execute_command_line('rm -rf "'//trim(work)//'" && mkdir -p "'//trim(work)//'"')
    static = trim(work)//'/static.nc'
    call write_static(static, .true.)
@@ -241,7 +241,7 @@ program test_surface_maps
                    index(msg, 'f_leak is not in (0, 1] at the cell (25.00, 120.00) (row 2, col 15), '//   &
                          'whose base is leaky') > 0)
 
-   call test_report('test_surface_maps')
+   call test_report('test_maps')
 
 contains
 
@@ -250,4 +250,4 @@ contains
       close = abs(a - b) <= 1.0e-12_wp * max(abs(a), abs(b), 1.0_wp)
    end function close
 
-end program test_surface_maps
+end program test_maps

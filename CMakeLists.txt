@@ -799,10 +799,10 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME met_era5land COMMAND test_met_era5land
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
    #----- The static-map reader and the cell mask, on the synthetic archive's grid. ----------#
-   add_executable(test_surface_maps test/test_surface_maps.f90)
-   target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
-   meds_fortran_flags(test_surface_maps)
-   add_test(NAME surface_maps COMMAND test_surface_maps ${CMAKE_CURRENT_BINARY_DIR}/surface_maps_tmp)
+   add_executable(test_maps test/test_maps.f90)
+   target_link_libraries(test_maps PRIVATE meds_maps meds_testassert meds_testarchive)
+   meds_fortran_flags(test_maps)
+   add_test(NAME maps COMMAND test_maps ${CMAKE_CURRENT_BINARY_DIR}/work/maps)
    #      The flux-tower contract of a MEDS forcing file (docs/science/forcing.md §1).
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
