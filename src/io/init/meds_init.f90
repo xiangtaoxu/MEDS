@@ -111,9 +111,10 @@ contains
          if (verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
       !----- The final stand's cohorts in their patches, and the snowpack, with the fast loop on or   !
-      !      off; a restart read them instead. -----------------------------------------------------!
+      !      off, and the canopy air owed the first forcing sample; a restart read them instead. -----!
       if (cfg%init%init_mode /= INIT_RESTART) then
          call init_fast_state(poly, cfg)
+         poly%seed_canopy_air = .true.
          if (verbose .and. cfg%snow_init_swe > 0.0_wp)                                             &
             write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ', cfg%snow_init_swe, ' kg/m2'
       end if

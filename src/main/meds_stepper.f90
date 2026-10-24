@@ -31,7 +31,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(poly, cfg, met_src, met_cur, step_start, out_bufs,                   &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
-                               patch_threads, seed_canopy_air)
+                               patch_threads)
       type(polygon_t),        intent(inout) :: poly
       type(meds_config_t),    intent(in)    :: cfg
       type(met_source_t),     intent(in),    optional :: met_src      !< the run's forcing source
@@ -43,7 +43,6 @@ contains
       !< the site's stores across the step, and the soil-carbon seam's worst values
       type(slow_ledger_t),    intent(inout), optional :: slow_ledger
       integer(ik),            intent(in),    optional :: patch_threads    !< the patch loop's threads (default 1)
-      logical,                intent(inout), optional :: seed_canopy_air  !< a start's first window
       type(slow_ledger_t) :: ledger   !< the caller's slow ledger, or an inactive one that books nothing
 
       if (present(slow_ledger)) ledger = slow_ledger
@@ -57,8 +56,7 @@ contains
          call fast_dynamics(poly, cfg, met_src=met_src, met_cur=met_cur,                            &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
-                            run_face_budget=run_face_budget, patch_threads=patch_threads,        &
-                            seed_canopy_air=seed_canopy_air)
+                            run_face_budget=run_face_budget, patch_threads=patch_threads)
       end if
 
       !----- The slow dynamics, unless the master slow_on freeze holds the stand while the fast    !

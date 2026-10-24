@@ -16,7 +16,7 @@
 module meds_polygon
    use, intrinsic :: ieee_arithmetic,   only : ieee_is_finite
    use meds_kinds,                      only : wp, ik
-   use meds_config,                     only : meds_config_t, INIT_RESTART
+   use meds_config,                     only : meds_config_t
    use meds_time,                       only : meds_time_t, calendar_step_t, time_to_string
    use meds_budget_check,               only : budget_t, budget_report
    use meds_cohort_state_vars,          only : cohort_bad_field, cohort_field_finite, cohort_field_name
@@ -55,7 +55,6 @@ module meds_polygon
    type :: polygon_run_t
       character(len=40)   :: label = ''                   !< how messages name it ('' for a site run)
       integer(ik)         :: patch_threads = 1_ik         !< the patch loop's threads ([run].n_threads, or 1)
-      logical             :: seed_canopy_air = .false.    !< a start's first window seeds the canopy air
       type(met_cursor_t)  :: met_cur                      !< set only if forcing_on
       type(budget_t)      :: energy_budget, water_budget  !< the whole-column ledgers over the run
       type(budget_t)      :: face_budget                  !< each layer face's water: did the heat move with it
@@ -88,7 +87,6 @@ contains
       type(slow_ledger_t) :: no_ledger                      !< inactive: the first canopy-air depth books nothing
       run%area_start      = total_area(poly)
       run%patch_threads   = patch_threads
-      run%seed_canopy_air = cfg%init%init_mode /= INIT_RESTART
       if (cfg%fast_biophysics_on) then
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, run%met_cur, cell, poly%latitude_deg, poly%longitude_deg,      &
@@ -152,8 +150,7 @@ contains
       call advance_one_step(poly, cfg, met_src=met_src, met_cur=run%met_cur, step_start=step%start,      &
                             out_bufs=out_bufs, run_energy_budget=run%energy_budget,                    &
                             run_water_budget=run%water_budget, run_face_budget=run%face_budget,         &
-                            slow_ledger=run%slow_ledger, patch_threads=run%patch_threads,              &
-                            seed_canopy_air=run%seed_canopy_air)
+                            slow_ledger=run%slow_ledger, patch_threads=run%patch_threads)
 
       !----- Output: replay the staged FAST samples, then fold this step -- its fluxes over the    !
       !      step and its state at its end -- into the slower tiers' windows that hold its start,  !
