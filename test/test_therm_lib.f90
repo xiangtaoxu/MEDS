@@ -6,14 +6,17 @@
 !      docs/science/leaf_gas_exchange.md eq. (4)): each form is k25 at 25 C; Arrhenius     !
 !      rises with temperature and the peaked form has an interior optimum; a warm-grown    !
 !      plant's entropy shift keeps more capacity in heat and moves the optimum up.         !
-!   2. DATUM (internal_energy_to_temp, temp_to_internal_energy): the phase-change          !
-!      inverter round-trips liquid and ice, is continuous at the ends of the melt plateau  !
-!      and sits at t_3ple on it (MEDS_ENERGY_BALANCE_DESIGN.md §3.1).                      !
+!   2. DATUM (internal_energy_to_temp, temp_to_internal_energy, internal_energy_ice): the  !
+!      phase-change inverter round-trips liquid and ice, is continuous at the ends of the  !
+!      melt plateau and sits at t_3ple on it; ice holds internal_energy_ice per kilogram,  !
+!      and melting it at t_3ple costs the latent heat of fusion                            !
+!      (MEDS_ENERGY_BALANCE_DESIGN.md §3.1).                                               !
 !   3. CLAUSIUS-CLAPEYRON (sat_vapor_pressure_temp_deriv): the slope of e_sat against a    !
 !      finite difference.                                                                  !
 !   4. ICE SATURATION (sat_vapor_pressure; docs/science/snow_biophysics.md eq. (1)): an    !
 !      absent liquid fraction is the liquid curve to the bit; the branches meet at the     !
-!      triple point; over ice e_sat is Murphy & Koop (2005)'s.                             !
+!      triple point; over ice e_sat is Murphy & Koop (2005)'s; at 268 K the air saturated  !
+!      over ice holds 3-8 % less vapour than over liquid.                                  !
 !   5. SOIL CONDUCTIVITY (soil_thermal_conductivity; docs/science/soil_biophysics.md eq.   !
 !      (11)): frozen soil conducts more than thawed; the Kersten number is Johansen's log  !
 !      form thawed and the linear form frozen.                                             !
@@ -23,8 +26,9 @@ program test_therm_lib
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : t_kelvin, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
    use meds_therm_lib,   only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,                    &
-                                temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,             &
-                                sat_vapor_pressure_temp_deriv, soil_thermal_conductivity
+                                temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
+                                sat_vapor_pressure, sat_vapor_pressure_temp_deriv, sat_specific_humidity,         &
+                                soil_thermal_conductivity
    implicit none
 
    call test_temperature_response()
@@ -90,10 +94,11 @@ contains
 
    !----- 2. The phase-change inverter, per m3 of soil with 1000 J/m3/K of dry matter and 0.3 kg of  !
    !      water: liquid and ice round-trip; at both ends of the melt plateau it reads t_3ple, and    !
-   !      half way along it t_3ple and half liquid. ----------------------------------------------!
+   !      half way along it t_3ple and half liquid. And 5 kg of snow, with no dry matter: all ice,  !
+   !      it holds internal_energy_ice per kilogram, and melting it at t_3ple costs 5 x 3.34e5 J.   !
    subroutine test_datum()
-      real(wp), parameter :: DH = 1000.0_wp, WM = 0.3_wp
-      real(wp) :: uext, t, fl, u_freeze, u_melt
+      real(wp), parameter :: DH = 1000.0_wp, WM = 0.3_wp, SWE = 5.0_wp
+      real(wp) :: uext, t, fl, u_freeze, u_melt, u_ice, u_liq
       print '(a)', 'test_datum:'
       uext = temp_to_internal_energy(DH, WM, 290.0_wp, 1.0_wp)
       call internal_energy_to_temp(uext, WM, DH, t, fl)
@@ -112,6 +117,11 @@ contains
       call internal_energy_to_temp(0.5_wp * (u_freeze + u_melt), WM, DH, t, fl)
       call check('plateau temp = t_3ple', t, t_3ple, 1.0e-9_wp)
       call check('plateau fliq = 0.5', fl, 0.5_wp, 1.0e-9_wp)
+      u_ice = temp_to_internal_energy(0.0_wp, SWE, 260.0_wp, 0.0_wp)
+      call check('ice holds internal_energy_ice per kilogram', u_ice, SWE * internal_energy_ice(260.0_wp), 1.0e-6_wp)
+      u_ice = temp_to_internal_energy(0.0_wp, SWE, t_3ple, 0.0_wp)
+      u_liq = temp_to_internal_energy(0.0_wp, SWE, t_3ple, 1.0_wp)
+      call check('melting at t_3ple costs the latent heat of fusion', u_liq - u_ice, SWE * 3.34e5_wp, 1.0e-3_wp)
    end subroutine test_datum
 
    !----- 3. The Clausius-Clapeyron slope of the liquid curve against a central difference. ----!
@@ -168,6 +178,12 @@ contains
       e_ice = sat_vapor_pressure(t_3ple - 10.0_wp, 0.0_wp)
       call check_true('liquid curve overstates a frozen surface by ~10 % at -10 C',               &
                       e_liq > 1.08_wp * e_ice .and. e_liq < 1.12_wp * e_ice, e_liq / e_ice)
+      call check_true('at 268 K the air saturated over ice holds 3-8 % less vapour than over liquid',   &
+                      sat_specific_humidity(268.0_wp, 101325.0_wp, 0.0_wp) <                              &
+                      0.97_wp * sat_specific_humidity(268.0_wp, 101325.0_wp) .and.                        &
+                      sat_specific_humidity(268.0_wp, 101325.0_wp, 0.0_wp) >                              &
+                      0.92_wp * sat_specific_humidity(268.0_wp, 101325.0_wp),                             &
+                      sat_specific_humidity(268.0_wp, 101325.0_wp, 0.0_wp) / sat_specific_humidity(268.0_wp, 101325.0_wp))
 
       !----- The blend is monotone in fliq and bracketed by the two pure branches. -------------!
       e_mix = sat_vapor_pressure(t_3ple - 15.0_wp, 0.4_wp)

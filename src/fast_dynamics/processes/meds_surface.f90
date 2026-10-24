@@ -10,7 +10,7 @@
 !   * snow_blend_ground_optics / ground_tile_radiation -- the ground's optics under a      !
 !     pack, and the radiation each tile absorbs at its own;                                !
 !   * snow_surface_fluxes / snow_base_conductance / snow_surface_balance /                 !
-!     snow_take_exchange / snow_energy_step -- its energy.                                 !
+!     snow_take_exchange -- its energy.                                                    !
 !==========================================================================================!
 module meds_surface
    use meds_kinds,              only : wp, ik
@@ -30,9 +30,7 @@ module meds_surface
    public :: ground_surface_exchange, ground_surface_fluxes, prepare_snow_stage
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater, snow_blend_ground_optics
    public :: ground_tile_radiation
-   public :: snow_surface_balance, snow_take_exchange
-   public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
-   public :: snow_surface_fluxes   ! used only by the tests
+   public :: snow_take_exchange
    public :: surface_env_t, snow_out_t
 
    !----- The ground surface's surroundings, read by the snow balance and the bare ground alike:   !
@@ -65,14 +63,13 @@ module meds_surface
    !      ledgers. All zero without a pack. -------------------------------------------------------!
    type :: snow_out_t
       !----- The surface balance. -----------------------------------------------------------------!
-      real(wp) :: t_surf  = 273.16_wp, fliq = 0.0_wp    !< [K],[-] diagnosed snow-surface temperature + liquid fraction
+      real(wp) :: t_surf  = 273.16_wp                   !< [K] diagnosed snow-surface temperature
       real(wp) :: h_snow  = 0.0_wp, le_snow = 0.0_wp    !< [W/m2] sensible + latent (sublimation/evap) to the canopy air
       real(wp) :: w_flux  = 0.0_wp                      !< [kg/m2/s] vapour to the canopy air (>0 sublimation, <0 deposition)
       real(wp) :: g_base  = 0.0_wp                      !< [W/m2] conduction from the snow base into the soil top
       real(wp) :: rnet    = 0.0_wp                      !< [W/m2] net all-wave radiation absorbed by the snow surface
       real(wp) :: energy_in = 0.0_wp                    !< [W/m2] what the pack gains: rnet - h_snow - le_snow - g_base
       real(wp) :: snowfac = 0.0_wp                      !< [-] Niu-Yang07 snow-cover / burial fraction
-      real(wp) :: energy_resid = 0.0_wp                 !< [J/m2] closed-budget residual (~0 by construction)
       !----- The meltwater drainage, a store-to-store hand-off to the pond. -----------------------!
       real(wp) :: melt_mass = 0.0_wp                    !< [kg/m2] free liquid drained this step -> the pond
       real(wp) :: melt_enth = 0.0_wp                    !< [J/m2]  matching enthalpy (internal_energy_liquid(t_3ple))
@@ -471,30 +468,5 @@ contains
          snow%snow_fliq(1) = 0.0_wp
       end if
    end subroutine snow_take_exchange
-
-   !----- One whole step at a fixed environment: the balance, then the pack takes it. The unit the !
-   !      snow tests check; energy_resid is zero by construction. ---------------------------------!
-   pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
-      type(snow_state_t),  intent(inout) :: snow        !< the pack
-      type(surface_env_t), intent(in)    :: env
-      type(snow_params_t), intent(in)    :: params
-      real(wp),            intent(in)    :: dt          !< [s]
-      real(wp),            intent(in)    :: area_frac   !< [-] the snow-cover fraction
-      type(snow_out_t),    intent(out)   :: flux        !< the exchange and its budget residual
-      type(surface_env_t) :: e   !< env with this pack, cover, parameters and step
-      real(wp) :: e_old
-      e = env
-      e%pack    = snow
-      e%snowfac = area_frac
-      e%params  = params
-      e%dt      = dt
-      e_old = snow%snow_energy(1)
-      call snow_surface_balance(e, flux)
-      if (flux%snowfac <= 0.0_wp) return
-      call snow_take_exchange(snow, dt * flux%energy_in, dt * flux%w_flux, params)
-      flux%t_surf = merge(snow%snow_temp(1), flux%t_surf, snow%swe(1) > params%tiny_snow_mass)
-      flux%fliq   = snow%snow_fliq(1)
-      flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * flux%energy_in
-   end subroutine snow_energy_step
 
 end module meds_surface
