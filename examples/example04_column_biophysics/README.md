@@ -26,8 +26,8 @@ python run_example.py --calibrate --workers 40           # ... and redo the cali
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main` or `MEDS_MAIN`,
 default `../../build-dev/meds_main`). The first full run builds the census file from the census
 tables, which it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The
-data); later runs reuse `data/bci_census2010_meds.csv`. Every step together takes about 14 minutes
-on 8 threads. The calibration's 836 runs took 28 minutes on 200 cores of five nodes, with the queue
+data); later runs reuse `data/bci_census2010_meds.csv`. Every step together takes about 12 minutes
+on 8 threads. The calibration's 996 runs took 60 minutes on 200 cores of five nodes, with the queue
 workers of [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
 ## The data
@@ -92,26 +92,30 @@ The calibrated configs, the fit and its report are in [`calibration/`](calibrati
 
 | key | calibrated (68 % range) | prior centre |
 |---|---|---|
-| `vcmax25` [µmol m⁻² s⁻¹] | 31.9 (31.0–32.9) | 39.9 (from the climate) |
-| `stomatal_g1` [kPa^0.5] | 2.79 (2.71–2.86) | 2.80 (from the climate) |
+| `vcmax25` [µmol m⁻² s⁻¹] | 33.6 (32.7–34.5) | 39.9 (from the climate) |
+| `stomatal_g1` [kPa^0.5] | 2.88 (2.81–2.95) | 2.80 (from the climate) |
 | `stomatal_g0` [mol m⁻² s⁻¹] | 0.0003 (0.0002–0.0006) | 0.01 |
-| `leaf_angle_mean` [°] | 56.5 (52.8–60.0) | 45 |
-| `z0m_ratio` | 0.054 (0.052–0.056) | 0.13 |
-| `wstress_sref_stomata` | 2 (fixed: the data do not constrain it) | 2 |
-| κ | 0.743 (0.707–0.779) | 0.65 |
+| `leaf_angle_mean` [°] | 51.6 (47.7–55.4) | 45 |
+| `z0m_ratio` | 0.049 (0.048–0.051) | 0.13 |
+| `wstress_sref_stomata` | 2.8 (1.4–4.7: the data barely constrain it) | 2 |
+| κ | 0.714 (0.680–0.747) | 0.65 |
 
 On the validation windows (RMSE in units of each target's error):
 
 | target | default | calibrated |
 |---|---|---|
-| u\* | 1.75 | 0.66 |
-| GPP | 2.40 | 1.58 |
-| upwelling longwave | 3.84 | 3.56 |
-| LE | 1.67 | 1.60 |
-| H | 3.82 | 3.95 |
+| u\* | 2.16 | 0.73 |
+| GPP | 2.32 | 1.59 |
+| upwelling longwave | 4.12 | 3.93 |
+| LE | 1.66 | 1.59 |
+| H | 3.85 | 4.29 |
+
+**The validation fails on H.** The protocol asks that no target do more than 10 % worse than the
+default, and H does 11 % worse; the other four improve. The calibrated parameters ship as the fit's
+best, with H flagged: lowering the canopy's sensible heat would cost GPP, u\* and the longwave.
 
 The energy-balance gap is the largest uncertainty: sharing it between H and LE instead moves
-`stomatal_g1` to 4.83 and `vcmax25` to 28.7.
+`stomatal_g1` to 4.75 and `vcmax25` to 30.6.
 
 ## 4. Against the tower
 
@@ -122,16 +126,18 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 
 | | tower | target | default | calibrated |
 |---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.12 | 10.47 | 8.60 |
-| LE [W m⁻²] | 75.5 | 75.5 | 78.8 | 63.8 |
-| H by day [W m⁻²] | 91.3 | 166.6 | 142.3 | 157.9 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.74 | −2.87 |
-| net radiation [W m⁻²] | 136.3 | | 122.5 | 123.4 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.23 | 10.50 | 8.75 |
+| LE [W m⁻²] | 75.5 | 75.5 | 81.0 | 66.9 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 161.0 | 174.9 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.79 | −3.00 |
+| net radiation [W m⁻²] | 136.3 | | 139.9 | 139.3 |
 
-- **Carbon:** the calibration brings GPP from 29 % above its target to 6 % above.
-- **Energy:** the model's canopy reflects too much (albedo 0.17–0.18 against the tower's 0.13), so
-  its net radiation is 13–14 W m⁻² short and its daytime H stays below the target.
-- **Water:** the calibration lowers LE to 63.8 W m⁻², below the tower's 75.5, although it improves LE
+- **Carbon:** the calibration brings GPP from 28 % above its target to 6 % above.
+- **Energy:** the model's canopy still reflects more than the tower sees (daytime albedo 0.163–0.168
+  against 0.131), but its net radiation, the leaves', the wood's and the ground's as their balances
+  book it, is within 3–4 W m⁻² of the tower's. The default's daytime H is 3 % below the target; the
+  calibrated run's is 5 % above it.
+- **Water:** the calibration lowers LE to 66.9 W m⁻², below the tower's 75.5, although it improves LE
   on the validation windows.
 - Whole-site energy and water close in both runs.
 
@@ -142,20 +148,20 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 The example runs the calibrated model to 20 April 2016, then restarts it for ten days with every
 patch's and cohort's states written each half hour ([`output_window.toml`](output_window.toml)).
 These are the last days of the 2016 El Niño dry season: four bright dry days, small showers, then
-42 mm of rain on the 27th. The figure shows the patch that covers the most ground (7 % of the site,
-LAI 6.0) and its tallest tree.
-- **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2 K above it, and the
-  top tree's leaves 3–5 K above it at midday. The soil at 2.5 cm swings 1–5 K a day.
+42 mm of rain on the 27th. The figure shows the patch that covers the most ground (8 % of the site,
+LAI 5.4) and its tallest tree.
+- **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2.6 K above it, and the
+  top tree's leaves 3–5.5 K above it at midday. The soil at 2.5 cm swings 1–5.5 K a day.
 - **Canopy-air CO₂** falls to about 399 µmol mol⁻¹ by day as the canopy draws it down, and builds up
-  again to 404–407 at night, and to 416 in the calm last night.
-- **Leaf water potential** refills to about −0.55 MPa each night of the dry spell (−0.37 after the
+  again to 404–409 at night, and to 415 in the calm last night.
+- **Leaf water potential** refills to about −0.5 MPa each night of the dry spell (−0.31 after the
   storm) and falls to −1.3 MPa at midday on the bright days: the tension that pulls the day's
   transpiration up through the sapwood. Panama's canopy trees measure −0.6 to −1.0 MPa before dawn
   and −1.4 to −2.0 at midday in a dry season, so the model's tree is at the wet end of the measured
   range.
-- **Soil moisture.** Before the storm the top 15 cm holds 0.32 m³ m⁻³, near the tower's sensor
-  (0.28). The storm wets the top layers within hours, and the model holds more of it than the sensor
-  in the days after (0.42 against 0.37).
+- **Soil moisture.** Before the storm the top 15 cm holds 0.30–0.31 m³ m⁻³, near the tower's sensor
+  (0.27–0.30). The storm wets the top layers within hours, and the model holds more of it than the
+  sensor in the days after (0.41–0.43 against 0.36–0.37).
 
 ## Files
 

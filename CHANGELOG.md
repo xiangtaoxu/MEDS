@@ -126,7 +126,7 @@ energy, at the tissue's temperature, so the canopy-water runs close their energy
 freezes on its freezing curve, holding supercooled liquid; its ice impedes the water and fills its
 pores, and the soil heat step solves the latent heat with the heat (#511). A tissue's longwave is
 linearized about the emission the two-stream gave it, and the output reports the net radiation the
-balances booked (#512).
+balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -744,6 +744,13 @@ balances booked (#512).
 
 ### Changed
 
+- **Examples 04 and 05 rerun, example 04 refitted** (#513). Example 04's calibration is redone on the
+  fast-kernel physics (vcmax25 33.6, stomatal_g1 2.88, leaf_angle_mean 51.6, z0m_ratio 0.049, κ 0.714);
+  its validation fails on H alone (RMSE +11 %, the limit 10 %), and it ships with H flagged. Against
+  the tower the calibrated GPP is 8.75 (target 8.23), LE 66.9 (75.5), daytime H 174.9 (target 166.6)
+  and the net radiation 139.3 (136.3; it was 13–14 W/m² short). BCI's regrowth reaches 126.6 MgC/ha in
+  2010 (was 124.9; the census 117.9); Palo Verde's reaches 76.5 MgC/ha at 150 years, 87 % of the 2009
+  inventory's.
 - **A tissue's longwave about the emission the two-stream gave it** (#512). The two-stream emits each
   cohort at its start-of-step radiative temperature, but the tissue balance linearized the change in
   emission about the canopy air's, so a tissue warmer than the canopy air lost 4εσT³·AI·(T_rad − T_cas)

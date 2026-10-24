@@ -26,7 +26,7 @@ CENSUS = os.path.join(os.path.dirname(HERE), "example03_demography", "census_sta
 PFT_COLOR = {1: "#008300", 2: "#2a78d6", 3: "#e87ba4"}   # the ED colours, as in example 03
 PFT_NAME = {1: "early", 2: "mid", 3: "late"}
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
-TOWER_GPP = 31.3          # [MgC/ha/yr] the BCI tower 2012-2017, corrected for its low bias (example 04)
+TOWER_GPP = 31.5          # [MgC/ha/yr] the BCI tower 2012-2017, corrected for its low bias (example 04)
 plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK,
                      "xtick.color": MUTED, "ytick.color": MUTED, "axes.spines.top": False,
                      "axes.spines.right": False, "axes.grid": True, "grid.color": GRID,
