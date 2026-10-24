@@ -106,7 +106,9 @@ canopy geometry are stored once (#498). The plants' process modules hold their o
 tissue's energy balance takes its two latent pathways as records (#499). The ground's process modules hold
 their own formulas, the ground surface's surroundings are one record, and the soil water routines take the
 soil's potential in MPa (#500). One module holds the plants' maintenance respiration and the soil's
-heterotrophic respiration, and the fast half no longer links the slow kernels (#501).
+heterotrophic respiration, and the fast half no longer links the slow kernels (#501). The process
+modules' comments say what each kernel computes, and every bare number in them has a name, with no
+change to any result (#502).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -702,6 +704,13 @@ heterotrophic respiration, and the fast half no longer links the slow kernels (#
 
 ### Changed
 
+- **The process modules' comments and named constants** (#502). Every kernel in
+  `fast_dynamics/processes` says what it computes and why, with units on each argument, and not which
+  integrator routine calls it; internal jargon goes from the comments and the science pages. The canopy
+  interception section moves to `vegetation_energy_dynamics.md`, beside the film's evaporation. The
+  in-canopy wind extinction, Katul's difference step, the vapour diffusivity, the hydraulics' `kexp`
+  tolerance and Niu & Yang's reference density are named constants. Every variable of the 10 harness
+  cases is identical on gfortran, and on ifx to #501's.
 - **One respiration module, plant and soil** (#501). `meds_plant_respiration` is `meds_respiration`, and
   the soil's respiration chemistry moves into it from `meds_soil_biogeochem`: the decomposition scalar,
   the CENTURY transfer matrix and Rh. `meds_soil_biogeochem` keeps the pools' daily dynamics and takes the
