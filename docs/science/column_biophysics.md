@@ -179,7 +179,7 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 | canopy interception | `meds_canopy_water`: `canopy_interception`, `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | leaf/wood energy | `meds_plant_energy`: `tissue_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`); every cohort, `canopy_tissue_energy` |
-| ground skin fluxes | `meds_surface`: `ground_surface_fluxes` |
+| ground surface (the snow/bare blend) and skin fluxes | `meds_surface`: `ground_surface_exchange`, `ground_surface_fluxes` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; per patch and sub-step, `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` |
 | snow mass / cover / melt | `meds_surface`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |

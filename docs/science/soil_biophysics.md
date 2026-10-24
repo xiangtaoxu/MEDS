@@ -428,12 +428,14 @@ and passes the resulting flux into the CO₂ source.
 | Concept | Routine |
 |---|---|
 | soil water (the network) | `meds_fast_integ_backward_euler`: `water_step` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_soil_hydr_lib`: `soil_water_relations` |
-| soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate` (its per-step terms from `ground_evaporation_setup`), `bottom_flux` |
+| soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate` (its per-step terms from `ground_evaporation_setup`), `bottom_flux`; the water reaching the pond, `pond_inflow` |
 | soil layers and profile | `meds_soil_derive`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`, `soil_layers`, `build_soil_profile`; the types, `soil_params_t` ([soil]) and `soil_profile_t` (what the solvers read), in `meds_soil_params` |
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
 | thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |
 | soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
+| the column's forcing from the water network's flows | `meds_soil_heat`: `set_soil_heat_env` |
+| a layer's temperature from its energy | `meds_soil_heat`: `soil_layer_temp` |
 | explicit thermal tendency (RK45) | `meds_soil_heat`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
