@@ -7,7 +7,8 @@
 !      ustar a hair either side of neutral.                                                       !
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
 !      (warm air aloft) a SMALLER one, at the same wind. A stable night over a 30 m forest       !
-!      keeps zeta within zeta_max_stable, and its coupling rises with the wind.                   !
+!      keeps zeta within zeta_max_stable, and its coupling rises with the wind. Under a weak wind  !
+!      and hot canopy air the sweeps settle on the root a 200-sweep solve finds.                  !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral); in the very   !
 !      stable range the profile through the surface layer's u* passes through the wind at zref.  !
 !   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
@@ -88,6 +89,15 @@ contains
       call mo_surface_layer(cfg, 2.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
                             287.15_wp, 0.008_wp, us_s, t1, z, r, o)
       call check_true('stable coupling rises with wind', us_s * t1 > 1.5_wp * g_1, us_s * t1 - g_1)
+      !----- Free convection: 0.5 m/s over a 30 m forest, the canopy air 5 K warmer, where four fixed  !
+      !      sweeps missed the coupling by 19 %. --------------------------------------------------------!
+      call mo_surface_layer(cfg, 0.5_wp, 35.0_wp, 18.9_wp, 3.9_wp, 298.15_wp, 0.010_wp,         &
+                            303.15_wp, 0.010_wp, us_s, t1, z, r, o)
+      g_1 = us_s * t1
+      cfg%n_iter_mo = 200_ik
+      call mo_surface_layer(cfg, 0.5_wp, 35.0_wp, 18.9_wp, 3.9_wp, 298.15_wp, 0.010_wp,         &
+                            303.15_wp, 0.010_wp, us_s, t1, z, r, o)
+      call check('free convection: the sweeps settle on the root', g_1, us_s * t1, 1.0e-3_wp * us_s * t1)
    end subroutine test_stability_order
 
    !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!

@@ -17,6 +17,9 @@ module meds_canopy_aerodynamics
    implicit none
    private
 
+   !----- The sweeps stop when the canopy air's coupling to the atmosphere, u* times the scalar    !
+   !      profile factor, moves by less than this share of itself from one sweep to the next. -----!
+   real(wp), parameter :: MO_TOL = 1.0e-4_wp       !< [-]
    !----- Bounds of the Monin-Obukhov stability, from CLM5 (Zeng et al. 1998, J. Climate 11,       !
    !      2628-2644): the first guess uses Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and      !
    !      starts at least 0.01 from neutral; the guess and every sweep stay at least -100. --------!
@@ -265,7 +268,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)):  !
-   ! n_iter_mo sweeps of the four-range denominators from the bulk-Richardson guess.       !
+   ! sweeps of the four-range denominators from the bulk-Richardson guess until the        !
+   ! coupling settles to MO_TOL, at most n_iter_mo of them.                                !
    ! Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's       !
    ! temp1) and the stability diagnostics. Every sweep's zeta is held in                   !
    ! [-100, zeta_max_stable], as CLM5 holds it. zeta divides only in the very-unstable     !
@@ -277,7 +281,7 @@ contains
       real(wp),            intent(in)  :: u_ref, zref, displace, rough, theta_atm, shv_atm   !< [m/s],[m],[m],[m],[K],[kg/kg]
       real(wp),            intent(in)  :: can_theta, can_shv   !< [K], [kg/kg] canopy-air temperature and humidity
       real(wp),            intent(out) :: ustar, heat_transfer_factor, zeta, rib, obu   !< [m/s], [-], [-], [-], [m]
-      real(wp)    :: uref, zldis, z0m, thv_atm, thv_can, dthv, dth, dqh, um, thvstar, wc
+      real(wp)    :: uref, zldis, z0m, thv_atm, thv_can, dthv, dth, dqh, um, thvstar, wc, coupling_prev
       integer(ik) :: it
 
       uref    = max(u_ref, cfg%ubmin)
@@ -305,13 +309,17 @@ contains
          zeta = max(ZETA_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
-      !----- n_iter_mo sweeps, no convergence test: every patch does the same work, and the result !
-      !      is the last sweep's, not a converged root, with whatever error the sweeps leave. -----!
+      !----- Sweep until the coupling u* x heat_transfer_factor settles to MO_TOL of itself, at    !
+      !      most n_iter_mo sweeps. Under hot canopy air and a weak wind the sweeps swing about    !
+      !      the root, and a few of them can miss it by a fifth; near neutral two suffice. --------!
       ustar = cfg%ustmin
       heat_transfer_factor = von_karman / log(zldis / z0m)
+      coupling_prev = -1.0_wp
       do it = 1_ik, cfg%n_iter_mo
          ustar   = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
          heat_transfer_factor   = von_karman / d_heat(zeta, zldis, z0m, cfg)
+         if (abs(ustar * heat_transfer_factor - coupling_prev) <= MO_TOL * ustar * heat_transfer_factor) exit
+         coupling_prev = ustar * heat_transfer_factor
          thvstar = (heat_transfer_factor * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
                  + virtual_temp_factor * theta_atm * (heat_transfer_factor * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
@@ -329,7 +337,7 @@ contains
             um = sqrt(uref * uref + wc * wc)
          end if
       end do
-      !----- Final ustar and heat_transfer_factor at the last sweep's zeta. -----------------------!
+      !----- ustar and heat_transfer_factor at the last sweep's zeta. ------------------------------!
       ustar = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
       heat_transfer_factor = von_karman / d_heat(zeta, zldis, z0m, cfg)
       obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral
