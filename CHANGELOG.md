@@ -128,7 +128,8 @@ pores, and the soil heat step solves the latent heat with the heat (#511). A tis
 linearized about the emission the two-stream gave it, and the output reports the net radiation the
 balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
 Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
-one helper groups the cohorts of one height into a layer (#514).
+one helper groups the cohorts of one height into a layer (#514). The slow loop's science is on two new
+pages, `demography.md` and `conservation.md`, and its code keeps short comments (#515).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -751,6 +752,12 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Changed
 
+- **The slow loop's science moves to the science pages** (#515), with no change to any result.
+  `docs/science/demography.md` (new) gives the vital rates, how they are applied, the cohort and patch
+  operators and what each conserves; `docs/science/conservation.md` (new) the slow site ledger, its
+  phases, declared terms and tolerance. `diagnostics.md` gains "The slow rows", and the ED2 notes move
+  to `ed2_comparison.md` §4.10. The slow modules' comments go from 1,743 lines to 933, and those that
+  no longer matched the code are corrected.
 - **Each tissue pays its own longwave emission** (#514). A cohort's net longwave was split between
   leaves and wood by their share of the absorption, so the leaves paid a share of the wood's emission
   whatever their temperatures. Leaves and wood now share what the cohort takes in, the two-stream's net
