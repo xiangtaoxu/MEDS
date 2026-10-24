@@ -124,7 +124,9 @@ conductivity (#508). The plant hydraulics page says how far the Kirchhoff sapflo
 exact steady flux under gravity, and a test pins it (#509). A canopy film is part of its tissue's
 energy, at the tissue's temperature, so the canopy-water runs close their energy (#510). A soil layer
 freezes on its freezing curve, holding supercooled liquid; its ice impedes the water and fills its
-pores, and the soil heat step solves the latent heat with the heat (#511).
+pores, and the soil heat step solves the latent heat with the heat (#511). A tissue's longwave is
+linearized about the emission the two-stream gave it, and the output reports the net radiation the
+balances booked (#512).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -742,6 +744,16 @@ pores, and the soil heat step solves the latent heat with the heat (#511).
 
 ### Changed
 
+- **A tissue's longwave about the emission the two-stream gave it** (#512). The two-stream emits each
+  cohort at its start-of-step radiative temperature, but the tissue balance linearized the change in
+  emission about the canopy air's, so a tissue warmer than the canopy air lost 4εσT³·AI·(T_rad − T_cas)
+  it never emitted: at BCI the booked canopy net radiation sat 20–25 W/m² below the two-stream's at
+  midday. The slopes are now taken at T_rad and the balance books A_lw − slope·(T − T_rad). The
+  reported net radiation (`mean_rnet_*`) is what the canopy's and the ground's balances booked, and
+  the reported upwelling longwave carries the change in emission within the step, so the reported
+  budget closes on the radiation the ledger books. More of the absorbed energy leaves as sensible heat:
+  BCI (ex04) H +7.3 %, LE +1.1 %, GPP −0.3 %; the region H +5.6 %, GPP −1.0 %; Palo Verde's inventory
+  H +5.5 %, NPP −0.6 %. Accepted integrator steps rise 0.5–2.6 %, ex04's wall time 1 %.
 - **Frozen soil on the soil freezing curve** (#511), CLM5's form. A layer held no liquid below 273.16 K
   and froze on a plateau at it, and its water drained, infiltrated and fed roots at its unfrozen
   conductivity through the ice. Below the triple point a layer now holds the liquid its retention
