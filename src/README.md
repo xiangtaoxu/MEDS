@@ -91,7 +91,7 @@ src/                                    37.5 k lines · 104 modules · 21 CMake 
                    restructuring), meds_polygon (one polygon's run
                    machinery and step), meds_region (a run of one polygon
                    or many: open / step / finalize), meds_main
-                   (the program)                                             1 297
+                   (the program)                                             1 267
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module
