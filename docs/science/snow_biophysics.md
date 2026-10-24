@@ -31,8 +31,9 @@ and the **commit** after it:
   the step after it melts, 15 minutes at the default `dt_fast`.
 - **Exchange** (`snow_surface_balance`, called through `ground_surface_exchange` at every evaluation of the march):
   a linearized backward-Euler balance of the pack's enthalpy over the step, against the canopy air and
-  the top soil node the march holds at that evaluation, as each tissue's is against them — net SW
-  (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, each linearized about
+  the top soil node the march holds at that evaluation, as each tissue's is against them — the
+  shortwave it absorbs at its own albedo + the longwave it absorbs less its own emission − sensible −
+  sublimation/evaporation − base conduction, each linearized about
   the pack's temperature $`T^n`$, so the net flux $R(T)$ is linear and falls as $T$ rises. The pack's
   enthalpy $`E(T)`$ rises with $T$ along the ice line, across the melt plateau and along the liquid
   line, so the balance $`E(T) = E^n + \Delta t\,f_{snow}\,R(T)`$ has one root, found in closed form on
@@ -53,6 +54,26 @@ and the **commit** after it:
 - **Commit** (`snow_take_exchange`): the pack takes the march's time integral of the exchange, the
   energy and vapour the canopy air and the soil received from it, so the pack, the canopy air and the
   soil close together in the whole-column ledgers; its temperature reads off the new energy.
+
+### The ground's radiation
+
+The two-stream sees one ground, the bare soil and the pack blended by the cover fraction $`f`$: its
+albedo and emissivity are the cover-weighted means, and it emits at the temperature at which that
+emissivity gives the two tiles' emission,
+
+```math
+\bar\varepsilon\,\sigma T_{eff}^4 = f\,\varepsilon_{snow}\sigma T_{snow}^4 + (1-f)\,\varepsilon_{soil}\sigma T_{soil}^4 .
+```
+
+What reaches the ground in each band, $`S_b`$ and $`L^\downarrow`$, is then shared at each tile's own
+optics (`ground_tile_radiation`). Per unit of its area the bare soil takes
+$`\sum_b S_b(1-\alpha_{soil,b}) + \varepsilon_{soil}(L^\downarrow-\sigma T_{soil}^4)`$, at the top
+soil node's temperature at the step's start, and the snow $`\sum_b S_b(1-\alpha_{snow,b})`$ of
+shortwave, with $`\varepsilon_{snow}(L^\downarrow-\sigma T^4)`$ of longwave formed in its balance at its
+own temperature. Weighted by the cover, the two give the blended ground's absorption, so the canopy and
+the ground agree on the ground's radiation. Half-covered ground under 300 W m⁻² of shortwave splits it by
+albedo, not by area: the snow's half absorbs about 38 W m⁻² of ground area and the soil's 117, where an
+even split would give each 77.
 
 ### Sublimation saturates over ice
 

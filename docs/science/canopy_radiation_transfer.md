@@ -179,11 +179,13 @@ $`u_{ground}`$, and the patch **albedo** = upward flux leaving the top / total i
 band the ground reflectance is the (per-band) soil albedo and its emission is zero; for the thermal
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
 T_{soil}^4`$. Its input (`ground_optics_env_t`) is **bare soil plus snow**: the per-band soil albedo,
-the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo,
-emissivity and temperature by the Niu-Yang snow-cover fraction, so a partial pack changes the ground
-continuously; the snow's own albedo moves from its fresh to its aged value with the liquid fraction of
-the pack's surface layer. Litter, standing water and soil moisture do not change the ground optics (see
-docs/ROADMAP.md).
+the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo and
+emissivity by the Niu-Yang snow-cover fraction, so a partial pack changes the ground continuously; the
+snow's own albedo moves from its fresh to its aged value with the liquid fraction of the pack's surface
+layer. The blend's temperature is the one at which the blended emissivity emits what the soil and the
+pack emit at their own temperatures. What reaches the ground in each band is then shared between the
+two at their own optics ([snow_biophysics](snow_biophysics.md), "The ground's radiation"). Litter,
+standing water and soil moisture do not change the ground optics (see docs/ROADMAP.md).
 
 `canopy_radiation` (the per-patch entry point, `meds_canopy_radiation`) loops the configured bands,
 blends optics per cohort, and dispatches each band to `solve_band`.
@@ -290,4 +292,4 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
 | LW emission temperature | `meds_canopy_radiation`: `radiative_temperature` |
-| the ground's optics under snow | `meds_surface`: `snow_blend_ground_optics` |
+| the ground's optics under snow, and each tile's radiation | `meds_surface`: `snow_blend_ground_optics`, `ground_tile_radiation` |

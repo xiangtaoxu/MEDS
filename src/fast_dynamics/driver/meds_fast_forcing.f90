@@ -18,7 +18,7 @@ module meds_fast_forcing
    use meds_pft_params,         only : N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
    use meds_canopy_radiation,   only : canopy_radiation, ground_optics, radiative_temperature
-   use meds_surface,            only : snow_blend_ground_optics
+   use meds_surface,            only : snow_blend_ground_optics, ground_tile_radiation
    use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
    implicit none
    private
@@ -193,6 +193,11 @@ contains
       forcing%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &
                             + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))
       forcing%abs_lw_ground = flux%dn_ground(RAD_LW) - flux%up_ground(RAD_LW)   ! net ground LW, emission included
+      !----- What each tile takes of the radiation reaching the ground, at its own optics. ----------!
+      call ground_tile_radiation(flux%dn_ground(RAD_VIS), flux%dn_ground(RAD_NIR), flux%dn_ground(RAD_LW),     &
+                                 soil_albedo(RAD_VIS), soil_albedo(RAD_NIR), cfg%soil%ground_emissivity,       &
+                                 soil_temp_top, dynamic%snow, cfg%snow, forcing%rnet_soil, forcing%sw_snow)
+      forcing%lw_down_ground = flux%dn_ground(RAD_LW)
       forcing%par_per_w     = par_w_2_umol                     ! true VIS absorbed -> photon flux
       !----- Top-of-canopy fluxes: each band's albedo times the incident it was formed from, kept as   !
       !      fluxes (docs/science/canopy_radiation_transfer.md, Surface radiative fluxes on the       !

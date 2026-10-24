@@ -683,6 +683,7 @@ contains
    subroutine set_noon_forcing()
       forcing%abs_sw = 450.0_wp ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
       forcing%abs_sw_ground = 70.0_wp ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rnet_soil = forcing%abs_sw_ground + forcing%abs_lw_ground
       forcing%rainfall = 0.0_wp
       forcing%enthalpy_atm = cas_temp_to_enthalpy(295.0_wp, 0.008_wp)
       forcing%shv_atm = 0.008_wp ; forcing%co2_atm = 400.0_wp
@@ -697,6 +698,7 @@ contains
       t_air = 288.0_wp + 6.0_wp * (cosz - 0.3_wp)
       forcing%abs_sw = 500.0_wp * cosz ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
       forcing%abs_sw_ground = 75.0_wp * cosz ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rnet_soil = forcing%abs_sw_ground + forcing%abs_lw_ground
       forcing%rainfall = 0.0_wp
       forcing%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.008_wp)
       forcing%shv_atm = 0.008_wp ; forcing%co2_atm = 400.0_wp
@@ -714,6 +716,7 @@ contains
       t_air = 252.0_wp + 4.0_wp * (cosz - 0.3_wp)                 ! ~248-256 K (a −20 C cold snap)
       forcing%abs_sw = 120.0_wp * cosz ; forcing%abs_par = forcing%abs_sw ; forcing%abs_lw = 0.0_wp
       forcing%abs_sw_ground = 20.0_wp * cosz ; forcing%abs_lw_ground = 0.0_wp
+      forcing%rnet_soil = forcing%abs_sw_ground + forcing%abs_lw_ground
       forcing%rainfall = 0.0_wp
       forcing%enthalpy_atm = cas_temp_to_enthalpy(t_air, 0.001_wp)   ! very dry cold air
       forcing%shv_atm = 0.001_wp ; forcing%co2_atm = 400.0_wp

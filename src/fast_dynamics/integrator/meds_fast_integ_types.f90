@@ -221,8 +221,12 @@ module meds_fast_integ_types
       real(wp)              :: wind          = 2.0_wp   !< [m/s]      wind at the reference level
       real(wp)              :: press         = 101325.0_wp  !< [Pa]   air pressure
       real(wp)              :: rho_air       = 1.2_wp   !< [kg/m3]    air density
-      real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave reaching the ground
-      real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground
+      real(wp)              :: abs_sw_ground = 0.0_wp   !< [W/m2] shortwave the ground absorbs, snow and soil
+      real(wp)              :: abs_lw_ground = 0.0_wp   !< [W/m2] net longwave at the ground, snow and soil
+      !----- Each ground tile's radiation per unit of its own area (ground_tile_radiation). -------!
+      real(wp)              :: rnet_soil     = 0.0_wp   !< [W/m2] the bare soil's net all-wave radiation
+      real(wp)              :: sw_snow       = 0.0_wp   !< [W/m2] the shortwave the snow absorbs
+      real(wp)              :: lw_down_ground = 0.0_wp  !< [W/m2] the longwave reaching the ground
       real(wp)              :: rainfall      = 0.0_wp   !< [kg/m2/s] reference-level rainfall (intercepted downstream)
       real(wp)              :: snowfall      = 0.0_wp   !< [kg/m2/s] snowfall (drives snow accumulation)
       real(wp)              :: par_per_w     = 2.1_wp   !< [umol photon / (W absorbed)] absorbed->PAR-photon factor

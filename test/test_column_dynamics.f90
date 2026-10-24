@@ -16,7 +16,7 @@
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4, n_soil_layer_max, tissue_c_leaf, &
-                                        tissue_c_wood_dry
+                                        tissue_c_wood_dry, stefan_boltzmann
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_fast_params,         only : INTEG_ESDIRK2, INTEG_RK45
@@ -599,6 +599,12 @@ contains
             t_air = T0 ; forcing%abs_sw = 0.0_wp ; forcing%abs_par = 0.0_wp ; forcing%abs_sw_ground = 0.0_wp
             forcing%rainfall = 0.0_wp
          end if
+         !----- Each ground tile's radiation: the bare soil nets the fixture's ground radiation, and a  !
+         !      pack absorbs its shortwave under a sky that emits what the pack does, so the pack has  !
+         !      no longwave loss at the step's start. ------------------------------------------------!
+         forcing%rnet_soil      = forcing%abs_sw_ground + forcing%abs_lw_ground
+         forcing%sw_snow        = forcing%abs_sw_ground
+         forcing%lw_down_ground = stefan_boltzmann * dynamic%snow%snow_temp(1) ** 4
          !----- The air temperature values frozen precipitation as ice, and it is the reference the  !
          !      surface layer measures the canopy against: the pre-pass gives it to the aerodynamics. --!
          forcing%air_temp     = t_air

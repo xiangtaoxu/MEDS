@@ -177,7 +177,7 @@ contains
             !      water here is only the CAS-vapour exchange. ------------------------------------------!
             bf%soil_wat_in  = 0.0_wp
             bf%soil_wat_out = 0.0_wp
-            !----- ground_rad is the snowfac-blended radiation (abs_sw + abs_lw when bare). Infiltration,  !
+            !----- ground_rad is the tiles' radiation, cover-weighted (rnet_soil when bare). Infiltration,  !
             !      exfiltration and uptake move enthalpy between tracked stores and cancel; rain and runoff  !
             !      are added once at the outer level (docs/science/numerical_scheme.md §5b). -------------!
             bf%whole_enth_in= surf_tend%coh_rnet + surf_tend%ground_rad - eflux%bottom_heat

@@ -7,7 +7,8 @@
 !   * ground_surface_fluxes -- the bare ground's sensible and latent fluxes;               !
 !   * prepare_snow_stage -- the pack before a step: its precipitation, drainage and cover; !
 !   * snow_cover_fraction / snow_accumulate / snow_drain_meltwater -- the snow's mass;     !
-!   * snow_blend_ground_optics -- the ground's optics under a pack;                        !
+!   * snow_blend_ground_optics / ground_tile_radiation -- the ground's optics under a      !
+!     pack, and the radiation each tile absorbs at its own;                                !
 !   * snow_surface_fluxes / snow_base_conductance / snow_surface_balance /                 !
 !     snow_take_exchange / snow_energy_step -- its energy.                                 !
 !==========================================================================================!
@@ -28,18 +29,21 @@ module meds_surface
 
    public :: ground_surface_exchange, ground_surface_fluxes, prepare_snow_stage
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater, snow_blend_ground_optics
+   public :: ground_tile_radiation
    public :: snow_surface_balance, snow_take_exchange
    public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
    public :: snow_surface_fluxes   ! used only by the tests
    public :: surface_env_t, snow_out_t
 
    !----- The ground surface's surroundings, read by the snow balance and the bare ground alike:   !
-   !      the radiation it absorbs and its conductance to the canopy air, the canopy air's and the !
-   !      soil top's state, the bare ground's evaporation, and the pack it exchanges with, the     !
-   !      pack's cover and parameters, and the step its balance relaxes over (prepare_snow_stage   !
-   !      sets the pack and the cover). -----------------------------------------------------------!
+   !      the radiation each tile absorbs and its conductance to the canopy air, the canopy air's  !
+   !      and the soil top's state, the bare ground's evaporation, and the pack it exchanges with, !
+   !      the pack's cover and parameters, and the step its balance relaxes over                   !
+   !      (prepare_snow_stage sets the pack and the cover). ---------------------------------------!
    type :: surface_env_t
-      real(wp) :: abs_sw   = 0.0_wp, abs_lw = 0.0_wp    !< [W/m2] the snow-blended ground's absorbed SW and net LW
+      real(wp) :: rnet_soil = 0.0_wp                    !< [W/m2] the bare soil's net all-wave radiation per unit of its area
+      real(wp) :: sw_snow   = 0.0_wp                    !< [W/m2] the shortwave the snow absorbs per unit of its area
+      real(wp) :: lw_down   = 0.0_wp                    !< [W/m2] the longwave reaching the ground
       real(wp) :: can_temp = 273.16_wp, can_shv = 0.0_wp !< [K],[kg/kg] the canopy air's temperature and specific humidity
       real(wp) :: ggnet    = 0.0_wp                     !< [m/s] ground to canopy-air conductance, heat and vapour alike
       real(wp) :: rho_air  = 1.2_wp, press = 101325.0_wp !< [kg/m3],[Pa] the canopy air's density and pressure
@@ -115,9 +119,9 @@ contains
       h_ground  = sfx%h_snow  + (1.0_wp - env%snowfac) * h_bare
       le_ground = sfx%le_snow + le_soil
       g_top     = sfx%g_base                                                                         &
-                  + (1.0_wp - env%snowfac) * (env%abs_sw + env%abs_lw - h_bare)                      &
+                  + (1.0_wp - env%snowfac) * (env%rnet_soil - h_bare)                                 &
                   - le_soil
-      ground_rad      = sfx%rnet + (1.0_wp - env%snowfac) * (env%abs_sw + env%abs_lw)
+      ground_rad      = sfx%rnet + (1.0_wp - env%snowfac) * env%rnet_soil
       snow_energy_in  = sfx%energy_in
       snow_vapour_out = sfx%w_flux
    end subroutine ground_surface_exchange
@@ -154,10 +158,11 @@ contains
       end if
    end function snow_cover_fraction
 
-   !----- The ground's optics under a pack: its albedo, emissivity and emission temperature        !
-   !      blended toward the pack's by the snow-cover fraction, so a partial pack is continuous;   !
-   !      the fresh and aged albedos are weighted by the surface liquid fraction                   !
-   !      (docs/science/canopy_radiation_transfer.md §4). Unchanged without a pack. ---------------!
+   !----- The ground's optics under a pack, for the two-stream: its albedo and emissivity blended  !
+   !      toward the pack's by the snow-cover fraction, so a partial pack is continuous, and the   !
+   !      temperature at which the blended emissivity emits what the soil and the pack emit at     !
+   !      their own (docs/science/snow_biophysics.md, "The ground's radiation"). Unchanged without !
+   !      a pack. ---------------------------------------------------------------------------------!
    pure subroutine snow_blend_ground_optics(snow, params, snow_rough, albedo_vis, albedo_nir, emiss, temp)
       type(snow_state_t),  intent(in)    :: snow
       type(snow_params_t), intent(in)    :: params
@@ -166,17 +171,52 @@ contains
       real(wp),            intent(inout) :: albedo_nir   !< [-] NIR albedo: the bare soil's on entry
       real(wp),            intent(inout) :: emiss        !< [-] thermal emissivity: the bare soil's on entry
       real(wp),            intent(inout) :: temp         !< [K] emission temperature: the top soil node's on entry
-      real(wp) :: fc, fl
+      real(wp) :: fc, snow_vis, snow_nir, emit_soil, emit_snow
       if (.not. (snow%nlayer >= 1_ik .and. snow%swe(1) > params%tiny_snow_mass)) return
       fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), params, snow_rough)
-      fl = snow%snow_fliq(1)
-      albedo_vis = (1.0_wp - fc) * albedo_vis                                                        &
-                   + fc * ((1.0_wp - fl) * params%albedo_vis_fresh + fl * params%albedo_vis_aged)
-      albedo_nir = (1.0_wp - fc) * albedo_nir                                                        &
-                   + fc * ((1.0_wp - fl) * params%albedo_nir_fresh + fl * params%albedo_nir_aged)
+      call snow_albedos(snow, params, snow_vis, snow_nir)
+      emit_soil  = emiss * temp ** 4                                ! [K4] emission over sigma
+      emit_snow  = params%snow_emiss * snow%snow_temp(1) ** 4
+      albedo_vis = (1.0_wp - fc) * albedo_vis + fc * snow_vis
+      albedo_nir = (1.0_wp - fc) * albedo_nir + fc * snow_nir
       emiss      = (1.0_wp - fc) * emiss + fc * params%snow_emiss
-      temp       = (1.0_wp - fc) * temp + fc * snow%snow_temp(1)
+      temp       = (((1.0_wp - fc) * emit_soil + fc * emit_snow) / emiss) ** 0.25_wp
    end subroutine snow_blend_ground_optics
+
+   !----- The pack's own shortwave albedos, fresh to aged by its surface liquid fraction; a pack   !
+   !      this step's snowfall has yet to make is fresh. ------------------------------------------!
+   pure subroutine snow_albedos(snow, params, albedo_vis, albedo_nir)
+      type(snow_state_t),  intent(in)  :: snow
+      type(snow_params_t), intent(in)  :: params
+      real(wp),            intent(out) :: albedo_vis, albedo_nir   !< [-]
+      real(wp) :: fl
+      fl = 0.0_wp
+      if (snow%nlayer >= 1_ik) fl = snow%snow_fliq(1)
+      albedo_vis = (1.0_wp - fl) * params%albedo_vis_fresh + fl * params%albedo_vis_aged
+      albedo_nir = (1.0_wp - fl) * params%albedo_nir_fresh + fl * params%albedo_nir_aged
+   end subroutine snow_albedos
+
+   !----- The radiation each tile of the ground absorbs per unit of its own area, from what        !
+   !      reaches the ground in each band (docs/science/snow_biophysics.md, "The ground's          !
+   !      radiation"): the bare soil's net all-wave radiation at its albedo and emissivity and the !
+   !      top soil node's temperature, and the shortwave the snow absorbs at its own albedo. The   !
+   !      snow's longwave is formed in its balance, at its own temperature. Weighted by the cover, !
+   !      the two give the ground absorption of the two-stream, whose optics                       !
+   !      snow_blend_ground_optics blends. --------------------------------------------------------!
+   pure subroutine ground_tile_radiation(dn_vis, dn_nir, dn_lw, soil_albedo_vis, soil_albedo_nir, soil_emiss,  &
+                                         soil_temp, snow, params, rnet_soil, sw_snow)
+      real(wp),            intent(in)  :: dn_vis, dn_nir, dn_lw   !< [W/m2] each band reaching the ground
+      real(wp),            intent(in)  :: soil_albedo_vis, soil_albedo_nir, soil_emiss   !< [-] the bare soil's optics
+      real(wp),            intent(in)  :: soil_temp               !< [K] the top soil node's temperature
+      type(snow_state_t),  intent(in)  :: snow
+      type(snow_params_t), intent(in)  :: params
+      real(wp),            intent(out) :: rnet_soil, sw_snow      !< [W/m2]
+      real(wp) :: snow_vis, snow_nir
+      rnet_soil = dn_vis * (1.0_wp - soil_albedo_vis) + dn_nir * (1.0_wp - soil_albedo_nir)              &
+                  + soil_emiss * (dn_lw - stefan_boltzmann * soil_temp ** 4)
+      call snow_albedos(snow, params, snow_vis, snow_nir)
+      sw_snow = dn_vis * (1.0_wp - snow_vis) + dn_nir * (1.0_wp - snow_nir)
+   end subroutine ground_tile_radiation
 
    !----- Snowfall joins the pack as ice and rain-on-snow as liquid, with their precip_enthalpy. A !
    !      layer is created only from min_new_snow_mass of new snow; with no layer and less, the    !
@@ -336,7 +376,7 @@ contains
       type(snow_out_t),    intent(out) :: flux   !< the exchange
       real(wp) :: t_n, fliq_n, e_old, swe0, gcond, af, dtaf
       real(wp) :: h_n, w_n, le_n, g_n, dh_dt, dw_dt, demit_dt, l_vap, r0, drdt
-      real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit
+      real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit, rad_n
       real(wp) :: dt, area_frac
 
       dt        = env%dt
@@ -364,8 +404,11 @@ contains
          dh_dt    = env%ggnet * env%rho_air * cp_air
          dw_dt    = env%ggnet * env%rho_air * sat_specific_humidity_temp_deriv(t_n, env%press, fliq_n)
          demit_dt = 4.0_wp * params%snow_emiss * stefan_boltzmann * t_n ** 3
+         !----- The snow's net radiation at T^n: what it absorbs at its own albedo and emissivity, !
+         !      less its own emission. ------------------------------------------------------------!
+         rad_n    = env%sw_snow + params%snow_emiss * (env%lw_down - stefan_boltzmann * t_n ** 4)
          l_vap    = enthalpy_vapor(t_n) - e_old / swe0
-         r0       = env%abs_sw + env%abs_lw - h_n - l_vap * w_n - g_n
+         r0       = rad_n - h_n - l_vap * w_n - g_n
          drdt     = -(demit_dt + dh_dt + l_vap * dw_dt + gcond)                ! < 0
 
          !----- Solve swe e(T) = E^n + dt af (r0 + drdt (T - T^n)): on the plateau first, else on the  !
@@ -393,7 +436,7 @@ contains
             le_s = w_s * (l_vap + e_bal / swe0)       ! the latent heat plus the leaving mass's own energy
          else                                         ! the whole pack sublimates, with all the energy left
             w_s  = swe0 / dtaf
-            le_s = e_old / dtaf + env%abs_sw + env%abs_lw - emit - h_s - g_s
+            le_s = e_old / dtaf + rad_n - emit - h_s - g_s
          end if
 
          !----- The fluxes per unit ground area, positive away from the pack: h_snow + le_snow to the  !
@@ -404,7 +447,7 @@ contains
          flux%le_snow   = af * le_s
          flux%w_flux    = af * w_s
          flux%g_base    = af * g_s
-         flux%rnet      = af * (env%abs_sw + env%abs_lw - emit)   ! snow's area-weighted net radiation into the store
+         flux%rnet      = af * (rad_n - emit)                     ! snow's area-weighted net radiation into the store
          flux%energy_in = flux%rnet - flux%h_snow - flux%le_snow - flux%g_base
       end associate
    end subroutine snow_surface_balance
