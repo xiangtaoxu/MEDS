@@ -325,7 +325,7 @@ contains
       logical,                   intent(in)    :: with_jacobian
       integer(ik) :: k, i, ca, cb, c, nsl, nsoil
       real(wp) :: q, dq_pa, dq_pb, dq_ka, dq_kb, dqa, dqb, u, s, ds_w, ds_l
-      real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
+      real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1
       real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum, du_dpsi(profile%n_active), du_dk(profile%n_active)
 
       nsl   = profile%n_active
@@ -391,19 +391,18 @@ contains
       ev%inflow_soil(POND) = ev%inflow_soil(POND) + drive%rain
       c = 2_ik
       theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1))
-      call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, drive%ground, soil, e, de_dtheta, de_dpsi)
+      call ground_evaporation_rate(theta1, ev%psi_soil(c), drive%ground, soil, e, de_dtheta, de_dpsi)
       ev%evap = e
       ev%inflow_soil(c) = ev%inflow_soil(c) - e
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
                          + de_dtheta * ev%dwater_soil(c) / (rho_h2o * profile%dz(1))                               &
-                         + de_dpsi * ev%dpsi_soil(c) / grav_head
+                         + de_dpsi * ev%dpsi_soil(c)
       c = 1_ik + nsl
-      head = ev%psi_soil(c) / grav_head
-      call bottom_flux(profile, soil, nsl, head, ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
+      call bottom_flux(profile, soil, nsl, ev%psi_soil(c), ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
       ev%drain = rho_h2o * qbot
       ev%inflow_soil(c) = ev%inflow_soil(c) - ev%drain
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
-                         + rho_h2o * (dqbot_dpsi * ev%dpsi_soil(c) / grav_head + dqbot_dk * ev%dk_soil(c))
+                         + rho_h2o * (dqbot_dpsi * ev%dpsi_soil(c) + dqbot_dk * ev%dk_soil(c))
 
       !----- Each cohort: uptake from its layers, sapflow to its leaves, and transpiration. The      !
       !      cohort's uptake comes from its whole root profile at once; its own sums are kept in       !

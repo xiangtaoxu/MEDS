@@ -74,18 +74,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The bottom-face Darcy flux [m/s, down-positive] (docs/science/soil_biophysics.md,     !
-   ! "Boundary conditions, and what the aquifer option actually means"): drainage          !
-   ! q = drain_factor * K(theta_n), or the aquifer boundary q = K_bot (psi_n/Delta + 1),   !
-   ! Delta = dz(n)/2, with K_bot upstream: K(theta_n) downward, K_sat upward.              !
+   ! "Boundary conditions, and what the aquifer option actually means"): drainage q =      !
+   ! drain_factor * K(theta_n), or the aquifer boundary q = K_bot (h_n/Delta + 1), h_n =   !
+   ! psi_n/(rho_w g) the deepest layer's head and Delta = dz(n)/2, with K_bot upstream:    !
+   ! K(theta_n) downward, K_sat upward.                                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
       type(soil_profile_t), intent(in)  :: profile
       type(soil_params_t),  intent(in)  :: soil
       integer(ik),          intent(in)  :: n
-      real(wp),             intent(in)  :: psi_n    !< [m]   matric head of the deepest layer
+      real(wp),             intent(in)  :: psi_n    !< [MPa] matric potential of the deepest layer
       real(wp),             intent(in)  :: k_n      !< [m/s] K(theta_n) of the deepest layer
       real(wp),             intent(out) :: qbot     !< [m/s] down-positive
-      real(wp), optional,   intent(out) :: dq_dpsi  !< [1/s] d(qbot)/d(psi_n), for the implicit solve
+      real(wp), optional,   intent(out) :: dq_dpsi  !< [m/s/MPa] d(qbot)/d(psi_n), for the implicit solve
       real(wp), optional,   intent(out) :: dq_dk    !< [-]   d(qbot)/d(k_n), for the water network
       real(wp) :: delta, grad, k_bot
       qbot = 0.0_wp
@@ -93,7 +94,7 @@ contains
       if (present(dq_dk))   dq_dk   = 0.0_wp
       if (soil%water_bottom_bc == SOIL_BC_AQUIFER) then
          delta = 0.5_wp * profile%dz(n)                                  ! z_node(n) - z_bottom > 0
-         grad  = psi_n / delta + 1.0_wp
+         grad  = psi_n / grav_head / delta + 1.0_wp
          if (grad >= 0.0_wp) then
             k_bot = k_n                                                 ! downward: upstream is layer n
             if (present(dq_dk)) dq_dk = grad
@@ -101,7 +102,7 @@ contains
             k_bot = profile%ksat(n)                                      ! upward: upstream is saturated
          end if
          qbot = k_bot * grad
-         if (present(dq_dpsi)) dq_dpsi = k_bot / delta
+         if (present(dq_dpsi)) dq_dpsi = k_bot / (delta * grav_head)
       else                                                              ! drainage, q = f K(theta_n)
          qbot = soil%drain_factor * k_n
          if (present(dq_dk)) dq_dk = soil%drain_factor
@@ -132,24 +133,25 @@ contains
    end subroutine ground_evaporation_setup
 
    !---------------------------------------------------------------------------------------!
-   ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water content        !
-   ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives (docs/science/soil_biophysics.md,    !
-   ! "The soil water column"): Philip's pore-space humidity (over ice when frozen) through the          !
-   ! Swenson-Lawrence dry-surface-layer resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from    !
-   ! the snow-free share only (docs/science/snow_biophysics.md). Both corners are rounded for Newton.   !
-   ! The boundary's constant terms are ground_evaporation_setup's.                                      !
+   ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water   !
+   ! content theta1 [m3/m3] and matric potential psi1 [MPa], with its derivatives          !
+   ! (docs/science/soil_biophysics.md, "The soil water column"): Philip's pore-space       !
+   ! humidity (over ice when frozen) through the Swenson-Lawrence dry-surface-layer        !
+   ! resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from the snow-free share only !
+   ! (docs/science/snow_biophysics.md). Both corners are rounded for Newton. The           !
+   ! boundary's constant terms are ground_evaporation_setup's.                             !
    !---------------------------------------------------------------------------------------!
    pure subroutine ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil, de_dtheta, de_dpsi)
       real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content
-      real(wp),               intent(in)  :: psi1        !< [m]     top-layer matric head
+      real(wp),               intent(in)  :: psi1        !< [MPa]   top-layer matric potential
       type(ground_evap_env_t), intent(in) :: forcing
       type(soil_params_t),    intent(in)  :: soil
       real(wp),               intent(out) :: e_soil      !< [kg/m2/s]
       real(wp),               intent(out) :: de_dtheta   !< [kg/m2/s per m3/m3]
-      real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per m of head]
+      real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per MPa]
       real(wp) :: alpha_soil, dalpha, drive, ddrive, dry, ddry, r_soil, dr_dtheta, resist
-      alpha_soil = safe_exp(psi1 * grav / forcing%rv_t)
-      dalpha     = alpha_soil * grav / forcing%rv_t
+      alpha_soil = safe_exp(psi1 / grav_head * grav / forcing%rv_t)   ! Philip's humidity, on the head
+      dalpha     = alpha_soil * grav / forcing%rv_t / grav_head          ! per MPa
       call smooth_max0(alpha_soil * forcing%q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
       !----- The dry surface layer, from theta_init down to the air-dry water content. ----------!
       call smooth_max0(forcing%theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)

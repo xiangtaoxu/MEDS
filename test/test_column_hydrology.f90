@@ -204,7 +204,7 @@ contains
       type(soil_params_t)  :: opts
       type(column_t)       :: col
       real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
-      real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp   ! [m/s], [m] a deepest layer's state
+      real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp * grav_head   ! [m/s], [MPa] a deepest layer's state
       real(wp) :: q, dq_dpsi, dq_dk, w0, w1, drained, drained_free, theta(10)
       integer(ik) :: step
       print '(a)', 'test_leaky_drain:'
@@ -402,18 +402,18 @@ contains
       type(soil_profile_t)   :: params
       type(soil_params_t)    :: opts
       type(ground_evap_env_t) :: f
-      real(wp) :: e_full, e_half, e_none, de1, de2, head
+      real(wp) :: e_full, e_half, e_none, de1, de2, psi
       print '(a)', 'test_snow_free_evap:'
       call loam_params(params)
       f%t_ground = 305.0_wp ; f%q_air = 0.001_wp ; f%rho_air = 1.2_wp ; f%r_aero = 50.0_wp
       call ground_evaporation_setup(params, opts, f)
-      head = soil_theta_to_head(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      psi = grav_head * soil_theta_to_head(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       f%snow_free_frac = 1.0_wp
-      call ground_evaporation_rate(0.30_wp, head, f, opts, e_full, de1, de2)
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_full, de1, de2)
       f%snow_free_frac = 0.5_wp
-      call ground_evaporation_rate(0.30_wp, head, f, opts, e_half, de1, de2)
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_half, de1, de2)
       f%snow_free_frac = 0.0_wp
-      call ground_evaporation_rate(0.30_wp, head, f, opts, e_none, de1, de2)
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_none, de1, de2)
       call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
       call check('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,             &
                  1.0e-14_wp * max(e_full, 1.0e-12_wp))
@@ -458,7 +458,7 @@ contains
       type(ground_evap_env_t), intent(in) :: f
       type(soil_params_t),    intent(in) :: opts
       real(wp) :: de1, de2
-      call ground_evaporation_rate(th, soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp,     &
+      call ground_evaporation_rate(th, grav_head * soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, &
                                    3.6_wp, 1.56_wp), f, opts, e, de1, de2)
    end function loam_evap
 
