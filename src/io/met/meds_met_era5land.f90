@@ -202,12 +202,10 @@ contains
       src%ngrid = src%cells%ncell
       src%has_wind_vector = .true.
       src%humidity = HUMIDITY_TDEW                           ! the archive stores the 2 m dewpoint
-      if (present(cells)) then
-         write(*,'(a,i0,a)') ' force : ED_ERA5land region, ', src%cells%ncell, ' cells'
-      else
+      !----- A caller that chose the cells reports them; the site's own choice is reported here. ---!
+      if (.not. present(cells))                                                                 &
          write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', src%cells%lat(1), ', ',  &
                src%cells%lon(1), '), ', distance_km, ' km from the site; orography ', src%cells%elevation(1), ' m'
-      end if
 
       !----- The months: the declared recycle window, or the run period. ----------------------!
       if (f%recycle) then

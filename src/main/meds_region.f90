@@ -42,8 +42,7 @@ module meds_region
    use meds_met_era5land,           only : era5land_grid
    use meds_output_reduce,          only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
-                                           ensure_output_dir, RUN_OK, RUN_FINISHED, RUN_ERR_NAN,         &
-                                           RUN_ERR_AREA, RUN_ERR_BOUNDS
+                                           RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : output_params_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_output_stream,          only : output_serialize, output_close
@@ -118,68 +117,39 @@ contains
       if (.not. ok) call region_free(reg)
    end subroutine region_open
 
-   !----- Everything region_open does; ok = .false. (after saying why) when the run cannot         !
-   !      start. ----------------------------------------------------------------------------------!
+   !----- Everything region_open does, in order; ok = .false. (after saying why) when the run      !
+   !      cannot start. ---------------------------------------------------------------------------!
    subroutine open_run(path, reg, ok)
       character(len=*),    intent(in)    :: path
       type(meds_region_t), intent(inout) :: reg
       logical,             intent(out)   :: ok
-      type(met_cells_t)          :: cells
-      type(met_grid_t)           :: grid
-      integer(ik)                :: st, p, n
-      integer(ik), allocatable   :: ids(:), slot(:)
+      type(met_cells_t)          :: cells, places
       type(map_inputs_t)         :: inputs
-      type(meds_config_t)        :: pcfg
-      type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
-      real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
+      integer(ik), allocatable   :: ids(:), slot(:)
+      real(wp)                   :: distance_km
       character(len=:), allocatable :: msg
-      logical                    :: region, started
+      logical                    :: have_maps
 
       ok = .false.
       call load_meds_config(trim(path), reg%cfg)
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
       associate (cfg => reg%cfg)
-      region = cfg%mode == RUN_MODE_REGION
+      !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE  !
+      !      (4 MB by default with ifx): a grown stand's automatic arrays overflow it within a few !
+      !      decades, a SIGSEGV. Say so when neither variable sets it. ----------------------------!
+      if (cfg%mode == RUN_MODE_REGION .and. cfg%n_threads > 1_ik .and.                              &
+          .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE')))                           &
+         write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a ', &
+                         'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
 
-      if (region) then
-         !----- A region steps each polygon on an OpenMP worker thread, whose stack is             !
-         !      OMP_STACKSIZE (4 MB by default with ifx): a grown stand's automatic arrays         !
-         !      overflow it within a few decades, a SIGSEGV. Say so when neither variable sets     !
-         !      it. -------------------------------------------------------------------------------!
-         if (cfg%n_threads > 1_ik .and. .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE'))) &
-            write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a ', &
-                            'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
-         !----- The cells: the box's valid cells with enough land, in row-major order, less those  !
-         !      the cell mask drops; each one's soil and site index from the [maps] files. --------!
-         grid = era5land_grid(cfg%forcing)
-         if (.not. select_cells(cfg, grid, cells, reg%verbose)) return
-         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
-         if (len(msg) > 0) then
-            write(*,'(2a)') ' region: ', msg
-            return
-         end if
-         n = cells%ncell
-         allocate(ids(n))
-         ids = cells%row * cells%nlon + cells%col        ! each cell's row-major index on the global grid
-      else
-         !----- One polygon at the [site]: its soil and the height allometry's site index from the !
-         !      [maps] files at its forcing cell, before anything is built on them. ---------------!
-         if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
-            call site_map_inputs(reg%cfg, msg)
-            if (len(msg) > 0) then
-               write(*,'(2a)') ' maps  : ', msg
-               return
-            end if
-            if (reg%verbose) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
-         end if
-         n = 1_ik
-         allocate(ids(1), source=0_ik)
-      end if
+      if (.not. choose_polygons(cfg, reg%verbose, cells, places, distance_km, inputs, have_maps)) return
+      allocate(ids(places%ncell), source=0_ik)
+      if (cfg%mode == RUN_MODE_REGION) ids = places%row * places%nlon + places%col   ! the cells' row-major index
 
       !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file    !
       !      may hold more polygons than the run: a region whose cell failed resumes with that     !
       !      cell masked out. ---------------------------------------------------------------------!
-      allocate(slot(n), source=0_ik)
+      allocate(slot(places%ncell), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
          call restart_file_slots(trim(cfg%init%restart_file), ids, slot, msg)
          if (len(msg) > 0) then
@@ -188,16 +158,131 @@ contains
          end if
       end if
 
-      !----- The forcing source: a region's cells, or the cell or grid nearest the [site]. --------!
-      if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
-         if (region) then
+      if (.not. open_forcing(reg, cells, distance_km)) return
+      if (.not. start_polygons(reg, places, ids, slot, inputs, have_maps)) return
+      reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
+      allocate(reg%cost(places%ncell), source=0.0_wp)
+
+      if (reg%verbose) then
+         write(*,'(a)') '==================== MEDS run ===================='
+         if (cfg%mode == RUN_MODE_REGION)                                                          &
+            write(*,'(a,4(1x,f0.3),a,i0,a,f0.2,a)') ' region: box_nwse =', cfg%region%box_nwse, ', ',    &
+               places%ncell, ' polygons (land fraction >= ', cfg%region%land_fraction_min, ')'
+         write(*,'(5a)') ' run   : ', time_to_string(cfg%start_time), ' -> ', time_to_string(cfg%end_time)
+         write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(reg%now, cfg%end_time), ' yr  steps/yr~',    &
+               max(1_ik, nint(yr_day / real(reg%step_days, wp), ik))
+      end if
+      call open_files(reg, ids, places)
+      if (reg%verbose .and. places%ncell == 1_ik) then
+         write(*,'(a)') '-----------------------------------------------------------------------------'
+         call print_summary(reg%poly(1), 'start')
+      end if
+      end associate
+      ok = .true.
+   end subroutine open_run
+
+   !----- The polygons, and the archive cells they read. A region's are its box's cells, each      !
+   !      polygon at its cell's centre; a site run's is one polygon at the [site] location,        !
+   !      reading the archive cell nearest it when the run reads the archive's forcing or maps     !
+   !      (distance_km away), and none on a point forcing file. With [maps], each cell's map       !
+   !      inputs. .false. (after saying why) when the cells or the maps cannot be had. ------------!
+   logical function choose_polygons(cfg, verbose, cells, places, distance_km, inputs, have_maps) result(ok)
+      type(meds_config_t), intent(in)  :: cfg
+      logical,             intent(in)  :: verbose
+      type(met_cells_t),   intent(out) :: cells        !< the archive cells the run reads (none: ncell = 0)
+      type(met_cells_t),   intent(out) :: places       !< each polygon's location and grid indices
+      real(wp),            intent(out) :: distance_km  !< a site's distance to its cell
+      type(map_inputs_t),  intent(out) :: inputs
+      logical,             intent(out) :: have_maps
+      type(met_grid_t)              :: grid
+      character(len=:), allocatable :: msg
+      integer(ik)                   :: st
+      logical                       :: region, archive
+      ok = .false.
+      distance_km = 0.0_wp
+      region    = cfg%mode == RUN_MODE_REGION
+      have_maps = soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0
+      archive   = cfg%fast_biophysics_on .and. cfg%forcing%forcing_on .and.                          &
+                  cfg%forcing%format == MET_BACKEND_ERA5LAND
+      if (region .or. have_maps .or. archive) grid = era5land_grid(cfg%forcing)
+      if (region) then
+         if (.not. select_cells(cfg, grid, cells, verbose)) return
+         places = cells
+      else
+         if (have_maps .or. archive) then
+            call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude,                 &
+                                  cfg%forcing%max_distance_km, cells, distance_km, st)
+            if (st == GRID_ERR_NO_CELL) then
+               write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' force : no valid ED_ERA5land cell within ',        &
+                     cfg%forcing%max_distance_km, ' km of the site (', cfg%forcing%latitude, ', ',        &
+                     cfg%forcing%longitude, ')'
+               return
+            else if (st /= GRID_OK) then
+               write(*,'(2a)') ' force : cannot read the ED_ERA5land static file ', trim(grid%static_file)
+               return
+            end if
+         end if
+         call site_place(cfg, cells, places)
+      end if
+      if (have_maps) then
+         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
+         if (len(msg) > 0) then
+            write(*,'(2a)') merge(' region: ', ' maps  : ', region), msg
+            return
+         end if
+         if (verbose .and. .not. region) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
+      end if
+      ok = .true.
+   end function choose_polygons
+
+   !----- A one-polygon run's place: the [site] location, which the polygon runs at, with the grid !
+   !      indices of the archive cell it reads (0 when it reads none). ----------------------------!
+   subroutine site_place(cfg, cells, place)
+      type(meds_config_t), intent(in)  :: cfg
+      type(met_cells_t),   intent(in)  :: cells
+      type(met_cells_t),   intent(out) :: place
+      place%ncell = 1_ik
+      allocate(place%row(1), place%col(1), source=0_ik)
+      allocate(place%lat(1), source=cfg%forcing%latitude)
+      allocate(place%lon(1), source=cfg%forcing%longitude)
+      allocate(place%elevation(1), source=cfg%forcing%elevation)
+      if (cells%ncell == 1_ik) then
+         place%nlat = cells%nlat
+         place%nlon = cells%nlon
+         place%row  = cells%row
+         place%col  = cells%col
+      end if
+   end subroutine site_place
+
+   !----- The forcing: the archive at the run's cells, or a point forcing file; without forcing,   !
+   !      the CO2 series alone, at whose CO2 the fast loop reads the reference climate             !
+   !      (docs/science/forcing.md §12). .false. when it cannot be opened (met_open says why). ----!
+   logical function open_forcing(reg, cells, distance_km) result(ok)
+      type(meds_region_t), intent(inout) :: reg
+      type(met_cells_t),   intent(in)    :: cells
+      real(wp),            intent(in)    :: distance_km
+      integer(ik) :: st
+      ok = .true.
+      associate (cfg => reg%cfg)
+      if (.not. cfg%fast_biophysics_on) return
+      if (cfg%forcing%forcing_on) then
+         if (cells%ncell > 0_ik) then
             call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,              &
                           run_end=cfg%end_time, cells=cells)
          else
             call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,              &
                           run_end=cfg%end_time)
          end if
-         if (st /= MET_OK) return
+         ok = st == MET_OK
+         if (.not. ok) return
+         if (cells%ncell > 0_ik) then
+            if (cfg%mode == RUN_MODE_REGION) then
+               write(*,'(a,i0,a)') ' force : ED_ERA5land region, ', cells%ncell, ' cells'
+            else
+               write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', cells%lat(1), ', ',  &
+                     cells%lon(1), '), ', distance_km, ' km from the site; orography ', cells%elevation(1), ' m'
+            end if
+         end if
          if (reg%verbose) then
             if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
@@ -205,42 +290,52 @@ contains
                write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
             end if
          end if
-      else if (cfg%fast_biophysics_on) then
-         !----- Without forcing the fast loop reads the reference climate at the run's CO2, so     !
-         !      only the CO2 is opened (docs/science/forcing.md §12). -----------------------------!
+      else
          call met_open_co2(reg%met_src, cfg%forcing, cfg%start_time, cfg%end_time, stat=st)
-         if (st /= MET_OK) return
+         ok = st == MET_OK
       end if
-      if (.not. region) call site_cell(reg%met_src, cfg, cells)
+      end associate
+   end function open_forcing
 
-      !----- Each polygon at its location, from its start, on its own configuration: the run's,    !
-      !      with a region cell's soil and site index. --------------------------------------------!
+   !----- Each polygon at its place, from its start, on its own configuration: the run's, with its !
+   !      cell's map inputs. Then what follows the start (polygon_prepare); one polygon gives its  !
+   !      patch loop the run's threads, a region gives them to its polygons. .false. when a        !
+   !      start's file cannot serve it. -----------------------------------------------------------!
+   logical function start_polygons(reg, places, ids, slot, inputs, have_maps) result(ok)
+      type(meds_region_t), intent(inout) :: reg
+      type(met_cells_t),   intent(in)    :: places
+      integer(ik),         intent(in)    :: ids(:), slot(:)
+      type(map_inputs_t),  intent(in)    :: inputs
+      logical,             intent(in)    :: have_maps
+      type(meds_config_t)              :: pcfg
+      type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
+      real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
+      integer(ik) :: p, n
+      ok = .false.
+      n = places%ncell
+      associate (cfg => reg%cfg)
       allocate(reg%poly(n), reg%run(n), reg%out_bufs(n))
       reg%now = cfg%start_time
       do p = 1_ik, n
          associate (poly => reg%poly(p), run => reg%run(p))
             pcfg = cfg
-            if (region) then
-               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', cells%lat(p), ', ',   &
-                                                       cells%lon(p), ')'
+            if (cfg%mode == RUN_MODE_REGION)                                                        &
+               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', places%lat(p), ', ',  &
+                                                       places%lon(p), ')'
+            if (have_maps) then
                call apply_map_inputs(inputs, p, pcfg)
                call validate_config(pcfg)
             end if
-            !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call site_configs(pcfg, site_cfg, site_area)
             call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
-                              started, site_cfg=site_cfg, site_area=site_area)
-            if (.not. started) return
-            !----- The polygon's id and place, on the stand the initial community built. ----------!
+                              ok, site_cfg=site_cfg, site_area=site_area)
+            if (.not. ok) return
             poly%id            = ids(p)
-            poly%latitude_deg  = cells%lat(p)
-            poly%longitude_deg = cells%lon(p)
-            poly%elevation_m   = cells%elevation(p)
+            poly%latitude_deg  = places%lat(p)
+            poly%longitude_deg = places%lon(p)
+            poly%elevation_m   = places%elevation(p)
             call set_site_terrain(poly, pcfg)
-
-            !----- The forcing cursor, the canopy-air depth, the spin-up. One polygon gives its    !
-            !      patch loop the run's threads; a region gives them to its polygons. -------------!
             call polygon_prepare(cfg, reg%met_src, p, poly, run,                                       &
                                  keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
@@ -251,55 +346,49 @@ contains
       !      none. --------------------------------------------------------------------------------!
       reg%restructure_pending  = reg%poly(1)%restructure_pending
       reg%restructure_new_year = reg%poly(1)%restructure_new_year
+      end associate
+   end function start_polygons
 
-      reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
-      allocate(reg%cost(n), source=0.0_wp)
-
-      if (reg%verbose) then
-         write(*,'(a)') '==================== MEDS run ===================='
-         if (region) write(*,'(a,4(1x,f0.3),a,i0,a,f0.2,a)') ' region: box_nwse =', cfg%region%box_nwse, ', ', &
-               n, ' polygons (land fraction >= ', cfg%region%land_fraction_min, ')'
-         write(*,'(5a)') ' run   : ', time_to_string(cfg%start_time), ' -> ', time_to_string(cfg%end_time)
-         write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(reg%now, cfg%end_time), ' yr  steps/yr~',    &
-               max(1_ik, nint(yr_day / real(reg%step_days, wp), ik))
+   !----- The run's files: the state files' directory and the run's PFT table; the diagnostic      !
+   !      output ([output].enabled), behind the polygon axis, each polygon writing its own layers, !
+   !      cohorts and patches; and the parameter record beside the output and the state, every     !
+   !      setting the loader read, from which file, set or defaulted, and its value, so a caller   !
+   !      can tell whether a key was read. --------------------------------------------------------!
+   subroutine open_files(reg, ids, places)
+      type(meds_region_t), intent(inout) :: reg
+      integer(ik),         intent(in)    :: ids(:)
+      type(met_cells_t),   intent(in)    :: places
+      integer(ik) :: p
+      associate (cfg => reg%cfg, out => reg%cfg%output)
+      if (out%state_write) then
+         call ensure_output_dir(trim(out%state_file_dir))
+         call write_pft_params_csv(cfg, trim(out%state_file_dir)//'/'//trim(out%state_file_prefix)//     &
+                                   '_pft_parameters.csv')
       end if
-
-      !----- The state files and the run's PFT provenance table. ----------------------------------!
-      if (cfg%output%state_write) then
-         call ensure_output_dir(trim(cfg%output%state_file_dir))
-         call write_pft_params_csv(cfg, trim(cfg%output%state_file_dir)//'/'//                           &
-                                   trim(cfg%output%state_file_prefix)//'_pft_parameters.csv')
-      end if
-
-      !----- The diagnostic output ([output].enabled), behind the polygon axis: each polygon       !
-      !      writes its own layers, cohorts and patches, and leaves the rest of each axis          !
-      !      empty. -------------------------------------------------------------------------------!
-      if (cfg%output%enabled) then
-         call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, cells%lat, cells%lon, &
-                                cells%row, cells%col)
-         do p = 1_ik, n
+      if (out%enabled) then
+         call ensure_output_dir(trim(out%dir))
+         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, places%lat,    &
+                                places%lon, places%row, places%col)
+         do p = 1_ik, size(reg%poly, kind=ik)
             call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), p)
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
-
-      !----- The parameter record, beside the output and the state: every setting the loader read, !
-      !      from which file, set or defaulted, and its value, so a caller can tell whether a key  !
-      !      was read. ----------------------------------------------------------------------------!
-      if (cfg%output%enabled)                                                                      &
-         call toml_write_record(trim(cfg%output%dir)//'/'//trim(cfg%output%prefix)//'_parameters.csv')
-      if (cfg%output%state_write)                                                                  &
-         call toml_write_record(trim(cfg%output%state_file_dir)//'/'//trim(cfg%output%state_file_prefix)// &
-                                '_parameters.csv')
-
-      if (reg%verbose .and. n == 1_ik) then
-         write(*,'(a)') '-----------------------------------------------------------------------------'
-         call print_summary(reg%poly(1), 'start')
-      end if
+      if (out%enabled) call toml_write_record(trim(out%dir)//'/'//trim(out%prefix)//'_parameters.csv')
+      if (out%state_write)                                                                         &
+         call toml_write_record(trim(out%state_file_dir)//'/'//trim(out%state_file_prefix)//'_parameters.csv')
       end associate
-      ok = .true.
-   end subroutine open_run
+   end subroutine open_files
+
+   !----- Create an output directory that does not exist yet. The model's libraries never touch    !
+   !      the file system; the run does. ----------------------------------------------------------!
+   subroutine ensure_output_dir(dir)
+      character(len=*), intent(in) :: dir
+      integer :: stat
+      if (len_trim(dir) == 0 .or. trim(dir) == '.') return
+      call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
+      if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
+   end subroutine ensure_output_dir
 
    !----- Each site's terrain: the polygon's elevation, flat, unless its [[sites]] table gives its own. !
    subroutine set_site_terrain(poly, pcfg)
@@ -316,34 +405,6 @@ contains
          end associate
       end do
    end subroutine set_site_terrain
-
-   !----- A site run's [maps] inputs, at the forcing cell its [site] location reads (the archive's !
-   !      own choice, select_site_cell), into cfg, which is then validated again. msg is '' on     !
-   !      success, else why the inputs could not be had. ------------------------------------------!
-   subroutine site_map_inputs(cfg, msg)
-      type(meds_config_t),           intent(inout) :: cfg
-      character(len=:), allocatable, intent(out)   :: msg
-      type(met_grid_t)   :: grid
-      type(met_cells_t)  :: cell
-      type(map_inputs_t) :: inp
-      real(wp)    :: distance_km
-      integer(ik) :: st
-      grid = era5land_grid(cfg%forcing)
-      call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%max_distance_km, &
-                            cell, distance_km, st)
-      if (st /= GRID_OK) then
-         if (st == GRID_ERR_NO_CELL) then
-            msg = 'no valid forcing cell near the site for the [maps] maps'
-         else
-            msg = 'cannot read the forcing''s static file '//trim(grid%static_file)//' for the [maps] maps'
-         end if
-         return
-      end if
-      call read_map_inputs(cfg%maps, grid, cell, inp, msg)
-      if (len(msg) > 0) return
-      call apply_map_inputs(inp, 1_ik, cfg)
-      call validate_config(cfg)
-   end subroutine site_map_inputs
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !
@@ -380,26 +441,6 @@ contains
       end if
       ok = .true.
    end function select_cells
-
-   !----- A one-polygon run's cell: the [site] location, which the polygon runs at, and the grid   !
-   !      indices of the archive cell the forcing reads (0 on the MEDS forcing file, whose grids   !
-   !      are not on a global grid). --------------------------------------------------------------!
-   subroutine site_cell(met_src, cfg, cells)
-      type(met_source_t),  intent(in)  :: met_src
-      type(meds_config_t), intent(in)  :: cfg
-      type(met_cells_t),   intent(out) :: cells
-      cells%ncell = 1_ik
-      allocate(cells%row(1), cells%col(1), source=0_ik)
-      allocate(cells%lat(1), source=cfg%forcing%latitude)
-      allocate(cells%lon(1), source=cfg%forcing%longitude)
-      allocate(cells%elevation(1), source=cfg%forcing%elevation)
-      if (met_src%cells%ncell == 1_ik) then
-         cells%nlat = met_src%cells%nlat
-         cells%nlon = met_src%cells%nlon
-         cells%row  = met_src%cells%row
-         cells%col  = met_src%cells%col
-      end if
-   end subroutine site_cell
 
    !----- How messages name a polygon: its label, or "the site" for a one-polygon run. ------------!
    function polygon_name(run) result(name)

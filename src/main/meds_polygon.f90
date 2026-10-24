@@ -40,7 +40,6 @@ module meds_polygon
    private
 
    public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
-   public :: ensure_output_dir
    public :: RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
 
    !----- A step's or a run's status. A failure is a status, not an `error stop`, so a library     !
@@ -358,15 +357,5 @@ contains
          pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
          pools_ss%passive_carbon, ' kgC/m2'
    end subroutine soil_carbon_steady
-
-   !----- Create an output directory that does not exist yet. The model's libraries never touch    !
-   !      the file system; the run does. ----------------------------------------------------------!
-   subroutine ensure_output_dir(dir)
-      character(len=*), intent(in) :: dir
-      integer :: stat
-      if (len_trim(dir) == 0 .or. trim(dir) == '.') return
-      call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
-      if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
-   end subroutine ensure_output_dir
 
 end module meds_polygon
