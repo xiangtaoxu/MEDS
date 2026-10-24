@@ -128,7 +128,9 @@ pores, and the soil heat step solves the latent heat with the heat (#511). A tis
 linearized about the emission the two-stream gave it, and the output reports the net radiation the
 balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
 Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
-one helper groups the cohorts of one height into a layer (#514).
+one helper groups the cohorts of one height into a layer (#514). A step that fails no longer leaves `meds_main`'s output files open, a run
+that cannot open no longer leaves its C-API slot half built, and a state file written in a month a
+polygon failed in owes the calendar's restructuring (#521).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -1672,6 +1674,20 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Fixed
 
+- **`meds_main` left its output files open when a step failed** (#521). It stopped with `error stop`
+  before `region_finalize`, so the files the run had open were never closed: the sub-daily tier is
+  never synced, and no tier is under `[output].sync_every = "never"`, so the failed month's records
+  could be lost or unreadable. It now finalizes the run first, which after a failure writes nothing
+  more and closes the files (ctest `main_failure_finalizes`).
+- **A run that could not open crashed the next one in its C-API slot** (#521). When a census or
+  restart file stopped `region_open` after it had opened the forcing and allocated the polygons,
+  `meds_run_open` returned -2 without freeing the slot, and the next open, handed the same slot,
+  stopped the Python process ("allocatable array is already allocated"). A run that cannot open now
+  frees what it built.
+- **A state file written after polygon 1 failed owed no restructuring** (#521). The file took the
+  owed restructuring from polygon 1, which stops tracking the calendar when it fails, so a region
+  resumed from it with that cell masked out skipped the month's restructuring for every polygon. The
+  file now takes it from the calendar.
 - **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
   targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
   `-j 16`). The shims now compile in one target.
