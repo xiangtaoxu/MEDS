@@ -724,8 +724,8 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_c_api_run)
    #      Runs from examples/example04_column_biophysics: it loads both of that example's shipped
    #      configs (the default and the calibrated run), so the build notices when they fall behind
-   #      the config reader.
-   add_test(NAME c_api_run COMMAND test_c_api_run
+   #      the config reader. It writes only under the build tree.
+   add_test(NAME c_api_run COMMAND test_c_api_run ${CMAKE_CURRENT_BINARY_DIR}/c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
    #      A run's sites from [[sites]]: derived from example 04's config, it runs from that example's
