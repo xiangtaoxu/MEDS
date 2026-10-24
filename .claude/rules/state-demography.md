@@ -56,10 +56,11 @@ invisible in a conservation ledger — that is what `test_carbon_growth` exists 
 
 ## Laws and operators do not touch
 
-`demography/` holds both, and they stay apart: the operators take rate **arrays** as arguments and
-never import `meds_demography_rates`. The slow driver is the one place a rate meets its application.
-The Python `apply_rates` path, feeding externally computed rates through the same operators, is the
-standing test.
+The laws are `slow_dynamics/processes/meds_demography`; the operators that apply them are
+`slow_dynamics/driver/meds_slow_update`. They stay apart: the operators take rate **arrays** as
+arguments and never import `meds_demography`. `meds_slow_dynamics` is the one place a rate meets its
+application. The C API's `apply_rates` path, feeding externally computed rates through the same
+operators, is the standing test.
 
 **The engine never computes a rate.** The driver computes a per-cohort tendency bundle and the
 engine applies it. The bundle is transient — deliberately not lockstep-reordered — which is correct

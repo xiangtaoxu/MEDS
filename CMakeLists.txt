@@ -7,11 +7,10 @@
 # lists, no repeated-build hack).                                                            #
 #                                                                                          #
 # THE PARALLEL PATH IS THE CPU, not the GPU. Patch-axis OpenMP threading on the host is what  #
-# ships and what is byte-identical at any thread count. GPU offload was evaluated and is NOT   #
-# viable as scoped: measured, the offload build runs 1.4x SLOWER than the CPU (49.8 s against  #
-# 36.2 s), one kernel sits at 0.4% occupancy, and the device treated as 20 slow cores is 26x   #
-# slower than 4 CPU cores. MEDS_GPU=gpu is kept as a reproducible experiment, not a fast path. #
-# See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md.                                           #
+# ships and what is byte-identical at any thread count. GPU offload was evaluated and is not   #
+# viable as scoped: the offload build ran 1.4x slower than the CPU (49.8 s against 36.2 s),    #
+# one kernel at 0.4% occupancy, so its build option is retired                                 #
+# (docs/dev_plans/archive/MEDS_GPU_EVALUATION.md).                                             #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.3.5 LANGUAGES Fortran
@@ -26,9 +25,6 @@ endif()
 option(MEDS_BUILD_TESTS "Build the CTest test suite" ON)
 # netCDF output + I/O are ALWAYS compiled: the standard (and only) build needs the netCDF C library.
 # Point CMake at it with -DCMAKE_PREFIX_PATH=<prefix> (find_package(netCDF CONFIG REQUIRED), below).
-# `multicore` is host OpenMP under NVHPC. `gpu` is the REFUTED offload experiment (see the header).
-set(MEDS_GPU "none" CACHE STRING "NVHPC OpenMP target: none|multicore|gpu (gpu is measured SLOWER than CPU)")
-set_property(CACHE MEDS_GPU PROPERTY STRINGS none multicore gpu)
 
 # Optional Python C-API shared libraries (ctypes). OFF by default -> normal builds are foreign-
 # call-free. When ON, ALL static libs are built position-independent so they link into the .so.
@@ -65,8 +61,8 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #
 #  It is the hardest trap here to find, so it is written down. Intel Fortran defaults to
 #  `-auto-scalar`: local SCALARS go on the stack, but local ARRAYS and DERIVED TYPES go in STATIC
-#  storage. Static locals are shared by every thread. The fast loop calls kernels in meds_fast_kernels,
-#  meds_slow_kernels, meds_share and meds_demography, and every one with a local array or a local
+#  storage. Static locals are shared by every thread. The fast loop calls code in meds_fast_kernels,
+#  meds_share and meds_state, and every routine with a local array or a local
 #  derived type (e.g. `rad_forcing_t rf` in apply_rt_forcing -> alloc_rad_forcing) then has all
 #  threads writing the same object. It does NOT crash: it produces plausible, silently
 #  thread-count-dependent answers -- precisely what the byte-identity-at-any-thread-count requirement
@@ -87,26 +83,17 @@ option(MEDS_OPENMP "Compile the patch (one polygon) and polygon (several) parall
 #      builds serial; a compiler with no Fortran OpenMP falls back to serial with a warning.
 set(MEDS_OPENMP_ACTIVE OFF)
 if(MEDS_OPENMP)
-   if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      set(MEDS_OPENMP_ACTIVE ON)                  # -mp is already PUBLIC on meds_demography (below)
+   find_package(OpenMP COMPONENTS Fortran)
+   if(OpenMP_Fortran_FOUND)
+      set(MEDS_OPENMP_ACTIVE ON)
    else()
-      find_package(OpenMP COMPONENTS Fortran)
-      if(OpenMP_Fortran_FOUND)
-         set(MEDS_OPENMP_ACTIVE ON)
-      else()
-         message(WARNING "MEDS: ${CMAKE_Fortran_COMPILER_ID} offers no Fortran OpenMP, so this build is "
-                         "SERIAL and [run].n_threads has no effect. Configure with -DMEDS_OPENMP=OFF "
-                         "to ask for that and silence this warning.")
-      endif()
+      message(WARNING "MEDS: ${CMAKE_Fortran_COMPILER_ID} offers no Fortran OpenMP, so this build is "
+                      "SERIAL and [run].n_threads has no effect. Configure with -DMEDS_OPENMP=OFF "
+                      "to ask for that and silence this warning.")
    endif()
 endif()
-#      Any build that can run host threads needs automatic locals -- which includes NVHPC with
-#      MEDS_GPU != none, because that puts -mp PUBLIC on meds_demography and meds_fast inherits it, so
-#      patch-loop directives are live there whether or not MEDS_OPENMP was asked for.
-set(MEDS_AUTO_LOCALS OFF)
-if(MEDS_OPENMP_ACTIVE OR NOT MEDS_GPU STREQUAL "none")
-   set(MEDS_AUTO_LOCALS ON)
-endif()
+#      Any build that can run host threads needs automatic locals.
+set(MEDS_AUTO_LOCALS ${MEDS_OPENMP_ACTIVE})
 
 #----- THE BUILD KINDS (docs/building.md, "Build kinds"): debug and dev are the Debug and Release   #
 #      build types; production is Release plus the two options below; CMakePresets.json names all   #
@@ -257,8 +244,8 @@ meds_fortran_flags(meds_state)
 #  PROCESSES, TIMESCALE-FIRST (src/README.md, rule 2).                                        #
 #                                                                                            #
 #  MEDS is an operator-split fast/slow model -- that is its dominant organizing axis -- and    #
-#  the tree says so. Each half holds its domain kernels, and the fast half additionally         #
-#  holds the integrator machinery (integrator/) and the loop that drives it (driver/).            #
+#  the tree says so. Each half holds its process kernels (processes/) and the loop that drives   #
+#  them (driver/); the fast half also holds the integrator machinery (integrator/).               #
 #==========================================================================================#
 
 #----- FAST kernels (sub-daily): the process modules in processes/, one per process: canopy      #
@@ -275,69 +262,36 @@ add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
 target_link_libraries(meds_fast_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_fast_kernels)
 
-#----- SLOW kernels (daily / annual): phenology, carbon allocation, trait dynamics, the CENTURY #
-#      soil carbon pools' daily step and the litter-destination split. Stateless and            #
-#      `pure`-where-possible; links the patch store types it reads/writes, the config leaves,   #
-#      and the fast kernels for the soil's respiration chemistry (meds_respiration), which the  #
-#      fast loop respires and the daily step integrates, so the two debit the same CENTURY     #
-#      matrix (docs/science/soil_carbon.md §7). Builds standalone.                              #
-file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/plant/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/soil/*.f90)
+#----- SLOW kernels (daily / annual): the process modules in processes/, one per science page:  #
+#      leaf phenology, carbon allocation, the plastic traits, the soil carbon pools' daily step   #
+#      and the demographic laws. Stateless and `pure`-where-possible; links the patch store      #
+#      types it reads/writes, the config leaves, and the fast kernels for the soil's respiration  #
+#      chemistry (meds_respiration), which the fast loop respires and the daily step integrates,  #
+#      so the two debit the same CENTURY matrix (docs/science/soil_carbon.md §7). Builds          #
+#      standalone.                                                                                 #
+file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/processes/*.f90)
 add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
 target_link_libraries(meds_slow_kernels PUBLIC meds_state meds_config meds_fast_kernels)
 meds_fortran_flags(meds_slow_kernels)
 
-#----- DEMOGRAPHY: the vital-rate laws (growth / mortality / recruitment) and the apply-operators #
-#      that change the population -- state update, cohort and patch fuse-fission, termination,     #
-#      recruitment, treefall disturbance -- plus the public facade. Links the site state it         #
-#      mutates and the litter law its kills feed. src/README.md rule 4 keeps the two halves apart:  #
-#      the operators take rate ARRAYS and never import meds_demography_rates.                        #
-file(GLOB DEMOGRAPHY_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/demography/*.f90)
-add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
-target_link_libraries(meds_demography PUBLIC meds_state meds_slow_kernels)
-meds_fortran_flags(meds_demography)
-
 #----- Diagnostic output (src/io/output), its netCDF-free half: every module of the folder but the  #
 #      writer -- the types, the registry, the file set's setup, the extract, the reductions and the  #
-#      per-tier integrators. Links meds_demography only, so the stepper edge that ticks the          #
+#      per-tier integrators. Links meds_state only, so the stepper edge that ticks the               #
 #      integrators pulls no C dependency (src/README.md, "The library graph"). The writer is         #
 #      meds_output_stream (below). The stages: docs/science/diagnostics.md §1.                      #
 file(GLOB OUTPUT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/*.f90)
 list(REMOVE_ITEM OUTPUT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90)
 add_library(meds_output STATIC ${OUTPUT_SOURCES})
-target_link_libraries(meds_output PUBLIC meds_demography)
+target_link_libraries(meds_output PUBLIC meds_state)
 meds_fortran_flags(meds_output)
 
 
 
 
 
-#----- NVHPC OpenMP target selection (the flags live on meds_demography). -------------------#
-#       PUBLIC so the demo/tests/drivers that link meds_demography inherit them.                       #
-#       `-gpu=mem:separate` forces explicit data movement (no CUDA managed allocator), so host #
-#       state stays in normal memory.                                                          #
-#       MEDS_GPU=gpu is a REPRODUCIBLE EXPERIMENT, not the fast path: it measured 1.4x slower  #
-#       than the CPU build. Use MEDS_GPU=multicore, or plain MEDS_OPENMP, for real runs.       #
-if(NOT MEDS_GPU STREQUAL "none")
-   if(CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      if(MEDS_GPU STREQUAL "gpu")
-         set(MEDS_MP_FLAGS -mp=gpu -gpu=mem:separate)
-      else()
-         set(MEDS_MP_FLAGS -mp)                         # multicore (host OpenMP)
-      endif()
-      target_compile_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
-      target_link_options(meds_demography PUBLIC ${MEDS_MP_FLAGS})
-      message(STATUS "MEDS: OpenMP target -> ${MEDS_MP_FLAGS} (NVHPC)")
-   else()
-      message(WARNING "MEDS_GPU=${MEDS_GPU} ignored for ${CMAKE_Fortran_COMPILER_ID} (NVHPC offload only)")
-   endif()
-endif()
-
-
 #----- netCDF C bindings, in their own minimal target so BOTH the output layer                  #
 #      (meds_init_restart, state serialization) AND the forcing reader (meds_met) link the netCDF C     #
-#      API WITHOUT meds_output_stream's -> meds_demography edge. netCDF is a hard dependency;            #
+#      API without the rest of the output layer. netCDF is a hard dependency;                          #
 #      its CMake config pulls in HDF5 -> FindThreads, which needs the C language enabled.          #
 enable_language(C)
 find_package(netCDF CONFIG REQUIRED)
@@ -348,7 +302,7 @@ meds_fortran_flags(meds_netcdf_c)
 
 #----- Meteorological FORCING (src/io/met): the reader, its samples at a site and at a patch's   #
 #      canopy-air top, the grid and the runtime types; the laws are share/'s. Links meds_config   #
-#      + the netCDF bindings ONLY (NOT demography): a prescribed external driver, low in the DAG. #
+#      + the netCDF bindings ONLY (no model state): a prescribed external driver, low in the DAG. #
 #      The science: docs/science/forcing.md.                                                     #
 file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/met/*.f90)
 add_library(meds_met STATIC ${FORCING_SOURCES})
@@ -377,11 +331,12 @@ add_library(meds_fast STATIC ${FAST_SOURCES})
 target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_state meds_met meds_output)
 meds_fortran_flags(meds_fast)
 
-#----- The SLOW loop: the thin coordinator and the two peer domain drivers (vegetation dynamics, #
-#      soil biogeochemistry). It is the ONE place a demographic rate meets its application.       #
+#----- The SLOW loop (driver/): the orchestrator, the per-process reads and writes of the stand, #
+#      the update that writes it, the slow rows and the site ledger. It is the one place a        #
+#      demographic rate meets its application (src/README.md rule 4).                            #
 file(GLOB SLOW_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/driver/*.f90)
 add_library(meds_slow STATIC ${SLOW_SOURCES})
-target_link_libraries(meds_slow PUBLIC meds_demography meds_slow_kernels meds_fast_kernels)
+target_link_libraries(meds_slow PUBLIC meds_slow_kernels)
 meds_fortran_flags(meds_slow)
 
 #----- The initial state (src/io/init): bare ground, a census or a restart file, and           #
@@ -390,7 +345,7 @@ meds_fortran_flags(meds_slow)
 #      bindings for the restart file, which the checkpoints write.                               #
 file(GLOB INIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/init/*.f90)
 add_library(meds_init STATIC ${INIT_SOURCES})
-target_link_libraries(meds_init PUBLIC meds_demography meds_slow meds_config meds_netcdf_c)
+target_link_libraries(meds_init PUBLIC meds_slow meds_config meds_netcdf_c)
 meds_fortran_flags(meds_init)
 
 #----- src/main: the master stepper (the cadence owner -- one call advances the coupled model by  #
@@ -409,20 +364,13 @@ target_link_libraries(meds_model INTERFACE meds_stepper meds_fast meds_slow meds
 #      ON by default (the option, beside meds_fortran_flags, says why). Applied to meds_fast -- the #
 #      target that owns the fast loop -- and PUBLIC so meds_main and the tests inherit the link     #
 #      flags. find_package, run with the option, resolves the per-compiler flag (-qopenmp         #
-#      IntelLLVM, -fopenmp GNU, -mp NVHPC).                                                         #
-#      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_demography, inherited here,   #
-#      so adding it again would fight -mp=gpu; that case is left alone. Note the consequence: such a #
-#      build compiles the patch-loop directives whether or not MEDS_OPENMP is set, which is exactly  #
-#      why the thread count is a RUNTIME knob ([run].n_threads, default 1) and not a build-time one. #
+#      IntelLLVM, -fopenmp GNU, -mp NVHPC). The thread count is a RUNTIME knob ([run].n_threads,     #
+#      default 1), not a build-time one.                                                            #
 #      The option itself is declared beside meds_fortran_flags(), which is where its OTHER (and more #
 #      important) half lives: the automatic-locals flag on every target.                             #
 if(MEDS_OPENMP_ACTIVE)
-   if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
-      message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_demography)")
-   else()
-      target_link_libraries(meds_fast PUBLIC OpenMP::OpenMP_Fortran)
-      message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
-   endif()
+   target_link_libraries(meds_fast PUBLIC OpenMP::OpenMP_Fortran)
+   message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
 else()
    message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
@@ -433,7 +381,7 @@ endif()
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
 #      per call; a Release build, the default, is clean.)                                            #
 add_library(meds_output_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90)
-target_link_libraries(meds_output_stream PUBLIC meds_demography meds_netcdf_c meds_output)
+target_link_libraries(meds_output_stream PUBLIC meds_netcdf_c meds_output)
 meds_fortran_flags(meds_output_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
@@ -543,7 +491,7 @@ if(MEDS_BUILD_TESTS)
 
    #----- The in-code config fixture; re-exports the assertions so most tests need one `use`. ----#
    add_library(meds_testsupport STATIC test/meds_test_support.f90)
-   target_link_libraries(meds_testsupport PUBLIC meds_demography meds_testassert)
+   target_link_libraries(meds_testsupport PUBLIC meds_config meds_testassert)
    meds_fortran_flags(meds_testsupport)
 
 

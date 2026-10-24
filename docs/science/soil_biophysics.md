@@ -493,8 +493,8 @@ described with the tissue it wets in [vegetation_energy_dynamics](vegetation_ene
 The heterotrophic soil CO₂ flux $`R_h`$ comes from **one formula**: the CENTURY transfer matrix
 (`meds_respiration`: `heterotrophic_respiration`, reached through
 `patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the pools' daily step
-lives in `src/slow_dynamics/soil/`; [soil_carbon](soil_carbon.md)), but its flux enters the fast loop as a source term of
-the canopy air's CO₂
+is `meds_soil_carbon`, in `src/slow_dynamics/processes/`; [soil_carbon](soil_carbon.md)), but its
+flux enters the fast loop as a source term of the canopy air's CO₂
 (see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The frozen build computes it once per step
 and passes the resulting flux into the CO₂ source.
 

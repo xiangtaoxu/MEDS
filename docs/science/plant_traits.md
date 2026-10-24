@@ -1,7 +1,7 @@
 # Plant trait dynamics
 
 Leaf traits are not static PFT constants — they **acclimate to the light environment** within a plant's
-lifetime. MEDS models this with a small **stateless, elemental** kernel, `meds_plant_trait_dynamics`, that
+lifetime. MEDS models this with a small **stateless, elemental** kernel, `meds_plant_traits`, that
 ports ED2's `update_cohort_plastic_trait` (Lloyd et al. 2010 canopy trait gradients). It covers
 **light-driven plasticity** of four cohort-level leaf traits — specific leaf area (SLA), photosynthetic
 capacity ($`V_{\mathrm{cmax25}}`$), leaf dark respiration ($`R_{\mathrm{d25}}`$), and the leaf turnover
@@ -12,7 +12,7 @@ photosynthetic capacity is a separate, site-level mechanism (`leaf_gas_exchange.
 acclimation"); per-cohort acclimation is open (see `docs/ROADMAP.md`).
 
 The kernel is two pure functions (targets, then a relaxation step); the per-cohort trait **state**, the
-orchestration, and every carbon consequence live in the driver (`meds_vegetation_dynamics`) and the core
+orchestration, and every carbon consequence live in the driver (`meds_slow_state`) and the core
 Structure-of-Arrays — the same kernel/driver/state split as phenology and carbon allocation.
 
 ## 1. The canopy-light trait gradient
@@ -99,7 +99,8 @@ $`R_\mathrm{d}`$ carries its own value.
 
 ## 5. Interface with other modules
 
-`meds_plant_trait_dynamics` `use`s only `meds_kinds` + `meds_constants` — a pure kernel. State, cadence, and
+`meds_plant_traits` `use`s only `meds_kinds` + `meds_constants`, and for the site's leaf table its type
+(`meds_pft_params`) and the Kattge–Knorr terms (`meds_therm_lib`) — a pure kernel. State, cadence, and
 consumers live outside it.
 
 - **State (`meds_cohort_state_vars`).** The four traits are per-cohort SoA fields, section 6 of
@@ -112,7 +113,7 @@ consumers live outside it.
   the share of the leaf carbon lost a year, so leaf carbon weights it too and the fused cohort turns
   over the leaf carbon its two parents did, which a leaf-area mean does not when their SLAs differ.
 
-- **Orchestration (`meds_vegetation_dynamics.advance_plant_traits`).** A slow-loop step, opt-in via
+- **Orchestration (`meds_slow_state.advance_plant_traits`).** A slow-loop step, opt-in via
   `[trait_dynamics].trait_plasticity_on` (default off ⇒ every cohort keeps its PFT's
   top-of-canopy traits). It runs **after** the competition sweep refreshes `overtopping_lai` and **before**
   `compute_carbon_allocation`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
@@ -144,13 +145,13 @@ consumers live outside it.
 
 | Concept | Routine |
 |---|---|
-| light target traits (eq. (1)) | `meds_plant_trait_dynamics`: `light_plastic_traits` (+ private `light_gradient`) |
-| replacement-weighted / instant update (eq. (2)) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
+| light target traits (eq. (1)) | `meds_plant_traits`: `light_plastic_traits` (+ private `light_gradient`) |
+| replacement-weighted / instant update (eq. (2)) | `meds_plant_traits`: `update_plastic_trait` |
 | the slopes' fits (eqs. (3)–(4)) | `scripts/pft_traits/pft_traits.py`: `plasticity` |
-| per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
-| slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
+| per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_slow_update`: `fuse_2_cohorts` |
+| slow-loop orchestration + SLA-overshoot resorption | `meds_slow_state`: `advance_plant_traits` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `cohort%leaf_turnover_rate`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |
-| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
+| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_slow_state`: `reacclimate_plant_traits` |
 
 ## References
 - **Ma, Y., Moorcroft, P. R., Wright, S. J., Rogers, A., Lamour, J., Davidson, K. J., Serbin, S. P.,

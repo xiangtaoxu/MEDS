@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**37.5 k lines, 104 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
+**37.5 k lines, 98 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,7 +13,7 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    37.5 k lines · 104 modules · 21 CMake libraries
+src/                                    37.5 k lines · 98 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_share
 ├── share/         uses nothing outside itself; every layer may use it: kinds,
@@ -60,14 +60,14 @@ src/                                    37.5 k lines · 104 modules · 21 CMake 
 │                  patches: the gather and scatter, the forcing, and what
 │                  the output reads                                          1 334
 │
-├── slow_dynamics/       daily to annual                                      5 075
-│   ├── plant/     phenology, carbon allocation, trait plasticity               695
-│   ├── soil/      the CENTURY soil-carbon matrix, the litter partition         746
-│   ├── demography/ the vital-rate LAWS, and the operators that apply them:
-│   │              state update, cohort and patch fuse-fission, recruitment,
-│   │              treefall disturbance                                      1 429
-│   └── driver/    the slow coordinator, the vegetation and biogeochemistry
-│                  drivers, and the slow conservation ledger                 2 205
+├── slow_dynamics/       daily to annual                                      4 046
+│   ├── processes/ one module per process: leaf phenology, carbon
+│   │              allocation, the plastic traits, soil carbon, the
+│   │              demographic laws                                          1 087
+│   └── driver/    the orchestrator, what each process reads from the
+│                  stand and writes back, the update that writes the
+│                  stand's carbon and structure, the slow rows, and the
+│                  site conservation ledger                                  2 959
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
 ├── io/            every data file a run reads or writes                     10 012
@@ -105,10 +105,11 @@ from becoming the place a file goes when no other place fits.
 ## Four rules, in the order you apply them
 
 **1. Kernel folders never see `polygon_t`.** `fast_dynamics/processes` and
-`slow_dynamics/{plant,soil}` take from the state layer only the per-patch store types and their
-blends, through `use meds_patch_state_vars, only : ...`, and link only `state` and `config`. That is
-what keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
-offload (a portability property worth holding, though offload is not currently a speedup — see
+`slow_dynamics/processes` take from the state layer only the per-patch store types and their
+blends, through `use meds_patch_state_vars, only : ...`, and link only `state` and `config` (the
+slow kernels also link the fast kernels, for the seam of rule 2). That is what keeps each kernel
+library building standalone, keeps the kernels eligible for OpenMP `target` offload (a portability
+property worth holding, though offload is not a speedup and has no build option — see
 [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets a
 test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
 (`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
@@ -119,11 +120,11 @@ patch's site (`site_surface_t`); it never uses a met, output, calendar or driver
 `integrator_boundary` (`scripts/lint/check_integrator_boundary.py`) checks it.
 
 **2. A kernel goes where its caller's timescale is**, and within that, in its process module: the fast
-half's are flat in `fast_dynamics/processes/`, the slow half's in its domain folder. A
+half's in `fast_dynamics/processes/`, the slow half's in `slow_dynamics/processes/`. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly
 one: the soil's respiration chemistry in `meds_respiration` (`decomposition_env_scalar`,
 `decomposition_transfer_matrix`, `heterotrophic_respiration`). The fast loop respires with it at
-every step, and the daily soil-carbon step (`meds_soil_biogeochem`) integrates the same matrix, which
+every step, and the daily soil-carbon step (`meds_soil_carbon`) integrates the same matrix, which
 is what closes the seam gap to machine precision. It sits with its most frequent caller, in the fast
 half, and the slow kernels link the fast kernels for it.
 
@@ -138,15 +139,16 @@ integrated, so they live with the configuration they are derived from: their typ
 kernel's own argument records are not parameters in this sense: they live with the kernel, and are
 named by role. `<process>_env_t` is what a kernel reads that changes during the run (`leaf_env_t`,
 `cas_env_t`); `<process>_args_t` is what it reads that is fixed for the run or the slow step, which a
-driver fills from the parameters (`pheno_args_t`, `aero_args_t`); `<process>_out_t` is what it returns
-(`rad_out_t`, `snow_out_t`). `_state_t` is kept for the stores in `state/`.
+driver fills from the parameters (`aero_args_t`); `<process>_out_t` is what it returns
+(`rad_out_t`, `snow_out_t`). `_state_t` is prognostic state: the stores in `state/`, and the
+per-cohort state a kernel reads and writes back (`pheno_state_t`).
 
-**4. Laws and operators do not touch.** `demography/` holds both the vital-rate laws
-(`meds_demography_rates`) and the operators that apply them (`update_*`, `*_fusefiss`,
-`terminate_*`, `apply_recruitment`, `apply_patch_disturbance`) — and the operators take rate
-**arrays** as arguments and never import the laws. The slow driver is the one place a rate meets
-its application. The Python `apply_rates` path, which feeds externally computed rates through the
-same operators, is the standing test that the separation holds.
+**4. Laws and operators do not touch.** The demographic laws decide: they are a process module,
+`slow_dynamics/processes/meds_demography`. `meds_slow_update` applies what it is given (the commit,
+recruitment, disturbance, fusion and fission): it takes rate **arrays** as arguments and never uses
+the laws. `meds_slow_dynamics` is the one place a rate meets its application. The C API's
+`apply_rates` path, which feeds externally computed rates through the same update routines, is the
+standing test that the separation holds.
 
 ## The library graph
 
@@ -154,11 +156,11 @@ Acyclic by construction, and the build enforces it. Every arrow is a `target_lin
 in [`CMakeLists.txt`](../CMakeLists.txt).
 
 ```
-  share  ──→ config ──→ state ──────────────────────→ demography ──→ output
-     │                    │                              ↑             │
-     │                    ├──→ fast_kernels ──────┐      │             │
-     │                    │         ↓             │      │             │
-     │                    └──→ slow_kernels ──────┼──────┘             │
+  share  ──→ config ──→ state ─────────────────────────────────────→ output
+     │                    │                                            │
+     │                    ├──→ fast_kernels ──────┐                    │
+     │                    │         ↓             │                    │
+     │                    └──→ slow_kernels ──────┤                    │
      │                                            │                    │
   netcdf_c, config ──→ met ─────────────────────→ fast  ←──────────────┘
                                                   slow
@@ -184,7 +186,7 @@ One edge is worth knowing because it is easy to get wrong:
 
 | You are adding | It goes in |
 |---|---|
-| a soil, canopy or plant process | `fast_dynamics/processes/meds_<process>.f90` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
+| a soil, canopy or plant process | `fast_dynamics/processes/meds_<process>.f90` or `slow_dynamics/processes/meds_<process>.f90`, by the **cadence of its caller** |
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
 | a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, the fusion policy, and, if it persists, the restart file (`io/init/meds_init_restart.f90`: three adjacent lines in its cohort section) |
 | a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_patch_into`, the new gap in `apply_patch_disturbance`, and, if it persists, the restart file's patch section |
@@ -240,7 +242,7 @@ Each kernel library compiles standalone, which is the fastest way to check that 
 ```bash
 cmake --build build-dev --target meds_fast_kernels
 cmake --build build-dev --target meds_slow_kernels
-cmake --build build-dev --target meds_demography
+cmake --build build-dev --target meds_slow
 ```
 
 Full build, test and run instructions are in [`docs/building.md`](../docs/building.md).
@@ -262,7 +264,7 @@ Revisit if the suite outgrows a single `ls`, or if two tests ever want the same 
 
 ## Per-folder notes
 
-Five folders carry their own README with subsystem detail:
+Six folders carry their own README with subsystem detail:
 [`fast_dynamics/`](fast_dynamics/README.md), [`fast_dynamics/processes/`](fast_dynamics/processes/README.md),
-[`io/met/`](io/met/README.md), [`io/maps/`](io/maps/README.md),
-[`slow_dynamics/soil/`](slow_dynamics/soil/README.md).
+[`slow_dynamics/`](slow_dynamics/README.md), [`slow_dynamics/processes/`](slow_dynamics/processes/README.md),
+[`io/met/`](io/met/README.md), [`io/maps/`](io/maps/README.md).

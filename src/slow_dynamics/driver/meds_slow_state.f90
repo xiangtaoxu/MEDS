@@ -1,0 +1,783 @@
+! SPDX-License-Identifier: Apache-2.0
+!==========================================================================================!
+! meds_slow_state -- what the slow processes read from the stand and write back            !
+! (docs/science/order_of_processes.md §4). Each routine loops over the cohorts or patches, !
+! calls a law of slow_dynamics/processes and writes that process's own fields; the step's  !
+! tendencies and decisions go into slow_step_data_t, which meds_slow_update commits.       !
+!   * leaf: advance_leaf_phenology, advance_plant_traits, reacclimate_plant_traits,        !
+!     acclimate_site_leaf_tables;                                                          !
+!   * carbon: compute_carbon_allocation, compute_vital_rates, accumulate_mortality_litter; !
+!   * tissue water: shed_turnover_water, fill_new_leaf_water, shed_mortality_water,        !
+!     shed_excess_tissue_water;                                                            !
+!   * soil carbon: advance_soil_carbon.                                                    !
+!==========================================================================================!
+module meds_slow_state
+   use meds_kinds,                   only : wp, ik
+   use meds_constants,               only : day_sec, tiny_num, grav_head
+   use meds_config,                  only : meds_config_t, growth_window_steps
+   use meds_pft_derive,              only : pft_leaf_psi_tlp
+   use meds_plant_hydr_lib,          only : water_curve_t, tissue_psi_to_water, tissue_water_to_psi,     &
+                                            tissue_capped_water
+   use meds_therm_lib,               only : internal_energy_liquid
+   use meds_allometry_lib,           only : size_to_leaf_carbon, min_cohort_carbon,                      &
+                                            storage_carbon_target
+   use meds_cohort_state_vars,       only : set_cohort_size_from_carbon, cohort_wood_store_carbon,       &
+                                            hold_cohort_tissue_temps, cohort_water_enthalpy
+   use meds_polygon_state_vars,      only : polygon_t, patch_polygon_area
+   use meds_slow_ledger,             only : slow_ledger_t, soilc_seam_t, slow_ledger_declare,            &
+                                            KGC_PER_UMOL_C
+   use meds_plant_carbon_allocation, only : plant_carbon_allocation, cohort_carbon_demand,               &
+                                            growth_window_so_far, growth_sink_limitation
+   use meds_diag_vars,               only : CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE,   &
+                                            CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE,   &
+                                            PA_MORT_C_BACKGROUND
+   use meds_leaf_params,             only : leaf_physiology_params_t
+   use meds_patch_state_vars,        only : litter_input_t
+   use meds_state_defaults,          only : is_unset_positive
+   use meds_biogeochem_params,       only : N_SOIL_POOL
+   use meds_plant_phenology,         only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,       &
+                                            phenology_kernel
+   use meds_plant_traits,            only : light_plastic_traits, update_plastic_trait,                  &
+                                            acclimate_leaf_photo_table
+   use meds_soil_carbon,             only : add_necromass, build_litter_input, soil_carbon_step,         &
+                                            soil_carbon_out_t
+   use meds_demography,              only : npp_to_growth, camac_mortality, decline_to_floor_mortality,  &
+                                            npp_to_recruitment
+   implicit none
+   private
+
+   public :: slow_step_data_t
+   public :: advance_leaf_phenology, advance_plant_traits, reacclimate_plant_traits, acclimate_site_leaf_tables
+   public :: compute_carbon_allocation, compute_vital_rates, accumulate_mortality_litter
+   public :: shed_turnover_water, fill_new_leaf_water, shed_mortality_water, shed_excess_tissue_water
+   public :: advance_soil_carbon
+
+   !----- One slow step's working record: what the processes decided, per cohort unless noted, !
+   !      for meds_slow_update to commit (docs/science/order_of_processes.md §4). --------------!
+   type :: slow_step_data_t
+      !----- The net change of the four carbon pools [kgC/plant]: growth less shed for leaf  !
+      !      and fine root, growth for wood, allocation less storage upkeep plus resorption   !
+      !      for storage. Not the reported NPP (the gross CO_NPP_* rows): a canopy that sheds !
+      !      more than it grows has a negative leaf change, the sign shed_turnover_water reads. !
+      real(wp), allocatable :: d_leaf(:), d_fineroot(:), d_wood(:), d_nonstructural(:)
+      real(wp), allocatable :: npp_repro(:)          !< [kgC/plant] reproduction growth
+      logical,  allocatable :: exhausted(:)          !< no leaves and no storage (plant_carbon_allocation.md §2)
+      real(wp), allocatable :: mortality(:)          !< [1/yr]
+      real(wp), allocatable :: recruitment(:,:)      !< [plant/m2/yr] (pft, patch)
+      !----- The density and leaf carbon before the commit, which the mortality litter and   !
+      !      the new leaves' water are measured against. -----------------------------------!
+      real(wp), allocatable :: nplant_before(:)      !< [plant/m2]
+      real(wp), allocatable :: leaf_carbon_before(:) !< [kgC/plant]
+   end type slow_step_data_t
+
+contains
+
+   !---------------------------------------------------------------------------------------!
+   ! Advance every cohort's leaf phenology one slow step (docs/science/plant_phenology.md): build  !
+   ! the daily drivers from the fast loop's accumulators (each site's air temperature, each       !
+   ! cohort's PAR hours) and the cohort's predawn leaf psi, run the kernel, and write back the     !
+   ! tendencies and cue memory. No carbon moves here. A step with no fast sub-steps is skipped,   !
+   ! so the memory never advances on a 0/0 mean.                                                  !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_leaf_phenology(poly, cfg, doy, latitude_deg)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik),         intent(in)    :: doy
+      real(wp),            intent(in), optional :: latitude_deg   !< the polygon's [deg] (default: the [site] latitude)
+      type(pheno_env_t)    :: env
+      type(pheno_args_t)   :: params
+      type(pheno_state_t)  :: state
+      type(pheno_out_t)    :: out
+      integer(ik) :: i, pf, is
+      real(wp)    :: dt_days, temp_day(poly%site%n), lat
+      logical     :: north
+
+      if (all(poly%site%pheno_tair_n(1:poly%site%n) < 1_ik)) return   ! no fast sub-steps -> no drivers
+      dt_days  = cfg%dt_slow / day_sec
+      !----- Each site's daily-mean air temperature: its own forcing after its terrain. -----------!
+      do is = 1_ik, poly%site%n
+         temp_day(is) = poly%site%pheno_tair_sum(is) / real(max(poly%site%pheno_tair_n(is), 1_ik), wp)
+      end do
+      lat = cfg%forcing%latitude
+      if (present(latitude_deg)) lat = latitude_deg
+      north    = lat >= 0.0_wp
+
+      do i = 1_ik, poly%cohort%n
+         pf = poly%cohort%pft(i)
+         call flatten_pheno_params(cfg, pf, params)
+
+         !----- The daily drivers. dmax_psi_leaf is the last completed predawn value; a cohort born !
+         !      today reads 0, well watered, for one day, as in the leaf kernel. ---------------!
+         env%temp_day         = temp_day(poly%patch%owner_site(poly%cohort%owner_patch(i)))
+         !----- Hours the PAR at the cohort's top exceeded par_min over the step, per day. -----!
+         env%par_hours        = poly%cohort%light_hours_accum(i) / dt_days
+         env%predawn_leaf_psi = min(0.0_wp, poly%cohort%dmax_psi_leaf(i))
+         env%doy              = doy
+         env%hemis_north      = north
+
+         !----- Pack the cohort's tendencies and cue memory, advance, unpack. ------------------!
+         state%leaf_flush_tendency = poly%cohort%leaf_flush_tendency(i)
+         state%leaf_shed_tendency  = poly%cohort%leaf_shed_tendency(i)
+         state%growing_degree_days = poly%cohort%growing_degree_days(i)
+         state%cold_degree_days    = poly%cohort%cold_degree_days(i)
+         state%wet_psi_sum         = poly%cohort%wet_psi_sum(i)
+         state%dry_psi_sum         = poly%cohort%dry_psi_sum(i)
+         state%light_hours_mean    = poly%cohort%light_hours_mean(i)
+         call phenology_kernel(env, params, dt_days, state, out)
+         poly%cohort%leaf_flush_tendency(i) = state%leaf_flush_tendency
+         poly%cohort%leaf_shed_tendency(i)  = state%leaf_shed_tendency
+         poly%cohort%growing_degree_days(i) = state%growing_degree_days
+         poly%cohort%cold_degree_days(i)    = state%cold_degree_days
+         poly%cohort%wet_psi_sum(i)         = state%wet_psi_sum
+         poly%cohort%dry_psi_sum(i)         = state%dry_psi_sum
+         poly%cohort%light_hours_mean(i)    = state%light_hours_mean
+      end do
+   end subroutine advance_leaf_phenology
+
+   !---------------------------------------------------------------------------------------!
+   ! Copy one PFT's phenology traits (cfg%pft%pheno) into the kernel's self-contained parameter  !
+   ! set, as meds_pft_derive does for the leaf traits.                                          !
+   !---------------------------------------------------------------------------------------!
+   subroutine flatten_pheno_params(cfg, ipft, p)
+      type(meds_config_t),  intent(in)  :: cfg
+      integer(ik),          intent(in)  :: ipft
+      type(pheno_args_t),   intent(out) :: p
+      associate (t => cfg%pft)
+         p%flush_cue_mask        = t%pheno(ipft)%flush_cue_mask
+         p%shed_cue_mask         = t%pheno(ipft)%shed_cue_mask
+         p%flush_cue_timescale   = t%pheno(ipft)%flush_cue_timescale
+         p%shed_cue_timescale    = t%pheno(ipft)%shed_cue_timescale
+         p%flush_rate_max        = t%pheno(ipft)%flush_rate_max
+         p%shed_rate_max         = t%pheno(ipft)%shed_rate_max
+         p%flush_base_temp       = t%pheno(ipft)%flush_base_temp
+         p%flush_degree_days     = t%pheno(ipft)%flush_degree_days
+         p%flush_temp_sharpness  = t%pheno(ipft)%flush_temp_sharpness
+         p%shed_base_temp        = t%pheno(ipft)%shed_base_temp
+         p%shed_degree_days      = t%pheno(ipft)%shed_degree_days
+         p%shed_temp_sharpness   = t%pheno(ipft)%shed_temp_sharpness
+         p%par_min               = t%pheno(ipft)%par_min
+         p%flush_light_hours     = t%pheno(ipft)%flush_light_hours
+         p%flush_light_sharpness = t%pheno(ipft)%flush_light_sharpness
+         p%shed_light_hours      = t%pheno(ipft)%shed_light_hours
+         p%shed_light_sharpness  = t%pheno(ipft)%shed_light_sharpness
+         p%light_window          = t%pheno(ipft)%light_window
+         p%flush_water_sum       = t%pheno(ipft)%flush_water_sum
+         p%flush_water_sharpness = t%pheno(ipft)%flush_water_sharpness
+         p%shed_water_sum        = t%pheno(ipft)%shed_water_sum
+         p%shed_water_sharpness  = t%pheno(ipft)%shed_water_sharpness
+      end associate
+      !----- The turgor-loss point is derived from the leaf's pressure-volume curve, the threshold  !
+      !      the leaf's water-stress controls use too (docs/science/plant_phenology.md §2;          !
+      !      leaf_gas_exchange.md §4.1-§4.2). --------------------------------------------------!
+      p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg%pft, ipft)
+   end subroutine flatten_pheno_params
+
+   !---------------------------------------------------------------------------------------!
+   ! Light trait plasticity over one slow step: each cohort's sla, vcmax25, rd25 and leaf        !
+   ! turnover rate relax toward their targets at the LAI above, as fast as leaves are replaced,  !
+   ! and leaf carbon above the new leaf target is resorbed to storage. Called only with          !
+   ! trait_plasticity_on (docs/science/plant_traits.md eqs. (1)-(2), §4).                        !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_plant_traits(poly, cfg, dt_yr, instantaneous)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: dt_yr
+      logical, optional,   intent(in)    :: instantaneous   !< census restart: jump straight to the target
+      integer(ik) :: j, pf
+      real(wp)    :: sla_t, vcmax_t, rd_t, turnover_t, turnover_now, leaf_target, excess
+      logical     :: instant
+      instant = .false.
+      if (present(instantaneous)) instant = instantaneous
+      associate (cohort => poly%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            !----- Light-acclimated targets from this cohort's cumulative LAI above. -----------!
+            call light_plastic_traits(cohort%overtopping_lai(j),                                 &
+                     pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_turnover_rate_toc(pf),  &
+                     pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),             &
+                     pft%kplastic_leaf_turnover(pf), sla_t, vcmax_t, rd_t, turnover_t)
+            !----- Each trait toward its target, or straight to it on a census start. ----------!
+            turnover_now = cohort%leaf_turnover_rate(j)
+            cohort%sla(j)     = update_plastic_trait(cohort%sla(j),     sla_t,   turnover_now, dt_yr, instant)
+            cohort%vcmax25(j) = update_plastic_trait(cohort%vcmax25(j), vcmax_t, turnover_now, dt_yr, instant)
+            cohort%rd25(j)    = update_plastic_trait(cohort%rd25(j),    rd_t,    turnover_now, dt_yr, instant)
+            cohort%leaf_turnover_rate(j) = update_plastic_trait(cohort%leaf_turnover_rate(j), turnover_t,      &
+                                                                turnover_now, dt_yr, instant)
+            !----- A higher SLA lowers the leaf target: resorb the excess leaf carbon to storage, so !
+            !      leaf area stays at allometry; a lower SLA leaves a deficit growth fills. --------!
+            leaf_target = size_to_leaf_carbon(cohort%pft_table%allom(cohort%pft(j)), cohort%dbh(j), cohort%height(j), &
+                                           cohort%sla(j))
+            if (cohort%leaf_carbon(j) > leaf_target) then
+               excess = cohort%leaf_carbon(j) - leaf_target
+               cohort%leaf_carbon(j)          = leaf_target
+               cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
+            end if
+            call set_cohort_size_from_carbon(cohort, j)   ! leaf_area = sla*leaf_carbon, either way
+            call hold_cohort_tissue_temps(cohort, j)      ! the resorbed leaf carbon left at the leaf's temperature
+         end do
+      end associate
+   end subroutine advance_plant_traits
+
+   !---------------------------------------------------------------------------------------!
+   ! reacclimate_plant_traits -- a restart's plastic leaf traits from this run's PFT file      !
+   ! ([init].reacclimate_traits): the census start's instant acclimation with plasticity on,   !
+   ! the top-of-canopy values without. Leaf area is kept: leaf carbon scales by the SLA's       !
+   ! change, storage taking up the difference, and a lower SLA takes at most the storage there  !
+   ! is, so no carbon is made (docs/configuration.md, "How a run starts"; plant_traits.md §5).  !
+   !---------------------------------------------------------------------------------------!
+   subroutine reacclimate_plant_traits(poly, cfg)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik) :: j, pf
+      real(wp)    :: sla_t, vcmax_t, rd_t, turnover_t, leaf_carbon_new, sla_old
+      associate (cohort => poly%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            if (cfg%trait_plasticity_on) then
+               call light_plastic_traits(cohort%overtopping_lai(j),                              &
+                        pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_turnover_rate_toc(pf), &
+                        pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),          &
+                        pft%kplastic_leaf_turnover(pf), sla_t, vcmax_t, rd_t, turnover_t)
+            else
+               sla_t = pft%sla(pf) ; vcmax_t = pft%vcmax25(pf) ; rd_t = pft%rd25(pf)
+               turnover_t = pft%leaf_turnover_rate_toc(pf)
+            end if
+            sla_old           = cohort%sla(j)
+            cohort%sla(j)     = sla_t
+            cohort%vcmax25(j) = vcmax_t
+            cohort%rd25(j)    = rd_t
+            cohort%leaf_turnover_rate(j) = turnover_t
+            if (cohort%sla(j) == sla_old) cycle
+            leaf_carbon_new = cohort%leaf_carbon(j) * sla_old / max(cohort%sla(j), tiny_num)
+            leaf_carbon_new = min(leaf_carbon_new, cohort%leaf_carbon(j) + cohort%nonstructural_carbon(j))
+            cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + cohort%leaf_carbon(j)        &
+                                             - leaf_carbon_new
+            cohort%leaf_carbon(j) = leaf_carbon_new
+            call set_cohort_size_from_carbon(cohort, j)
+            call hold_cohort_tissue_temps(cohort, j)
+         end do
+      end associate
+   end subroutine reacclimate_plant_traits
+
+   !---------------------------------------------------------------------------------------!
+   ! acclimate_site_leaf_tables -- advance each site's growth-temperature running mean     !
+   ! (weight dt/window, on the last fast loop's daily mean) and acclimate its leaf table   !
+   ! (leaf_gas_exchange.md §2 "Thermal acclimation", eq. (4)). An unset mean takes the     !
+   ! first day's value, so the optimum starts from the site's own climate.                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine acclimate_site_leaf_tables(poly, lp, step_days)
+      type(polygon_t),                intent(inout) :: poly
+      type(leaf_physiology_params_t), intent(in)    :: lp          !< [leaf_physiology]
+      integer(ik),                    intent(in)    :: step_days
+      real(wp)    :: t_day, w
+      integer(ik) :: is
+      do is = 1_ik, poly%site%n
+         if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
+         t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)
+         associate (t_growth => poly%site%t_growth_avg(is))
+            if (is_unset_positive(t_growth)) then
+               t_growth = t_day
+            else
+               w = min(1.0_wp, real(step_days, wp) / max(lp%acclim_window_days, real(step_days, wp)))
+               t_growth = t_growth + w * (t_day - t_growth)
+            end if
+            call acclimate_leaf_photo_table(t_growth, lp%acclim_ds_vcmax_a, lp%acclim_ds_vcmax_b,            &
+                                            lp%acclim_ds_jmax_a, lp%acclim_ds_jmax_b, lp%acclim_jv_a,        &
+                                            lp%acclim_jv_b, poly%site%leaf_photo(is))
+         end associate
+      end do
+   end subroutine acclimate_site_leaf_tables
+
+   !---------------------------------------------------------------------------------------!
+   ! Each cohort's carbon for the step: gather the day's GPP and maintenance respiration, apply  !
+   ! turnover first (this step's litter) so the growth demands are formed against the post-shed !
+   ! pools, allocate with plant_carbon_allocation, and form the net per-pool change. Turnover   !
+   ! first lets a canopy that is not senescing replace its loss within the step and hold its    !
+   ! target. The litter and the CO2 owed go to the patch; the pools' changes, the reproduction  !
+   ! carbon and the exhausted flags to the step record                                           !
+   ! (docs/science/plant_carbon_allocation.md §1-§2, §4-§5).                                     !
+   !---------------------------------------------------------------------------------------!
+   subroutine compute_carbon_allocation(poly, cfg, step)
+      type(polygon_t),         intent(inout) :: poly   !< no pool moves here; inout for the litter, rows and patch rates
+      type(meds_config_t),     intent(in)    :: cfg
+      type(slow_step_data_t),  intent(inout) :: step
+      integer(ik) :: n, j, pf, ip
+      real(wp)    :: dt_yr
+      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn, root_turn
+      real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
+      real(wp)    :: leaf_shed_c, fineroot_shed_c
+      real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
+      real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
+      real(wp)    :: seed_lost, exudate, window_yr, grown_in_window
+      real(wp), allocatable :: co2_owed(:), efficiency(:)
+      logical     :: starving
+      integer(ik) :: n_window, next_pos
+
+      !----- The litter accumulator is patch state: it arrives holding the last step's litter. !
+      poly%patch%litter_in(1:poly%patch%n) = litter_input_t()
+      n = poly%cohort%n
+      dt_yr  = cfg%dt_years
+      dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
+      allocate(step%d_leaf(n), step%d_fineroot(n), step%d_wood(n), step%d_nonstructural(n),          &
+               step%npp_repro(n), step%exhausted(n))
+      allocate(co2_owed(poly%patch%n)) ; co2_owed = 0.0_wp
+      efficiency = cohort_recruit_efficiency(poly, cfg)
+      !----- The growth-history slot this step's sample will fill (commit_vegetation_step advances !
+      !      growth_hist_pos the same way): the sink limit's window leaves out its old sample. ----!
+      n_window = growth_window_steps(cfg)
+      next_pos = mod(poly%growth_hist_pos, n_window) + 1_ik
+      associate (cohort => poly%cohort, pft => cfg%pft, lit => poly%patch%litter_in)
+         do j = 1_ik, n
+            pf  = cohort%pft(j)
+            r2l = pft%root_to_leaf_ratio(pf)
+            !----- The leaf target at the cohort's own SLA conserves leaf area (docs/science/plant_traits.md §4). !
+            leaf_target  = size_to_leaf_carbon(cohort%pft_table%allom(pf), cohort%dbh(j), cohort%height(j), &
+                                            cohort%sla(j))
+            leaf_turn    = cohort%leaf_turnover_rate(j)   ! baseline leaf turnover [1/yr]
+            !----- Storage upkeep, charged first: netted into the storage tendency, not written to the  !
+            !      pool, and the allocator sees the reserve after it. The fraction is clamped to [0,1],  !
+            !      so the charge never exceeds the pool or turns negative                                !
+            !      (docs/science/plant_carbon_allocation.md eq. (2), §1 "Storage maintenance"). --------!
+            storage_maint = cohort%nonstructural_carbon(j)                                              &
+                          * min(1.0_wp, max(0.0_wp, pft%storage_turnover_rate(pf) * dt_yr))
+            store_post    = cohort%nonstructural_carbon(j) - storage_maint
+            !----- Storage upkeep is owed to the canopy air with growth respiration                 !
+            !      (docs/science/plant_respiration.md §6). ----------------------------------------!
+            co2_owed(cohort%owner_patch(j)) = co2_owed(cohort%owner_patch(j))                           &
+                                            + cohort%nplant(j) * storage_maint
+
+            store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
+                                                             r2l * leaf_target) - store_post)
+            !----- Reproduction starts at min_repro_height (docs/science/plant_carbon_allocation.md §2). !
+            repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
+                                 cohort%height(j) >= pft%min_repro_height(pf))
+            !----- Fine-root turnover, slowed with the leaves' when fineroot_turnover_plastic      !
+            !      (docs/science/plant_traits.md §4); then the turnover and the growth demands. ----!
+            root_turn = pft%fineroot_turnover_rate(pf)
+            if (cfg%fineroot_turnover_plastic)                                                     &
+               root_turn = root_turn * cohort%leaf_turnover_rate(j) / pft%leaf_turnover_rate_toc(pf)
+            call cohort_carbon_demand(cfg%fast_biophysics_on,                                      &
+                     cohort%gpp_accum(j), cohort%leaf_resp_accum(j), cohort%stem_resp_accum(j),    &
+                     cohort%root_resp_accum(j), cfg%gpp_ref, cohort%leaf_area(j), dt_yr,           &
+                     cohort%leaf_flush_tendency(j), cohort%leaf_shed_tendency(j),                  &
+                     pft%pheno(pf)%flush_rate_max, pft%pheno(pf)%shed_rate_max, leaf_turn,         &
+                     root_turn,                                                                    &
+                     pft%pheno(pf)%min_leaf_cover, pft%pheno(pf)%bare_leaf_cover,                  &
+                     cohort%leaf_carbon(j), cohort%fineroot_carbon(j), leaf_target, dt_day, r2l,   &
+                     gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
+                     fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c,           &
+                     fineroot_retained_c)
+            call growth_window_so_far(cohort%growth_count(j), cohort%growth_accum(j),              &
+                                      cohort%growth_hist(next_pos, j), n_window, dt_yr,             &
+                                      window_yr, grown_in_window)
+            !----- Allocate the day's carbon: growth respiration on realized growth, wood capped by !
+            !      the sink limit (docs/science/plant_carbon_allocation.md §2-§3). ---------------!
+            call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
+                     growth_resp_frac=pft%growth_resp_factor(pf), storage=store_post,                    &
+                     leaf_demand=leaf_demand, fineroot_demand=fineroot_demand,                     &
+                     storage_demand=store_demand, repro_frac=repro_frac,                           &
+                     growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
+                     npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
+                     deficit=deficit, starving=starving,                                           &
+                     wood_growth_max=growth_sink_limitation(                                       &
+                        allom=cohort%pft_table%allom(pf),                                            &
+                        wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
+                        wood_density=pft%wood_density(pf),                                          &
+                        max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
+                        max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
+                        max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
+                        dt_yr=dt_yr, window_yr=window_yr, grown_in_window=grown_in_window),         &
+                     exudate=exudate)
+            !----- The net per-pool change: growth less the shed for leaf and fine root. ---------!
+            step%d_leaf(j)          = g_leaf     - leaf_shed_c
+            step%d_fineroot(j)      = g_fineroot - fineroot_shed_c
+            step%d_wood(j)          = g_wood
+            !----- Storage: allocation less upkeep, plus the resorbed carbon, which d_leaf and     !
+            !      d_fineroot remove in full (docs/science/plant_carbon_allocation.md eq. (3)). ----!
+            step%d_nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
+            step%npp_repro(j)       = g_repro
+            !----- No leaves and no storage: the maintenance left unpaid once storage is spent exceeds !
+            !      all the leaf carbon, so no flush can be paid for                                   !
+            !      (docs/science/plant_carbon_allocation.md §2, "A cohort with no leaves and no storage"). !
+            step%exhausted(j)       = deficit > cohort%leaf_carbon(j)
+            !----- Slow cohort rows: the allocation split, growth respiration, storage upkeep and     !
+            !      exudate, as rates [kgC/plant/yr], so the carbon budget closes from the output. ----!
+            if (cohort%sdiag%active) then
+               cohort%sdiag%v(CO_NPP_LEAF,     j) = g_leaf     / dt_yr
+               cohort%sdiag%v(CO_NPP_FINEROOT, j) = g_fineroot / dt_yr
+               cohort%sdiag%v(CO_NPP_WOOD,     j) = g_wood     / dt_yr
+               cohort%sdiag%v(CO_NPP_STORAGE,  j) = npp_store  / dt_yr
+               cohort%sdiag%v(CO_NPP_REPRO,    j) = g_repro    / dt_yr
+               cohort%sdiag%v(CO_GROWTH_RESP,  j) = growth_resp / dt_yr
+               cohort%sdiag%v(CO_STORAGE_RESP, j) = storage_maint / dt_yr
+               cohort%sdiag%v(CO_EXUDATE,      j) = exudate / dt_yr
+               cohort%sdiag%w(j)                  = 1.0_wp
+            end if
+            !----- Growth respiration, less the starvation deficit the fast loop over-reported, is   !
+            !      owed to the canopy air (docs/science/plant_respiration.md §6). -------------------!
+            ip = cohort%owner_patch(j)
+            co2_owed(ip) = co2_owed(ip) + cohort%nplant(j) * (growth_resp - deficit)
+
+            !----- The seed that does not establish is litter that falls with the canopy           !
+            !      (docs/science/demography.md §1, "Recruitment"). ------------------------------!
+            seed_lost = g_repro * cohort%nplant(j)                                              &
+                      * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
+            !----- The unresorbed share of the turnover and the seed lost go to the patch's litter !
+            !      (docs/science/plant_carbon_allocation.md eq. (3)). ----------------------------!
+            call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
+                     (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
+                     seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
+                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf))
+            !----- Root exudate, the carbon the sink limit left, is below-ground labile litter.  !
+            lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
+            lit(ip)%exudate_c   = lit(ip)%exudate_c   + exudate * cohort%nplant(j)
+         end do
+      end associate
+
+      !----- The CO2 owed as a molar rate [umol/m2/s] the next fast window emits. -------------!
+      do ip = 1_ik, poly%patch%n
+         poly%patch%slow_co2_rate(ip) = co2_owed(ip) / max(cfg%dt_slow, tiny_num) / KGC_PER_UMOL_C
+      end do
+   end subroutine compute_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! Each cohort's recruit carbon efficiency this step: the share of its reproduction carbon   !
+   ! that becomes recruits, reduced by the shade of its patch's LAI (docs/science/demography.md !
+   ! eq. (5)). The recruits and the seed lost to litter both take it from here, so the two     !
+   ! always add up to the reproduction carbon.                                                 !
+   !---------------------------------------------------------------------------------------!
+   function cohort_recruit_efficiency(poly, cfg) result(efficiency)
+      type(polygon_t),     intent(in) :: poly
+      type(meds_config_t), intent(in) :: cfg
+      real(wp), allocatable :: efficiency(:)
+      real(wp), allocatable :: patch_lai(:)
+      integer(ik) :: j, pf, ip
+      allocate(efficiency(poly%cohort%n), patch_lai(max(poly%patch%n, 1_ik)))
+      patch_lai = 0.0_wp
+      associate (cohort => poly%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            ip = cohort%owner_patch(j)
+            patch_lai(ip) = patch_lai(ip) + cohort%nplant(j) * cohort%leaf_area(j)
+         end do
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            efficiency(j) = pft%recruit_carbon_efficiency(pf)                                      &
+                          * exp(-pft%recruit_shade_decay(pf) * patch_lai(cohort%owner_patch(j)))
+         end do
+      end associate
+   end function cohort_recruit_efficiency
+
+   !---------------------------------------------------------------------------------------!
+   ! The vital rates from the step's carbon: each cohort's mortality [1/yr] from its wood growth, !
+   ! and each PFT's recruitment per patch [plant/m2/yr] from the reproduction carbon plus the     !
+   ! seed rain, by the laws of meds_demography (docs/science/demography.md §1), from the wood    !
+   ! and reproduction carbon compute_carbon_allocation put in the step record. The sweep over the  !
+   ! stand stays here, so the laws keep no state.                                                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine compute_vital_rates(poly, cfg, step)
+      type(polygon_t),        intent(in)    :: poly
+      type(meds_config_t),    intent(in)    :: cfg
+      type(slow_step_data_t), intent(inout) :: step   !< reads d_wood, npp_repro, exhausted; fills mortality, recruitment
+      integer(ik) :: n, np, npft, j, pf, ip
+      real(wp)    :: dbh_rate, dt_yr
+      real(wp), allocatable :: carbon_min(:), efficiency(:)
+
+      n     = poly%cohort%n
+      np    = poly%patch%n
+      npft  = cfg%pft%n
+      dt_yr = cfg%dt_years
+      if (allocated(step%mortality))   deallocate(step%mortality)
+      if (allocated(step%recruitment)) deallocate(step%recruitment)
+      allocate(step%mortality(n), step%recruitment(npft, max(np, 1_ik)))
+      step%recruitment = 0.0_wp
+      efficiency  = cohort_recruit_efficiency(poly, cfg)
+
+      associate (cohort => poly%cohort, pft => cfg%pft, mortality => step%mortality,            &
+                 recruitment => step%recruitment, npp_wood => step%d_wood, npp_repro => step%npp_repro, &
+                 exhausted => step%exhausted)
+         allocate(carbon_min(npft))
+         do pf = 1_ik, npft
+            carbon_min(pf) = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height,      &
+                                               pft%wood_density(pf))
+         end do
+         !----- The baseline seed rain, from outside the site. ----------------------------!
+         do ip = 1_ik, np
+            do pf = 1_ik, npft
+               if (pft%include_pft(pf) == 1_ik) recruitment(pf, ip) = pft%seed_rain_recruits(pf)
+            end do
+         end do
+         do j = 1_ik, n
+            pf = cohort%pft(j)
+            ip = cohort%owner_patch(j)
+            !----- Prospective diameter rate and the Camac hazard (docs/science/demography.md eqs. (1), (3)). !
+            dbh_rate = npp_to_growth(cohort%pft_table%allom(pf), cohort%wood_carbon(j), npp_wood(j),  &
+                                     cohort%dbh(j), dt_yr, pft%wood_density(pf))
+            mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
+                                           cohort%growth_count(j) > 0_ik,                           &
+                                           pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
+            !----- A cohort with no leaves and no storage cannot flush again: its density goes to the  !
+            !      floor this step (docs/science/demography.md eq. (4); plant_carbon_allocation.md §2). !
+            if (exhausted(j)) mortality(j) = max(mortality(j),                                      &
+                    decline_to_floor_mortality(cohort%nplant(j), cfg%negligible_nplant, dt_yr))
+            !----- Reproduction carbon to recruits, a yearly rate the recruit pool takes daily; a  !
+            !      disabled PFT recruits nothing (docs/science/demography.md eq. (6)). ------------!
+            if (pft%include_pft(pf) == 1_ik)                                                       &
+            recruitment(pf, ip) = recruitment(pf, ip)                                              &
+                 + npp_to_recruitment(cohort%nplant(j), npp_repro(j), dt_yr,                       &
+                                      efficiency(j), carbon_min(pf))
+         end do
+      end associate
+   end subroutine compute_vital_rates
+
+   !---------------------------------------------------------------------------------------!
+   ! Mortality litter: every pool of the plants that died this step, (n0 - n1).p1, on the pools  !
+   ! and the density drop of the commit it follows, so litter is valued on the new pools and a   !
+   ! cohort the floor stopped gets none (docs/science/demography.md eq. (9)). It goes to the same !
+   ! per-patch accumulator as the turnover litter.                                                !
+   !---------------------------------------------------------------------------------------!
+   subroutine accumulate_mortality_litter(poly, cfg, step)
+      type(polygon_t),        intent(inout) :: poly   !< the litter accumulator and the mortality-carbon row
+      type(meds_config_t),    intent(in)    :: cfg
+      type(slow_step_data_t), intent(in)    :: step   !< reads nplant_before
+      integer(ik) :: j, pf, ip
+      real(wp)    :: died_nplant
+
+      associate (cohort => poly%cohort, pft => cfg%pft, lit => poly%patch%litter_in,            &
+                 nplant_before => step%nplant_before)
+         do j = 1_ik, cohort%n
+            died_nplant = nplant_before(j) - cohort%nplant(j)
+            if (died_nplant <= 0.0_wp) cycle
+            pf = cohort%pft(j)
+            ip = cohort%owner_patch(j)
+            !----- The background mortality's carbon, from the same numbers as the litter below, as  !
+            !      a rate [kgC/m2/yr] times the step's seconds (docs/science/diagnostics.md §4). -----!
+            if (poly%patch%diag%active)                                                            &
+               poly%patch%diag%v(PA_MORT_C_BACKGROUND, ip) =                                       &
+                  poly%patch%diag%v(PA_MORT_C_BACKGROUND, ip)                                      &
+                  + (died_nplant * (cohort%leaf_carbon(j) + cohort%fineroot_carbon(j)              &
+                                  + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
+                     / cfg%dt_years) * cfg%dt_slow
+            call add_necromass(lit(ip), died_nplant * cohort%leaf_carbon(j),                      &
+                     died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
+                     died_nplant * cohort%nonstructural_carbon(j), 0.0_wp,                         &
+                     pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                 &
+                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf))
+         end do
+      end associate
+   end subroutine accumulate_mortality_litter
+
+   !---------------------------------------------------------------------------------------!
+   ! The turnover's tissue water. A net leaf or fine-root loss sheds water in proportion to the !
+   ! carbon lost, so the tissue left keeps its water per unit carbon; fine roots shed their      !
+   ! share of the wood store. A net gain moves no water: the store keeps its mass. It runs       !
+   ! before the commit, against the pre-step pools. The water and its enthalpy go to the ground  !
+   ! as patch rates (shed_water_rate, shed_water_enth) the next fast window adds                 !
+   ! (docs/science/soil_plant_water.md §2; conservation.md §3). ---------------------------------!
+   subroutine shed_turnover_water(poly, cfg, step, ledger)
+      type(polygon_t),        intent(inout) :: poly
+      type(meds_config_t),    intent(in)    :: cfg
+      type(slow_step_data_t), intent(in)    :: step   !< reads d_leaf, d_fineroot
+      type(slow_ledger_t), intent(inout), optional :: ledger
+      real(wp), allocatable :: patch_total(:), patch_enth(:)
+      real(wp) :: shed_frac, shed_amount
+      integer(ik) :: j, ip
+
+      allocate(patch_total(poly%patch%n), patch_enth(poly%patch%n))
+      patch_total = 0.0_wp
+      patch_enth  = 0.0_wp
+
+      associate (cohort => poly%cohort)
+         do j = 1_ik, cohort%n
+            ip = cohort%owner_patch(j)
+            if (step%d_leaf(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -step%d_leaf(j) / max(cohort%leaf_carbon(j), tiny_num))
+               shed_amount = cohort%leaf_water_mass(j) * shed_frac
+               cohort%leaf_water_mass(j) = cohort%leaf_water_mass(j) - shed_amount
+               patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%leaf_temp(j))
+            end if
+            if (step%d_fineroot(j) < 0.0_wp) then
+               shed_frac   = min(1.0_wp, -step%d_fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
+               !----- The fine roots' own share of the store, in proportion to their carbon. ------!
+               shed_amount = max(cohort%wood_water_mass(j), 0.0_wp) * cohort%fineroot_carbon(j)   &
+                           / max(cohort_wood_store_carbon(cohort%sapwood_carbon(j), cohort%fineroot_carbon(j)), &
+                                 tiny_num) * shed_frac
+               cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
+               patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               patch_enth(ip)  = patch_enth(ip)  + cohort%nplant(j) * shed_amount                        &
+                                                 * internal_energy_liquid(cohort%wood_temp(j))
+            end if
+            !----- The water leaves at its tissue's temperature: the temperature holds, the energy falls. !
+            call hold_cohort_tissue_temps(cohort, j)
+         end do
+      end associate
+
+      do ip = 1_ik, poly%patch%n
+         poly%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
+         poly%patch%shed_water_enth(ip) = patch_enth(ip)  / max(cfg%dt_slow, tiny_num)
+      end do
+
+      !----- The shed water and its enthalpy: a declared handoff (docs/science/conservation.md §3). !
+      if (present(ledger)) then
+         do ip = 1_ik, poly%patch%n
+            call slow_ledger_declare(ledger, water_out  = patch_polygon_area(poly, ip) * patch_total(ip),     &
+                                             energy_out = patch_polygon_area(poly, ip) * patch_enth(ip))
+         end do
+      end if
+   end subroutine shed_turnover_water
+
+   !---------------------------------------------------------------------------------------!
+   ! New leaves take their water from the wood: the leaf tissue the commit added is filled,  !
+   ! with at most the water the wood holds, to the wood's potential less the crown's gravity !
+   ! head. The plant's water is unchanged, and a canopy re-flushing from bare does not start  !
+   ! at the dry end of its pressure-volume curve. The wood ends a little drier than the       !
+   ! leaves at rest; the next fast step evens them out (docs/science/soil_plant_water.md §2). !
+   !---------------------------------------------------------------------------------------!
+   subroutine fill_new_leaf_water(poly, cfg, step)
+      type(polygon_t),        intent(inout) :: poly
+      type(meds_config_t),    intent(in)    :: cfg
+      type(slow_step_data_t), intent(in)    :: step   !< reads leaf_carbon_before
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp)    :: grown, head, psi_wood, moved
+      integer(ik) :: i
+
+      associate (cohort => poly%cohort)
+         do i = 1_ik, cohort%n
+            grown = cohort%leaf_carbon(i) - step%leaf_carbon_before(i)
+            if (grown <= 0.0_wp) cycle
+            leaf_curve = cfg%pft%hydro(cohort%pft(i))%leaf_curve
+            wood_curve = cfg%pft%hydro(cohort%pft(i))%wood_curve
+            head     = grav_head * cohort%height(i)          ! the crown above the wood datum [MPa]
+            psi_wood = tissue_water_to_psi(cohort%wood_water_mass(i), wood_curve,                           &
+                          cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
+            moved    = min(tissue_psi_to_water(psi_wood - head, leaf_curve, grown), cohort%wood_water_mass(i))
+            cohort%leaf_water_mass(i) = cohort%leaf_water_mass(i) + moved
+            cohort%wood_water_mass(i) = cohort%wood_water_mass(i) - moved
+            call hold_cohort_tissue_temps(cohort, i)
+         end do
+      end associate
+   end subroutine fill_new_leaf_water
+
+   !---------------------------------------------------------------------------------------!
+   ! The water of the plants that die this step: their tissue water and canopy films go to the !
+   ! ground down the turnover shed's channel. Runs after the commit, with the dying number      !
+   ! n0 - n1 taken as accumulate_mortality_litter takes it (docs/science/demography.md §2).      !
+   !---------------------------------------------------------------------------------------!
+   subroutine shed_mortality_water(poly, cfg, step, water_shed)
+      type(polygon_t),        intent(inout) :: poly
+      type(meds_config_t),    intent(in)    :: cfg
+      type(slow_step_data_t), intent(in)    :: step         !< reads nplant_before
+      real(wp),               intent(out)   :: water_shed   !< [kg/m2 site]
+      integer(ik) :: j, ip
+      real(wp)    :: died_nplant, w_j
+
+      water_shed = 0.0_wp
+      associate (cohort => poly%cohort, patch => poly%patch)
+         do j = 1_ik, cohort%n
+            died_nplant = step%nplant_before(j) - cohort%nplant(j)
+            if (died_nplant <= 0.0_wp) cycle
+            ip  = cohort%owner_patch(j)
+            !----- The density drop times the per-plant water (cohort_tissue_water would carry the !
+            !      post-commit density and scale the loss by n1/n0). -----------------------------!
+            w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
+                               + max(cohort%wood_water_mass(j), 0.0_wp)                            &
+                               + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + died_nplant * cohort_water_enthalpy(cohort, j) / max(cfg%dt_slow, tiny_num)
+            water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
+         end do
+      end associate
+   end subroutine shed_mortality_water
+
+   !---------------------------------------------------------------------------------------!
+   ! Tissue water above the capacity a cohort's biomass now allows goes to the ground, down the !
+   ! turnover shed's channel (patch%shed_water_rate). An operator that shrinks a store without  !
+   ! touching its water (an SLA rise, a fusion or split) can leave it above saturation; the     !
+   ! caller declares the water shed (docs/science/soil_plant_water.md §2).                      !
+   !---------------------------------------------------------------------------------------!
+   subroutine shed_excess_tissue_water(poly, cfg, water_shed)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(out)   :: water_shed     !< [kg/m2 site] the water shed
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp)    :: leaf_kept, wood_kept, excess, excess_enth
+      integer(ik) :: i, ip
+
+      water_shed = 0.0_wp
+      associate (cohort => poly%cohort, patch => poly%patch)
+         do i = 1_ik, cohort%n
+            leaf_curve = cfg%pft%hydro(cohort%pft(i))%leaf_curve
+            wood_curve = cfg%pft%hydro(cohort%pft(i))%wood_curve
+            leaf_kept = tissue_capped_water(cohort%leaf_water_mass(i), leaf_curve, cohort%leaf_carbon(i))
+            wood_kept = tissue_capped_water(cohort%wood_water_mass(i), wood_curve,                &
+                           cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
+            excess = (cohort%leaf_water_mass(i) - leaf_kept) + (cohort%wood_water_mass(i) - wood_kept)
+            if (excess <= 0.0_wp) cycle
+            excess_enth = (cohort%leaf_water_mass(i) - leaf_kept) * internal_energy_liquid(cohort%leaf_temp(i)) &
+                        + (cohort%wood_water_mass(i) - wood_kept) * internal_energy_liquid(cohort%wood_temp(i))
+            cohort%leaf_water_mass(i) = leaf_kept
+            cohort%wood_water_mass(i) = wood_kept
+            call hold_cohort_tissue_temps(cohort, i)          ! the excess leaves at the tissue's temperature
+            ip = cohort%owner_patch(i)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
+                                      + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
+                                      + cohort%nplant(i) * excess_enth / max(cfg%dt_slow, tiny_num)
+            water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
+         end do
+      end associate
+   end subroutine shed_excess_tissue_water
+
+   !---------------------------------------------------------------------------------------!
+   ! Advance each patch's soil-carbon pools one daily step on the step's litter,           !
+   ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
+   ! on the pools directly). `seam` keeps the run's worst Rh gap, lignin residual and      !
+   ! lambda (soil_carbon.md §6-§7, §9).                                                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_soil_carbon(poly, cfg, seam, ledger)
+      type(polygon_t),       intent(inout) :: poly
+      type(meds_config_t),   intent(in)    :: cfg
+      type(soilc_seam_t), optional, intent(inout) :: seam   !< the run's worst fast/slow seam checks (soil_carbon.md §7)
+      !----- The slow ledger: the litter declared leaving the live pools is declared       !
+      !      arriving here, and the day's Rh is declared leaving (conservation.md §3). ----!
+      type(slow_ledger_t), optional, intent(inout) :: ledger
+      real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
+      type(soil_carbon_out_t) :: audit
+      integer(ik)          :: ip
+
+      if (present(ledger)) then
+         do ip = 1_ik, poly%patch%n
+            associate (lit => poly%patch%litter_in(ip))
+               call slow_ledger_declare(ledger, carbon_in = patch_polygon_area(poly, ip)           &
+                        * (lit%labile_grnd + lit%labile_soil + lit%struct_grnd + lit%struct_soil))
+            end associate
+         end do
+      end if
+      do ip = 1_ik, poly%patch%n
+         call build_litter_input(poly%patch%litter_in(ip), u, lignin_in)
+         associate (xa => poly%patch%decomp_xi(ip))
+            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xa%xi_days, cfg%soil_carbon, &
+                                  rh_today, audit)
+            !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
+            !      debit, should equal the fast loop's accumulated Rh. --------------------!
+            audit%rh_fast_accum = xa%rh_fast
+            audit%rh_seam_gap   = rh_today - xa%rh_fast
+            if (present(seam)) then
+               seam%worst_rh_gap = max(seam%worst_rh_gap, abs(audit%rh_seam_gap))
+               seam%worst_lignin = max(seam%worst_lignin, abs(audit%lignin_resid))
+               if (audit%lambda_max > seam%worst_lambda) then
+                  seam%worst_lambda = audit%lambda_max
+                  seam%lambda_pool  = audit%lambda_pool
+               end if
+            end if
+            !----- Declare the matrix's own Rh debit (conservation.md §3): what is left in !
+            !      the residual is the fast/slow seam gap. --------------------------------!
+            if (present(ledger)) call slow_ledger_declare(ledger,                                  &
+                                          carbon_out = patch_polygon_area(poly, ip) * rh_today)
+         end associate
+      end do
+   end subroutine advance_soil_carbon
+
+end module meds_slow_state

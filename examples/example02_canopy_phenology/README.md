@@ -4,8 +4,8 @@ The leaf-phenology module of MEDS on its own. **This example shows how the modul
 kernel, three cues, and leaf habits as parameter sets — at four forests; it is not a calibration of
 any of them.** A temperate deciduous broadleaf, an evergreen pine, a tropical tree that renews its
 leaves in the dry season and a drought-deciduous dry forest all run the same compiled kernel
-([`meds_phenology.f90`](../../src/slow_dynamics/plant/meds_phenology.f90)) and differ only in
-parameter values. A Python script drives it through
+([`meds_plant_phenology.f90`](../../src/slow_dynamics/processes/meds_plant_phenology.f90)) and
+differ only in parameter values. A Python script drives it through
 [`meds.plant.pheno`](../../python/meds/plant/pheno.py); the equations are in
 [`docs/science/plant_phenology.md`](../../docs/science/plant_phenology.md).
 

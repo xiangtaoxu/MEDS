@@ -1,6 +1,6 @@
 # Leaf phenology
 
-MEDS models leaf phenology in two layers. The **cue kernel** (`meds_phenology`) turns daily
+MEDS models leaf phenology in two layers. The **cue kernel** (`meds_plant_phenology`) turns daily
 environmental cues and per-PFT traits into two smoothed **tendencies** in $[0,1]$: a leaf **flush**
 tendency $f$ and a leaf **shed** (senescence) tendency $s$. The **carbon layer** turns the tendencies
 into leaf growth and leaf loss (`leaf_turnover_step`, §5). The kernel's state is the two tendencies
@@ -299,12 +299,13 @@ restart files.
 
 | Concept | Routine |
 |---|---|
-| cues → tendencies → potential rates | `meds_phenology`: `phenology_kernel` (+ private `accumulate`, the water switches) |
-| tendencies → leaf loss + flush cap | `meds_phenology`: `leaf_turnover_step` |
-| types (env / params / state / out) + cue bits | `meds_phenology_types` |
+| cues → tendencies → potential rates | `meds_plant_phenology`: `phenology_kernel` (+ private `accumulate`, the water switches) |
+| tendencies → leaf loss + flush cap | `meds_plant_phenology`: `leaf_turnover_step`, `turnover_gate` |
+| types (env / args / state / out) | `meds_plant_phenology`: `pheno_env_t`, `pheno_args_t`, `pheno_state_t`, `pheno_out_t` |
+| cue bits | `meds_pft_params`: `CUE_*`, beside the cue masks |
 | helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `doy_effective` |
-| per-cohort advance (slow loop) | `meds_vegetation_dynamics`: `advance_leaf_phenology`, `flatten_pheno_params` |
+| per-cohort advance (slow loop) | `meds_slow_state`: `advance_leaf_phenology`, `flatten_pheno_params` |
 | hours of light at each cohort's top | `meds_canopy_radiation`: `solve_band` (`incident`), `rad_out_t%incid_top`; `meds_fast_state`: `accumulate_fast_to_slow` (`light_hours_accum`) |
-| turnover-first carbon demand | `meds_vegetation_dynamics`: `cohort_carbon_demand` (called from `compute_carbon_allocation`) |
+| turnover-first carbon demand | `meds_plant_carbon_allocation`: `cohort_carbon_demand` (called from `meds_slow_state`: `compute_carbon_allocation`) |
 | C-API | `meds_c_api_phenology`: `meds_phenology_step`, `meds_leaf_turnover_step`, `meds_daylength` |
 | Python front end + example | `meds.plant.pheno`; `examples/example02_canopy_phenology/` |

@@ -9,10 +9,9 @@ program test_fusion_cohort
                                                cohort_bad_field, cohort_field_name, cohort_deriv_block, cohort_deriv_alloc, &
                                                init_cohort, hold_cohort_tissue_temps
    use meds_polygon_state_vars,         only : polygon_t
-   use meds_demography_update, only : fill_cohort_deriv
+   use meds_slow_update, only : fill_cohort_deriv, fuse_2_cohorts, new_fuse_cohorts, split_cohorts,      &
+                                max_cohort_count
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
-   use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
-                                         max_cohort_count
    use meds_output_reduce, only : total_nplant, total_agb
    use meds_diag_vars,        only : alloc_cohort_diag, cohort_diag_value, CO_LEAF_TEMP, CO_WOOD_TEMP
    use meds_allometry_lib,   only : storage_carbon_target

@@ -44,7 +44,7 @@ compiler-specific.
 | Compiler | Role | Activation |
 |---|---|---|
 | Intel `ifx` | The everyday compiler. Strict standards checking; runs the full suite. | `source /opt/intel/oneapi/setvars.sh` |
-| NVIDIA `nvfortran` | The second back end, and the host-multicore path. (GPU offload builds but is slower than the CPU — see below.) | put the HPC SDK `compilers/bin` on `PATH` |
+| NVIDIA `nvfortran` | The second back end, and the host-multicore path. (There is no GPU build — see [Parallel builds](#parallel-builds).) | put the HPC SDK `compilers/bin` on `PATH` |
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
@@ -208,27 +208,11 @@ of two runs:
   (41.5 s and 56.7 s on the 60-day case). The `no_procedure_arguments` test keeps every MEDS source free of
   them.
 
-**OpenMP `target` offload** (NVHPC only):
-
-```bash
-cmake -S . -B build-mc  -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_GPU=multicore -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake -S . -B build-gpu -DCMAKE_Fortran_COMPILER=nvfortran -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_GPU=gpu -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-```
-
-`MEDS_GPU` (`none|multicore|gpu`) affects NVHPC builds only; ifx and gfortran ignore it, because
-the `!$omp` lines are comments without an OpenMP flag.
-
-**On the GPU, honestly:** offload is **not viable for the current model**. The GPU build runs 1.4×
-slower than the CPU (49.8 s against 36.2 s), with one kernel at 0.4 % occupancy.
-`MEDS_GPU=multicore` is useful; `MEDS_GPU=gpu` builds and runs correctly and is kept so the offload
-path does not rot, but it is not a speedup. The measurement and what to do instead are in
-[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md).
-
-**Do not use `-stdpar=gpu`.** It forces the global CUDA managed allocator, whose deep copy and
-finalize of the allocatable-component site type double-frees on the host. OpenMP `target` with
-`-gpu=mem:separate` keeps all state in normal host memory and moves only the mapped arrays.
+**There is no GPU build.** OpenMP `target` offload under nvfortran measured 1.4× slower than the
+CPU (49.8 s against 36.2 s), with one kernel at 0.4 % occupancy, so its build option is removed.
+The measurement and what to do instead are in
+[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md). nvfortran
+threads the host through `MEDS_OPENMP`, as the other compilers do.
 
 ## Installing dependencies
 

@@ -47,7 +47,7 @@ program test_slow_diag_units
    use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
-   use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
+   use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
    implicit none

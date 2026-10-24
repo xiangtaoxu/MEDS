@@ -22,7 +22,7 @@ program test_fast_loop
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_plant_hydr_lib,  only : tissue_psi_to_water
-   use meds_slow_dynamics,   only : settle_tissue_water
+   use meds_slow_dynamics, only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
    use meds_stepper,             only : advance_one_step

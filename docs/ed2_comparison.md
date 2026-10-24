@@ -248,9 +248,9 @@ analysis code:
 MEDS threads the patch axis with OpenMP (compiled in by default, asked for at run time), and **the output is
 byte-identical at any thread count** — site accumulators are staged per (sub-step, patch) and folded
 back in patch order rather than by `reduction(+:)`, so the last bits do not drift with thread
-scheduling. The hot demographic kernel carries OpenMP `target` regions and runs on GPU under
-nvfortran. There is **no MPI**: a region's polygons run one after another in one process, and a
-larger domain is split into boxes run as separate jobs.
+scheduling. There is no GPU build: OpenMP `target` offload measured 1.4× slower than the CPU
+(`docs/dev_plans/archive/MEDS_GPU_EVALUATION.md`). There is **no MPI**: a region's polygons run one
+after another in one process, and a larger domain is split into boxes run as separate jobs.
 
 Measured on a 50-year forced spin-up: ~2.0× on 4 cores, which is ~67% of that machine's *measured*
 4-core aggregate throughput (3.03×, not 4× — turbo and shared cache). Speedup is bounded by patch
@@ -384,7 +384,7 @@ What the output code in `src/io/output` takes from ED2:
 | Compilers | ifx and gfortran verified for v0.3.0; nvfortran is the multicore back end | gfortran, ifort, others |
 | Dependencies | netCDF-C (mandatory) | HDF5, optionally MPI |
 | Tests | 53 CTest targets, run on both compilers, Release and Debug | `EDTS` regression suite comparing whole-model output |
-| Parallelism | OpenMP over patches, bit-identical at any thread count. (GPU offload exists and is measured 1.4× *slower* than the CPU.) | MPI over polygons + OpenMP within a rank |
+| Parallelism | OpenMP over patches, bit-identical at any thread count. (No GPU build: offload measured 1.4× *slower* than the CPU.) | MPI over polygons + OpenMP within a rank |
 | Scale | One site, or a region of polygons in one process | Single points, regional grids, or coupled to BRAMS |
 
 MEDS has no equivalent of EDTS. That is the gap behind the "not benchmarked" caveat at the top of
@@ -511,7 +511,7 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
 The slow-loop code in `src/slow_dynamics` states MEDS's own rationale in its comments and its science
 pages. What it takes from ED2 is listed here.
 
-- **The slow driver.** `meds_vegetation_dynamics` plays the part of ED2's `veg_dynamics_driver`. Leaf
+- **The slow driver.** `meds_slow_dynamics` plays the part of ED2's `veg_dynamics_driver`. Leaf
   phenology runs inside the slow loop, as ED2's `phenology_driv` runs inside its vegetation dynamics.
 - **Storage upkeep** (`plant_carbon_allocation.md` eq. (2)).
   - Its form is ED2's `growth_balive`: a fractional turnover of the pool per year, with no
@@ -522,19 +522,18 @@ pages. What it takes from ED2 is listed here.
   - It covers ED2's `growth_balive` and `structural_growth` in one daily step.
   - It follows FATES's PARTEH hypothesis 1 ("allometrically guided, carbon only"): every pool has an
     allometric target, and the residual builds wood.
-- **Soil carbon** (`meds_soil_biogeochem`).
+- **Soil carbon** (`meds_soil_carbon`).
   - The seven pools are ED2's CENTURY set, and the network is ED2's `update_C_and_N_pools`,
     reorganized as a carbon matrix.
   - The `euler` step is ED2's forward Euler.
   - The above-ground pools take the surface temperature and the below-ground ones the active layer's,
     as ED2's `A_decomp` and `B_decomp`.
-- **Cohort and patch fusion and fission** (`meds_demography_cohort_fusefiss`,
-  `meds_demography_patch_fusefiss`).
+- **Cohort and patch fusion and fission** (`meds_slow_update`).
   - They are ED2's `fuse_fiss_utils`; `new_fuse_cohorts` and `new_fuse_patches` keep ED2's names.
   - Patch fusion compares ED2's cumulative-LAI light profiles (`patch_pft_size_profile`).
 - **Treefall disturbance** (`apply_patch_disturbance`). The survivorship is ED2's treefall: cohorts
   at or above the survival height die in the gap, and the understory survives into it.
-- **Light plasticity** (`meds_plant_trait_dynamics`). It ports ED2's `update_cohort_plastic_trait`
+- **Light plasticity** (`meds_plant_traits`). It ports ED2's `update_cohort_plastic_trait`
   (Lloyd et al. 2010).
 
 ---
@@ -604,14 +603,14 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Turbulence | `src/fast_dynamics/processes/meds_canopy_aerodynamics.f90`; [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | `canopy_struct_dynamics.f90` |
 | Hydraulics | `src/fast_dynamics/processes/meds_plant_hydraulics.f90`; [`plant_hydraulics.md`](science/plant_hydraulics.md) | `plant_hydro.f90` |
 | Soil | `src/fast_dynamics/meds_soil_{water,energy}.f90`; [`soil_biophysics.md`](science/soil_biophysics.md) | `rk4_misc.f90`, `lsm_hyd.f90`, `soil_coms.F90` |
-| Allocation / growth | `src/slow_dynamics/plant/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
-| Decomposition | `src/slow_dynamics/soil/meds_soil_biogeochem.f90`; [`soil_carbon.md`](science/soil_carbon.md) | `soil_respiration.f90`, `decomp_coms.f90` |
+| Allocation / growth | `src/slow_dynamics/processes/meds_plant_carbon_allocation.f90`; [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | `growth_balive.f90`, `structural_growth.f90` |
+| Decomposition | `src/slow_dynamics/processes/meds_soil_carbon.f90`; [`soil_carbon.md`](science/soil_carbon.md) | `soil_respiration.f90`, `decomp_coms.f90` |
 | Respiration | `src/fast_dynamics/processes/meds_plant_respiration.f90`; [`plant_respiration.md`](science/plant_respiration.md) | `stem_resp_driv.f90` |
-| Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
-| Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
-| Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |
+| Phenology | `src/slow_dynamics/processes/meds_plant_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
+| Mortality / recruitment | `src/slow_dynamics/processes/meds_demography.f90`; [`demography.md`](science/demography.md) | `mortality.f90`, `reproduction.f90` |
+| Disturbance | `src/slow_dynamics/driver/meds_slow_update.f90` (`apply_patch_disturbance`) | `disturbance.f90`, `fire.f90`, `forestry.f90` |
 | Forcing | `src/io/met/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
-| Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
+| Fusion / fission | `src/slow_dynamics/driver/meds_slow_update.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
 | State | `src/state/meds_{cohort,patch,site}_state_vars.f90`, named after ED2's; MEDS has no global like `edgrid_g` | `memory/ed_state_vars.F90` |
 | Output | `src/io/output/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |

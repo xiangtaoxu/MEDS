@@ -10,8 +10,8 @@
 module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
    use meds_kinds,           only : wp, ik
-   use meds_phenology_types, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
-   use meds_phenology,       only : phenology_kernel, leaf_turnover_step
+   use meds_plant_phenology, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,               &
+                                    phenology_kernel, leaf_turnover_step
    use meds_time,            only : daylength
    implicit none
    private
@@ -119,7 +119,7 @@ contains
    end subroutine meds_phenology_step
 
    !---------------------------------------------------------------------------------------!
-   ! One step of leaf loss and the flush cap (meds_phenology::leaf_turnover_step,              !
+   ! One step of leaf loss and the flush cap (meds_plant_phenology::leaf_turnover_step,        !
    ! docs/science/plant_phenology.md §5, eq. (9)), so Python applies the carbon layer's own    !
    ! rule rather than a copy of it.                                                           !
    !---------------------------------------------------------------------------------------!

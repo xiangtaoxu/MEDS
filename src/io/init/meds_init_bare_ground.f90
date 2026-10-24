@@ -19,7 +19,7 @@ module meds_init_bare_ground
    use meds_polygon_state_vars,    only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map,      &
                                           assign_cohort_id, assign_patch_id
    use meds_patch_state_vars,      only : patch_physical_state, DIST_PRIMARY
-   use meds_demography_cohort_fusefiss, only : sort_cohorts
+   use meds_slow_update, only : sort_cohorts
    implicit none
    private
 

@@ -10,7 +10,7 @@ OpenMP `target` device. A routine that needs more is driver code.
 The library boundary cannot hold this rule, because every module file goes to one shared
 directory: once the state layer is built, any file can `use` any of its modules. So this script
 checks it on every ctest run. Code in the kernel folders (src/fast_dynamics/processes,
-src/slow_dynamics/{plant,soil}):
+src/slow_dynamics/processes):
   * takes from the state layer only the per-patch store types and their blends, through
     `use meds_patch_state_vars, only : ...`;
   * never names polygon_t, cohort_block or patch_block;
@@ -22,12 +22,12 @@ import re
 import sys
 from pathlib import Path
 
-KERNEL_DIRS = ("fast_dynamics/processes",
-               "slow_dynamics/plant", "slow_dynamics/soil")
+KERNEL_DIRS = ("fast_dynamics/processes", "slow_dynamics/processes")
 FORBIDDEN_TYPES = ("polygon_t", "cohort_block", "patch_block")
 FORBIDDEN_MODULES = ("meds_polygon_state_vars", "meds_cohort_state_vars", "meds_diag_vars")
 PATCH_MODULE = "meds_patch_state_vars"
-ALLOWED = {"cas_state_t", "snow_state_t", "soil_water_state_t", "soil_energy_state_t", "soil_carbon_t",
+ALLOWED = {"cas_state_t", "snow_state_t", "soil_water_state_t", "soil_energy_state_t",
+           "soil_carbon_state_t",
            "decomp_xi_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_water", "blend_soil_energy",
            "blend_soil_carbon", "blend_decomp_xi", "blend_litter_input", "cas_set_depth",
            "cas_capacities", "soil_water_store", "soil_energy_store", "pack_pool_vector", "unpack_pool_vector"}

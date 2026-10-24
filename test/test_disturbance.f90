@@ -5,7 +5,7 @@ program test_disturbance
    use meds_config,           only : meds_config_t
    use meds_patch_state_vars, only : DIST_TREEFALL
    use meds_polygon_state_vars, only : polygon_t
-   use meds_demography_patch_fusefiss, only : apply_patch_disturbance
+   use meds_slow_update, only : apply_patch_disturbance
    use meds_diag_vars,                 only : PA_DISTURB_AREA, PA_LE, PA_MORT_C_CULL, alloc_patch_diag, patch_diag_value
    use meds_constants,                 only : yr_sec
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init

@@ -1,16 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_plant_trait_dynamics -- changes to a cohort's leaf traits within its lifetime.      !
+! meds_plant_traits -- changes to a cohort's leaf traits within its lifetime.              !
 !   * light_plastic_traits       -- the light-acclimated targets of SLA, Vcmax25, Rd25 and !
 !       the leaf turnover rate (docs/science/plant_traits.md eq. (1)).                     !
 !   * update_plastic_trait       -- one step of a live trait toward its target, as fast as !
 !       leaves are replaced, or a jump to it on a census start (eq. (2)).                  !
 !   * acclimate_leaf_photo_table -- a site's leaf table at its growth temperature (Kattge & !
 !       Knorr 2007; docs/science/leaf_gas_exchange.md §2, "Thermal acclimation").          !
-! The light routines are elemental; the per-cohort trait state and the orchestration live  !
-! in the driver (meds_vegetation_dynamics).                                                !
+! The light routines are elemental; the loop over the cohorts and their trait state is     !
+! meds_slow_state's.                                                                       !
 !==========================================================================================!
-module meds_plant_trait_dynamics
+module meds_plant_traits
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : safe_exp
    use meds_pft_params, only : leaf_photo_table_t
@@ -87,4 +87,4 @@ contains
       end do
    end subroutine acclimate_leaf_photo_table
 
-end module meds_plant_trait_dynamics
+end module meds_plant_traits

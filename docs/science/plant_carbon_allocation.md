@@ -138,7 +138,7 @@ emergent can each have their own curve, cap and leaf display. With $D$ the diame
 
 Carbon supply is not the only limit on growth: cambial cell division and expansion run at a bounded
 rate however much carbon the leaves fix (sink limitation; Körner 2015). Wood growth is therefore capped
-by `growth_sink_limitation` (`meds_sink_limitation`), which returns the most wood the step can build.
+by `growth_sink_limitation` (`meds_plant_carbon_allocation`), which returns the most wood the step can build.
 It has two forms, each a per-PFT trait that is off at zero; with both set the tighter applies:
 
 ```math
@@ -232,7 +232,7 @@ the current pool, so a partially-built canopy is never over-shed.
 
 The kernel is **growth-only** — it returns the per-pool growth $`a_{\mathrm{leaf}},a_{\mathrm{root}},
 a_{\mathrm{wood}},a_{\mathrm{repro}}\ge0`$ and the net storage change $`\mathrm{npp}_{\mathrm{store}}=`$
-refill − drawdown. The **turnover/shed is applied upstream** by the driver
+refill − drawdown. The **turnover/shed is applied upstream**, before the ladder
 (`cohort_carbon_demand`): the pools handed to the kernel are already net of this step's shed, and the
 driver forms the net leaf/root change $`\mathrm{npp}_{\mathrm{leaf}}=a_{\mathrm{leaf}}-\ell_{\mathrm{leaf}}`$
 (and likewise for root). The **growth-side** budget the kernel closes on every call is
@@ -270,9 +270,10 @@ The flush and senescence rates, `min_leaf_cover` and `bare_leaf_cover` are pheno
 
 ## Interface with other modules
 
-`meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only `meds_kinds` — no `polygon_t`,
-no config, no PFT table. Everything is passed as plain scalars, so the **driver**
-(`meds_vegetation_dynamics.compute_carbon_allocation`) is the single place that assembles the inputs and disposes of
+`meds_plant_carbon_allocation` is a **pure kernel library**: it `use`s only the kinds, the constants, the
+allometry and the phenology's leaf turnover — no `polygon_t`, no config, no PFT table. Everything is
+passed as plain scalars (and the sink limit its PFT's allometry), so the **driver**
+(`meds_slow_state.compute_carbon_allocation`) is the single place that assembles the inputs and disposes of
 the outputs, calling the kernel once per cohort as an `elemental` sweep over the cohort Structure-of-Arrays.
 This is the *only* plant-flux call on the slow carbon path.
 
@@ -284,19 +285,19 @@ This is the *only* plant-flux call on the slow carbon path.
 | `leaf_demand`, `fineroot_demand` | allometric deficit (`meds_allometry_lib.size_to_leaf_carbon`, using the **plastic** `cohort%sla`) **flush-capped** by the phenology flush rate |
 | `storage_demand`, `storage`, `repro_frac` | cohort SoA (`nonstructural_carbon`) + PFT traits (`storage_cushion`, `reproduction_investment_fraction`) |
 | `growth_resp_frac` | PFT trait `growth_resp_factor` |
-| this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_phenology.leaf_turnover_step` (background turnover at the cohort's `leaf_turnover_rate` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |
+| this step's **shed** (litter) | `cohort_carbon_demand` calls `meds_plant_phenology.leaf_turnover_step` (background turnover at the cohort's `leaf_turnover_rate` while flushing and no leaves drop, plus senescence down to `min_leaf_cover`) and turns fine roots over on the same `turnover_gate`, for the carbon amounts it pre-subtracts from the pools |
 
 **Outputs the driver disposes of:**
 
 | output | destination |
 |---|---|
-| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `pool_change_block` (`meds_vegetation_dynamics`; the net pool change, not the gross NPP the `CO_NPP_*` diagnostics report), and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry_lib.carbon_to_structure`) → the core engine's `update_cohort_states` |
+| per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed` in the step record `slow_step_data_t` (`meds_slow_state`; the net pool change, not the gross NPP the `CO_NPP_*` diagnostics report), which `commit_vegetation_step` (`meds_slow_update`) hands to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry_lib.carbon_to_structure`) → the core engine's `update_cohort_states` |
 | `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
 | `deficit`, `starving` | `deficit` is netted, with the opposite sign, into the patch's `slow_co2_rate` (`plant_respiration.md` §6); no tissue is destroyed. A deficit larger than the cohort's leaf carbon means it has no leaves and no storage, and it dies (§2) |
 | leaf + fine-root **litter** (`shed`) | the resorbed share to storage, the rest to the patch's litter (`add_necromass`); the exudate to `labile_soil` |
 
 `growth_respiration` lives in `meds_plant_carbon_allocation` beside the allocation kernel; the whole kernel is orthogonal to
-the core engine (`demography ⊥ plant`), which only ever *applies* the tendency arrays the driver backs out.
+the core engine (`meds_slow_update`), which only ever *applies* the tendency arrays the driver backs out.
 
 ## Code map
 
@@ -304,8 +305,8 @@ the core engine (`demography ⊥ plant`), which only ever *applies* the tendency
 |---|---|
 | daily GROWTH allocation (master, elemental) | `meds_plant_carbon_allocation`: `plant_carbon_allocation` (+ private `fill_carbon_demand`, the $`(1+g)`$ funder) |
 | growth (construction) respiration | `meds_plant_carbon_allocation`: `growth_respiration(npp_growth, g)` |
-| sink limit on wood growth | `meds_sink_limitation`: `growth_sink_limitation` (relative and absolute limits, the tighter applies) |
-| leaf loss (turnover + senescence) + flush cap | `meds_phenology`: `leaf_turnover_step` |
-| turnover-first carbon demand per cohort | `meds_vegetation_dynamics`: `cohort_carbon_demand` |
-| per-cohort orchestration (slow loop) | `meds_vegetation_dynamics`: `compute_carbon_allocation` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |
-| geometry flip (wood_carbon → dbh) | `meds_vegetation_dynamics`: `update_cohort_derivatives`; `meds_allometry_lib`: `carbon_to_structure` |
+| sink limit on wood growth | `meds_plant_carbon_allocation`: `growth_sink_limitation` (relative and absolute limits, the tighter applies), with its window from `growth_window_so_far` |
+| leaf loss (turnover + senescence) + flush cap | `meds_plant_phenology`: `leaf_turnover_step` |
+| turnover-first carbon demand per cohort | `meds_plant_carbon_allocation`: `cohort_carbon_demand` |
+| per-cohort orchestration (slow loop) | `meds_slow_state`: `compute_carbon_allocation` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |
+| geometry flip (wood_carbon → dbh) | `meds_slow_update`: `update_cohort_derivatives`; `meds_allometry_lib`: `carbon_to_structure` |

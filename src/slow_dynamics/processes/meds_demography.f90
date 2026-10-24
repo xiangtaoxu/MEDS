@@ -1,13 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_demography_rates -- the vital-rate laws (docs/science/demography.md §1), as         !
-! elemental pure functions of scalars and PFT traits: the prospective diameter growth      !
-! rate (eq. (1)), the Camac et al. (2018) mortality hazard (eq. (3)), the decline to the   !
-! density floor (eq. (4)) and a cohort's term of the recruitment rate (eq. (6)). The       !
-! operators that apply rates never use this module (src/README.md rule 4). The empirical   !
-! growth and recruitment laws live in the Python example.                                  !
+! meds_demography -- the demographic laws (docs/science/demography.md §1), as elemental    !
+! pure functions of scalars and PFT traits: the prospective diameter growth rate           !
+! (eq. (1)), the Camac et al. (2018) mortality hazard (eq. (3)), the decline to the        !
+! density floor (eq. (4)) and a cohort's term of the recruitment rate (eq. (6)).           !
+! meds_slow_update, which applies the rates, never uses this module (src/README.md rule    !
+! 4). The empirical growth and recruitment laws live in the Python example.                !
 !==========================================================================================!
-module meds_demography_rates
+module meds_demography
    use meds_kinds,         only : wp
    use meds_constants,     only : tiny_num
    use meds_allometry_lib, only : allometry_t, wood_to_dbh
@@ -62,4 +62,4 @@ contains
       rec = nplant * (npp_repro / dt_yr) * recruit_carbon_efficiency / carbon_min
    end function npp_to_recruitment
 
-end module meds_demography_rates
+end module meds_demography

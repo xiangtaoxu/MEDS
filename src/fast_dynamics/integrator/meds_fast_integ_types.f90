@@ -18,7 +18,7 @@ module meds_fast_integ_types
    use meds_kinds, only : wp, ik
    use meds_constants, only : n_soil_layer_max
    use meds_pft_params, only : leaf_photo_table_t
-   use meds_patch_state_vars,   only : cas_state_t, soil_water_state_t, soil_energy_state_t, snow_state_t, soil_carbon_t
+   use meds_patch_state_vars,   only : cas_state_t, soil_water_state_t, soil_energy_state_t, snow_state_t, soil_carbon_state_t
    use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp
    use meds_biophysics_params, only : aero_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
@@ -179,7 +179,7 @@ module meds_fast_integ_types
       !----- The patch's soil-carbon pools (docs/science/soil_carbon.md §7), held over the day's fast    !
       !      sub-steps: the fast Rh respires against them, and the daily soil_carbon_step alone writes  !
       !      the real pools. 0 when off. --------------------------------------------------------------!
-      type(soil_carbon_t)      :: soil_carbon
+      type(soil_carbon_state_t) :: soil_carbon
       !----- The day's leaf/root-turnover shed water, added to the ground's water input every sub-step. !
       real(wp)                 :: shed_water_rate = 0.0_wp  !< [kg/m2 ground/s]
       real(wp)                 :: shed_water_enth = 0.0_wp  !< [W/m2 ground] its enthalpy, from the tissues it left

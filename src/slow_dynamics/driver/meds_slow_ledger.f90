@@ -5,23 +5,26 @@
 ! carbon, water and energy store and attributes what the operator did not declare to its   !
 ! phase (§3, eq. (1)); a breach of eq. (2) is reported at the end of the run (§5). It      !
 ! measures; it corrects nothing. Routines: slow_ledger_open, _rebase, _declare, _mark,     !
-! _report; slow_site_store (§2); slow_fast_carbon_handover (§3); check_plausible (§6).     !
+! _report; slow_site_store (§2); the declared amounts slow_fast_carbon_handover,           !
+! slow_co2_handoff and litter_carbon_total (§3); check_plausible (§6). soilc_seam_t keeps  !
+! the run's worst soil-carbon checks.                                                      !
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, pack_pool_vector
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, pack_pool_vector, &
+                                       litter_input_t
    use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
-   use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private
 
-   public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
-   public :: slow_tissue_energy
+   public :: slow_store_t, slow_ledger_t, soilc_seam_t, slow_site_store, slow_fast_carbon_handover
+   public :: slow_tissue_energy, slow_co2_handoff, litter_carbon_total
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
@@ -88,6 +91,14 @@ module meds_slow_ledger
       real(wp)            :: bad_value = 0.0_wp    !< its value
       integer(ik)         :: n_bad     = 0_ik      !< how many marks saw an impossible store
    end type slow_ledger_t
+
+   !----- The run's worst values of the soil-carbon step's three checks (soil_carbon.md §7, §9). !
+   type :: soilc_seam_t
+      real(wp)    :: worst_rh_gap  = 0.0_wp  !< [kgC/m2/day] max |rh_out - rh_fast_accum|
+      real(wp)    :: worst_lignin  = 0.0_wp  !< [kgC/m2/day] max |lignin passive-tracer residual|
+      real(wp)    :: worst_lambda  = 0.0_wp  !< [-] max fraction of any pool withdrawn in one step
+      integer(ik) :: lambda_pool   = 0_ik    !< the pool that attained worst_lambda
+   end type soilc_seam_t
 
 contains
 
@@ -343,6 +354,35 @@ contains
          end associate
       end do
    end function slow_fast_carbon_handover
+
+   !----- The CO2 this step owes the canopy air [kgC/m2 site]: growth respiration and storage upkeep, !
+   !       less the starvation deficit. A declared handoff, not a store: it reaches the canopy air   !
+   !       in the next fast window (docs/science/conservation.md §3). -------------------------------!
+   pure function slow_co2_handoff(poly, cfg) result(c)
+      type(polygon_t),     intent(in) :: poly
+      type(meds_config_t), intent(in) :: cfg
+      real(wp)    :: c
+      integer(ik) :: ip
+      c = 0.0_wp
+      do ip = 1_ik, poly%patch%n
+         c = c + patch_polygon_area(poly, ip) * poly%patch%slow_co2_rate(ip) * KGC_PER_UMOL_C * cfg%dt_slow
+      end do
+   end function slow_co2_handoff
+
+   !----- Site-total carbon in this step's litter accumulator [kgC/m2 site], declared leaving at    !
+   !       SLOW_PHASE_GROW and arriving at SLOW_PHASE_SOILC; with soil carbon off nothing arrives   !
+   !       (docs/science/conservation.md §3). ------------------------------------------------------!
+   pure function litter_carbon_total(poly, lit) result(c)
+      type(polygon_t),      intent(in) :: poly
+      type(litter_input_t), intent(in) :: lit(:)
+      real(wp)    :: c
+      integer(ik) :: ip
+      c = 0.0_wp
+      do ip = 1_ik, poly%patch%n
+         c = c + patch_polygon_area(poly, ip) * (lit(ip)%labile_grnd + lit(ip)%labile_soil          &
+                                      + lit(ip)%struct_grnd + lit(ip)%struct_soil)
+      end do
+   end function litter_carbon_total
 
    !----- Phase labels for the report. ----------------------------------------------------!
    pure function slow_phase_name(phase) result(nm)

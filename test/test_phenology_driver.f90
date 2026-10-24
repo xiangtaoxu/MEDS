@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING            !
-! (meds_vegetation_dynamics.advance_leaf_phenology, the phenology driver), as opposed to         !
+! (meds_slow_state.advance_leaf_phenology, the phenology driver), as opposed to                  !
 ! the kernel itself (test_plant_phenology). It drives a two-cohort site through one synthetic    !
 ! Ithaca year, feeding the daily drivers through the site accumulators the fast loop fills, and   !
 ! checks the two leaf tendencies:                                                                 !
@@ -25,10 +25,10 @@ program test_phenology_driver
    use meds_pft_derive,           only : pft_leaf_psi_tlp
    use meds_polygon_state_vars,   only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort
-   use meds_vegetation_dynamics,  only : advance_leaf_phenology
+   use meds_slow_state, only : advance_leaf_phenology
    use meds_constants,            only : day_sec
    use meds_time,                 only : daylength
-   use meds_phenology_types,      only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_LIGHT
+   use meds_pft_params, only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_LIGHT
    use meds_test_support, only : build_test_config, check_close, check_int, check_true, test_report
    implicit none
 

@@ -47,7 +47,7 @@ module meds_polygon_state_vars
       ! 3. CALENDAR: the cohorts' shared sample clock and the restructuring owed                 !
       !==========================================================================================!
       !----- Global ring-buffer write slot for the moving-average growth (same for all cohorts !
-      !      since they all take one sample per step); advanced by update_demography.           !
+      !      since they all take one sample per step); advanced by commit_vegetation_step.      !
       integer(ik)        :: growth_hist_pos = 0_ik
       !----- The calendar restructuring the last step's end owes: set when a step ends on a month    !
       !      (and, with restructure_new_year, a year) boundary, run at the start of the next step,   !

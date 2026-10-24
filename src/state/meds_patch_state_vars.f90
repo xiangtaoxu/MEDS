@@ -28,7 +28,7 @@ module meds_patch_state_vars
    implicit none
    private
 
-   public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_t
+   public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_state_t
    public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, cas_capacities, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
    public :: soil_water_store, soil_energy_store, pack_pool_vector, unpack_pool_vector
@@ -83,10 +83,9 @@ module meds_patch_state_vars
 
    !----- The soil-carbon pools, the matrix state vector X (docs/science/soil_carbon.md    !
    !      §2): written daily by soil_carbon_step, held fixed for the fast loop's           !
-   !      heterotrophic respiration. Named fields rather than an array, because the pool   !
-   !      count is in meds_biogeochem_types, a soil-kernel module the state layer does not !
-   !      use; pack_pool_vector and unpack_pool_vector convert. ---------------------------!
-   type :: soil_carbon_t
+   !      heterotrophic respiration. Named fields; pack_pool_vector and unpack_pool_vector !
+   !      convert them to and from the matrix's vector. -----------------------------------!
+   type :: soil_carbon_state_t
       ! carbon pools [kgC/m2], ordered litter -> SOM -> passive
       real(wp) :: fast_grnd_carbon    = 0.0_wp   !< X(1) metabolic litter, above-ground (flammable)
       real(wp) :: fast_soil_carbon    = 0.0_wp   !< X(2) metabolic litter, below-ground
@@ -98,7 +97,7 @@ module meds_patch_state_vars
       ! lignin of the structural pools [kgC/m2], 0 <= L <= C: its fraction slows their decay
       real(wp) :: struct_grnd_lignin  = 0.0_wp
       real(wp) :: struct_soil_lignin  = 0.0_wp
-   end type soil_carbon_t
+   end type soil_carbon_state_t
 
    !----- The day's decomposition scalars for soil_carbon_step: each pool's xi integrated  !
    !      over the day (docs/science/soil_carbon.md §7, eq. (5)), summed by the fast loop, !
@@ -168,7 +167,7 @@ module meds_patch_state_vars
       !==========================================================================================!
       ! 7. SOIL CARBON                                                                           !
       !==========================================================================================!
-      type(soil_carbon_t),        allocatable :: soil_carbon(:)  !< soil-carbon pools
+      type(soil_carbon_state_t),  allocatable :: soil_carbon(:)  !< soil-carbon pools
       !==========================================================================================!
       ! 8. DAILY SLOW-TO-FAST RATES (set once per slow step, held fixed all day)                 !
       !==========================================================================================!
@@ -304,7 +303,7 @@ contains
    !  matrix kernels operate on (keeps kernels array-based / GPU-friendly, state self-documenting).!
    !=======================================================================================!
    pure subroutine pack_pool_vector(pools, x)
-      type(soil_carbon_t), intent(in)  :: pools
+      type(soil_carbon_state_t), intent(in)  :: pools
       real(wp),            intent(out) :: x(N_SOIL_POOL)
       x(IP_FAST_GRND)   = pools%fast_grnd_carbon
       x(IP_FAST_SOIL)   = pools%fast_soil_carbon
@@ -317,7 +316,7 @@ contains
 
    pure subroutine unpack_pool_vector(x, pools)
       real(wp),            intent(in)    :: x(N_SOIL_POOL)
-      type(soil_carbon_t), intent(inout) :: pools   !< inout: only the 7 carbon pools are overwritten
+      type(soil_carbon_state_t), intent(inout) :: pools   !< inout: only the 7 carbon pools are overwritten
       pools%fast_grnd_carbon   = x(IP_FAST_GRND)
       pools%fast_soil_carbon   = x(IP_FAST_SOIL)
       pools%struct_grnd_carbon = x(IP_STRUCT_GRND)
@@ -360,8 +359,8 @@ contains
 
    pure function blend_soil_carbon(w1, a, w2, b) result(c)
       real(wp),             intent(in) :: w1, w2
-      type(soil_carbon_t),  intent(in) :: a, b
-      type(soil_carbon_t)              :: c
+      type(soil_carbon_state_t),  intent(in) :: a, b
+      type(soil_carbon_state_t)              :: c
       c%fast_grnd_carbon   = w1 * a%fast_grnd_carbon   + w2 * b%fast_grnd_carbon
       c%fast_soil_carbon   = w1 * a%fast_soil_carbon   + w2 * b%fast_soil_carbon
       c%struct_grnd_carbon = w1 * a%struct_grnd_carbon + w2 * b%struct_grnd_carbon

@@ -22,22 +22,22 @@ module meds_polygon
    use meds_config,                 only : meds_config_t, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_to_string
    use meds_cohort_state_vars,      only : cohort_bad_field, cohort_field_finite, cohort_field_name
-   use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_t
+   use meds_patch_state_vars,       only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_state_t, &
+                                           litter_input_t
    use meds_polygon_state_vars,     only : polygon_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
-   use meds_slow_dynamics,          only : refresh_canopy_depth, acclimate_site_leaf_tables
-   use meds_biogeochem_types,       only : litter_input_t, soilc_seam_t
+   use meds_slow_update,            only : refresh_canopy_depth, max_cohort_count
+   use meds_slow_state,             only : acclimate_site_leaf_tables
+   use meds_slow_ledger,            only : soilc_seam_t, slow_ledger_t, slow_ledger_report
    use meds_biogeochem_params,      only : N_SOIL_POOL
-   use meds_soil_biogeochem,        only : solve_soil_carbon_steady_state, build_litter_input,      &
+   use meds_soil_carbon,            only : solve_soil_carbon_steady_state, build_litter_input,      &
                                            soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_respiration,            only : decomposition_transfer_matrix
    use meds_met_types,          only : met_source_t, met_cursor_t
    use meds_met,             only : met_cursor_init
    use meds_output_reduce,      only : total_area
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
-   use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : TIER_FAST
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
@@ -196,8 +196,8 @@ contains
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
       !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
-      !      done inside the biogeochem driver, which sees every patch; this only records the date   !
-      !      on the step where the running maximum moved.  ------------------------------------------!
+      !      done inside advance_soil_carbon (meds_slow_state), which sees every patch; this only    !
+      !      records the date on the step where the running maximum moved.  -------------------------!
       if (run%seam%worst_rh_gap > seam_prev) then
          run%worst_rh_seam_when   = time_to_string(now)
          run%worst_rh_seam_npatch = poly%patch%n
@@ -418,12 +418,12 @@ contains
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       logical,              intent(in)    :: verbose
-      type(soil_carbon_t)  :: pools0, pools_ss
+      type(soil_carbon_state_t) :: pools0, pools_ss
       type(litter_input_t) :: lit
       real(wp)    :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp)    :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL), lignin_bar(2)
       integer(ik) :: ipp
-      pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
+      pools0 = soil_carbon_state_t()                    ! zero-carbon reference (f_lignin=0)
       call decomposition_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
       xi_bar = cfg%soil_carbon%spinup_xi
       lit%labile_grnd = cfg%soil_carbon%spinup_labile_grnd

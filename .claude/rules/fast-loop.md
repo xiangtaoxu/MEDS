@@ -78,7 +78,7 @@ compiler-generated static mold that every thread writes.
 
 The soil's respiration chemistry in `processes/meds_respiration` (`decomposition_env_scalar`,
 `decomposition_transfer_matrix`, `heterotrophic_respiration`). `build_frozen` respires the frozen
-CENTURY pool with it at every step, and the daily soil-carbon step (`meds_soil_biogeochem`) integrates
+CENTURY pool with it at every step, and the daily soil-carbon step (`meds_soil_carbon`) integrates
 the same matrix, so the day's respiration equals the pools' debit. The residual is asserted and closes
 to machine precision (`docs/science/soil_carbon.md` §7). Do not add a second cross-tier kernel call
 without the same treatment.

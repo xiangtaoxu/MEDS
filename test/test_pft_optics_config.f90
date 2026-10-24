@@ -30,7 +30,7 @@ program test_pft_optics_config
    use meds_patch_state_vars, only : patch_physical_state
    use meds_soil_params,    only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
-   use meds_vegetation_dynamics, only : shed_excess_tissue_water
+   use meds_slow_state, only : shed_excess_tissue_water
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 

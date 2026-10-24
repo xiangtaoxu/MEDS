@@ -77,9 +77,10 @@ so every symbol has exactly one legal spelling.
 
 **Respiration** — **`meds_respiration`**: the plants' stem and fine-root maintenance
 respiration, and the soil's heterotrophic respiration — the decomposition scalar, the CENTURY
-transfer matrix and Rh. The daily step of the soil carbon pools (`slow_dynamics/soil/meds_soil_biogeochem`)
-integrates the same matrix, so the sub-daily respiration debits the same CENTURY pool the daily step
-does — the one documented fast/slow kernel seam in the model.
+transfer matrix and Rh. The daily step of the soil carbon pools
+(`slow_dynamics/processes/meds_soil_carbon`) integrates the same matrix, so the sub-daily
+respiration debits the same CENTURY pool the daily step does — the one documented fast/slow kernel
+seam in the model.
 
 ## Shared constitutive kernels (in `src/share/functions/`)
 

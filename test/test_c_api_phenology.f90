@@ -22,7 +22,7 @@ program test_c_api_phenology
    use meds_constants,       only : yr_day
    use meds_c_api_phenology, only : pheno_env_c, pheno_args_c, pheno_state_c, pheno_out_c,        &
                                     meds_phenology_step, meds_leaf_turnover_step, meds_daylength
-   use meds_phenology_types, only : CUE_NONE, CUE_TEMP, CUE_WATER, CUE_LIGHT
+   use meds_pft_params, only : CUE_NONE, CUE_TEMP, CUE_WATER, CUE_LIGHT
    use meds_test_support, only : banner, check, check_close
    implicit none
 

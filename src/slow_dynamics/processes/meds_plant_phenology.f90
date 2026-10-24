@@ -1,26 +1,88 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_phenology -- leaf phenology. Daily cues and per-PFT traits become two smoothed      !
-! tendencies in [0,1], leaf_flush_tendency and leaf_shed_tendency; the carbon layer turns  !
-! them into leaf growth and leaf loss through leaf_turnover_step.                          !
+! meds_plant_phenology -- leaf phenology (docs/science/plant_phenology.md). Daily cues and !
+! a PFT's traits become two smoothed tendencies in [0,1], leaf_flush_tendency and          !
+! leaf_shed_tendency; the carbon allocation turns them into leaf growth and leaf loss.     !
 !   * phenology_kernel   -- one daily update: accumulate the cue memory, switch each cue,  !
-!                           combine the switches, smooth (docs/science/plant_phenology.md  !
-!                           §1-§4, eqs. (1)-(8)).                                          !
+!                           combine the switches, smooth (§1-§4, eqs. (1)-(8)).            !
 !   * leaf_turnover_step -- one step of leaf loss and the flush cap (§5, eq. (9)), also    !
-!                           exposed through the C-API; turnover_gate gives the share of its !
-!                           background turnover that acts.                                 !
+!                           exposed through the C API; turnover_gate gives the share of    !
+!                           its background turnover that acts.                             !
+! Its records: pheno_env_t (the day's cues), pheno_args_t (the PFT's traits),              !
+! pheno_state_t (the cohort's memory, read and written back) and pheno_out_t (the          !
+! potential rates). The cue bits (CUE_*) are meds_pft_params', beside the masks they code. !
 !==========================================================================================!
-module meds_phenology
-   use meds_kinds,       only : wp, ik
-   use meds_constants,   only : yr_day
-   use meds_numerics,    only : logistic, clamp01
-   use meds_time,        only : doy_effective
-   use meds_phenology_types
+module meds_plant_phenology
+   use meds_kinds,          only : wp, ik
+   use meds_constants,      only : yr_day
+   use meds_numerics,       only : logistic, clamp01
+   use meds_time,           only : doy_effective
    use meds_state_defaults, only : is_unset_positive
+   use meds_pft_params,     only : CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER
    implicit none
    private
 
+   public :: pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
    public :: phenology_kernel, leaf_turnover_step, turnover_gate
+
+   !----- Daily environmental drivers (read-only). ------------------------------------------!
+   type :: pheno_env_t
+      real(wp)    :: temp_day         = 0.0_wp    !< [K]   daily-mean air temperature
+      real(wp)    :: par_hours        = 12.0_wp   !< [h/day] hours with PAR at the cohort's top above par_min
+      real(wp)    :: predawn_leaf_psi = 0.0_wp    !< [MPa, <=0] predawn (daily-max) leaf water potential
+      integer(ik) :: doy              = 1_ik      !< [-]   day of year
+      logical     :: hemis_north      = .true.    !< northern hemisphere (season windows)
+   end type pheno_env_t
+
+   !----- The prognostic memory: two smoothed tendencies + the cue accumulators. -----------!
+   type :: pheno_state_t
+      real(wp) :: leaf_flush_tendency = 1.0_wp   !< [-] smoothed flush signal; a cohort is born flushing
+      real(wp) :: leaf_shed_tendency  = 0.0_wp   !< [-] smoothed senescence signal
+      real(wp) :: growing_degree_days = 0.0_wp   !< [K day] warmth sum since midwinter     (TEMP flush)
+      real(wp) :: cold_degree_days    = 0.0_wp   !< [K day] cold sum since midsummer       (TEMP shed)
+      real(wp) :: wet_psi_sum         = 0.0_wp   !< [MPa day] sum of psi above the TLP     (WATER flush)
+      real(wp) :: dry_psi_sum         = 0.0_wp   !< [MPa day] sum of psi below the TLP     (WATER shed)
+      real(wp) :: light_hours_mean    = -1.0_wp  !< [h/day] running-mean par_hours (LIGHT); < 0: unset, the first day sets it
+   end type pheno_state_t
+
+   !----- Per-PFT traits, filled by the driver from cfg%pft. Each switch is sigma(s (x - x*)), !
+   !      with a centre x* and a signed sharpness s (plant_phenology.md eq. (2)). The defaults !
+   !      are a PFT with no [phenology] section: no cues, so only the rates and timescales act. !
+   type :: pheno_args_t
+      integer(ik) :: flush_cue_mask      = CUE_NONE         !< cues of the flush side
+      integer(ik) :: shed_cue_mask       = CUE_NONE         !< cues of the shed side
+      real(wp)    :: flush_cue_timescale = 5.0_wp           !< [day]  smoothing of the flush tendency
+      real(wp)    :: shed_cue_timescale  = 5.0_wp           !< [day]  smoothing of the shed tendency
+      real(wp)    :: flush_rate_max      = 0.06667_wp       !< [1/day] leaf growth at full tendency
+      real(wp)    :: shed_rate_max       = 0.05_wp          !< [1/day] senescence at full tendency
+      !----- Temperature: warmth above flush_base_temp from midwinter, cold below          !
+      !      shed_base_temp from midsummer.                                                !
+      real(wp)    :: flush_base_temp       = 278.15_wp      !< [K]
+      real(wp)    :: flush_degree_days     = 100.0_wp       !< [K day] warmth requirement
+      real(wp)    :: flush_temp_sharpness  = 0.04_wp        !< [1/(K day)]
+      real(wp)    :: shed_base_temp        = 290.15_wp      !< [K]
+      real(wp)    :: shed_degree_days      = 50.0_wp        !< [K day] cold requirement
+      real(wp)    :: shed_temp_sharpness   = 0.1_wp         !< [1/(K day)]
+      !----- Light: the hours a day PAR at the cohort's top exceeds par_min, as a running mean. !
+      real(wp)    :: par_min               = 5.0_wp         !< [umol/m2/s] light that counts as an hour of light
+      real(wp)    :: flush_light_hours     = 12.0_wp        !< [h/day]
+      real(wp)    :: flush_light_sharpness = 1.0_wp         !< [1/h] > 0: long or bright days permit flushing
+      real(wp)    :: shed_light_hours      = 11.0_wp        !< [h/day]
+      real(wp)    :: shed_light_sharpness  = -1.0_wp        !< [1/h] < 0: short or dim days trigger senescence; > 0: bright days
+      real(wp)    :: light_window          = 10.0_wp        !< [day] running-mean window
+      !----- Water: predawn leaf psi summed against the turgor-loss point. -----------------!
+      real(wp)    :: leaf_psi_tlp          = -2.0_wp        !< [MPa] turgor-loss point
+      real(wp)    :: flush_water_sum       = 10.0_wp        !< [MPa day] wet sum that permits flushing
+      real(wp)    :: flush_water_sharpness = 0.5_wp         !< [1/(MPa day)]
+      real(wp)    :: shed_water_sum        = 10.0_wp        !< [MPa day] dry sum that triggers shedding
+      real(wp)    :: shed_water_sharpness  = 0.5_wp         !< [1/(MPa day)]
+   end type pheno_args_t
+
+   !----- Outputs: the potential relative rates the tendencies allow. ----------------------!
+   type :: pheno_out_t
+      real(wp) :: leaf_flush_potential = 0.0_wp   !< [1/day] flush_rate_max * leaf_flush_tendency
+      real(wp) :: leaf_shed_potential  = 0.0_wp   !< [1/day] shed_rate_max  * leaf_shed_tendency
+   end type pheno_out_t
 
    !----- Northern-equivalent day of the summer solstice, where the cold sum starts (§2). ---!
    integer(ik), parameter :: MIDSUMMER_DOY     = 172_ik
@@ -183,4 +245,4 @@ contains
       if (leaf_shed_tendency <= NO_DROP_SHED_TENDENCY) gate = leaf_flush_tendency
    end function turnover_gate
 
-end module meds_phenology
+end module meds_plant_phenology

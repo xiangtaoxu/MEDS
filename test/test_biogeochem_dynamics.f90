@@ -28,8 +28,9 @@ program test_biogeochem_dynamics
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
-   use meds_slow_dynamics,       only : advance_slow_dynamics
-   use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
+   use meds_slow_dynamics, only : advance_slow_dynamics
+   use meds_patch_state_vars, only : litter_input_t
+   use meds_slow_ledger, only : soilc_seam_t
    use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
