@@ -12,11 +12,10 @@
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_cohort_state_vars,  only : cohort_film_water
+   use meds_cohort_state_vars,  only : cohort_film_water, cohort_carbon_supply
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store,              &
                                        pack_pool_vector, litter_input_t
-   use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_biogeochem_params,  only : N_SOIL_POOL
@@ -241,14 +240,7 @@ contains
       real(wp),            intent(in) :: rho_air
       type(slow_store_t)              :: store
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
-      real(wp)    :: c_min(cfg%pft%n)
       integer(ik) :: ip, i, i0, i1, pf
-
-      !----- Each PFT's recruit value per plant, c_min, as the vital rates use it. --------!
-      do pf = 1_ik, cfg%pft%n
-         c_min(pf) = min_cohort_carbon(poly%cohort%pft_table%allom(pf), cfg%pft%min_cohort_height,          &
-                                       cfg%pft%wood_density(pf))
-      end do
 
       do ip = 1_ik, poly%patch%n
          a = patch_polygon_area(poly, ip)
@@ -286,8 +278,9 @@ contains
          end associate
 
          !----- Carbon in transit: the recruit carry-forward pool. ------------------------!
-         do pf = 1_ik, cfg%pft%n
-            store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip) * c_min(pf)
+         do pf = 1_ik, poly%cohort%pft_table%n
+            store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip)                   &
+                                        * poly%cohort%pft_table%recruit_carbon(pf)
          end do
 
          !----- Cohorts: nplant is per m2 of patch; the area weight converts to site. -----!
@@ -336,7 +329,7 @@ contains
    pure function slow_fast_carbon_handover(poly, cfg) result(net_c)
       type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
-      real(wp)    :: net_c, per_plant, a
+      real(wp)    :: net_c, gross_gpp, resp_maint, a
       integer(ik) :: ip, i, i0, i1
       net_c = 0.0_wp
       do ip = 1_ik, poly%patch%n
@@ -345,13 +338,9 @@ contains
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (ch => poly%cohort)
             do i = i0, i1
-               if (cfg%fast_biophysics_on) then
-                  per_plant = ch%gpp_accum(i) - (ch%leaf_resp_accum(i) + ch%stem_resp_accum(i)     &
-                                                 + ch%root_resp_accum(i))
-               else
-                  per_plant = cfg%gpp_ref * ch%leaf_area(i) * cfg%dt_years
-               end if
-               net_c = net_c + a * ch%nplant(i) * per_plant
+               call cohort_carbon_supply(ch, i, cfg%fast_biophysics_on, cfg%gpp_ref, cfg%dt_years,     &
+                                         gross_gpp, resp_maint)
+               net_c = net_c + a * ch%nplant(i) * (gross_gpp - resp_maint)
             end do
          end associate
       end do

@@ -14,7 +14,7 @@ module meds_demography
    implicit none
    private
 
-   public :: npp_to_growth, camac_mortality, decline_to_floor_mortality, npp_to_recruitment
+   public :: npp_to_growth, camac_mortality, decline_to_floor_mortality, recruit_efficiency, npp_to_recruitment
 
 contains
 
@@ -50,6 +50,16 @@ contains
       real(wp)             :: mort
       mort = log(max(nplant, nplant_floor) / max(nplant_floor, tiny_num)) / max(window, tiny_num)
    end function decline_to_floor_mortality
+
+   !----- The share of a cohort's reproduction carbon that becomes recruits, eq. (5): the     !
+   !      PFT's efficiency in the open, reduced by the shade of its patch's LAI. ------------!
+   elemental pure function recruit_efficiency(efficiency_open, shade_decay, patch_lai) result(eff)
+      real(wp), intent(in) :: efficiency_open   !< [-] the efficiency in the open
+      real(wp), intent(in) :: shade_decay       !< [m2/m2 per LAI] k of exp(-k LAI)
+      real(wp), intent(in) :: patch_lai         !< [m2/m2] the patch's LAI
+      real(wp)             :: eff
+      eff = efficiency_open * exp(-shade_decay * patch_lai)
+   end function recruit_efficiency
 
    !----- One cohort's term of the recruitment rate [plant/m2/yr], eq. (6): its reproduction  !
    !      carbon per plant as a yearly rate, times the density and the recruit efficiency     !

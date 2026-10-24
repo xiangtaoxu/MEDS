@@ -284,6 +284,10 @@ module meds_pft_params
       type(leaf_photo_table_t) :: leaf_photo   !< DERIVED each PFT's leaf-photosynthesis parameters
       type(hydraulics_table_t) :: hydraulics   !< DERIVED each PFT's hydraulics and Kirchhoff lookup
       type(rad_pft_optics_t)   :: optics       !< DERIVED the two-stream's per-PFT optics
+      !----- A recruit's carbon [kgC/plant] at min_cohort_height on its PFT's allometry, the  !
+      !      value of one plant of the recruit pool; derived on a polygon's own copy of the table, !
+      !      which carries the cell's allometry (derive_recruit_carbon). ----------------------!
+      real(wp), allocatable :: recruit_carbon(:)   !< DERIVED (pft)
    end type pft_table_t
 
    !----- Sentinel of an optional stomatal stress point the PFT file leaves out: large and !

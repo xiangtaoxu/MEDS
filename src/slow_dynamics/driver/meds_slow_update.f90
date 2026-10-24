@@ -30,7 +30,7 @@ module meds_slow_update
                                        cas_set_depth
    use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id,                  &
                                        patch_polygon_area, rebuild_patch_map, assign_patch_id
-   use meds_allometry_lib,      only : height_to_dbh, min_cohort_carbon, carbon_to_structure
+   use meds_allometry_lib,      only : height_to_dbh, carbon_to_structure
    use meds_config,             only : meds_config_t, growth_window_steps
    use meds_diag_vars,          only : fuse_cohort_diag, PA_MORT_C_CULL, blend_patch_diag,               &
                                        inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB,           &
@@ -254,18 +254,15 @@ contains
       real(wp),            intent(in)    :: dt_yr
       real(wp),            intent(out)   :: seed_rain_carbon  !< [kgC/m2 site] the external part
       integer(ik) :: ip, pf
-      real(wp)    :: c_min
 
       seed_rain_carbon = 0.0_wp
-      associate (patch => poly%patch, pft => cfg%pft)
+      associate (patch => poly%patch, pft => poly%cohort%pft_table)
          do ip = 1_ik, patch%n
             do pf = 1_ik, poly%n_pft
                patch%recruit_pool(pf, ip) = patch%recruit_pool(pf, ip) + recruitment(pf, ip) * dt_yr
                if (pft%include_pft(pf) /= 1_ik) cycle
-               c_min = min_cohort_carbon(poly%cohort%pft_table%allom(pf), pft%min_cohort_height,          &
-                                         pft%wood_density(pf))
-               seed_rain_carbon = seed_rain_carbon                                                 &
-                                + patch_polygon_area(poly, ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
+               seed_rain_carbon = seed_rain_carbon + patch_polygon_area(poly, ip)                  &
+                                * pft%seed_rain_recruits(pf) * dt_yr * pft%recruit_carbon(pf)
             end do
          end do
       end associate
@@ -387,7 +384,7 @@ contains
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
-      real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, c_tot, e_tot, w_tot
+      real(wp)    :: recruit_dbh, endow, t_birth, psi_birth, c_tot, e_tot, w_tot
 
       c_tot = 0.0_wp
       e_tot = 0.0_wp
@@ -412,7 +409,7 @@ contains
       call expand_cohort_block(poly%cohort, poly%cohort%n + nspawn)
       n_before = poly%cohort%n
       m = poly%cohort%n
-      associate (cohort => poly%cohort, patch => poly%patch, pft => cfg%pft)
+      associate (cohort => poly%cohort, patch => poly%patch, pft => poly%cohort%pft_table)
          do ip = 1_ik, np
             do pf = 1_ik, poly%n_pft
                if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
@@ -427,10 +424,10 @@ contains
                                 t_birth, psi_birth)
                !----- The draw: everything the new cohort holds, less the reproduction carbon the !
                !      pool paid for at carbon_min per plant. -------------------------------------!
-               c_min = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height, pft%wood_density(pf))
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
-               c_tot = c_tot + patch_polygon_area(poly, ip) * patch%recruit_pool(pf, ip) * (endow - c_min)
+               c_tot = c_tot + patch_polygon_area(poly, ip) * patch%recruit_pool(pf, ip)            &
+                             * (endow - pft%recruit_carbon(pf))
                e_tot = e_tot + patch_polygon_area(poly, ip) * cohort%nplant(m)                       &
                              * (cohort%leaf_energy(m) + cohort%wood_energy(m))
                w_tot = w_tot + patch_polygon_area(poly, ip) * cohort_tissue_water(cohort, m)
@@ -602,9 +599,9 @@ contains
                                  lost_density * cohort%fineroot_carbon(i),                               &
                                  lost_density * cohort%wood_carbon(i),                                   &
                                  lost_density * cohort%nonstructural_carbon(i),                          &
-                                 cfg%pft%f_labile_leaf(pf), cfg%pft%f_labile_stem(pf),                   &
+                                 cohort%pft_table%f_labile_leaf(pf), cohort%pft_table%f_labile_stem(pf), &
                                  cohort%pft_table%allom(pf)%aboveground_frac,                           &
-                                 cfg%pft%struct_lignin_frac(pf),                                         &
+                                 cohort%pft_table%struct_lignin_frac(pf),                                &
                                  lab_g, lab_s, str_g, str_s, lig_g, lig_s)
                         patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
                         patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s
@@ -943,7 +940,7 @@ contains
       n = poly%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
-      associate (cohort => poly%cohort, pft => cfg%pft, patch => poly%patch)
+      associate (cohort => poly%cohort, pft => poly%cohort%pft_table, patch => poly%patch)
          do i = 1_ik, n
             keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
                       (cohort%nplant(i) > cfg%negligible_nplant)
