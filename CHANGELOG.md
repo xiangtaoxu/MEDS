@@ -762,7 +762,6 @@ pores, and the soil heat step solves the latent heat with the heat (#511).
   budget closes to round-off. A column frozen from the top gives the same profile at 30-minute and
   1-minute steps, to 0.007 K. ex04's wall time is unchanged; Ithaca in January takes 38 % longer, from
   the frozen water network's extra Newton iterations.
-
 - **A canopy film is part of its tissue's energy** (#510), ED2's form. The films had no energy of their
   own: each step valued them at the rain's temperature, or at `tsupercool_liq` under a pack, where rain
   held on the canopy was worth 0 J/kg and cost the leaf about 0.95 MJ/kg extra to evaporate, and their
