@@ -688,9 +688,11 @@ soil's potential in MPa (#500).
   the march computes them with `snow_surface_balance`, and the update commits them with
   `snow_take_exchange`.
 - **Fortran: `ground_evaporation_rate` and `bottom_flux` take the soil's matric potential in MPa** (#500),
-  not metres of head, and their potential derivatives are per MPa. `snow_env_t` is `surface_env_t`, with
-  the bare ground's `soil_evap`; `prepare_snow_stage` is `meds_surface`'s and no longer takes the top soil
-  node's depth and conductivity, which the record holds.
+  not metres of head, and their potential derivatives are per MPa. `snow_env_t` is `surface_env_t`, which
+  also holds the bare ground's `soil_evap`, the pack, its cover, the snow parameters and the step:
+  `snow_surface_balance(env, flux)` reads them from it, and `surface_derivs` has no `snow` argument.
+  `prepare_snow_stage(snowfall, rainfall, t_air, snow_rough, env, st)` is `meds_surface`'s; it advances
+  `env`'s pack and returns its hand-off in `snow_out_t`.
 
 ### Changed
 
@@ -698,9 +700,12 @@ soil's potential in MPa (#500).
   column's forcing from the ground heat flux and the water network's flows, which the ESDIRK2 stage and
   `march_derivs` each assembled (it replaces `assemble_soil_energy_forcing`); `soil_layer_temp` is one
   layer's temperature from its energy; `pond_inflow` is the water reaching the pond, its temperature and
-  the enthalpy it brings. `ground_boundary_t` and the snow stage's soil-top terms are one `surface_env_t`
-  (was `snow_env_t`), held for the step; `ground_surface_exchange` is the snow/bare blend `surface_derivs`
-  held; `prepare_snow_stage` and its record, now `snow_stage_out_t`, are `meds_surface`'s.
+  the enthalpy it brings. What the ground surface reads is one `surface_env_t` (was `snow_env_t`), held
+  for the step: `ground_boundary_t`'s radiation, conductance and soil evaporation, the top soil node, and
+  the snow stage's pack, cover, parameters and step. What the stage hands on (the melt as a rate and
+  temperature, the precipitation's enthalpy, the pack before it) joins `snow_out_t`, so the stage's own
+  record goes. `ground_surface_exchange` is the snow/bare blend `surface_derivs` held, and
+  `prepare_snow_stage` is `meds_surface`'s.
   `soil_water_store` and `soil_energy_store` move to `meds_patch_state_vars`, and the slow ledger takes the
   soil column's totals from them. These moves leave every variable of the 10 harness cases identical on
   gfortran. `ground_evaporation_rate` and `bottom_flux` then take the soil's potential in MPa, the unit the
