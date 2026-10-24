@@ -937,11 +937,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_diagnostic_reduce)
    add_test(NAME diagnostic_reduce COMMAND test_diagnostic_reduce)
 
-   #----- State restart round-trip (plastic-trait persistence) links the IO layer + model. #
-   add_executable(test_state_roundtrip test/test_state_roundtrip.f90)
-   target_link_libraries(test_state_roundtrip PRIVATE meds_model meds_output_stream meds_testsupport)
-   meds_fortran_flags(test_state_roundtrip)
-   add_test(NAME state_roundtrip COMMAND test_state_roundtrip)
+   #----- The state file: written, read back and written again, every variable (links the IO layer). #
+   add_executable(test_state_file test/test_state_file.f90)
+   target_link_libraries(test_state_file PRIVATE meds_model meds_output_stream meds_testsupport)
+   meds_fortran_flags(test_state_file)
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
+   add_test(NAME state_file COMMAND test_state_file WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
 
    #----- A polygon of several sites: its stands, threads and state file (links the IO layer). #
    add_executable(test_several_sites test/test_several_sites.f90)
