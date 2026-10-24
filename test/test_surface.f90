@@ -22,6 +22,9 @@
 !   7. TILE RADIATION (ground_tile_radiation, snow_blend_ground_optics): on half-covered   !
 !      ground the snow and the soil each absorb at their own optics, and weighted by the   !
 !      cover they sum to what the blended ground absorbs.                                  !
+!   8. BARE GROUND (ground_surface_fluxes): no sensible flux without a temperature         !
+!      difference and no latent flux without evaporation; warm ground heats the canopy     !
+!      air, in proportion to the difference.                                               !
 ! The energy datum the pack is held in is test_therm_lib's.                                !
 !==========================================================================================!
 program test_surface
@@ -34,7 +37,7 @@ program test_surface
    use meds_biophysics_params, only : snow_params_t
    use meds_surface,          only : surface_env_t, snow_out_t, snow_cover_fraction, snow_accumulate,            &
                                      snow_drain_meltwater, ground_surface_exchange, snow_take_exchange,         &
-                                     snow_blend_ground_optics, ground_tile_radiation
+                                     snow_blend_ground_optics, ground_tile_radiation, ground_surface_fluxes
    implicit none
 
    call test_snow_cover()
@@ -44,6 +47,7 @@ program test_surface
    call test_rain_on_snow()
    call test_stiff_coupling()
    call test_tile_radiation()
+   call test_ground_balance()
 
    call test_report('test_surface')
 
@@ -348,5 +352,19 @@ contains
       call check('the tiles sum to the blended ground', fc * rnet_snow + (1.0_wp - fc) * rnet_soil, blended,   &
                  1.0e-9_wp)
    end subroutine test_tile_radiation
+
+   !----- 8. The bare ground's skin fluxes to the canopy air. ---------------------------------------!
+   subroutine test_ground_balance()
+      real(wp), parameter :: GGNET = 0.02_wp, RHO = 1.2_wp, T_GROUND = 300.0_wp
+      real(wp) :: h_bare, le_soil, h_2k
+      print '(a)', 'test_ground_balance:'
+      call ground_surface_fluxes(T_GROUND, T_GROUND, GGNET, RHO, 0.0_wp, h_bare, le_soil)
+      call check_true('H_bare = 0 (no gradient)', abs(h_bare) < 1.0e-9_wp, h_bare)
+      call check_true('LE_soil = 0 (no evap)',    abs(le_soil) < 1.0e-30_wp, le_soil)
+      call ground_surface_fluxes(T_GROUND, T_GROUND - 1.0_wp, GGNET, RHO, 0.0_wp, h_bare, le_soil)
+      call ground_surface_fluxes(T_GROUND, T_GROUND - 2.0_wp, GGNET, RHO, 0.0_wp, h_2k, le_soil)
+      call check_true('warm ground over cooler canopy air heats it', h_bare > 0.0_wp, h_bare)
+      call check('twice the difference, twice the sensible flux', h_2k, 2.0_wp * h_bare, 1.0e-12_wp * h_2k)
+   end subroutine test_ground_balance
 
 end program test_surface
