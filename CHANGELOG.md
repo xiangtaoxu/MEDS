@@ -120,7 +120,8 @@ the transpiration demand stops re-solving it at the state the pre-pass already s
 ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506). The
 snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507). The aquifer
 face takes the column's own rule, the geometric mean of the bottom layer's and the table's
-conductivity (#508).
+conductivity (#508). The plant hydraulics page says how far the Kirchhoff sapflow law is from the
+exact steady flux under gravity, and a test pins it (#509).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -727,6 +728,10 @@ conductivity (#508).
 
 ### Changed
 
+- **The Kirchhoff sapflow law under gravity, documented** (#509). The law is the exact steady flux
+  without gravity; with it the exact flux solves an implicit equation, and the law overstates it by
+  3.4 % at a = 2 and 15.5 % at a = 4 in an embolised case, under 1 % on the shipped PFTs' realistic
+  ranges. The law stays; `test_plant_hydraulics` pins the 3.4 % against the a = 2 closed form.
 - **The aquifer face takes the geometric mean** (#508). The aquifer boundary took K_sat for capillary
   rise, the upper bound of the half-layer between the bottom node and the table: a 0.5 m bottom layer
   at −2 m head drew 7 K_sat however dry it was, and dq/dψ jumped by K_sat/K(θ_n) at zero gradient. It
