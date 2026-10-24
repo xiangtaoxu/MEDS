@@ -34,13 +34,13 @@ standalone. The driver reads the stand, calls the laws, and writes the stand bac
 - `meds_slow_diag` — the slow rows of the diagnostic blocks.
 - `meds_slow_ledger` — the site conservation ledger across a slow step.
 
-`driver/` may see `polygon_t`; **`processes/` may not**, and ctest `kernels_no_site_state` checks it.
+`driver/` may see `polygon_t`; **`processes/` may not**, and ctest `kernels_patch_only` checks it.
 The fast half is `src/fast_dynamics/`; the split between them is by **timescale**. See
 [`../README.md`](../README.md) for the tree-wide rules.
 
 Each process module owns its argument records, beside the kernel that reads them (`src/README.md`,
 rule 3): `pheno_env_t`, `pheno_state_t` and `pheno_out_t` are
-`meds_plant_phenology`'s, and `soil_carbon_out_t` and `soilc_diag_t` are `meds_soil_carbon`'s. The
+`meds_plant_phenology`'s, and `soil_carbon_out_t` is `meds_soil_carbon`'s. The
 patch stores a slow step advances — the soil carbon pools (`soil_carbon_state_t`), the litter
 (`litter_input_t`) and the decomposition integral (`decomp_xi_t`) — live in
 `state/meds_patch_state_vars`. The phenology's cue bits (`CUE_*`) are in

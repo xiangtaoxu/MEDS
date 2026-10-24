@@ -48,7 +48,7 @@ A new water flow belongs in the network (its law in `meds_plant_hydraulics` or `
 
 - **Kernels never see `polygon_t`.** The process modules in `processes/` take only the per-patch store types
   from `meds_patch_state_vars` (through an only-list) and link only `state` and `config`. That is what
-  keeps them device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A
+  keeps them device-eligible and standalone-buildable; ctest `kernels_patch_only` checks it. A
   routine that needs `polygon_t` is driver code.
 - **The integrator steps one patch.** `integrator/` takes the patch's site (`site_surface_t`) and the
   per-patch store types, never the polygon, a met, output, calendar or driver module; ctest

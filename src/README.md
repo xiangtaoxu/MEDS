@@ -111,7 +111,7 @@ slow kernels also link the fast kernels, for the seam of rule 2). That is what k
 library building standalone, keeps the kernels eligible for OpenMP `target` offload (a portability
 property worth holding, though offload is not a speedup and has no build option — see
 [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets a
-test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
+test link one kernel library alone. It is checked on every ctest run, by `kernels_patch_only`
 (`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
 file goes to one shared directory, so any file can use any built module. **If a new routine needs
 `polygon_t`, it is driver code**, and it belongs in a `driver/` folder. The integrator

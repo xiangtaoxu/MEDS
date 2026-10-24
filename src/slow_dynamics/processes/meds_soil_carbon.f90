@@ -9,7 +9,6 @@
 !                                       on the fast loop's accumulated decay (§6); its      !
 !                                       checks come back in soil_carbon_out_t (§7, §9).    !
 !   * solve_soil_carbon_steady_state -- the semi-analytic spin-up (SASU, §8).              !
-!   * soil_carbon_diagnostics        -- storage capacity, potential, residence time (§8).  !
 !   * soil_carbon_bad_pool           -- plausibility, as distinct from conservation (§9).  !
 ! The pools (soil_carbon_state_t) and the litter (litter_input_t) are patch state, in      !
 ! meds_patch_state_vars.                                                                   !
@@ -21,16 +20,16 @@ module meds_soil_carbon
    use meds_biogeochem_params, only : N_SOIL_POOL, soil_carbon_params_t, DECOMP_STEP_EXPM,               &
                                       IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,        &
                                       IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_constants,         only : yr_day, tiny_num
+   use meds_constants,         only : tiny_num
    use meds_linear_algebra,    only : matrix_exp, lu_factor, lu_solve
-   use meds_respiration,       only : decomposition_transfer_matrix, heterotrophic_respiration
+   use meds_respiration,       only : decomposition_transfer_matrix
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
    private
 
-   public :: soil_carbon_out_t, soilc_diag_t
+   public :: soil_carbon_out_t
    public :: necromass_to_litter, add_necromass, build_litter_input, soil_carbon_step
-   public :: solve_soil_carbon_steady_state, soil_carbon_diagnostics
+   public :: solve_soil_carbon_steady_state
    public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
 
    !----- One daily step's carbon-mass checks (soil_carbon.md §7, §9). --------------------!
@@ -44,14 +43,6 @@ module meds_soil_carbon
       real(wp)    :: lambda_max  = 0.0_wp   !< [-] max_j dvec_j = max_j (xi_int_j * K_j)
       integer(ik) :: lambda_pool = 0_ik     !< which pool attained it (IP_* index)
    end type soil_carbon_out_t
-
-   !----- Traceability diagnostics (pure post-processing of the assembled matrices; §8). ---!
-   type :: soilc_diag_t
-      real(wp) :: x_c(N_SOIL_POOL) = 0.0_wp   !< [kgC/m2] storage capacity (equilibrium under current climate+input)
-      real(wp) :: x_p(N_SOIL_POOL) = 0.0_wp   !< [kgC/m2] storage potential = x_c - X (remaining sink; <0 = source)
-      real(wp) :: tau_e            = 0.0_wp   !< [yr]     ecosystem soil-carbon residence time = sum(X_c)/sum(u)
-      real(wp) :: rh               = 0.0_wp   !< [kgC/m2/day] instantaneous Rh = -1^T*A*xi*K*X
-   end type soilc_diag_t
 
    !----- What "physically impossible" means for a pool (soil_carbon.md §9): a carbon pool !
    !      is never negative beyond round-off, and 1e4 kgC/m2 (~500x the richest real soil) !
@@ -285,32 +276,6 @@ contains
          x_ss(idx(j)) = x_red(j)
       end do
    end subroutine steady_state_vector
-
-   !=======================================================================================!
-   !  Traceability diagnostics, on the active sub-block (soil_carbon.md eq. (8)):          !
-   !    X_c = -(A*xi*K)^{-1}*u    storage capacity (the equilibrium under today's climate) !
-   !    X_p = X_c - X             storage potential (remaining sink; < 0 is a source)      !
-   !    tau_E = sum(X_c)/sum(u)   ecosystem residence time, in years                       !
-   !=======================================================================================!
-   pure subroutine soil_carbon_diagnostics(a_mat, k_diag, xi, u, pools, diag)
-      real(wp),            intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
-      real(wp),            intent(in)  :: xi(N_SOIL_POOL), u(N_SOIL_POOL)
-      type(soil_carbon_state_t), intent(in)  :: pools
-      type(soilc_diag_t),  intent(out) :: diag
-      real(wp) :: x_c(N_SOIL_POOL), x(N_SOIL_POOL), throughput
-      call steady_state_vector(a_mat, k_diag, xi, u, x_c)        ! X_c = -(A xi K)^{-1} u
-      call pack_pool_vector(pools, x)
-      diag%x_c  = x_c
-      diag%x_p  = x_c - x
-      throughput = sum(u)
-      if (throughput > tiny_num) then
-         diag%tau_e = (sum(x_c) / throughput) / yr_day           ! [kgC/m2] / [kgC/m2/day] = day -> yr
-      else
-         diag%tau_e = 0.0_wp
-      end if
-      diag%rh = heterotrophic_respiration(a_mat, k_diag, xi, pools)
-   end subroutine soil_carbon_diagnostics
-
 
    !=======================================================================================!
    !  The exact daily step: with M = A*diag(xi_int*K) and the day's input u held constant, !

@@ -230,7 +230,7 @@ meds_fortran_flags(meds_config)
 #  meds_diag_vars          -- the diagnostic accumulators, per cohort, patch and polygon.     #
 #                                                                                            #
 #  The kernels take only the per-patch store types (from meds_patch_state_vars), never        #
-#  polygon_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_no_site_state    #
+#  polygon_t, which keeps them OpenMP-`target` device-eligible; ctest kernels_patch_only       #
 #  checks it, because the shared module directory cannot. The parameters that describe the    #
 #  stores are config (meds_soil_params): a parameter is not state.                            #
 file(GLOB STATE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/state/*.f90)
@@ -535,7 +535,7 @@ if(MEDS_BUILD_TESTS)
                        ${CMAKE_CURRENT_SOURCE_DIR})
       #----- The kernels take only the per-patch store types from the state layer, never polygon_t: #
       #      the shared module directory cannot enforce it, so this does, on every run.             #
-      add_test(NAME kernels_no_site_state
+      add_test(NAME kernels_patch_only
                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_kernel_state.py
                        ${CMAKE_CURRENT_SOURCE_DIR}/src)
       #----- The integrator steps one patch: it takes the site's surface and the per-patch store     #
