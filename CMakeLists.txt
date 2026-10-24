@@ -623,11 +623,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_pft_optics_config)
    add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
 
-   #----- The [soil] column keys reach the column they describe. ----------------------------#
-   add_executable(test_soil_column_config test/test_soil_column_config.f90)
-   target_link_libraries(test_soil_column_config PRIVATE meds_config meds_testsupport)
-   meds_fortran_flags(test_soil_column_config)
-   add_test(NAME soil_column_config COMMAND test_soil_column_config)
+   #----- The config blocks reach their records: the [soil]/[fast]/[snow]/[aerodynamics] loaders, #
+   #      and the [soil] column through build_soil_profile. -------------------------------------#
+   add_executable(test_params_config test/test_params_config.f90)
+   target_link_libraries(test_params_config PRIVATE meds_config meds_testassert)
+   meds_fortran_flags(test_params_config)
+   add_test(NAME params_config COMMAND test_params_config)
 
    #----- Field-coverage of the fast state vector's combinators. ---------------------------#
    add_executable(test_state_combinators test/test_state_combinators.f90)
@@ -878,12 +879,6 @@ if(MEDS_BUILD_TESTS)
          message(STATUS "MEDS: restart_exact skipped (${Python3_EXECUTABLE} lacks numpy, netCDF4, pytest or tomli)")
       endif()
    endif()
-
-   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
-   add_executable(test_biophysics_params_config test/test_biophysics_params_config.f90)
-   target_link_libraries(test_biophysics_params_config PRIVATE meds_config meds_testassert)
-   meds_fortran_flags(test_biophysics_params_config)
-   add_test(NAME biophysics_params_config COMMAND test_biophysics_params_config)
 
    #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
