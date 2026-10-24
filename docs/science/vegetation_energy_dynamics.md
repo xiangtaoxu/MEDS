@@ -122,7 +122,11 @@ energy gains the rain's liquid enthalpy for what its film captures, $`u_{liq}(T_
 throughfall's temperature, and loses the vapour's, $`h_v`$, for what evaporates; the commit values the
 film's change at $`u_{liq}`$ of the tissue's start-of-step temperature, as it does the tissue's own
 water, and the balance's film terms are taken relative to that, so the tissue, its film and the canopy
-air close exactly. Drip, and water a film passes from leaf to wood within a cohort, leave at the rain's
+air close exactly. Within a step the tissue's balance runs on the tissue's own heat capacity, and the
+commit reads the temperature back with the end-of-step film, so the film's share of the step's heat is
+a step behind. With the film in the step's capacity, a film far heavier than its tissue that evaporates
+within the step (a falling leaf's, or a stem's at the first rains) would leave its sensible heat to the
+tissue alone: at Palo Verde a nearly leafless cohort's leaf read back at 107 K. Drip, and water a film passes from leaf to wood within a cohort, leave at the rain's
 liquid enthalpy, the throughfall's temperature the pond values them at; the update's cut at capacity
 leaves at the tissue's. The film stays liquid below 0 °C, as tissue water does. A state file whose
 tissue energies leave out the films it holds is refused at the first fast step, where its cohorts'
@@ -217,7 +221,8 @@ internal water, both from the water network. Fresh wood's specific heat (about 2
 100 % moisture) is not used: the water is counted on its own, so a fresh-wood value would count it
 twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build the capacity the same
 way, so the fusion weights and the slow ledger use the same capacity. Each tissue's water includes the
-film it carries (The canopy's interception film, above).
+film it carries, in the cohort's capacity and energy; a step's balance runs on the tissue's own water
+(The canopy's interception film, above).
 
 The wood's area and its sapwood come from stem-size allometries (`meds_allometry_lib`; each PFT's
 `[allometry]` `wai_b1/b2`, `sapwood_area_b1/b2`), with $D$ the diameter [cm]. The wood area index is

@@ -13,6 +13,9 @@
 !    temperature leaves the temperature where it was; with it on, the energy gains exactly !
 !    the heat the tissue relaxed through and its water's enthalpy; and the temperature it  !
 !    commits gives back the energy, so the next step starts where this one ended.          !
+! 5. A film far heavier than its tissue that evaporates within the step: committed at the  !
+!    tissue's own heat capacity, the tissue reads back at the step's temperature; at the   !
+!    capacity with the film it would read hundreds of kelvin off.                          !
 !==========================================================================================!
 program test_tissue_energy
    use meds_test_assert,                only : check_true, test_report
@@ -98,6 +101,7 @@ program test_tissue_energy
 
    !=== 4. The fast commit. =====================================================================!
    call commit_case('commit')
+   call film_heavier_than_tissue()
 
    call test_report('test_tissue_energy')
 
@@ -163,5 +167,47 @@ contains
       gap = DWW * cp_liq * (dynamic%wood_temp(1) - TW0 + tsupercool_liq)
       print '(a,a,es10.3,a)', '   (', tag, gap, ' J the cap*T bookkeeping would re-value the wood by between steps)'
    end subroutine commit_case
+
+   !----- A nearly leafless cohort at Palo Verde's first rains (one plant per m2): its leaf holds   !
+   !      a film of a thousand times its own heat capacity, which evaporates within the step while  !
+   !      the leaf cools from 298 K to 297.5 K. --------------------------------------------------!
+   subroutine film_heavier_than_tissue()
+      real(wp), parameter :: DL = 3.4e-8_wp, WL = 1.0e-11_wp, F0 = 8.4e-9_wp   ! [J/K], [kg], [kg]
+      real(wp), parameter :: DW = 4.0e4_wp, WW = 9.0_wp                       ! [J/K], [kg]
+      real(wp), parameter :: TL0 = 298.0_wp, TL_AVG = 297.5_wp, TW0 = 298.0_wp
+      type(plant_energy_env_t)    :: tissue
+      type(fast_dynamic_state_t)  :: dynamic
+      real(wp) :: store0, store1, t_own, t_with_film
+      integer :: pass
+      allocate(tissue%leaf_hcap_per_dt(1), tissue%wood_hcap_per_dt(1), tissue%t_leaf0(1), tissue%t_wood0(1))
+      allocate(tissue%leaf_dry_hcap(1), tissue%wood_dry_hcap(1), tissue%leaf_water_enth(1), tissue%wood_water_enth(1))
+      call alloc_dynamic_state(dynamic, 1_ik, 295.0_wp, 0.008_wp, 400.0_wp, TL0)
+      do pass = 1, 2
+         tissue%leaf_dry_hcap    = DL
+         tissue%wood_dry_hcap    = DW
+         tissue%leaf_hcap_per_dt = (DL + WL * cp_liq) / DT                    ! the tissue's own (tissue_coefficients)
+         if (pass == 2) tissue%leaf_hcap_per_dt = (DL + (WL + F0) * cp_liq) / DT   ! with the film
+         tissue%wood_hcap_per_dt = (DW + WW * cp_liq) / DT
+         tissue%t_leaf0          = TL0
+         tissue%t_wood0          = TW0
+         tissue%leaf_water_enth  = 0.0_wp
+         tissue%wood_water_enth  = 0.0_wp
+         dynamic%leaf_energy     = tissue_temp_to_energy(DL, WL + F0, TL0)
+         dynamic%wood_energy     = tissue_temp_to_energy(DW, WW, TW0)
+         dynamic%leaf_water_mass = WL
+         dynamic%wood_water_mass = WW
+         call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW0], 1_ik, dynamic%leaf_water_mass,          &
+                                   dynamic%wood_water_mass, [F0], [0.0_wp], [0.0_wp], [0.0_wp],                  &
+                                   dynamic%leaf_energy, dynamic%wood_energy, dynamic%leaf_temp, dynamic%wood_temp, &
+                                   store0, store1)
+         if (pass == 1) t_own = dynamic%leaf_temp(1)
+         if (pass == 2) t_with_film = dynamic%leaf_temp(1)
+      end do
+      call check_true('a film heavier than its tissue: at the tissue''s own capacity it reads back at the '//    &
+                      'step''s temperature', abs(t_own - TL_AVG) < 1.0e-6_wp)
+      call check_true('a film heavier than its tissue: at the capacity with the film it would not',             &
+                      abs(t_with_film - TL_AVG) > 100.0_wp)
+      print '(a,f10.3,a,f10.3,a)', '   (leaf at the tissue''s capacity ', t_own, ' K; with the film ', t_with_film, ' K)'
+   end subroutine film_heavier_than_tissue
 
 end program test_tissue_energy

@@ -554,15 +554,16 @@ contains
          tissue%lai(i)    = static%lai(i)
          tissue%abs_sw(i) = forcing%abs_sw(i)
          tissue%abs_lw(i) = forcing%abs_lw(i)
-         !----- Wood heat capacity: the dry heat of all the wood plus the water network's whole wood store  !
-         !      and the film the wood holds (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------!
+         !----- Wood heat capacity over the step: the dry heat of all the wood plus the water network's    !
+         !      whole wood store (docs/science/vegetation_energy_dynamics.md eq. (8)). The film the wood   !
+         !      holds joins at the commit, which reads the temperature back with the end-of-step film, so  !
+         !      a film far heavier than its tissue that evaporates within the step cannot leave its heat   !
+         !      to the tissue alone ("The canopy's interception film"). -----------------------------------!
          tissue%wood_dry_hcap(i) = static%wood_dry_hcap(i)
-         tissue%wood_wmass(i)    = max(dynamic%wood_water_mass(i), 0.0_wp) * static%nplant(i)                   &
-                                   + dynamic%wood_surf_water(i)
-         !----- Leaf heat capacity, the same parts: its water read from dynamic, and its film. ---------------!
+         tissue%wood_wmass(i)    = max(dynamic%wood_water_mass(i), 0.0_wp) * static%nplant(i)
+         !----- Leaf heat capacity, the same parts: its water read from dynamic. ----------------------------!
          tissue%leaf_dry_hcap(i) = static%leaf_dry_hcap(i)
-         tissue%leaf_wmass(i)    = max(dynamic%leaf_water_mass(i), 0.0_wp) * static%nplant(i)                   &
-                                   + dynamic%leaf_surf_water(i)
+         tissue%leaf_wmass(i)    = max(dynamic%leaf_water_mass(i), 0.0_wp) * static%nplant(i)
          !----- The wood's radiation and sensible coefficient: its whole energy budget in surface_derivs   !
          !      (docs/science/vegetation_energy_dynamics.md §Leaf and wood energy balance). -------------!
          tissue%wai(i)         = static%wai(i)

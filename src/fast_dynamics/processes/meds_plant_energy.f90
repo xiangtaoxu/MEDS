@@ -63,11 +63,11 @@ module meds_plant_energy
       real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
       !----- The heat-capacity inputs behind leaf_hcap_per_dt and wood_hcap_per_dt = (dry hcap +   !
       !      water mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). The water !
-      !      is the tissue's own and the film it holds. -------------------------------------------!
+      !      is the tissue's own: the film it holds joins at the commit. --------------------------!
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry wood heat capacity
-      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood, fine roots) and film
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood, fine roots)
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity
-      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water and film
+      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water
    end type plant_energy_env_t
 
    !----- One latent pathway of a tissue's balance (docs/science/vegetation_energy_dynamics.md eq. !
@@ -263,10 +263,13 @@ contains
    ! commit_tissue_energy -- each tissue's end-of-step energy and temperature, and the     !
    ! tissue store before and after, for the column's energy budget                         !
    ! (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)). The energy gains the heat !
-   ! cap*(t_avg - t0), t_avg being the step's time-average of where the tissue relaxed to, !
-   ! the enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)) and its      !
-   ! film's change at the liquid enthalpy of its start-of-step temperature; the            !
-   ! temperature is read back with the end-of-step water and film. A tissue with no heat   !
+   ! cap*(t_avg - t0) at the capacity the step's balance ran on, the tissue's own without  !
+   ! its film, t_avg being the step's time-average of where the tissue relaxed to; the     !
+   ! enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)); and its film's  !
+   ! change at the liquid enthalpy of its start-of-step temperature. The temperature is    !
+   ! read back with the end-of-step water and film, so the film's share of the heat is a   !
+   ! step behind, and it lies between the start-of-step temperature and t_avg even where a !
+   ! film far heavier than its tissue evaporated within the step. A tissue with no heat    !
    ! capacity keeps a temperature: wood its own, a leaf its wood's.                        !
    !---------------------------------------------------------------------------------------!
    pure subroutine commit_tissue_energy(env, nplant, dt, t_leaf_avg, t_wood_avg, n, leaf_water_mass,          &
