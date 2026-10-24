@@ -28,6 +28,8 @@ module meds_fast_integ_types
    use meds_fast_params, only : CTRL_I
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    use meds_canopy_air_space, only : cas_env_t
+   use meds_plant_energy, only : plant_energy_env_t
+   use meds_canopy_water, only : canopy_water_out_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -42,7 +44,7 @@ module meds_fast_integ_types
    public :: ensure_static_capacity, ensure_dynamic_capacity, ensure_forcing_capacity, ensure_output_capacity
    public :: surface_state_t, surface_tend_t
    public :: snow_stage_t
-   public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
+   public :: cas_boundary_t, ground_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, esdirk2_stages_t
    public :: march_state_t, frozen_t, march_tend_t
    public :: stage_bflux_t, boundary_flux_t
@@ -349,60 +351,6 @@ module meds_fast_integ_types
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
    end type cas_boundary_t
 
-   !----- Per-cohort leaf and wood energy-balance coefficients and the tissue heat store, frozen at  !
-   !      state^n. Each stage relaxes a tissue from t_leaf0/t_wood0 against hcap_per_dt = cap/dt_fast, !
-   !      an algebraic closure rather than a tableau unknown, so it needs no error group and no Newton !
-   !      (docs/science/vegetation_energy_dynamics.md §One formulation: the tissue relaxes exactly). -!
-   type :: tissue_coefficients_t
-      real(wp), allocatable :: h_coeff_leaf(:)   !< [W/m2/K]  frozen sensible coefficient
-      real(wp), allocatable :: g_transp_leaf(:)      !< [m/s]     frozen leaf transpiration series conductance
-      real(wp), allocatable :: abs_sw(:)      !< [W/m2]    absorbed shortwave (frozen source)
-      real(wp), allocatable :: abs_lw(:)      !< [W/m2]    net longwave at the emission base (frozen source)
-      real(wp), allocatable :: lai(:)         !< [m2/m2]   cohort leaf area index
-      real(wp), allocatable :: h_coeff_w(:)   !< [W/m2/K]  frozen WOOD sensible coefficient (pi*wai*wood_gbh*rho*cp)
-      real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] frozen absorbed SW / net LW on wood
-      real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
-      real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
-      real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
-      !----- Heat the moving plant water brings each tissue, and the enthalpy each tissue's own water  !
-      !      gains as its mass changes, both at start-of-step temperatures (docs/science/soil_plant_water.md !
-      !      eqs. (4)-(5)). ----------------------------------------------------------------------------!
-      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
-      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
-      real(wp), allocatable :: leaf_water_enth(:)  !< [W/m2 ground] the leaf's water, eq. (5)
-      real(wp), allocatable :: wood_water_enth(:)  !< [W/m2 ground] the wood's water, eq. (5)
-      !----- Each cohort's transpiration over the step [kg/m2 ground/s], from the water network         !
-      !      (docs/science/soil_plant_water.md §4). With transp_held the leaf energy balance holds it, so  !
-      !      the canopy air gains exactly the water the leaves lose; without (the pre-pass's own call, a  !
-      !      hand-built record) the demand follows the stomata and the canopy air's humidity. ----------!
-      logical :: transp_held = .false.
-      real(wp), allocatable :: transp_net(:)
-      !----- Per-cohort longwave emissivities, the ones the radiation solver used, so each tissue's     !
-      !      emission slope 4*eps*sigma*T^3 matches the longwave it was given. ----------------------!
-      real(wp), allocatable :: leaf_emiss(:)  !< [-]       leaf LW emissivity
-      real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
-      !----- The heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt = (dry hcap + water !
-      !      mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------------!
-      real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry wood heat capacity
-      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood and fine roots)
-      real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity
-      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
-   end type tissue_coefficients_t
-
-   !----- Canopy interception film: the wetted fraction and film-evaporation conductances, the     !
-   !      liquid enthalpy the film is valued at, and the interception rates, frozen per dt_fast. All !
-   !      zero when canopy_water_on is off; only the state-dependent terms are evaluated per stage. !
-   type :: canopy_film_capacity_t
-      real(wp), allocatable :: g_film_leaf(:), g_film_w(:)   !< [m/s] frozen film-evap conductance, leaf/wood
-      real(wp), allocatable :: f_wet_c(:)                 !< [-]   frozen combined wetted fraction (sigma_w)
-      !----- The film's liquid enthalpy, internal_energy_liquid(t_film_valuation). The tissue pays     !
-      !      enthalpy_vapor(T) minus this per kg it evaporates, so film, tissue and CAS close exactly. -!
-      real(wp) :: film_liquid_enthalpy    = 0.0_wp      !< [J/kg]
-      !----- Frozen interception rates (capture/capacity only, e_canopy = 0): integrating them by    !
-      !      explicit Euler over dt_fast reproduces the one-shot bucket commit exactly. -------------!
-      real(wp), allocatable :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] (ncoh)
-   end type canopy_film_capacity_t
-
    !----- Bare-ground boundary: radiation reaching the ground, the ground <-> CAS conductance and   !
    !      the ground evaporation the frozen hydrology authority committed to. ----------------------!
    type :: ground_boundary_t
@@ -601,8 +549,8 @@ module meds_fast_integ_types
    !----- The container: everything held constant over one dt_fast, by physical content. -----------!
    type :: frozen_t
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
-      type(tissue_coefficients_t)  :: tissue       !< per-cohort leaf/wood energy coefficients + heat store
-      type(canopy_film_capacity_t) :: film         !< canopy interception film
+      type(plant_energy_env_t)     :: tissue       !< per-cohort leaf/wood energy coefficients + heat store
+      type(canopy_water_out_t)     :: film         !< canopy interception film
       type(ground_boundary_t)      :: ground       !< bare-ground boundary
       type(snow_stage_t)           :: snow         !< the snow stage's outcome (all zero without a pack)
       type(soil_hydrology_t)       :: hydrology    !< the water network's soil flows over the step

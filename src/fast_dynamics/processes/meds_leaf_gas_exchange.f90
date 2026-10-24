@@ -36,7 +36,7 @@ module meds_leaf_gas_exchange
 
    !----- The coupled Ci solver. ---------------------------------------------------------!
    public :: solve_leaf_gas_exchange, rubisco_kinetics
-   public :: leaf_gas_exchange_batch, leaf_params_at_capacity
+   public :: leaf_gas_exchange_batch, leaf_params_at_capacity, cohort_leaf_par
 
    real(wp),    parameter :: CI_TOL_PPM = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: LO_EPS_PPM = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
@@ -226,6 +226,33 @@ contains
       lambda = lambda25 * max(beta, BETA_FLOOR) ** (-lambda_psi_exp)
    end function katul_lambda
 
+   !---------------------------------------------------------------------------------------!
+   ! The fast water-stress control, on capacity (docs/science/leaf_gas_exchange.md §4.1,   !
+   ! eq. (9)): a linear ramp in the current leaf potential, 0 at psi_close and 1 at        !
+   ! psi_open, that scales Vcmax, Jmax and TPU (not Rd).                                   !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function capacity_stress_factor(psi_leaf, psi_close, psi_open) result(beta)
+      real(wp), intent(in) :: psi_leaf              !< [MPa] the leaf's potential at the step's start
+      real(wp), intent(in) :: psi_close, psi_open   !< [MPa] where capacity is lost and where it is whole
+      real(wp)             :: beta                  !< [-]   1 = unstressed
+      beta = (psi_leaf - psi_close) / (psi_open - psi_close)
+      beta = min(max(beta, 0.0_wp), 1.0_wp)
+   end function capacity_stress_factor
+
+   !---------------------------------------------------------------------------------------!
+   ! The slow water-stress control, on the stomata (§4.2, eq. (10)): exp(sref*(psi -       !
+   ! psi_onset)) on the previous day's predawn potential, which scales g1 and raises the   !
+   ! Katul lambda. There is no stress above the onset, so a tall tree in wet soil keeps    !
+   ! its full g1.                                                                          !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function stomatal_stress_factor(psi, sref, psi_onset) result(beta)
+      real(wp), intent(in) :: psi         !< [MPa]   the supply-side (predawn) potential
+      real(wp), intent(in) :: sref        !< [1/MPa] the sensitivity
+      real(wp), intent(in) :: psi_onset   !< [MPa]   where stress begins
+      real(wp)             :: beta        !< [-]     1 = unstressed
+      beta = min(1.0_wp, exp(sref * (psi - psi_onset)))
+   end function stomatal_stress_factor
+
 
    !---------------------------------------------------------------------------------------!
    ! C3 Rubisco kinetics at leaf temperature, as mole fractions [umol/mol]. Kc and Ko are  !
@@ -283,13 +310,11 @@ contains
       !----- Water stress, two controls on two time scales (docs/science/leaf_gas_exchange.md §4). The fast !
       !      one, eq. (9), ramps Vcmax/Jmax/TPU on the step-start leaf potential (Rd is not scaled); the     !
       !      slow one, eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. ---!
-      beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
-      beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
+      beta_nonstomata = capacity_stress_factor(env%psi_leaf, p%psi_close, p%psi_open)
       vcmax = vcmax * beta_nonstomata
       jmax  = jmax  * beta_nonstomata
       tpu   = tpu   * beta_nonstomata
-      !----- No stress above the onset, so a tall tree in wet soil keeps its full g1 (§4.2). ---------------!
-      beta_stomata = min(1.0_wp, exp(p%sref_stomata * (env%psi - p%psi_onset)))
+      beta_stomata = stomatal_stress_factor(env%psi, p%sref_stomata, p%psi_onset)
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -551,6 +576,20 @@ contains
       p%tpu25   = table%tpu_vcmax_ratio(ipft)  * vcmax25
       p%rd25    = rd25
    end function leaf_params_at_capacity
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's leaf PAR per unit of its own leaf area [umol photon/m2 leaf/s]: abs_par is !
+   ! the PAR its leaves absorb divided by leaf_absorptance, so the result is the incident  !
+   ! PAR the leaf solver takes. The guard only keeps a leafless cohort, which absorbs      !
+   ! nothing, at 0; a floor on the leaf area would spread a thin cohort's light over leaf  !
+   ! area it does not have.                                                                !
+   !---------------------------------------------------------------------------------------!
+   elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
+      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb, over leaf_absorptance
+      real(wp), intent(in) :: lai        !< [m2 leaf/m2 ground] the cohort's leaf area index
+      real(wp), intent(in) :: par_per_w  !< [umol/J] PAR photons per joule
+      par = abs_par / max(lai, tiny_num) * par_per_w
+   end function cohort_leaf_par
 
    !---------------------------------------------------------------------------------------!
    ! leaf_gas_exchange_batch -- solve_leaf_gas_exchange over n leaves on bare arrays (the  !

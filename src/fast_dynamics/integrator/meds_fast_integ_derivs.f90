@@ -19,7 +19,7 @@ module meds_fast_integ_derivs
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o, grav_head
    use meds_therm_lib, only : cas_enthalpy_to_temp, sat_specific_humidity,                                &
-                              sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
+                              sat_specific_humidity_temp_deriv, internal_energy_to_temp,                  &
                               internal_energy_liquid
    use meds_soil_heat, only : soil_heat_env_t
    use meds_surface, only : snow_env_t, snow_out_t
@@ -28,10 +28,10 @@ module meds_fast_integ_derivs
    use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv, cas_condensation
    use meds_surface, only : ground_surface_fluxes, snow_surface_balance
    use meds_canopy_aerodynamics, only : canopy_air_conductances
-   use meds_plant_energy, only : veg_energy_balance, lw_emission_slope
+   use meds_plant_energy, only : plant_energy_env_t, canopy_tissue_energy
+   use meds_canopy_water, only : canopy_water_out_t
    use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
-                               tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
-                               march_state_t, frozen_t, march_tend_t, fast_static_state_t,               &
+                               ground_boundary_t, march_state_t, frozen_t, march_tend_t, fast_static_state_t, &
                                water_drive_t, water_tend_t, water_work_t, ensure_water_capacity, POND, WOOD, LEAF
    use meds_site_state_vars, only : site_surface_t
    use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
@@ -97,8 +97,8 @@ contains
    pure subroutine surface_derivs(y, cas, tissue, film, ground, snow, t_ground, n, f)
       type(surface_state_t),        intent(in)  :: y
       type(cas_boundary_t),         intent(in)  :: cas      !< CAS <-> atmosphere boundary (a stage may pass its own conductances)
-      type(tissue_coefficients_t),  intent(in)  :: tissue   !< per-cohort leaf/wood energy coefficients
-      type(canopy_film_capacity_t), intent(in)  :: film     !< interception film
+      type(plant_energy_env_t),     intent(in)  :: tissue   !< per-cohort leaf/wood energy coefficients
+      type(canopy_water_out_t),     intent(in)  :: film     !< interception film
       type(ground_boundary_t),      intent(in)  :: ground   !< bare-ground boundary
       type(snow_stage_t),           intent(in)  :: snow     !< the snow stage's outcome
       real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at this evaluation (live, not frozen)
@@ -108,19 +108,12 @@ contains
       type(surface_tend_t),   intent(inout) :: f
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt
-      real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
-      real(wp)    :: lw_slope_w, dtw, tw, transp_w, dh_w, drnet_w    !< wood balance (own store)
-      real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
-      real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
+      real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap   !< the canopy's, into the canopy air
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
       type(snow_env_t)  :: senv        !< the pack's surroundings at this evaluation
       type(snow_out_t) :: sfx         !< its exchange with them (zero without a pack)
-      !----- Film-evaporation latent terms: frozen conductance, live dqdt and qsat_c - qcas, as for the !
-      !      dry pathway. With canopy_water_on off, f_wet_c = 0 and the wet pathway vanishes. --------!
-      real(wp)    :: le_slope_wet, le_ref_wet, le_slope_wet_w, le_ref_wet_w
       real(wp)    :: gah_l, gaw_l, gac_l      !< the conductances this evaluation uses
       type(cas_env_t) :: cas_env
-      integer(ik) :: i
 
       call ensure_surface_tend(f, n)
 
@@ -129,69 +122,11 @@ contains
       qsat_c = sat_specific_humidity(tcas, cas%press)
       dqdt   = sat_specific_humidity_temp_deriv(tcas, cas%press)
 
-      coh_h = 0.0_wp
-      coh_qw = 0.0_wp
-      coh_transp = 0.0_wp
-      coh_rnet = 0.0_wp
-      coh_film_evap = 0.0_wp
-      do i = 1_ik, n
-         lw_slope = lw_emission_slope(tissue%leaf_emiss(i), tcas, tissue%lai(i))
-         !----- The leaf pays the full specific enthalpy of the vapour it sheds, enthalpy_vapor at tcas   !
-         !      (the linearization base), and the CAS receives the same number; the film pays it less the !
-         !      liquid enthalpy its water arrived with, so film, leaf and CAS close with no slack         !
-         !      (docs/science/vegetation_energy_dynamics.md eq. (2)). -----------------------------------!
-         h_evap_l = enthalpy_vapor(tcas)
-         h_film_l = h_evap_l - film%film_liquid_enthalpy
-         if (tissue%transp_held) then
-            !----- Transpiration held at the network's: a fixed latent term on the leaf's dry share, so  !
-            !      the transpiration it reports is the water the leaves lost (soil_plant_water.md §4). -!
-            le_slope = 0.0_wp
-            le_ref   = h_evap_l * tissue%transp_net(i) / max(1.0_wp - film%f_wet_c(i), tiny_num)
-         else
-            le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
-            le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
-         end if
-         le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
-         le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
-         !----- Wood: the same kernel with no transpiration, solved first because a leaf with no area    !
-         !      takes its wood's temperature (docs/science/vegetation_energy_dynamics.md, "A tissue with !
-         !      no area"). q_wood_net enters as q_extra, as qwflux_wl does for the leaf. -----------------!
-         lw_slope_w = lw_emission_slope(tissue%wood_emiss(i), tcas, tissue%wai(i))
-         h_evap_w = h_evap_l
-         h_film_w = h_evap_w - film%film_liquid_enthalpy
-         le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
-         le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
-         call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
-                                    tissue%t_wood0(i),                                                &
-                                    dtw, tw, transp_w, dh_w, drnet_w, q_extra=tissue%q_wood_net(i),   &
-                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
-                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i),        &
-                                    h_evap=h_evap_w, h_evap_wet=h_film_w)
-         f%wood_temp(i) = tw
-         !----- Leaf: linearized about tcas, relaxing with its own heat store                            !
-         !      (docs/science/vegetation_energy_dynamics.md eqs. (3)-(6)). qwflux_wl enters as q_extra:  !
-         !      it shifts the equilibrium like absorbed energy but is an internal transfer, not in drnet. !
-         call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tw, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),    &
-                                    dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
-                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
-                                    le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
-                                    h_evap=h_evap_l, h_evap_wet=h_film_l)
-         f%leaf_temp(i) = tl
-         f%transp_c(i)  = transp_i                                          ! per-cohort transpiration this stage charges
-         coh_h      = coh_h      + dh
-         coh_qw     = coh_qw     + (transp_i + f%film_evap_leaf(i)) * h_evap_l   ! what the leaf paid
-         coh_transp = coh_transp + transp_i
-         coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
-         coh_rnet   = coh_rnet   + drnet
-         !----- The wood's sensible heat, film evaporation and net longwave join coh_h, coh_qw and   !
-         !      coh_rnet after the leaf's. ---------------------------------------------------------!
-         coh_h    = coh_h    + dh_w
-         coh_qw   = coh_qw   + f%film_evap_wood(i) * h_evap_w   ! wood film-evap -> CAS, what the wood paid
-         coh_film_evap = coh_film_evap + f%film_evap_wood(i)
-         coh_rnet = coh_rnet + drnet_w
-      end do
+      !----- Every cohort's wood and leaf at this canopy air (docs/science/vegetation_energy_dynamics.md);  !
+      !      with canopy_water_on off, f_wet_c = 0 and the films' pathway vanishes. ------------------------!
+      call canopy_tissue_energy(tissue, film, tcas, qcas, qsat_c, dqdt, cas%rho, n, f%leaf_temp, f%wood_temp,     &
+                                f%transp_c, f%film_evap_leaf, f%film_evap_wood, coh_h, coh_qw, coh_transp,        &
+                                coh_film_evap, coh_rnet)
 
       !----- The snow pack's exchange at this evaluation's canopy air and soil top, as the tissues'      !
       !      is at theirs: its surface balance relaxed over the step with its own heat store             !

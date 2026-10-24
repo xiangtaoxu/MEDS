@@ -437,7 +437,7 @@ and passes the resulting flux into the CO₂ source.
 | explicit thermal tendency (RK45) | `meds_soil_heat`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
-| canopy interception | `meds_canopy_water`: `intercept_canopy_layer` |
+| canopy interception | `meds_canopy_water`: `intercept_canopy_layer`, swept over the cohorts by `canopy_interception`; `limit_film_evaporation`, `clamp_canopy_film` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_state_t`, `soil_energy_state_t` |
 

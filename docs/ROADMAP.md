@@ -185,7 +185,7 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   wind, which `ugbmin` makes unreachable.
 
   The effect on `ΔT_leaf` is smaller again, because `h_coeff` is one of four terms in
-  `veg_energy_balance`'s denominator (`h_coeff + le_slope + le_slope_wet + lw_slope`).
+  `tissue_energy_balance`'s denominator (`h_coeff`, the two latent pathways' slopes and `lw_slope`).
 
   And the fix is not the one the note describes. A flat factor on the denominator alone would break
   the kernel's exact conservation identity (`store_hcap_per_dt*(dt_end − dt_prev) + denom*dt_avg ==

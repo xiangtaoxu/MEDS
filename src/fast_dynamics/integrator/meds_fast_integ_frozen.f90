@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_fast_integ_frozen
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, cp_liq, t_3ple, r_gas,      &
+   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, t_3ple, r_gas,              &
                                      kgcday_2_umols
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM,     &
                                      CO_BETA_NONSTOM, CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF,      &
@@ -34,8 +34,8 @@ module meds_fast_integ_frozen
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
                                      march_state_t, frozen_t, surface_state_t,                            &
-                                     surface_tend_t, snow_stage_t, cas_boundary_t, tissue_coefficients_t,         &
-                                     canopy_film_capacity_t, ground_boundary_t, plant_water_t, step_exports_t,   &
+                                     surface_tend_t, snow_stage_t, cas_boundary_t, ground_boundary_t,             &
+                                     plant_water_t, step_exports_t,                                              &
                                      water_work_t, POND, WOOD, WORK_WATER_NFAIL
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
@@ -43,23 +43,22 @@ module meds_fast_integ_frozen
    use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t, cas_capacities
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
-   use meds_plant_energy, only : sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, EFFAREA_HEAT, &
-                                 EFFAREA_TRANSP, EFFAREA_EVAP
-   use meds_canopy_water, only : intercept_canopy_layer
-   use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch
+   use meds_plant_energy, only : plant_energy_env_t, sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, &
+                                 tissue_hcap_per_dt, EFFAREA_HEAT, EFFAREA_TRANSP, EFFAREA_EVAP
+   use meds_canopy_water, only : canopy_water_out_t, canopy_interception, limit_film_evaporation
+   use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch, cohort_leaf_par
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,           &
                                       root_zone_temp_scale
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
    use meds_surface, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
-                                     cas_enthalpy_to_temp, sat_vapor_pressure,                                  &
+                                     cas_enthalpy_to_temp, air_vpd,                                             &
                                      soil_thermal_conductivity, specific_humidity_to_vapor_pressure
    use meds_numerics,         only : weighted_mean
    implicit none
    private
 
    public :: build_frozen, record_water_flows
-   public :: cohort_leaf_par   ! used only by the tests
 
 contains
 
@@ -360,7 +359,7 @@ contains
       do i = 1_ik, n
          rho_mol_arr(i)  = press / (r_gas * dynamic%leaf_temp(i))
          par_arr(i)      = cohort_leaf_par(forcing%abs_par(i), static%lai(i), forcing%par_per_w)
-         vpd_arr(i)      = max(sat_vapor_pressure(dynamic%leaf_temp(i)) - e_air, 0.0_wp)
+         vpd_arr(i)      = air_vpd(dynamic%leaf_temp(i), e_air)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = leaf_node_psi(dynamic%leaf_water_mass(i), static%bleaf(i),                 &
                dynamic%wood_water_mass(i), static%bwood_water(i), static%height(i),              &
@@ -426,19 +425,6 @@ contains
          g_transp_leaf(i)    = leaf_transp_coeff(EFFAREA_TRANSP, static%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
-
-   !---------------------------------------------------------------------------------------!
-   ! A cohort's leaf PAR per unit of its OWN leaf area: the PAR its leaves absorb, which            !
-   ! apply_rt_forcing has divided by leaf_absorptance, so it is the incident PAR the leaf kernel    !
-   ! takes. The guard only keeps a leafless cohort, which absorbs nothing, at 0; a floor on the     !
-   ! leaf area would spread a thin cohort's light over leaf area it does not have.                  !
-   !---------------------------------------------------------------------------------------!
-   elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
-      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb, over leaf_absorptance
-      real(wp), intent(in) :: lai        !< [m2 leaf/m2 ground] the cohort's leaf area index
-      real(wp), intent(in) :: par_per_w  !< [umol/J] PAR photons per joule
-      par = abs_par / max(lai, tiny_num) * par_per_w
-   end function cohort_leaf_par
 
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort       !
@@ -566,11 +552,9 @@ contains
    end subroutine prepare_snow_stage
 
    !---------------------------------------------------------------------------------------!
-   ! intercept_rain -- canopy interception (docs/science/soil_biophysics.md §Canopy           !
-   ! interception): one leaf+wood bucket per cohort, tallest first, capture only (film        !
-   ! evaporation is surface_derivs' per-stage flux), held as the frozen rate whose Euler step  !
-   ! over dt_fast is the bucket update. None under a pack; throughfall carries sub-threshold   !
-   ! snowfall, which forms no pack, as liquid.                                                 !
+   ! intercept_rain -- the step's canopy interception (canopy_interception) with the canopy  !
+   ! water store on. None under a pack, which takes the rain and the snow; throughfall        !
+   ! carries sub-threshold snowfall, which forms no pack, as liquid.                          !
    !---------------------------------------------------------------------------------------!
    subroutine intercept_rain(dt_fast, cfg, static, forcing, dynamic, pack_exists, film, throughfall)
       real(wp),                     intent(in)    :: dt_fast
@@ -579,40 +563,23 @@ contains
       type(fast_forcing_t),         intent(in)    :: forcing
       type(fast_dynamic_state_t),   intent(in)    :: dynamic
       logical,                      intent(in)    :: pack_exists
-      type(canopy_film_capacity_t), intent(inout) :: film
+      type(canopy_water_out_t),     intent(inout) :: film
       real(wp),                     intent(out)   :: throughfall   !< [kg/m2/s] what reaches the ground
-      real(wp)    :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i
-      integer(ik) :: i
+      integer(ik) :: n
+      n = static%n
       film%intercept_leaf = 0.0_wp
       film%intercept_wood = 0.0_wp
       film%f_wet_c = 0.0_wp
       film%g_film_leaf = 0.0_wp
       film%g_film_w = 0.0_wp
       throughfall = forcing%rainfall + forcing%snowfall
-      if (cfg%canopy_water_on .and. .not. pack_exists) then
-         rain_above = forcing%rainfall + forcing%snowfall
-         do i = 1_ik, static%n
-            combined_w = dynamic%leaf_surf_water(i) + dynamic%wood_surf_water(i)
-            leaf_cap_i = cfg%pft%leaf_surf_water_max(static%pft(i)) * static%lai(i)
-            wood_cap_i = cfg%pft%wood_surf_water_max(static%pft(i)) * static%wai(i)
-            call intercept_canopy_layer(combined_w, rain_above, static%lai(i), static%wai(i), 0.0_wp, dt_fast, &
-                                        cfg%pft%leaf_surf_water_max(static%pft(i)),                            &
-                                        cfg%pft%wood_surf_water_max(static%pft(i)), cfg%intercept_k,          &
-                                        cfg%intercept_alpha, throughfall_i, drip_i, film%f_wet_c(i))
-            !----- the combined film shared by capacity, so neither film is left above its own cap -------!
-            if (leaf_cap_i + wood_cap_i > tiny_num) then
-               film%intercept_leaf(i) = (combined_w*leaf_cap_i/(leaf_cap_i + wood_cap_i)                       &
-                                         - dynamic%leaf_surf_water(i)) / dt_fast
-               film%intercept_wood(i) = (combined_w*wood_cap_i/(leaf_cap_i + wood_cap_i)                       &
-                                         - dynamic%wood_surf_water(i)) / dt_fast
-            else
-               film%intercept_leaf(i) = -dynamic%leaf_surf_water(i) / dt_fast
-               film%intercept_wood(i) = -dynamic%wood_surf_water(i) / dt_fast
-            end if
-            rain_above = throughfall_i   ! cascades to the next (shorter) cohort
-         end do
-         throughfall = rain_above   ! whatever survives the shortest (last) cohort
-      end if
+      if (cfg%canopy_water_on .and. .not. pack_exists)                                                         &
+         call canopy_interception(n, forcing%rainfall + forcing%snowfall, dynamic%leaf_surf_water,              &
+                                  dynamic%wood_surf_water, static%lai, static%wai,                              &
+                                  cfg%pft%leaf_surf_water_max(static%pft(1:n)),                                 &
+                                  cfg%pft%wood_surf_water_max(static%pft(1:n)), cfg%intercept_k,                &
+                                  cfg%intercept_alpha, dt_fast, film%intercept_leaf, film%intercept_wood,       &
+                                  film%f_wet_c, throughfall)
    end subroutine intercept_rain
 
    !---------------------------------------------------------------------------------------!
@@ -628,8 +595,8 @@ contains
       type(fast_dynamic_state_t),   intent(in)    :: dynamic
       type(aero_out_t),             intent(in)    :: aero
       real(wp),                     intent(in)    :: rho
-      type(tissue_coefficients_t),  intent(inout) :: tissue
-      type(canopy_film_capacity_t), intent(inout) :: film
+      type(plant_energy_env_t),     intent(inout) :: tissue
+      type(canopy_water_out_t),     intent(inout) :: film
       type(plant_water_t),          intent(inout) :: plant
       integer(ik) :: i
       do i = 1_ik, static%n
@@ -653,8 +620,8 @@ contains
          !----- Tissue heat store a = cap/dt_fast, relaxing from the start-of-step temperature             !
          !      (docs/science/vegetation_energy_dynamics.md eqs. (3)-(5)): an algebraic closure in every  !
          !      stage evaluation, not a tableau unknown. -------------------------------------------------!
-         tissue%leaf_hcap_per_dt(i) = (tissue%leaf_dry_hcap(i) + tissue%leaf_wmass(i) * cp_liq) / dt_fast
-         tissue%wood_hcap_per_dt(i) = (tissue%wood_dry_hcap(i) + tissue%wood_wmass(i) * cp_liq) / dt_fast
+         tissue%leaf_hcap_per_dt(i) = tissue_hcap_per_dt(tissue%leaf_dry_hcap(i), tissue%leaf_wmass(i), dt_fast)
+         tissue%wood_hcap_per_dt(i) = tissue_hcap_per_dt(tissue%wood_dry_hcap(i), tissue%wood_wmass(i), dt_fast)
          tissue%t_leaf0(i) = dynamic%leaf_temp(i)
          tissue%t_wood0(i) = dynamic%wood_temp(i)
          tissue%leaf_emiss(i) = static%leaf_emissivity(i)
@@ -716,22 +683,15 @@ contains
       type(frozen_t),      intent(inout) :: frozen
       type(surface_state_t) :: y_stage
       type(surface_tend_t)  :: sf0
-      real(wp)    :: avail_leaf, avail_wood, t_up_wl
+      real(wp)    :: t_up_wl
       integer(ik) :: i
       y_stage%cas_enthalpy = dynamic%cas%can_enthalpy
       y_stage%cas_shv = dynamic%cas%can_shv
       y_stage%cas_co2 = dynamic%cas%can_co2
       call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
-      if (canopy_water_on) then
-         do i = 1_ik, n
-            avail_leaf = dynamic%leaf_surf_water(i) + max(0.0_wp, frozen%film%intercept_leaf(i)) * dt_fast
-            if (sf0%film_evap_leaf(i) > tiny_num) frozen%film%g_film_leaf(i) = frozen%film%g_film_leaf(i)          &
-                 * min(1.0_wp, avail_leaf / (sf0%film_evap_leaf(i)*dt_fast))
-            avail_wood = dynamic%wood_surf_water(i) + max(0.0_wp, frozen%film%intercept_wood(i)) * dt_fast
-            if (sf0%film_evap_wood(i) > tiny_num) frozen%film%g_film_w(i) = frozen%film%g_film_w(i)                &
-                 * min(1.0_wp, avail_wood / (sf0%film_evap_wood(i)*dt_fast))
-         end do
-      end if
+      if (canopy_water_on)                                                                                    &
+         call limit_film_evaporation(n, dt_fast, dynamic%leaf_surf_water, dynamic%wood_surf_water,              &
+                                     sf0%film_evap_leaf, sf0%film_evap_wood, frozen%film)
       do i = 1_ik, n
          t_up_wl = merge(dynamic%wood_temp(i), dynamic%leaf_temp(i), sf0%transp_c(i) >= 0.0_wp)
          frozen%tissue%qwflux_wl(i) = sf0%transp_c(i) * internal_energy_liquid(t_up_wl)

@@ -16,8 +16,8 @@ hydraulics ([plant_hydraulics](plant_hydraulics.md)).
 
 ## Leaf and wood energy balance
 
-`veg_energy_balance` (`meds_plant_energy`) is the one kernel for a cohort's leaf **or** wood; wood is
-the case without transpiration. Its conductances and absorbed radiation are frozen for the step
+`tissue_energy_balance` (`meds_plant_energy`) is the one kernel for a cohort's leaf **or** wood; wood
+is the case without transpiration. Its conductances and absorbed radiation are frozen for the step
 (Category 0, [numerical_scheme](numerical_scheme.md) §2), the saturation terms follow the canopy-air
 state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$. The balance is then
 linear in the tissue's offset $`\Delta T = T - T_{cas}`$: a forcing $`\mathrm{numer}`$ that does not
@@ -77,7 +77,7 @@ its own heat capacity (next section), and reports its fluxes over the step avera
 $`T_{rad}=\big(f_l T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$, $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
 from the start-of-step tissue temperatures ([canopy_radiation_transfer](canopy_radiation_transfer.md)
 §3), so the absorbed longwave $`A_{lw}`$ already contains the tissue's own emission at $`T_{rad}`$.
-`veg_energy_balance` linearizes the change in emission about $`T_{cas}`$, so the loss it books is
+`tissue_energy_balance` linearizes the change in emission about $`T_{cas}`$, so the loss it books is
 $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
 where the consistent one is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{rad})`$: a tissue warmer
 than the canopy air loses an extra $`4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$ and a
@@ -89,7 +89,7 @@ not been tried under `esdirk2`.
 ## One formulation: the tissue relaxes exactly
 
 There is no diagnostic/prognostic *mode*. The tissue always carries a heat capacity and
-`veg_energy_balance` always relaxes it — **exactly**, because under the Category-0 coefficient
+`tissue_energy_balance` always relaxes it — **exactly**, because under the Category-0 coefficient
 freeze the equation is linear with a known timescale:
 
 ```math
@@ -290,12 +290,13 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 
 | Concept | Routine |
 |---|---|
-| leaf/wood balance + exact exponential relaxation, eqs. (1), (3)–(7) | `meds_plant_energy`: `veg_energy_balance` |
+| leaf/wood balance + exact exponential relaxation, eqs. (1), (3)–(7) | `meds_plant_energy`: `tissue_energy_balance` |
 | coefficients $h$, $g$, emission slope | `sensible_heat_coeff`, `leaf_transp_coeff`, `leaf_film_coeff`, `lw_emission_slope` |
-| latent terms, eq. (2); the per-cohort call | `meds_fast_integ_derivs`: `surface_derivs` |
-| tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `meds_fast_integ_frozen`: `tissue_coefficients`; the dry part `derive_cohort_terms` (`meds_fast_state`) |
+| a latent pathway, eq. (2) | `latent_pathway` (`latent_pathway_t`) |
+| every cohort's wood and leaf at one canopy-air state | `canopy_tissue_energy` |
+| tissue heat capacity, eq. (8), and $`a_{\rm store}`$ | `tissue_hcap_per_dt`, per cohort in `meds_fast_integ_frozen`'s `tissue_coefficients`; the dry part `derive_cohort_terms` (`meds_fast_state`) |
 | tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_temp_to_energy`, `tissue_energy_to_temp` |
-| the fast step's energy commit | `meds_fast_integ_update`: `commit_tissue_energy` |
+| the fast step's energy commit | `meds_plant_energy`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
 | ground skin fluxes | `meds_surface`: `ground_surface_fluxes` |
 

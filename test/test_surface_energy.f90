@@ -2,11 +2,11 @@
 !==========================================================================================!
 ! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
 !   1. WOOD THERMAL TIMESCALE from the real allometry: the wood store carries memory at dt_fast.   !
-!   2. EXACT RELAXATION: veg_energy_balance's closed-form tissue step, its two limits and its      !
+!   2. EXACT RELAXATION: tissue_energy_balance's closed-form tissue step, its two limits and its   !
 !      energy identity (docs/science/vegetation_energy_dynamics.md eqs. (3)-(7)).                  !
 !   3. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
 !   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
-!   5. veg_energy_balance's wetted-canopy extension (f_wet/le_slope_wet/le_ref_wet/film_evap).     !
+!   5. tissue_energy_balance's two latent pathways: the stomata's and the wetted film's (f_wet).   !
 !   6. A THIN tissue: energy closes at every area index, halving the area halves every flux and    !
 !      keeps the temperature, and a tissue with no area takes the temperature of what it grows     !
 !      from.                                                                                       !
@@ -18,7 +18,7 @@ program test_surface_energy
    use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
    use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
                                         cas_enthalpy_to_temp
-   use meds_plant_energy, only : veg_energy_balance
+   use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t
    use meds_surface, only : ground_surface_fluxes
    use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
@@ -128,7 +128,7 @@ contains
    end subroutine test_wood_stiffness_spread
 
    !=======================================================================================!
-   ! EXACT EXPONENTIAL RELAXATION in veg_energy_balance.                                  !
+   ! EXACT EXPONENTIAL RELAXATION in tissue_energy_balance.                               !
    !                                                                                          !
    ! Under the Category-0 freeze the tissue equation is linear with tau = cap/denom, so the     !
    ! step has a closed form and the kernel uses it: endpoint weight exp(-x), flux weight        !
@@ -140,27 +140,29 @@ contains
    subroutine test_veg_exponential()
       real(wp) :: dtt, ts, tr, dh, drn, dt_diag_ref, ts_ref
       real(wp) :: t_cas, t0, sw, lw, h, les, lws, ler, cap, dt, denom, tau, a_st
-      real(wp) :: t_exact, t_march, worst
+      real(wp) :: t_exact, t_march, worst, fe
+      type(latent_pathway_t) :: dry, none   !< the stomata's pathway; none: no film
       integer(ik) :: k, nstep
       print '(a)', 'test_veg_exponential:'
       t_cas = 295.0_wp ; sw = 300.0_wp ; lw = -40.0_wp
       h = 120.0_wp ; les = 30.0_wp ; lws = 5.0_wp ; ler = 25.0_wp
+      dry = latent_pathway_t(slope=les, ref=ler)
       denom = h + les + lws
       dt    = 1800.0_wp
 
       !----- (a) store_hcap_per_dt -> 0 is the DIAGNOSTIC limit, exactly. This is why there is no     !
       !          diagnostic/prognostic selector: diagnostic is a limit of one formula, not a second   !
       !          branch. -----------------------------------------------------------------------------!
-      call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, 0.0_wp, t_cas,             &
-                                 dtt, ts, tr, dh, drn)
+      call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, 0.0_wp, t_cas, &
+                                 dtt, ts, tr, fe, dh, drn)
       dt_diag_ref = (sw + lw - ler) / denom
       call check('store_hcap_per_dt = 0 gives the exact diagnostic offset', dtt, dt_diag_ref, 1.0e-12_wp)
       ts_ref = t_cas + dt_diag_ref
 
       !----- (b) store_hcap_per_dt -> huge FREEZES the store at its entry temperature. -----------------------!
       t0 = 288.0_wp
-      call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, 1.0e12_wp, t0,             &
-                                 dtt, ts, tr, dh, drn)
+      call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, 1.0e12_wp, t0, &
+                                 dtt, ts, tr, fe, dh, drn)
       call check('store_hcap_per_dt -> infinity holds the store at t_store0', ts, t0, 1.0e-6_wp)
 
       !----- (c) THE CONSERVATION IDENTITY. The endpoint and step-average weights are different      !
@@ -170,8 +172,8 @@ contains
       cap  = 4.0e4_wp                       ! a big cohort: tau = cap/denom is order dt
       a_st = cap / dt
       tau  = cap / denom
-      call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
-                                 dtt, ts, tr, dh, drn)
+      call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, a_st, t0, &
+                                 dtt, ts, tr, fe, dh, drn)
       call check('energy balance closes with the endpoint/average pair',                            &
            a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-9_wp)
 
@@ -180,8 +182,8 @@ contains
       !          T(t) = T_eq + (T0 - T_eq)*exp(-t/tau).                                              !
       nstep = 20_ik ; t_march = t0 ; worst = 0.0_wp
       do k = 1_ik, nstep
-         call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t_march,          &
-                                    dtt, ts, tr, dh, drn)
+         call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, a_st, t_march, &
+                                    dtt, ts, tr, fe, dh, drn)
          t_march = ts
          t_exact = ts_ref + (t0 - ts_ref) * exp(-real(k, wp) * dt / tau)
          worst   = max(worst, abs(t_march - t_exact))
@@ -191,16 +193,16 @@ contains
       !----- (e) The small-x series branch (a very large capacity) must not lose precision where     !
       !          1 - exp(-x) would cancel. tau = 1e6 s against dt = 1800 s puts x ~ 2.7e-4. ---------!
       a_st = 1.0e6_wp * denom / dt
-      call veg_energy_balance(sw, lw, h, les, lws, ler, t_cas, t_cas, a_st, t0,                  &
-                                 dtt, ts, tr, dh, drn)
+      call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, a_st, t0, &
+                                 dtt, ts, tr, fe, dh, drn)
       call check('large-capacity limit stays accurate (series branch)',                             &
            a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-6_wp)
 
       !----- (f) A store with NO coupling (x = 0) warms by its forcing over the step, numer*dt/cap,  !
       !          and passes nothing on: the relaxation needs no division by the coupling. ---------!
       a_st = cap / dt
-      call veg_energy_balance(sw, lw, 0.0_wp, 0.0_wp, 0.0_wp, ler, t_cas, t_cas, a_st, t0,         &
-                                 dtt, ts, tr, dh, drn)
+      call tissue_energy_balance(sw, lw, 0.0_wp, 0.0_wp, 0.0_wp, latent_pathway_t(ref=ler), none, 0.0_wp, t_cas, &
+                                 t_cas, a_st, t0, dtt, ts, tr, fe, dh, drn)
       call check('no coupling: the store warms by numer*dt/cap', ts, t0 + (sw + lw - ler) / a_st, 1.0e-12_wp)
       call check_true('no coupling: no sensible heat leaves', dh == 0.0_wp, dh)
    end subroutine test_veg_exponential
@@ -263,54 +265,53 @@ contains
    end subroutine test_cas
 
    subroutine test_veg_energy_diagnostic_wetted()
-      !----- Direct unit test of veg_energy_balance's wet/dry extension (the column tests exercise it   !
-      !      only through the full integration). f_wet splits the single latent pathway into a          !
-      !      (1-f_wet) DRY (stomatal) share and an f_wet WET (boundary-layer film) share;               !
-      !      LE_SLOPE_DRY/LE_REF_DRY model the former, LE_SLOPE_W/LE_REF_W the latter -- two DIFFERENT  !
-      !      conductances, so the three properties below are non-trivial (a bug that swapped or mixed   !
-      !      them would still "look" plausible).                                                        !
+      !----- Direct unit test of tissue_energy_balance's two latent pathways (the column tests exercise  !
+      !      them only through the full integration). f_wet splits the latent flux into a (1-f_wet)     !
+      !      DRY (stomatal) share and an f_wet WET (boundary-layer film) share; DRY and WET carry two    !
+      !      DIFFERENT conductances, so the three properties below are non-trivial (a bug that swapped  !
+      !      or mixed them would still "look" plausible).                                               !
       real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
-      real(wp) :: dt_temp2, t_store2, transp2, dh2, drnet2
+      real(wp) :: dt_temp2, t_store2, transp2, dh2, drnet2, film_evap2
       real(wp), parameter :: ABS_SW = 400.0_wp, ABS_LW = -50.0_wp, H_COEFF = 12.0_wp
       real(wp), parameter :: LW_SLOPE = 6.0_wp, T_CAS = 298.0_wp, T_PARENT = 298.0_wp
-      real(wp), parameter :: LE_SLOPE_DRY = 8.0_wp,  LE_REF_DRY = 15.0_wp   ! stomatal (dry) pathway
-      real(wp), parameter :: LE_SLOPE_W   = 20.0_wp, LE_REF_W   = 40.0_wp   ! boundary-layer (wet) pathway
+      type(latent_pathway_t), parameter :: DRY = latent_pathway_t(slope=8.0_wp,  ref=15.0_wp)   ! stomatal
+      type(latent_pathway_t), parameter :: WET = latent_pathway_t(slope=20.0_wp, ref=40.0_wp)   ! film
+      type(latent_pathway_t) :: none
       print '(a)', 'test_veg_energy_diagnostic_wetted:'
 
-      !----- 1. ABSENT f_wet must be bit-identical to explicitly passing f_wet=0 -- the contract that   !
-      !      lets a caller with no film omit the wet extension. ----------------------------------------!
-      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
-                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet)
-      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
-                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, dh2, drnet2, &
-                                 0.0_wp, LE_SLOPE_W, LE_REF_W, film_evap)
-      call check('f_wet=0 explicit == f_wet absent (dt_temp)', dt_temp2, dt_temp, 1.0e-14_wp)
-      call check('f_wet=0 explicit == f_wet absent (transp)',  transp2,  transp,  1.0e-14_wp)
-      call check_true('f_wet=0 -> film_evap = 0 exactly', film_evap == 0.0_wp, film_evap)
+      !----- 1. f_wet = 0 leaves no trace of the film's pathway: the same result, bit for bit, as no   !
+      !      film pathway at all. -----------------------------------------------------------------!
+      call tissue_energy_balance(ABS_SW, ABS_LW, 0.0_wp, H_COEFF, LW_SLOPE, DRY, none, 0.0_wp,           &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, film_evap, dh, drnet)
+      call tissue_energy_balance(ABS_SW, ABS_LW, 0.0_wp, H_COEFF, LW_SLOPE, DRY, WET, 0.0_wp,            &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, film_evap2, dh2, &
+                                 drnet2)
+      call check('f_wet=0 == no film pathway (dt_temp)', dt_temp2, dt_temp, 1.0e-14_wp)
+      call check('f_wet=0 == no film pathway (transp)',  transp2,  transp,  1.0e-14_wp)
+      call check_true('f_wet=0 -> film_evap = 0 exactly', film_evap2 == 0.0_wp, film_evap2)
 
       !----- 2. FULLY WET (f_wet=1): the dry (stomatal) pathway must vanish -- a saturated film          !
       !      transpires ~0 and evaporates its whole latent capacity through the wet pathway instead.      !
-      !      SWAP-EQUIVALENCE: this must be algebraically IDENTICAL to calling the kernel with the wet     !
-      !      conductance as the PRIMARY (le_slope,le_ref) argument and no wet extension at all -- not       !
-      !      just approximately equal (both reduce to the same 2-unknown linear solve). -------------------!
-      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
-                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet,      &
-                                 1.0_wp, LE_SLOPE_W, LE_REF_W, film_evap)
-      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_W, LW_SLOPE, LE_REF_W,               &
-                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, dh2, drnet2)
+      !      SWAP-EQUIVALENCE: this must be algebraically IDENTICAL to calling the kernel with the film's  !
+      !      pathway as the DRY one and no film -- not just approximately equal (both reduce to the same   !
+      !      2-unknown linear solve). ---------------------------------------------------------------------!
+      call tissue_energy_balance(ABS_SW, ABS_LW, 0.0_wp, H_COEFF, LW_SLOPE, DRY, WET, 1.0_wp,            &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, film_evap, dh, drnet)
+      call tissue_energy_balance(ABS_SW, ABS_LW, 0.0_wp, H_COEFF, LW_SLOPE, WET, none, 0.0_wp,           &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp2, t_store2, transp2, film_evap2, dh2, &
+                                 drnet2)
       call check_true('f_wet=1: dry pathway (transp) vanishes', abs(transp) < 1.0e-14_wp, transp)
       call check('f_wet=1: film_evap == swap-equivalent transp', film_evap, transp2, 1.0e-12_wp)
       call check('f_wet=1: dt_temp == swap-equivalent dt_temp',  dt_temp,   dt_temp2, 1.0e-12_wp)
 
       !----- 3. PARTIAL wetting (f_wet=0.4): the energy balance must still close -- absorbed radiation     !
       !      net of LW emission (drnet) splits EXACTLY into sensible + BOTH latent pathways, each at the    !
-      !      CONSTANT latent_heat_vap (not enthalpy_vapor(T)) -- the identity the surface path relies        !
+      !      pathway's h_vap (here the default, latent_heat_vap) -- the identity the surface path relies    !
       !      on to make the CAS's temperature-dependent vapour-enthalpy credit balance against a store's     !
       !      liquid-enthalpy debit (for transpiration the leaf pays the full vapour enthalpy itself; the     !
       !      surface-water accounting does the same for film_evap). -----------------------------------------!
-      call veg_energy_balance(ABS_SW, ABS_LW, H_COEFF, LE_SLOPE_DRY, LW_SLOPE, LE_REF_DRY,          &
-                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, dh, drnet,      &
-                                 0.4_wp, LE_SLOPE_W, LE_REF_W, film_evap)
+      call tissue_energy_balance(ABS_SW, ABS_LW, 0.0_wp, H_COEFF, LW_SLOPE, DRY, WET, 0.4_wp,            &
+                                 T_CAS, T_PARENT, 0.0_wp, T_CAS, dt_temp, t_store, transp, film_evap, dh, drnet)
       call check('partial f_wet: energy balance closes (drnet = dh + latent)', drnet,                  &
                  dh + (transp + film_evap) * latent_heat_vap, 1.0e-9_wp)
       call check_true('partial f_wet: film_evap > 0 (wet pathway active)', film_evap > 0.0_wp, film_evap)
@@ -382,9 +383,9 @@ contains
       lws = 4.0_wp * EMISS * stefan_boltzmann * T_CAS**3 * a
       les = merge( 8.0_wp * a, 0.0_wp, leaf)    ! stomatal (wood does not transpire)
       ler = merge(15.0_wp * a, 0.0_wp, leaf)
-      call veg_energy_balance(400.0_wp*a, -50.0_wp*a, hc, les, lws, ler, T_CAS, T_PARENT, a_store, T0,    &
-                              dtt, ts, tr, h_out, rn, f_wet=0.4_wp, le_slope_wet=20.0_wp*a,              &
-                              le_ref_wet=40.0_wp*a, film_evap=fe, q_extra=25.0_wp*a)
+      call tissue_energy_balance(400.0_wp*a, -50.0_wp*a, 25.0_wp*a, hc, lws, latent_pathway_t(slope=les, ref=ler), &
+                                 latent_pathway_t(slope=20.0_wp*a, ref=40.0_wp*a), 0.4_wp, T_CAS, T_PARENT,      &
+                                 a_store, T0, dtt, ts, tr, fe, h_out, rn)
    end subroutine thin_tissue
 
 end program test_surface_energy

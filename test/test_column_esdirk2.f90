@@ -199,7 +199,7 @@ contains
       call record_water_flows(DT_FAST, cfg, site, static, dynamic, ws%water, out, fz)
    end subroutine frozen_record
 
-   !----- Prognostic WOOD: veg_energy_balance relaxes the wood's heat store (store_hcap_per_dt > 0)     !
+   !----- Prognostic WOOD: tissue_energy_balance relaxes the wood's heat store (store_hcap_per_dt > 0)  !
    !      exactly (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4)), on ESDIRK2 and RK45.       !
    !      Two assertions:                                                                               !
    !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !

@@ -102,7 +102,8 @@ kernels' comments and science pages say what the code computes, with no change t
 Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496). The
 fast kernels are one folder of eleven process modules, `fast_dynamics/processes`, with no change to any
 result (#497). The canopy's process modules hold their own formulas, and the reference-level air and the
-canopy geometry are stored once (#498).
+canopy geometry are stored once (#498). The plants' process modules hold their own formulas, and a tissue's energy
+balance takes its two latent pathways as records (#499).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -687,6 +688,18 @@ canopy geometry are stored once (#498).
 
 ### Changed
 
+- **The plants' process modules hold their own formulas** (#499). `veg_energy_balance` is
+  `tissue_energy_balance`, with its eight optional arguments replaced by two `latent_pathway_t` records,
+  the stomata's and the film's, which `latent_pathway` builds from a conductance; wood is the case with no
+  stomatal pathway. `canopy_tissue_energy` is the per-cohort loop `surface_derivs` held, and
+  `commit_tissue_energy` moves to `meds_plant_energy`. `tissue_coefficients_t` is `plant_energy_env_t` and
+  `canopy_film_capacity_t` is `canopy_water_out_t`, each in the module that owns it. The interception
+  cascade (`canopy_interception`), the cap on a film's evaporation (`limit_film_evaporation`) and
+  `clamp_canopy_film` are `meds_canopy_water`'s, and `intercept_canopy_layer` drops `e_canopy`, which every
+  caller passed as 0. The leaf's two water-stress controls are `capacity_stress_factor` and
+  `stomatal_stress_factor`, and `cohort_leaf_par` is the leaf module's. Every variable of the 10 harness
+  cases is identical on gfortran; on ifx Release they move by round-off (at most 6.5e-8 relative on ex04),
+  and the ifx Debug runs are identical.
 - **The canopy's process modules hold their own formulas** (#498). `canopy_aerodynamics` takes the
   gather's bottom-to-top order and reorders the cohorts itself, so the integrator's `aero_bottom_to_top`
   is gone, and the per-stage surface-layer re-solve is its `canopy_air_conductances`. `aero_env_t` drops

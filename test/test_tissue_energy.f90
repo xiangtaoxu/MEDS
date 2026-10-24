@@ -26,8 +26,8 @@ program test_tissue_energy
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,          only : hold_cohort_tissue_temps, cohort_tissue_temps
    use meds_demography_cohort_fusefiss, only : split_cohorts
-   use meds_fast_integ_types,                 only : tissue_coefficients_t, fast_dynamic_state_t, alloc_dynamic_state
-   use meds_fast_integ_update,                only : commit_tissue_energy
+   use meds_fast_integ_types,                 only : fast_dynamic_state_t, alloc_dynamic_state
+   use meds_plant_energy,                     only : plant_energy_env_t, commit_tissue_energy
    use meds_test_support,               only : build_test_config
    implicit none
 
@@ -121,7 +121,7 @@ contains
       real(wp), parameter :: WL0 = 0.8_wp, WW0 = 9.0_wp            ! [kg] start-of-step water
       real(wp), parameter :: DWL = 0.05_wp, DWW = 0.4_wp           ! [kg] the water each gains
       real(wp), parameter :: TL0 = 300.0_wp, TW0 = 296.0_wp, TL_AVG = 301.5_wp, TW_AVG = 296.8_wp
-      type(tissue_coefficients_t) :: tissue
+      type(plant_energy_env_t)    :: tissue
       type(fast_dynamic_state_t)  :: dynamic
       real(wp) :: store0, store1, heat, enth, tl_expect, tw_expect, gap
       allocate(tissue%leaf_hcap_per_dt(1), tissue%wood_hcap_per_dt(1), tissue%t_leaf0(1), tissue%t_wood0(1))
@@ -139,8 +139,9 @@ contains
       dynamic%wood_energy     = tissue_temp_to_energy(DW, WW0, TW0)
       dynamic%leaf_water_mass = WL0 + DWL                          ! the network's end-of-step water
       dynamic%wood_water_mass = WW0 + DWW
-      call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, dynamic, &
-                                store0, store1)
+      call commit_tissue_energy(tissue, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, dynamic%leaf_water_mass,       &
+                                dynamic%wood_water_mass, dynamic%leaf_energy, dynamic%wood_energy,              &
+                                dynamic%leaf_temp, dynamic%wood_temp, store0, store1)
       heat = (DL + WL0 * cp_liq) * (TL_AVG - TL0) + (DW + WW0 * cp_liq) * (TW_AVG - TW0)
       tl_expect = ((DL + WL0 * cp_liq) * TL_AVG + DWL * cp_liq * TL0) / (DL + (WL0 + DWL) * cp_liq)
       tw_expect = ((DW + WW0 * cp_liq) * TW_AVG + DWW * cp_liq * TW0) / (DW + (WW0 + DWW) * cp_liq)
