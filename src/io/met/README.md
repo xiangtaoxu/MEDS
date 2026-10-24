@@ -125,12 +125,13 @@ The file format, the ERA5-Land de-accumulation recipe (including the hour-zero t
 disaggregation math are documented in [`docs/science/forcing.md`](../../../../docs/science/forcing.md).
 The design record is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
 
-**Tested** in `test/test_met_driver.f90`: the kernels, a NetCDF round trip
-that writes and reads a two-grid file, with and without the wind vector, and the prescribed CO₂
-(every format rule, and CO₂ that keeps rising under recycled met). `test/test_met_era5land.f90`
-writes a small synthetic archive and covers the archive backend end to end. `test/test_met_tower.f90`
-covers what a flux-tower file relies on: the humidity forms, the UTC and height checks, the interval
-each flux is read from, and the round trip of the tower's relative humidity.
+**Tested** in `test/test_met_file.f90`: the kernels, a NetCDF round trip
+that writes and reads a two-grid file, with and without the wind vector, the prescribed CO₂
+(every format rule, and CO₂ that keeps rising under recycled met), the forcing at a site, and what
+a flux-tower file relies on: the humidity forms, the UTC and height checks, the interval each flux
+is read from, and the round trip of the tower's relative humidity. `test/test_met_era5land.f90`
+writes a small synthetic archive and covers the archive backend end to end. The radiation laws are
+`test/test_radiation_lib.f90`'s.
 
 ## Not here yet
 

@@ -15,17 +15,21 @@
 !   9. The calendar (meds_time): leap years, day and month stepping, day of year, comparisons,   !
 !      the decimal year, parsing and formatting, and the one solar declination that solar_cosz  !
 !      and daylength both use.                                                                  !
+!  10. The sun on a slope (meds_time::slope_incidence_cosz; docs/science/forcing.md §8): level   !
+!      ground sees cos z, an equator-facing slope at a winter noon sees cos(z - slope), a      !
+!      pole-facing one less, and an east-facing one more of the morning sun.                   !
+!  11. linear_interpolate: states are linear between the bracketing records.                   !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_numerics,     only : quadratic_smaller_root, adaptive_step_update, ascending_order, conserved, &
-                                 pair_mean, equal_height_layers
+                                 pair_mean, equal_height_layers, linear_interpolate
    use meds_linear_algebra, only : thomas_solve
    use meds_time,         only : meds_time_t, is_leap_year, days_in_month, days_in_year, day_of_year,         &
                                  time_advance_days, time_advance_months, time_lt, time_eq, string_to_time,    &
                                  time_to_string, time_to_stamp, time_to_decimal_year, solar_cosz, daylength,  &
-                                 solar_declination
+                                 solar_declination, solar_cosz_utc, seconds_into_day, slope_incidence_cosz
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  BUDGET_RTOL_FLUX, last_check_closed
@@ -41,6 +45,8 @@ program test_numerics
    call test_pair_mean()
    call test_equal_height_layers()
    call test_calendar()
+   call test_slope_sun()
+   call test_interpolation()
 
    call test_report('test_numerics')
 
@@ -343,6 +349,39 @@ contains
          call check_true('declination near -23.45 deg at the December solstice', solar_declination(355_ik) < -0.40_wp)
       end block
    end subroutine test_calendar
+
+   !----- 10. The sun on a slope: 45 N on the winter solstice, at 0 E (solar noon ~12 UTC). --------!
+   subroutine test_slope_sun()
+      real(wp), parameter :: LAT = 45.0_wp, LON = 0.0_wp, SLOPE = 30.0_wp
+      real(wp), parameter :: DEG = 3.14159265358979323846_wp / 180.0_wp
+      type(meds_time_t) :: noon, morning, afternoon
+      real(wp)          :: cosz, flat, south, north, east_am, east_pm
+      print '(a)', 'test_slope_sun:'
+      noon      = meds_time_t(year=2021, month=12, day=21, hour=12)
+      morning   = meds_time_t(year=2021, month=12, day=21, hour=10)
+      afternoon = meds_time_t(year=2021, month=12, day=21, hour=14)
+      cosz  = solar_cosz_utc(noon, seconds_into_day(noon), LAT, LON)
+      flat  = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, 0.0_wp, 0.0_wp)
+      south = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, SLOPE, 180.0_wp)
+      north = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, SLOPE, 0.0_wp)
+      call check('level ground sees the sun at cos z', flat, cosz, 1.0e-12_wp)
+      !----- At noon the sun is due south, so an equator-facing slope sees it at z - slope; the 12 UTC !
+      !      instant is a few minutes off solar noon at 0 E, hence the tolerance. ---------------------!
+      call check('a 30 deg equator-facing slope sees the noon sun at cos(z - 30 deg)', south,          &
+                 cos(acos(cosz) - SLOPE * DEG), 2.0e-3_wp)
+      call check_true('a slope facing the pole sees it lower than level ground', north < cosz)
+      east_am = slope_incidence_cosz(morning, seconds_into_day(morning), LAT, LON, SLOPE, 90.0_wp)
+      east_pm = slope_incidence_cosz(afternoon, seconds_into_day(afternoon), LAT, LON, SLOPE, 90.0_wp)
+      call check_true('a slope facing east sees more of the morning sun than of the afternoon''s', east_am > east_pm)
+   end subroutine test_slope_sun
+
+   !----- 11. Linear interpolation between two records. -------------------------------------------!
+   subroutine test_interpolation()
+      print '(a)', 'test_interpolation:'
+      call check('linear midpoint', linear_interpolate(10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
+      call check('linear at the first record', linear_interpolate(10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
+      call check('linear at the second record', linear_interpolate(10.0_wp, 20.0_wp, 1.0_wp), 20.0_wp, 1.0e-12_wp)
+   end subroutine test_interpolation
 
    !----- Calendar date of a day-of-year, so the cosz inversion above can be driven by doy. -------!
    pure type(meds_time_t) function date_of_doy(year, doy) result(t)

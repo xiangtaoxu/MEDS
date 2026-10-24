@@ -773,22 +773,20 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 
-   #----- A site's forcing within its polygon: the sun and the beam on a slope, the lapse to the site. #
-   add_executable(test_site_terrain test/test_site_terrain.f90)
-   target_link_libraries(test_site_terrain PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_site_terrain)
-   add_test(NAME site_terrain COMMAND test_site_terrain)
-
-   #----- Meteorological-forcing reader test links the forcing library (writes+reads a NetCDF). #
-   add_executable(test_met_driver test/test_met_driver.f90)
-   target_link_libraries(test_met_driver PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_met_driver)
-   #      The three met tests write their files in a directory of their own in the build tree.
-   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land
-                       ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
-   add_test(NAME met_driver COMMAND test_met_driver
+   #----- The radiation laws of the forcing: the beam/diffuse split, PAR, the sky's longwave. #
+   add_executable(test_radiation_lib test/test_radiation_lib.f90)
+   target_link_libraries(test_radiation_lib PRIVATE meds_share meds_testassert)
+   meds_fortran_flags(test_radiation_lib)
+   add_test(NAME radiation_lib COMMAND test_radiation_lib)
+   #----- A MEDS forcing file: its contract, the reader, and the forcing at a site. ----------#
+   add_executable(test_met_file test/test_met_file.f90)
+   target_link_libraries(test_met_file PRIVATE meds_met meds_testassert)
+   meds_fortran_flags(test_met_file)
+   #      The met tests write their files in a directory of their own in the build tree.
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_file ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
+   add_test(NAME met_file COMMAND test_met_file
             ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_file)
    #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
    add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
    target_link_libraries(meds_testarchive PUBLIC meds_met)
@@ -803,11 +801,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_maps PRIVATE meds_maps meds_testassert meds_testarchive)
    meds_fortran_flags(test_maps)
    add_test(NAME maps COMMAND test_maps ${CMAKE_CURRENT_BINARY_DIR}/work/maps)
-   #      The flux-tower contract of a MEDS forcing file (docs/science/forcing.md §1).
-   add_executable(test_met_tower test/test_met_tower.f90)
-   target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_met_tower)
-   add_test(NAME met_tower COMMAND test_met_tower WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
    #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
    #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
    find_package(Python3 COMPONENTS Interpreter QUIET)
