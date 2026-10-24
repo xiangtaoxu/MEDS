@@ -915,13 +915,12 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME allometry_lib COMMAND test_allometry_lib ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
 
    #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so #
-   #      it can drift silently from the registry. The source tree path is passed in because     #
-   #      ctest runs from the build tree.                                                        #
-   add_executable(test_io_config_example test/test_io_config_example.f90)
-   target_link_libraries(test_io_config_example PRIVATE meds_output meds_testsupport)
-   meds_fortran_flags(test_io_config_example)
-   add_test(NAME io_config_example COMMAND test_io_config_example
-            ${CMAKE_CURRENT_SOURCE_DIR}/meds_io_config.toml)
+   #      it can drift silently from the registry: it must be what meds_main --dump-io-config     #
+   #      writes from the reference configs. The script explains the rule.                       #
+   add_test(NAME io_config_example
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/work/io_config_example
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_io_config_example.cmake)
 
    #----- The Python wheel ships COPIES of LICENSE and NOTICE, because python/pyproject.toml     #
    #      cannot list license files above its own directory. A tracked copy drifts silently,     #
