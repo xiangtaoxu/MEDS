@@ -713,7 +713,7 @@ contains
                   write(*,'(i9,2f9.2,f12.4,f7.3,i9,es12.2,2(1x,i0))') poly%id,                      &
                         poly%latitude_deg, poly%longitude_deg, total_agb(poly),                     &
                         total_lai(poly), poly%cohort%n, a1 - 1.0_wp,                          &
-                        run%energy_budget%n_fail, run%water_budget%n_fail
+                        run%ledgers%energy%n_fail, run%ledgers%water%n_fail
             end associate
          end do
          if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'

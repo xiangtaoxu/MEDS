@@ -19,7 +19,7 @@ program test_several_sites
    use meds_polygon_state_vars,   only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
    use meds_init,                 only : init_fast_state
-   use meds_stepper,              only : advance_one_step, advance_boundary
+   use meds_stepper,              only : advance_one_step, run_ledgers_t
    use meds_output_reduce,    only : total_agb, total_nplant, total_area
    use meds_init_restart,                   only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                          read_restart_file
@@ -135,14 +135,17 @@ contains
       call init_fast_state(poly, run_cfg)
    end subroutine stand
 
-   !----- N_DAY daily steps, a month's restructuring every 15 days and a year's every 30. -----!
+   !----- N_DAY daily steps, a month's restructuring owed every 15 days and a year's every 30,   !
+   !      which the next step performs first, as a run does. -------------------------------------!
    subroutine run(poly, patch_threads)
       type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: patch_threads
+      type(run_ledgers_t) :: ledgers
       integer(ik) :: day
       do day = 1_ik, N_DAY
-         call advance_one_step(poly, cfg, patch_threads=patch_threads)
-         if (mod(day, 15_ik) == 0_ik) call advance_boundary(poly, cfg, .true., mod(day, 30_ik) == 0_ik)
+         call advance_one_step(poly, cfg, ledgers, patch_threads=patch_threads)
+         poly%restructure_pending  = mod(day, 15_ik) == 0_ik
+         poly%restructure_new_year = mod(day, 30_ik) == 0_ik
       end do
    end subroutine run
 

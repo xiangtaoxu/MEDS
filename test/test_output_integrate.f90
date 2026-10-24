@@ -409,7 +409,7 @@ contains
    !----- The slow tick across a month boundary (docs/science/diagnostics.md §4, Which steps a    !
    !      record holds). The step from 31 January to 1 February is January's: it folds into       !
    !      January, which then closes. The stand is restructured only after that tick              !
-   !      (advance_boundary), so January's cohort slab holds one slot set, and February opens on  !
+   !      (the next step's start), so January's cohort slab holds one slot set, and February opens on  !
    !      1 February with the new one. -----------------------------------------------------------!
    subroutine test_boundary_step()
       type(meds_config_t)    :: cfg

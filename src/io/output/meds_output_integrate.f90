@@ -227,7 +227,7 @@ contains
    !  window that holds prev, and only then is each window that now has left closed, so a   !
    !  step belongs to the period it starts in (docs/science/diagnostics.md §4, Which steps  !
    !  a record holds). Closed records go to bufs%queue. The calendar restructuring runs     !
-   !  after this tick (advance_boundary).                                                   !
+   !  after this tick, at the next step's start (meds_stepper).                             !
    !=======================================================================================!
    subroutine output_integrate(files, bufs, poly, prev, dt, is_new_day, is_new_month, is_new_year)
       type(output_files_t),   intent(in)    :: files

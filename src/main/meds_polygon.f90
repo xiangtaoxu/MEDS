@@ -23,9 +23,8 @@ module meds_polygon
    use meds_patch_state_vars,           only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_state_t, &
                                                litter_input_t
    use meds_polygon_state_vars,         only : polygon_t, reset_step_diagnostics
-   use meds_stepper,                    only : advance_one_step, advance_boundary
+   use meds_stepper,                    only : run_ledgers_t, advance_one_step
    use meds_slow_update,                only : refresh_canopy_depth, max_cohort_count
-   use meds_slow_state,                 only : acclimate_site_leaf_tables
    use meds_slow_ledger,                only : slow_ledger_t, slow_ledger_report
    use meds_biogeochem_params,          only : N_SOIL_POOL
    use meds_soil_carbon,                only : solve_soil_carbon_steady_state, build_litter_input,      &
@@ -56,9 +55,7 @@ module meds_polygon
       character(len=40)   :: label = ''                   !< how messages name it ('' for a site run)
       integer(ik)         :: patch_threads = 1_ik         !< the patch loop's threads ([run].n_threads, or 1)
       type(met_cursor_t)  :: met_cur                      !< set only if forcing_on
-      type(budget_t)      :: energy_budget, water_budget  !< the whole-column ledgers over the run
-      type(budget_t)      :: face_budget                  !< each layer face's water: did the heat move with it
-      type(slow_ledger_t) :: slow_ledger                  !< the site's stores across each slow step, the seam
+      type(run_ledgers_t) :: ledgers                      !< its conservation ledgers over the run
       !----- The most patches, and the most cohorts in one patch, a restructuring left, and when:  !
       !      above max_patch or max_cohort, the fusion tolerance ceilings kept dissimilar ones     !
       !      apart. -------------------------------------------------------------------------------!
@@ -100,14 +97,15 @@ contains
       call refresh_canopy_depth(poly, cfg, no_ledger)
       if (cfg%soil_carbon%soil_carbon_on .and. cfg%soil_carbon%spinup_steady .and. .not. keep_soil_carbon)    &
          call soil_carbon_steady(poly, cfg, verbose)
-      run%slow_ledger%active = cfg%slow_on .and. cfg%slow_ledger_on
+      run%ledgers%slow%active = cfg%slow_on .and. cfg%slow_ledger_on
    end subroutine polygon_prepare
 
    !---------------------------------------------------------------------------------------!
-   ! polygon_step -- one slow step of one polygon, `step`: the restructuring the last      !
-   ! step's boundary owes, the thermal acclimation, the coupled step, the output tick and  !
-   ! the state guard. The step's forcing is already loaded into `met_src`; closed output   !
-   ! records are queued in the polygon's buffers, `out_bufs`.                              !
+   ! polygon_step -- one slow step of one polygon, `step`: the coupled step (meds_stepper, !
+   ! in the order of processes), the output tick, the step's diagnostics zeroed and the    !
+   ! restructuring a month boundary owes, and the state guard. The step's forcing is       !
+   ! already loaded into `met_src`; closed output records are queued in the polygon's      !
+   ! buffers, `out_bufs`.                                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine polygon_step(cfg, met_src, out_files, out_bufs, poly, run, step, status)
       type(meds_config_t),    intent(in)    :: cfg
@@ -119,15 +117,16 @@ contains
       type(calendar_step_t),  intent(in)    :: step
       integer(ik),            intent(out)   :: status
       integer(ik) :: n_cohort_max
+      logical     :: restructured
 
-      !----- The boundary the last step ended on: the stand's monthly and yearly restructuring,    !
-      !      before this step's fast loop sees the stand, and the most patches and cohorts it      !
-      !      leaves. ------------------------------------------------------------------------------!
-      if (poly%restructure_pending) then
-         call advance_boundary(poly, cfg, .true., poly%restructure_new_year,                       &
-                               slow_ledger=run%slow_ledger)
-         poly%restructure_pending  = .false.
-         poly%restructure_new_year = .false.
+      !----- The coupled step (meds_stepper): the restructuring the last step's boundary owes, the !
+      !      thermal acclimation, the fast loop, which stages its sub-steps in `out_bufs` when the !
+      !      output reads them, and the slow dynamics. The daily step neither adds nor removes     !
+      !      patches or cohorts, so the most a restructuring left are counted after it. -----------!
+      restructured = poly%restructure_pending
+      call advance_one_step(poly, cfg, run%ledgers, met_src=met_src, met_cur=run%met_cur,               &
+                            step_start=step%start, out_bufs=out_bufs, patch_threads=run%patch_threads)
+      if (restructured) then
          if (poly%patch%n > run%most_patches) then
             run%most_patches      = poly%patch%n
             run%most_patches_when = time_to_string(step%start)
@@ -138,19 +137,6 @@ contains
             run%most_cohorts_when = time_to_string(step%start)
          end if
       end if
-
-      !----- Thermal acclimation (docs/science/leaf_gas_exchange.md §2): each site's               !
-      !      growth-temperature mean takes the daily mean the last step's fast loop accumulated,   !
-      !      and its leaf table follows. The mean tracks the preceding weeks, so one step's delay  !
-      !      is a thirtieth of its window. --------------------------------------------------------!
-      if (cfg%leaf_physiology%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, step%days)
-
-      !----- The coupled step: the fast loop, which stages its sub-steps in `out_bufs` when the    !
-      !      output reads them, then the slow dynamics. -------------------------------------------!
-      call advance_one_step(poly, cfg, met_src=met_src, met_cur=run%met_cur, step_start=step%start,      &
-                            out_bufs=out_bufs, run_energy_budget=run%energy_budget,                    &
-                            run_water_budget=run%water_budget, run_face_budget=run%face_budget,         &
-                            slow_ledger=run%slow_ledger, patch_threads=run%patch_threads)
 
       !----- Output: replay the staged FAST samples, then fold this step -- its fluxes over the    !
       !      step and its state at its end -- into the slower tiers' windows that hold its start,  !
@@ -188,8 +174,8 @@ contains
       status = RUN_OK
       !----- One NaN flux or store turns a ledger's running residual NaN for good. ----------------!
       if (cfg%fast_biophysics_on) then
-         if (.not. (ieee_is_finite(run%energy_budget%resid_sum) .and.                              &
-                    ieee_is_finite(run%water_budget%resid_sum))) then
+         if (.not. (ieee_is_finite(run%ledgers%energy%resid_sum) .and.                             &
+                    ieee_is_finite(run%ledgers%water%resid_sum))) then
             call report_failure(run, 'a NaN reached the energy/water ledger.', '',                   &
                                 'in the step ending '//time_to_string(now))
             status = RUN_ERR_NAN
@@ -269,20 +255,20 @@ contains
       type(meds_config_t), intent(in) :: cfg
       type(polygon_run_t), intent(in) :: run
       if (cfg%fast_biophysics_on) then
-         call budget_report(run%energy_budget, 'whole_energy', 'J/m2',  'W/m2')
-         call budget_report(run%water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
+         call budget_report(run%ledgers%energy, 'whole_energy', 'J/m2',  'W/m2')
+         call budget_report(run%ledgers%water,  'whole_water',  'kg/m2', 'kg/m2/s')
          !----- The face closure should be machine zero: a nonzero value means soil enthalpy moved !
          !      on a mass flux the committed water never moved, a misplacement between layers that !
          !      both whole-column budgets sum away. -----------------------------------------------!
          write(*,'(a,es12.3,a,es12.3,a,i0)') ' faces[soil_layer_mass]  worst = ',                  &
-               run%face_budget%worst, ' kg/m2   mean |resid| = ',                                   &
-               run%face_budget%abs_sum / max(real(run%face_budget%n_check, wp), 1.0_wp),            &
-               ' kg/m2   checks = ', run%face_budget%n_check
-         if (run%face_budget%n_fail > 0_ik)                                                        &
-            write(*,'(a,i0,a)') ' WARNING: ', run%face_budget%n_fail,                                &
+               run%ledgers%face%worst, ' kg/m2   mean |resid| = ',                                   &
+               run%ledgers%face%abs_sum / max(real(run%ledgers%face%n_check, wp), 1.0_wp),            &
+               ' kg/m2   checks = ', run%ledgers%face%n_check
+         if (run%ledgers%face%n_fail > 0_ik)                                                        &
+            write(*,'(a,i0,a)') ' WARNING: ', run%ledgers%face%n_fail,                                &
                ' soil-water solves did not converge (see [fast].debug_error to make this fatal)'
-         if (run%energy_budget%n_fail + run%water_budget%n_fail > 0_ik)                          &
-            write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail,   &
+         if (run%ledgers%energy%n_fail + run%ledgers%water%n_fail > 0_ik)                          &
+            write(*,'(a,i0,a)') ' WARNING: ', run%ledgers%energy%n_fail + run%ledgers%water%n_fail,   &
                ' whole-column budget checks breached tolerance (see [fast].debug_error to make this fatal)'
       end if
       if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. run%most_patches > cfg%max_patch)     &
@@ -293,7 +279,7 @@ contains
          write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', run%most_cohorts, ' cohorts in one patch on ',  &
                trim(run%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                          &
                '): cohort_size_tol_max kept dissimilar cohorts apart'
-      call slow_ledger_report(run%slow_ledger)
+      call slow_ledger_report(run%ledgers%slow)
    end subroutine polygon_report
 
    !----- The SASU steady-state soil-carbon spin-up from the configured climatological xi and      !
