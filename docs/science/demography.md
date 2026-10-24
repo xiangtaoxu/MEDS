@@ -280,8 +280,8 @@ not deleted.
 | recruit pool (§2) | — | the seed rain (in) |
 | recruitment (§3) | — | the recruit's carbon beyond $`c_{\min}`$, heat and water (in) |
 | cohort fusion, fission (§3) | plant number, the four pools, biomass, leaf area: exact, asserted | the tissues' thermal mass |
-| the cull (§3) | — | the culled cohort's water (out); its carbon goes to litter |
-| treefall gaps (§4) | site area | the killed canopy's water (out); its carbon goes to litter; the thermal mass |
+| the cull (§3) | — | the culled cohort's carbon, to the litter, and its water (out) |
+| treefall gaps (§4) | site area | the killed canopy's carbon, to the gap's litter, and its water (out); the thermal mass |
 | patch fusion, termination (§4) | area-extensive amounts, plant number, area: exact | the thermal mass of the cohort operators they call |
 
 "The tissues' thermal mass": a cohort's heat capacity follows its biomass, so an operator that makes,
@@ -326,7 +326,7 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 | the rates per cohort and patch; the month's founding and the year's treefall decisions | `meds_slow_state`: `cohort_recruit_efficiency`, `compute_vital_rates`, `decide_recruitment`, `decide_disturbance` |
 | the growth history, eq. (2) | `meds_slow_update`: `fill_cohort_deriv` |
 | applying growth and mortality, eq. (8) | `meds_slow_update`: `commit_vegetation_step`, `update_cohort_states`, `advance_pool`, `advance_density` |
-| mortality's litter and water, eq. (9); the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`; `meds_slow_update`: `accumulate_recruit_pool` |
+| mortality's litter and water, eq. (9); the cull's and the treefall's litter; the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`, `kill_litter`; `meds_slow_update`: `accumulate_recruit_pool` |
 | sort, fusion, fission, the cull, recruitment | `meds_slow_update`: `sort_cohorts`, `fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
 | treefall gaps, patch fusion, termination, eq. (10) | `meds_slow_update`: `apply_patch_disturbance`, `fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
 | the overtopping LAI, eq. (11) | `meds_slow_update`: `update_overtopping_lai`; `meds_numerics`: `equal_height_layers` |

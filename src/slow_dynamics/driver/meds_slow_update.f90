@@ -34,8 +34,7 @@ module meds_slow_update
                                        inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB,           &
                                        CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE
    use meds_slow_ledger,        only : slow_ledger_t, slow_ledger_declare
-   use meds_soil_carbon,        only : necromass_to_litter
-   use meds_slow_state,         only : slow_step_data_t
+   use meds_slow_state,         only : slow_step_data_t, kill_report_t, open_kill_report, report_kill
    implicit none
    private
 
@@ -451,21 +450,23 @@ contains
    ! rest die in it, and each donor keeps (1-frac) of its area. Site                       !
    ! area is conserved; plant number is not, since the killed canopy is the disturbance.   !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_patch_disturbance(poly, cfg, frac, survives, water_shed)
+   subroutine apply_patch_disturbance(poly, cfg, frac, survives, water_shed, kills)
       type(polygon_t),       intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: frac          !< [-] the disturbed share (decide_disturbance)
       logical,             intent(in)    :: survives(:)   !< (cohort) survives into the gap
       !----- What the killed canopy handed on, for the caller to declare to the slow ledger. ---!
       real(wp),            intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
-      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
+      type(kill_report_t), intent(out)   :: kills       !< the killed canopy's carbon (kill_litter)
+      integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, is, p0, p1
       real(wp)    :: new_area, atot
       real(wp), allocatable :: donor_area(:)
-      real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      real(wp)    :: lost_density
       real(wp)    :: kill_frac, w_kill, w_tot
 
       w_tot = 0.0_wp
       water_shed = 0.0_wp
+      call open_kill_report(kills, max(poly%cohort%n, 1_ik))
 
       np0 = poly%patch%n
       if (np0 < 1_ik .or. frac <= tiny_num) return
@@ -515,6 +516,7 @@ contains
          new_area = frac * sum(poly%patch%area(p0:p1))
          if (new_area <= tiny_num) cycle
          newp = newp + 1_ik
+         call assign_patch_id(poly, newp)   ! the gap's id, which the kill report names it by
 
          associate (cohort => poly%cohort, patch => poly%patch)
             !----- A new age-0 treefall gap. ----------------------------------------------!
@@ -541,8 +543,8 @@ contains
             end if
 
             !----- Survivors move in at the density the disturbed share of their patch gives over the gap's !
-            !      area; the killed canopy, at that density, becomes litter in the gap when soil carbon is  !
-            !      on (soil_carbon.md §5). -----------------------------------------------------------------!
+            !      area; the killed canopy's carbon, at that density, is reported for the gap's litter     !
+            !      (soil_carbon.md §5). --------------------------------------------------------------------!
             m = cohort%n
             do d = p0, p1
                i0 = patch%cohort_offset(d)
@@ -559,24 +561,11 @@ contains
                                          kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i)   &
                                          / new_area, cfg%dt_slow)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
-                     if (cfg%soil_carbon%soil_carbon_on) then
-                        lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
-                        pf = cohort%pft(i)
-                        call necromass_to_litter(lost_density * cohort%leaf_carbon(i),                  &
-                                 lost_density * cohort%fineroot_carbon(i),                               &
-                                 lost_density * cohort%wood_carbon(i),                                   &
-                                 lost_density * cohort%nonstructural_carbon(i),                          &
-                                 cohort%pft_table%f_labile_leaf(pf), cohort%pft_table%f_labile_stem(pf), &
-                                 cohort%pft_table%allom(pf)%aboveground_frac,                           &
-                                 cohort%pft_table%struct_lignin_frac(pf),                                &
-                                 lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-                        patch%soil_carbon(newp)%fast_grnd_carbon   = patch%soil_carbon(newp)%fast_grnd_carbon   + lab_g
-                        patch%soil_carbon(newp)%fast_soil_carbon   = patch%soil_carbon(newp)%fast_soil_carbon   + lab_s
-                        patch%soil_carbon(newp)%struct_grnd_carbon = patch%soil_carbon(newp)%struct_grnd_carbon + str_g
-                        patch%soil_carbon(newp)%struct_soil_carbon = patch%soil_carbon(newp)%struct_soil_carbon + str_s
-                        patch%soil_carbon(newp)%struct_grnd_lignin  = patch%soil_carbon(newp)%struct_grnd_lignin  + lig_g
-                        patch%soil_carbon(newp)%struct_soil_lignin  = patch%soil_carbon(newp)%struct_soil_lignin  + lig_s
-                     end if
+                     lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
+                     call report_kill(kills, patch%global_id(newp), cohort%pft(i),                    &
+                              lost_density * cohort%leaf_carbon(i), lost_density * cohort%fineroot_carbon(i), &
+                              lost_density * cohort%wood_carbon(i),                                    &
+                              lost_density * cohort%nonstructural_carbon(i))
                      cycle
                   end if
                   m = m + 1_ik
@@ -593,10 +582,9 @@ contains
             end do
          end associate
 
-         !----- The gap takes a new id, and its donors' diagnostic rows blended on area, so the    !
-         !      stand's Sum(area x value) is unchanged by the carving (diagnostics.md §4). Every   !
-         !      donor lost the same share, so their current areas blend as their original ones. ---!
-         call assign_patch_id(poly, newp)
+         !----- The gap takes its donors' diagnostic rows blended on area, so the stand's         !
+         !      Sum(area x value) is unchanged by the carving (diagnostics.md §4). Every donor     !
+         !      lost the same share, so their current areas blend as their original ones. --------!
          donor_area = 0.0_wp
          donor_area(p0:p1) = poly%patch%area(p0:p1)
          call inherit_patch_diag(poly%patch%diag, newp, donor_area)
@@ -888,23 +876,24 @@ contains
    !---------------------------------------------------------------------------------------!
    ! The cull: remove the cohorts whose n x AGB is below min_cohort_agb, and those at or   !
    ! below the density floor; mortality stops a cohort exactly on the floor, so the test   !
-   ! includes equality. A culled cohort's water goes to the ground, and all its carbon to  !
-   ! its patch's litter when soil carbon is on (demography.md §3; soil_carbon.md §5).      !
+   ! includes equality. A culled cohort's water goes to the ground; its carbon is reported !
+   ! in `kills`, for its patch's litter (demography.md §3; soil_carbon.md §5).             !
    !---------------------------------------------------------------------------------------!
-   subroutine terminate_cohorts(poly, cfg, water_shed)
+   subroutine terminate_cohorts(poly, cfg, water_shed, kills)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       !----- What the cull handed on, for the caller to declare to the slow ledger            !
       !      (conservation.md §3). ------------------------------------------------------------!
       real(wp),           intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
+      type(kill_report_t), intent(out) :: kills      !< the culled cohorts' carbon (kill_litter)
       logical, allocatable :: keep(:)
-      integer(ik)          :: i, n, pf, ip
-      real(wp)             :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      integer(ik)          :: i, n, ip
       real(wp)             :: w_tot, w_cohort
 
       w_tot = 0.0_wp
       water_shed = 0.0_wp
       n = poly%cohort%n
+      call open_kill_report(kills, max(n, 1_ik))
       if (n < 1_ik) return
       allocate(keep(n))
       associate (cohort => poly%cohort, pft => poly%cohort%pft_table, patch => poly%patch)
@@ -922,28 +911,16 @@ contains
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The cull's mortality carbon, a rate [kgC/m2/yr] times the step's seconds, on    !
             !      the cohort's patch, which the cohort restructuring leaves in place              !
-            !      (diagnostics.md §4, "The slow rows"). It is written before the soil-carbon test !
-            !      because the cull happens with the soil pools off too. --------------------------!
+            !      (diagnostics.md §4, "The slow rows"). ------------------------------------------!
             if (patch%diag%active)                                                                 &
                patch%diag%v(PA_MORT_C_CULL, ip) = patch%diag%v(PA_MORT_C_CULL, ip)                 &
                   + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
                                        + cohort%wood_carbon(i) + cohort%nonstructural_carbon(i))   &
                      / cfg%dt_years) * cfg%dt_slow
-            if (.not. cfg%soil_carbon%soil_carbon_on) cycle
-            pf = cohort%pft(i)
-            call necromass_to_litter(cohort%nplant(i) * cohort%leaf_carbon(i),                    &
-                     cohort%nplant(i) * cohort%fineroot_carbon(i),                                 &
+            call report_kill(kills, patch%global_id(ip), cohort%pft(i),                             &
+                     cohort%nplant(i) * cohort%leaf_carbon(i), cohort%nplant(i) * cohort%fineroot_carbon(i), &
                      cohort%nplant(i) * cohort%wood_carbon(i),                                     &
-                     cohort%nplant(i) * cohort%nonstructural_carbon(i),                             &
-                     pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                  &
-                     cohort%pft_table%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf),       &
-                     lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-            patch%soil_carbon(ip)%fast_grnd_carbon   = patch%soil_carbon(ip)%fast_grnd_carbon   + lab_g
-            patch%soil_carbon(ip)%fast_soil_carbon   = patch%soil_carbon(ip)%fast_soil_carbon   + lab_s
-            patch%soil_carbon(ip)%struct_grnd_carbon = patch%soil_carbon(ip)%struct_grnd_carbon + str_g
-            patch%soil_carbon(ip)%struct_soil_carbon = patch%soil_carbon(ip)%struct_soil_carbon + str_s
-            patch%soil_carbon(ip)%struct_grnd_lignin  = patch%soil_carbon(ip)%struct_grnd_lignin  + lig_g
-            patch%soil_carbon(ip)%struct_soil_lignin  = patch%soil_carbon(ip)%struct_soil_lignin  + lig_s
+                     cohort%nplant(i) * cohort%nonstructural_carbon(i))
          end do
       end associate
       water_shed = w_tot

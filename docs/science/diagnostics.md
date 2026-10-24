@@ -475,9 +475,9 @@ kgC µmol⁻¹ × the year's seconds).
 The litter variables are the vegetation's carbon on its way to the soil, by the tissue it came from,
 read from the same accumulator the biogeochemistry consumes. `mean_litter_leaf_py`,
 `mean_litter_fineroot_py`, `mean_litter_wood_py` and `mean_litter_repro_py`, with `mean_root_exudate_py`, are the
-carbon that turnover and background mortality send to the soil pools. Cohorts culled below the
-tracking floor or killed by disturbance add to the pools directly (`mean_mort_carbon_cull_py`,
-`mean_mort_carbon_disturb_py`). With soil carbon off, all of it leaves the model. `mean_litter_struct_py`
+carbon that turnover, background mortality and the calendar boundary's cull and treefall send to the
+soil pools. A boundary's kills (`mean_mort_carbon_cull_py`, `mean_mort_carbon_disturb_py`) are in the
+litter of the step after it. With soil carbon off, all of it leaves the model. `mean_litter_struct_py`
 is a destination, the structural pools, so it overlaps the others.
 
 The three `mort_carbon_*_site` pathways (background, cull, disturbance) are exclusive and together

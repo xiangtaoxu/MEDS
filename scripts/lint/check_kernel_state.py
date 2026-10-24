@@ -16,6 +16,8 @@ checks it on every ctest run (ctest kernels_patch_only). Code in the kernel fold
   * takes from the state layer only the per-patch store types and their blends, through
     `use meds_patch_state_vars, only : ...`;
   * never names polygon_t, cohort_block or patch_block.
+It also holds src/README.md rule 4, laws and operators do not touch: the operators,
+src/slow_dynamics/driver/meds_slow_update, use no process module.
 
 Usage: check_kernel_state.py SRC_DIR   (exit 1 and a list when a kernel reaches past its patch)
 """
@@ -29,6 +31,7 @@ ALLOWED_DIRS = ("share", "config") + KERNEL_DIRS       # where a module a kernel
 ALLOWED_MODULES = {"meds_state_defaults"}              # the unset sentinels
 INTRINSIC = {"iso_c_binding", "iso_fortran_env", "ieee_arithmetic", "ieee_exceptions", "omp_lib"}
 PATCH_MODULE = "meds_patch_state_vars"
+OPERATORS = ("slow_dynamics/driver/meds_slow_update.f90",)   # rule 4: they apply, they never decide
 MODULE = re.compile(r"^\s*module\s+(\w+)\s*$", re.I)
 ALLOWED = {"cas_state_t", "snow_state_t", "soil_water_state_t", "soil_energy_state_t",
            "soil_carbon_state_t",
@@ -108,6 +111,13 @@ def violations(src):
                     for n in names:
                         if n not in ALLOWED:
                             found.append(f"{f}:{no}: takes {n} from {mod} (only the per-patch store types are allowed)")
+    for rel in OPERATORS:
+        f = src / rel
+        for no, stmt in statements(f):
+            m = USE.match(stmt)
+            if m and homes.get(m.group(1).lower(), "") in KERNEL_DIRS:
+                found.append(f"{f}:{no}: uses the process module {m.group(1)}: the operators apply what "
+                             "they are given (src/README.md rule 4)")
     return found
 
 
@@ -117,7 +127,8 @@ if __name__ == "__main__":
     for line in bad:
         print(line)
     if bad:
-        print(f"\n{len(bad)} kernel reference(s) past the patch: a kernel takes only the per-patch store "
-              "types; a routine that needs more is driver code (scripts/lint/check_kernel_state.py)")
+        print(f"\n{len(bad)} reference(s) past a boundary: a kernel takes only the per-patch store types, "
+              "and the operators no process module (scripts/lint/check_kernel_state.py)")
         sys.exit(1)
-    print("check_kernel_state: the kernels take only the laws, the parameters and the per-patch stores")
+    print("check_kernel_state: the kernels take only the laws, the parameters and the per-patch stores; "
+          "the operators use no process module")

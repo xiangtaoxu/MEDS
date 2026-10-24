@@ -48,6 +48,7 @@ module meds_slow_state
    public :: compute_carbon_allocation, compute_vital_rates, accumulate_mortality_litter
    public :: shed_turnover_water, fill_new_leaf_water, shed_mortality_water, shed_excess_tissue_water
    public :: advance_soil_carbon, decide_recruitment, decide_disturbance
+   public :: kill_report_t, open_kill_report, report_kill, kill_litter, clear_litter
 
    !----- One slow step's working record: what the processes decided, per cohort unless noted, !
    !      for meds_slow_update to commit (docs/science/order_of_processes.md §4). --------------!
@@ -70,6 +71,15 @@ module meds_slow_state
       !      it, so the two add up to the reproduction carbon. --------------------------------!
       real(wp), allocatable :: recruit_efficiency(:) !< [-]
    end type slow_step_data_t
+
+   !----- The plants a stand operator killed (the cull, a treefall gap), one row per cohort: !
+   !      the patch its litter goes to, by global id, which a re-sort keeps; its PFT; and   !
+   !      its carbon by tissue [kgC/m2 of that patch]. kill_litter makes it litter. -------!
+   type :: kill_report_t
+      integer(ik)              :: n = 0_ik
+      integer(ik), allocatable :: patch_id(:), pft(:)
+      real(wp),    allocatable :: leaf(:), fineroot(:), wood(:), storage(:)
+   end type kill_report_t
 
 contains
 
@@ -286,8 +296,6 @@ contains
       real(wp), allocatable :: co2_owed(:)
       integer(ik) :: n_window, next_pos
 
-      !----- The litter accumulator is patch state: it arrives holding the last step's litter. !
-      poly%patch%litter_in(1:poly%patch%n) = litter_input_t()
       n = poly%cohort%n
       dt_yr  = cfg%dt_years
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
@@ -691,8 +699,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Step each patch's soil-carbon pools one day on the step's litter,                     !
-   ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
-   ! on the pools directly), into pools_new, which meds_slow_update's commit_soil_carbon   !
+   ! poly%patch%litter_in (turnover, mortality, and the kills of the boundary before it),  !
+   ! into pools_new, which meds_slow_update's commit_soil_carbon   !
    ! writes. The ledger keeps the run's worst Rh gap, lignin residual and lambda           !
    ! (soil_carbon.md §6-§7, §9).                                                           !
    !---------------------------------------------------------------------------------------!
@@ -764,5 +772,61 @@ contains
       survives = .true.
       survives(1:n) = survives_treefall(poly%cohort%height(1:n), cfg%disturbance_survive_height)
    end subroutine decide_disturbance
+
+   !----- An empty kill report with room for `capacity` rows: an operator kills each cohort !
+   !      at most once. --------------------------------------------------------------------!
+   subroutine open_kill_report(kills, capacity)
+      type(kill_report_t), intent(out) :: kills
+      integer(ik),         intent(in)  :: capacity
+      allocate(kills%patch_id(capacity), kills%pft(capacity), kills%leaf(capacity),             &
+               kills%fineroot(capacity), kills%wood(capacity), kills%storage(capacity))
+      kills%n = 0_ik
+   end subroutine open_kill_report
+
+   !----- One killed cohort's row of the report [kgC/m2 of the patch `patch_id`]. ---------!
+   subroutine report_kill(kills, patch_id, pft, leaf, fineroot, wood, storage)
+      type(kill_report_t), intent(inout) :: kills
+      integer(ik),         intent(in)    :: patch_id, pft
+      real(wp),            intent(in)    :: leaf, fineroot, wood, storage
+      kills%n = kills%n + 1_ik
+      kills%patch_id(kills%n) = patch_id
+      kills%pft(kills%n)      = pft
+      kills%leaf(kills%n)     = leaf
+      kills%fineroot(kills%n) = fineroot
+      kills%wood(kills%n)     = wood
+      kills%storage(kills%n)  = storage
+   end subroutine report_kill
+
+   !---------------------------------------------------------------------------------------!
+   ! The killed plants' carbon into their patches' litter, split as background mortality's !
+   ! is (soil_carbon.md §5); the next soil step takes it up. `carbon` [kgC/m2 polygon] is  !
+   ! what left the plants, for the ledger to declare (conservation.md §3).                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine kill_litter(poly, kills, carbon)
+      type(polygon_t),     intent(inout) :: poly
+      type(kill_report_t), intent(in)    :: kills
+      real(wp),            intent(out)   :: carbon
+      integer(ik) :: k, ip, pf
+      carbon = 0.0_wp
+      associate (pft => poly%cohort%pft_table)
+         do k = 1_ik, kills%n
+            ip = findloc(poly%patch%global_id(1:poly%patch%n), kills%patch_id(k), dim=1)
+            if (ip < 1_ik) error stop 'kill_litter: the patch a kill was reported on is gone'
+            pf = kills%pft(k)
+            call add_necromass(poly%patch%litter_in(ip), kills%leaf(k), kills%fineroot(k),           &
+                     kills%wood(k), kills%storage(k), 0.0_wp, pft%f_labile_leaf(pf),                 &
+                     pft%f_labile_stem(pf), pft%allom(pf)%aboveground_frac, pft%struct_lignin_frac(pf))
+            carbon = carbon + patch_polygon_area(poly, ip)                                          &
+                              * (kills%leaf(k) + kills%fineroot(k) + kills%wood(k) + kills%storage(k))
+         end do
+      end associate
+   end subroutine kill_litter
+
+   !----- The step's litter has gone to the soil pools or, with soil carbon off, left the   !
+   !      model: the accumulator starts the next step empty (soil_carbon.md §5). ----------!
+   subroutine clear_litter(poly)
+      type(polygon_t), intent(inout) :: poly
+      poly%patch%litter_in(1:poly%patch%n) = litter_input_t()
+   end subroutine clear_litter
 
 end module meds_slow_state

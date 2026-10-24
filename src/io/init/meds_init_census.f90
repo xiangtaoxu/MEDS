@@ -11,6 +11,7 @@ module meds_init_census
    use meds_config,     only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground,   only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
+   use meds_slow_state,  only : kill_report_t, kill_litter
    use meds_slow_update, only : sort_cohorts, fuse_cohorts, terminate_cohorts, split_cohorts,        &
                                 sort_patches, fuse_patches, terminate_patches
    implicit none
@@ -232,10 +233,12 @@ contains
    subroutine restructure_census_stand(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      real(wp) :: water_shed   !< the cull's shed water; a start books no ledger
+      real(wp) :: water_shed, kill_carbon   !< what the cull handed on; a start books no ledger
+      type(kill_report_t) :: kills
       if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, water_shed)
+         call terminate_cohorts(poly, cfg, water_shed, kills)
+         call kill_litter(poly, kills, kill_carbon)
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
       end if
@@ -244,7 +247,8 @@ contains
          call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, water_shed)
+         call terminate_cohorts(poly, cfg, water_shed, kills)
+         call kill_litter(poly, kills, kill_carbon)
          call sort_cohorts(poly)
       end if
    end subroutine restructure_census_stand

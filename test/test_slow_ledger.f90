@@ -30,18 +30,20 @@ program test_slow_ledger
    use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
-   use meds_slow_update, only : terminate_cohorts, fuse_2_patches, refresh_canopy_depth
+   use meds_slow_update, only : terminate_cohorts, apply_patch_disturbance, fuse_2_patches, refresh_canopy_depth
    use meds_slow_dynamics, only : vegetation_dynamics, restructure_stand, settle_tissue_water
-   use meds_slow_state, only : shed_turnover_water, slow_step_data_t
+   use meds_slow_state, only : kill_report_t, kill_litter, shed_turnover_water, slow_step_data_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, slow_tissue_energy, SLOW_PHASE_GROW, &
-                                       SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
+                                       SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER, &
+                                       litter_carbon_total
    use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
    use meds_constants,          only : grav_head, n_soil_layer_max, umol_2_kgc
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_constants,          only : rho_air_ref
    implicit none
+   type(kill_report_t)  :: kills   !< what the cull and the treefall killed
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
    integer(ik) :: n_soil_layer
@@ -152,6 +154,11 @@ program test_slow_ledger
    !       arrive in the patch's shed channel, and the tissue heat store must fall by what the   !
    !       cohort carried.                                                                       !
    call check_cull()
+
+   !=== 5b. A TREEFALL reports the carbon it kills, which reaches the gap's litter. ============!
+   !        With soil carbon off this carbon once left undeclared; the ledger now declares the  !
+   !        report, so the store's fall must be exactly it.                                     !
+   call check_treefall_carbon()
 
    !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
    call check_birth_temp()
@@ -737,6 +744,8 @@ contains
 
    subroutine check_cull()
       real(wp) :: w_before, shed_before, w_shed, expect_w, heat_before, heat_after
+      real(wp) :: lit_before, kill_c
+      type(slow_store_t) :: before, after
       integer(ik) :: n0
       !----- Drive cohort 2 below the density floor so the cull takes it, and nothing else. ------!
       poly%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
@@ -747,8 +756,20 @@ contains
       w_before    = poly%cohort%nplant(2) * (poly%cohort%leaf_water_mass(2) + poly%cohort%wood_water_mass(2) &
                                          + poly%cohort%leaf_surf_water(2) + poly%cohort%wood_surf_water(2))
       expect_w    = poly%patch%area(1) * w_before
+      before      = slow_site_store(poly, cfg)
+      lit_before  = litter_carbon_total(poly, poly%patch%litter_in)
 
-      call terminate_cohorts(poly, cfg, w_shed)
+      call terminate_cohorts(poly, cfg, w_shed, kills)
+      call kill_litter(poly, kills, kill_c)
+      after = slow_site_store(poly, cfg)
+
+      !----- Its carbon: what the stand lost is what the cull reports, for the ledger to      !
+      !      declare, and it reaches the patch's litter. ------------------------------------!
+      call check(kill_c > 0.0_wp, 'cull: the culled cohort carried carbon')
+      call check_close(before%carbon - after%carbon, kill_c, 1.0e-12_wp,                          &
+                       'cull: the carbon it reports is the carbon the stand lost')
+      call check_close(litter_carbon_total(poly, poly%patch%litter_in) - lit_before, kill_c,      &
+                       1.0e-12_wp, 'cull: its carbon reaches the patch litter')
 
       call check(poly%cohort%n == n0 - 1_ik, 'cull: the sub-floor cohort is removed')
       call check_close(w_shed, expect_w, 1.0e-12_wp, 'cull: reports the tissue + film water it carried')
@@ -760,6 +781,27 @@ contains
       heat_after = slow_tissue_energy(poly)
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
+
+   !----- A treefall gap that kills every cohort's share, on a copy of the stand. -------------!
+   subroutine check_treefall_carbon()
+      type(polygon_t)      :: st
+      logical, allocatable :: surv(:)
+      real(wp)             :: lit_before, w_shed, kill_c
+      type(slow_store_t)   :: before, after
+      st = poly
+      allocate(surv(st%cohort%n))
+      surv = .false.
+      before     = slow_site_store(st, cfg)
+      lit_before = litter_carbon_total(st, st%patch%litter_in)
+      call apply_patch_disturbance(st, cfg, 0.1_wp, surv, w_shed, kills)
+      call kill_litter(st, kills, kill_c)
+      after = slow_site_store(st, cfg)
+      call check(kill_c > 0.0_wp, 'treefall: the gap killed carbon')
+      call check_close(before%carbon - after%carbon, kill_c, 1.0e-12_wp,                          &
+                       'treefall: the carbon it reports is the carbon the stand lost')
+      call check_close(litter_carbon_total(st, st%patch%litter_in) - lit_before, kill_c,          &
+                       1.0e-12_wp, 'treefall: its carbon reaches the litter')
+   end subroutine check_treefall_carbon
 
    !----- A cohort is born in its patch's state (patch_physical_state): at the canopy-air temperature, !
    !      its tissues at the top soil layer's potential. -------------------------------------------!

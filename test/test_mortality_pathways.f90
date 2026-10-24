@@ -35,8 +35,9 @@ program test_mortality_pathways
    use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, test_report
    use meds_slow_ledger,  only : slow_ledger_t
-   use meds_slow_state,  only : decide_disturbance
+   use meds_slow_state,  only : kill_report_t, decide_disturbance
    implicit none
+   type(kill_report_t)  :: kills   !< what the cull and the treefall killed
    real(wp)             :: dist_frac          !< the treefall decision's share
    logical, allocatable :: dist_survives(:)   !< and its survivors
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
@@ -114,7 +115,7 @@ contains
       expect = 0.20_wp * plant_carbon(poly, 1_ik)
       call check(expect > 0.0_wp, 'cull fixture: the doomed cohort carries carbon')
 
-      call terminate_cohorts(poly, cfg, shed_water)
+      call terminate_cohorts(poly, cfg, shed_water, kills)
       call check(poly%cohort%n == 1_ik, 'cull fixture: exactly one cohort was culled')
       call check_close(site_amount(poly, cfg, PA_MORT_C_CULL), expect, 1.0e-12_wp,                 &
                        'PA_MORT_C_CULL == the culled cohort''s every pool x its density')
@@ -149,7 +150,7 @@ contains
       call check(expect > 0.0_wp, 'disturbance fixture: the canopy carries carbon')
 
       call decide_disturbance(poly, cfg, 1.0_wp, dist_frac, dist_survives)
-      call apply_patch_disturbance(poly, cfg, dist_frac, dist_survives, shed_water)
+      call apply_patch_disturbance(poly, cfg, dist_frac, dist_survives, shed_water, kills)
 
       !----- Asserted on the SITE AGGREGATE, not on the donor slot, because that is where the      !
       !      donor's area shrink lands: the carbon died on the frac of the donor that became the   !
