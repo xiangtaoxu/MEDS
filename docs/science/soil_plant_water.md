@@ -257,10 +257,9 @@ the pond takes the mixture. Across the column's boundary that inflow brings all 
 bare ground, but under a pack only the shed water's: the meltwater's comes from the pack, inside the
 column.
 
-The canopy film keeps the rain's valuation, since it holds rain; under a pack, where nothing is
-intercepted, it is valued at `tsupercool_liq`, where the liquid energy is zero. The valuation is a
-reference: the film's store, its interception and its evaporation all use it, so the film's ledger
-closes whatever it is.
+The canopy films exchange water with the throughfall at its temperature: what they capture brings the
+rain's liquid enthalpy into their tissues, whose energy holds the films
+([vegetation_energy_dynamics](vegetation_energy_dynamics.md), "The canopy's interception film").
 
 ## 6. Work counters
 

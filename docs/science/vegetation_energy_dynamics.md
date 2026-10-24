@@ -43,8 +43,10 @@ $g$ linearizes the saturation deficit at $`T_{cas}`$:
 with $`h_v`$ the specific enthalpy of the vapour at $`T_{cas}`$, so the tissue pays what the canopy air
 receives. The terms in eq. (1) sum the pathways, each weighted by its share of the surface: a leaf's
 dry share $`1-f_{wet}`$ transpires through boundary layer and stomata in series; its wetted share
-$`f_{wet}`$ evaporates the intercepted film through the boundary layer alone, paying $`h_v`$ less the
-enthalpy the film's liquid arrived with. Wood has only the film pathway. Once the water network has
+$`f_{wet}`$ evaporates the intercepted film through the boundary layer alone. The film is part of its
+tissue, so this pathway pays $`h_v`$ less the liquid enthalpy the tissue's energy holds for the water,
+$`u_{liq}`$ at the tissue's start-of-step temperature (The canopy's interception film, below). Wood has
+only the film pathway. Once the water network has
 fixed the step's transpiration, the dry share carries it as a fixed latent term
 ($`\mathrm{LE}_{slope}=0`$), so the transpiration the leaf reports is exactly the water it lost.
 The tissue is charged the full $`h_v`$, not the latent heat alone: charging it only $`L`$, with the
@@ -112,6 +114,19 @@ interception, so it is floored at zero and the shortfall is booked as a negative
 above capacity leaves as outflow.
 
 The film's evaporation is the wetted share's latent pathway of eqs. (1)–(2) above.
+
+**A film is part of its tissue** (ED2's form). Its water joins the tissue's in the heat capacity,
+eq. (8), and in the energy, eqs. (9)–(10), so it sits at the tissue's temperature: rain that lands on a
+warm leaf cools it, and a wet leaf's heat capacity rises with what it holds. Over a step the tissue's
+energy gains the rain's liquid enthalpy for what its film captures, $`u_{liq}(T_{rain})`$ at the
+throughfall's temperature, and loses the vapour's, $`h_v`$, for what evaporates; the commit values the
+film's change at $`u_{liq}`$ of the tissue's start-of-step temperature, as it does the tissue's own
+water, and the balance's film terms are taken relative to that, so the tissue, its film and the canopy
+air close exactly. Drip, and water a film passes from leaf to wood within a cohort, leave at the rain's
+liquid enthalpy, the throughfall's temperature the pond values them at; the update's cut at capacity
+leaves at the tissue's. The film stays liquid below 0 °C, as tissue water does. A state file whose
+tissue energies leave out the films it holds is refused at the first fast step, where its cohorts'
+energies and temperatures disagree.
 
 ## One formulation: the tissue relaxes exactly
 
@@ -201,9 +216,8 @@ both in `meds_constants`), $`W_{wood}`$ the wood store's water per plant and $`W
 internal water, both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at
 100 % moisture) is not used: the water is counted on its own, so a fresh-wood value would count it
 twice. The fast loop and the state layer's `cohort_tissue_heat_capacity` build the capacity the same
-way, so the fusion weights and the slow ledger use the same capacity. The intercepted film is a
-separate store and is not in $`\mathrm{cap}_{leaf}`$: it has its own phase, and folding it into a
-temperature-based capacity would commit to a film that can never freeze.
+way, so the fusion weights and the slow ledger use the same capacity. Each tissue's water includes the
+film it carries (The canopy's interception film, above).
 
 The wood's area and its sapwood come from stem-size allometries (`meds_allometry_lib`; each PFT's
 `[allometry]` `wai_b1/b2`, `sapwood_area_b1/b2`), with $D$ the diameter [cm]. The wood area index is

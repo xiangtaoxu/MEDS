@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_fast_integ_frozen
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, r_gas,                      &
+   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, r_gas,                      &
                                      kgcday_2_umols
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM,     &
                                      CO_BETA_NONSTOM, CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF,      &
@@ -147,9 +147,9 @@ contains
       call tissue_coefficients(dt_fast, cfg, static, forcing, dynamic, out%aero, rho, frozen%tissue, frozen%film, &
                                frozen%plant)
       call canopy_air_boundary(cfg%aero, static%geom, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
-      call transpiration_demand(dt_fast, cfg%canopy_water_on, n, dynamic, t_ground, frozen)
       call ground_inflow(static, forcing, dynamic, out%aero%ggnet, throughfall, tcas, qcas, rho, t_ground, nsl,    &
                          frozen)
+      call transpiration_demand(dt_fast, cfg%canopy_water_on, n, dynamic, t_ground, frozen)
 
       !----- The start states: the water network's, from the stores' state^n water, and the march's. --!
       call set_water_state(static, site%soil_profile, cfg%pft%hydraulics, dynamic%soil_water%theta(1:nsl),       &
@@ -555,13 +555,14 @@ contains
          tissue%abs_sw(i) = forcing%abs_sw(i)
          tissue%abs_lw(i) = forcing%abs_lw(i)
          !----- Wood heat capacity: the dry heat of all the wood plus the water network's whole wood store  !
-         !      (docs/science/vegetation_energy_dynamics.md eq. (8), §The store is ON). -------------------!
+         !      and the film the wood holds (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------!
          tissue%wood_dry_hcap(i) = static%wood_dry_hcap(i)
-         tissue%wood_wmass(i)    = max(dynamic%wood_water_mass(i), 0.0_wp) * static%nplant(i)
-         !----- Leaf heat capacity, the same two parts, its water read from dynamic. The intercepted film  !
-         !      is a separate store, not in it. -----------------------------------------------------------!
+         tissue%wood_wmass(i)    = max(dynamic%wood_water_mass(i), 0.0_wp) * static%nplant(i)                   &
+                                   + dynamic%wood_surf_water(i)
+         !----- Leaf heat capacity, the same parts: its water read from dynamic, and its film. ---------------!
          tissue%leaf_dry_hcap(i) = static%leaf_dry_hcap(i)
-         tissue%leaf_wmass(i)    = max(dynamic%leaf_water_mass(i), 0.0_wp) * static%nplant(i)
+         tissue%leaf_wmass(i)    = max(dynamic%leaf_water_mass(i), 0.0_wp) * static%nplant(i)                   &
+                                   + dynamic%leaf_surf_water(i)
          !----- The wood's radiation and sensible coefficient: its whole energy budget in surface_derivs   !
          !      (docs/science/vegetation_energy_dynamics.md §Leaf and wood energy balance). -------------!
          tissue%wai(i)         = static%wai(i)
@@ -662,7 +663,8 @@ contains
    ! (docs/science/soil_plant_water.md §5, "The ground inflow"): the water reaching the    !
    ! pond, the temperature that values it and the enthalpy it brings across the column's   !
    ! boundary (pond_inflow), each layer's temperature and the ground evaporation's         !
-   ! boundary. Also the canopy film's valuation temperature, which is the rain's.          !
+   ! boundary. Also the liquid enthalpy of the rain the canopy films exchange water with,  !
+   ! which the start-of-step surface solves read, so it runs before them.                  !
    !---------------------------------------------------------------------------------------!
    subroutine ground_inflow(static, forcing, dynamic, ggnet, throughfall, tcas, qcas, rho, t_ground, nsl, frozen)
       type(fast_static_state_t),  intent(in)    :: static
@@ -689,12 +691,8 @@ contains
          !----- Bare-soil aerodynamic resistance; snow_free_frac above weights the flux, not this. -------!
          drive%ground%r_aero = 1.0_wp / max(ggnet, tiny_num)
          drive%t_soil(1:nsl) = dynamic%soil_energy%soil_temp(1:nsl)
-         !----- The canopy film's valuation temperature, a reference its store, interception and evaporation  !
-         !      share: the rain's on bare ground; under a pack, where nothing is intercepted, tsupercool_liq.   !
-         !      Set after the start-of-step surface solves, which read the record's default. -------------------!
-         frozen%hydrology%t_film_valuation = t_water_base
-         if (snow%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
-         frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
+         !----- The rain the canopy films capture and drip back is the throughfall's, at its temperature. -!
+         frozen%film%rain_liquid_enthalpy = internal_energy_liquid(t_water_base)
       end associate
    end subroutine ground_inflow
 

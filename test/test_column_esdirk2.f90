@@ -167,10 +167,8 @@ program test_column_esdirk2
    call test_esdirk2_budgets_wet()
 
    !=== G. CANOPY-SURFACE WATER (opt-in): a diurnal march with a morning rain pulse actually gets         !
-   !       intercepted; whole_water closes exactly, whole_energy stays BOUNDED (the store is valued at    !
-   !       one fixed t_film_valuation reference rather than a prognostic surface-water temperature, so    !
-   !       its sensible heat at the tissue temperature offset is not counted; see docs/ROADMAP.md;        !
-   !       mirrors RUN 6 in test_column_dynamics.f90, same bound). Proves the WIRING (interception->      !
+   !       intercepted; whole_water and whole_energy close, each film being part of its tissue's energy   !
+   !       (mirrors RUN 6 in test_column_dynamics.f90). Proves the WIRING (interception->                 !
    !       film->CAS->ledgers), not the wetted-fraction algebra itself (unit-tested in                    !
    !       test_surface_energy.f90). =====================================================================!
    call test_esdirk2_canopy_water()
@@ -390,8 +388,8 @@ contains
               real(out%report%ledgers%whole_water%n_fail, wp))
       call check_true('ESDIRK2 canopy water: the morning rain pulse was intercepted', surf_water_peak > 0.0_wp,         &
               surf_water_peak)
-      call check_true('ESDIRK2 canopy water: whole-column energy stays BOUNDED (film sensible heat not counted)',     &
-              out%report%ledgers%whole_energy%worst < 5.0e6_wp, out%report%ledgers%whole_energy%worst)
+      call check_true('ESDIRK2 canopy water: whole-column energy closes to round-off',                             &
+              out%report%ledgers%whole_energy%worst < 1.0e-3_wp, out%report%ledgers%whole_energy%worst)
       print '(a,es10.3,a)', '   (ESDIRK2 canopy water peak film=', surf_water_peak, ' kg/m2)'
    end subroutine test_esdirk2_canopy_water
 

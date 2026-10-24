@@ -667,9 +667,8 @@ than a convergence proof.
    across wind speeds and `dt_fast`. It is scored at one site.
 
 3. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
-   evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
-   canopy film, which is optional and carries its enthalpy at a fixed reference temperature, to carry
-   its own temperature first.
+   evapotranspiration at BCI, so routing it onto the leaves would change little; the canopy film,
+   which is optional, is part of its tissue's energy and could take it.
 4. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —

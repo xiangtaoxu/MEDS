@@ -257,13 +257,9 @@ program test_column_dynamics
    !           no-op. The wetted-fraction transpiration-suppression algebra itself is         !
    !           unit-tested in test_surface_energy.f90.                                        !
    !                                                                                          !
-   !           whole_energy is checked against a LOOSE, explicit bound rather than n_fail==0: !
-   !           the film has no thermal state of its own and is valued at ONE fixed reference  !
-   !           (t_film_valuation) at both endpoints. That closes MASS and the LATENT-heat     !
-   !           exchange (film_evap*latent_heat_vap balances coh_rnet exactly, the identity    !
-   !           test_surface_energy.f90 unit-tests) but leaves the water's SENSIBLE heat at    !
-   !           the leaf/wood temperature offset uncounted. A film store with its own thermal  !
-   !           state is planned (see docs/ROADMAP.md).                                        !
+   !           whole_energy must close too: each film is part of its tissue's energy, at the  !
+   !           tissue's temperature, its capture brought in at the rain's liquid enthalpy and !
+   !           its evaporation paying the vapour's.                                           !
    !=====================================================================================!
    cfg%canopy_water_on = .true.
    call integrate_day()
@@ -272,8 +268,8 @@ program test_column_dynamics
            real(out%report%ledgers%whole_water%n_fail, wp))
    call check_true('CANOPY WATER: the morning rain pulse was actually intercepted', surf_water_peak > 0.0_wp,         &
            surf_water_peak)
-   call check_true('CANOPY WATER: whole-column energy stays BOUNDED (film sensible heat not counted)',               &
-           out%report%ledgers%whole_energy%worst < 5.0e6_wp, out%report%ledgers%whole_energy%worst)
+   call check_true('CANOPY WATER: whole-column energy closes to round-off with films on the canopy',                &
+           out%report%ledgers%whole_energy%worst < 1.0e-3_wp, out%report%ledgers%whole_energy%worst)
    call test_report('test_column_dynamics')
 
    !=====================================================================================!

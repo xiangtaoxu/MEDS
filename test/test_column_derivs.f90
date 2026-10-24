@@ -101,6 +101,8 @@ contains
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
+      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
+      frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
       frozen%tissue%h_coeff_w = 0.0_wp ; frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp ; frozen%tissue%wai = 0.0_wp
       frozen%tissue%qwflux_wl = 0.0_wp ; frozen%tissue%q_wood_net = 0.0_wp   ! advective enthalpy: no-op unless populated
