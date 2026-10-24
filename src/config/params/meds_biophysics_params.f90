@@ -37,7 +37,7 @@ module meds_biophysics_params
       !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
       real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
       real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable first guess of zeta
-      integer(ik) :: n_iter_mo = 4_ik               !< fixed MO iterations (GPU-uniform, no root-find)
+      integer(ik) :: n_iter_mo = 4_ik               !< fixed MO sweeps, with no convergence test
       real(wp)    :: wc = 0.5_wp                     !< [m/s] convective velocity of the first stability guess
       !----- Floors. ----------------------------------------------------------------------!
       real(wp) :: ustmin = 0.10_wp, ubmin = 0.65_wp, ugbmin = 0.25_wp   !< [m/s] u*, bulk-wind and in-canopy wind

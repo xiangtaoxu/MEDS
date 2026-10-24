@@ -106,7 +106,8 @@ One one-sided exponential covers both moisture limbs — dry-side substrate diff
 and it is the **same functional form the fast Rh kernel uses**, so the two timescales reconcile at
 matched inputs. $`T_j`$ is the **ground surface** temperature for the above-ground pools (1, 3) and the
 **root-weighted soil** temperature for the rest (ED2's `A_decomp` / `B_decomp` split), $\theta$ the
-depth-weighted column mean, $`f_{\mathrm{decomp}}`$ the N immobilization brake (identically 1 while N
+depth-weighted column mean, $`\theta_{\mathrm{dry}}`$ and $`\theta_{\mathrm{sat}}`$ the top layer's residual and
+saturated water contents, $`f_{\mathrm{decomp}}`$ the N immobilization brake (identically 1 while N
 is off). The invariant is $`\xi>0`$, not $`\xi\le1`$: scheme 5's Q10 is uncapped.
 
 **Placement is physics.** The scalar sits *inside* the transfer, $`A\,(\xi K X)`$, never
@@ -193,7 +194,7 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
 sub-step, `heterotrophic_respiration` evaluates eq. (2) on it, and the fast pre-pass converts
-$`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin;
+$`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy air's CO₂;
 the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\xi^{\mathrm{int}}`$ of
 eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
 like, into `decomp_xi%rh_fast`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole

@@ -23,7 +23,7 @@ module meds_plant_hydr_lib
    public :: tissue_psi_to_water, tissue_capacitance, tissue_water_to_psi, tissue_capped_water
    public :: tissue_water_relations, tissue_rwc_to_unknown, tissue_water_to_rwc
    !----- Vulnerability curve; the sapwood's and the roots' conductances. ----------------!
-   public :: conductance_retained_fraction
+   public :: conductance_retained_fraction, KEXP_TOL
    public :: xylem_max_conductance, root_fraction_profile, rhizosphere_conductance
 
    !----- One tissue's pressure-volume curve: the four traits every tissue-water routine   !
@@ -39,9 +39,13 @@ module meds_plant_hydr_lib
    !      solver's relations have none. ---------------------------------------------------!
    real(wp), parameter :: RWC_FLOOR = 1.0e-4_wp
 
-   !----- [kg/s/MPa per plant] Intact conductance of a plant without sapwood, so its leaves  !
-   !      stay joined to its wood. -------------------------------------------------------!
+   !----- [kg/s/MPa per plant] Intact conductance of a plant without sapwood, so its leaves stay   !
+   !      joined to its wood. ---------------------------------------------------------------------!
    real(wp), parameter :: XYLEM_COND_MIN = 1.0e-15_wp
+
+   !----- [-] How close the vulnerability exponent kexp must be to 1 or 2 to take that exponent's  !
+   !      closed forms. ---------------------------------------------------------------------------!
+   real(wp), parameter :: KEXP_TOL = 1.0e-9_wp
 
    !----- [-] Floor of half-spacing / root radius in the single-root (Gardner)             !
    !      conductance: closer, the roots all but touch and the form fails. ----------------!
@@ -208,17 +212,16 @@ contains
 
    !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp), r =          !
    !      psi/psi50, and one at or above zero potential (docs/science/plant_hydraulics.md  !
-   !      eq. (7)). r = 0 is kept off the general power: under floating-point trapping a   !
-   !      compiler may take 0**kexp through log(0). Exponent 2 squares r by a product: the !
-   !      general power is a library call, and this fraction is the sapflow's slope at     !
-   !      every evaluation of the water network. ------------------------------------------!
+   !      eq. (7)). r = 0 is kept off the general power, which a compiler may take through !
+   !      log(0) under floating-point trapping; exponent 2 uses a product, cheaper than    !
+   !      the general power. --------------------------------------------------------------!
    elemental real(wp) function conductance_retained_fraction(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
       if (r <= 0.0_wp) then
          f = 1.0_wp
-      else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+      else if (abs(kexp - 2.0_wp) < KEXP_TOL) then
          f = 1.0_wp / (1.0_wp + r * r)
       else
          f = 1.0_wp / (1.0_wp + r**kexp)

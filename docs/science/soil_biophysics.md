@@ -75,8 +75,8 @@ air-dry water content at a matric head of −10⁴ m (CLM5's): referenced to the
 the tortuosity would fall faster than the layer thickens and a wetter soil would evaporate less. The
 tortuosity is Millington–Quirk's, $`\phi_{air}^{10/3}/\phi^2`$, rather than CLM5's form in the
 Clapp–Hornberger $b$; with the air-filled porosity $`\phi_{air}`$ fixed the two differ by a constant
-factor, so the moisture response has the same shape. It is the **single authority** for the
-ground latent flux (it drives both the CAS vapour twin and the ground energy balance's LE, so no
+factor, so the moisture response has the same shape. It alone sets the
+ground latent flux (it drives both the canopy air's humidity and the ground energy balance's LE, so no
 double-count).
 
 ### Boundary conditions, and what the aquifer option actually means
@@ -256,7 +256,7 @@ on **the same negative-$z$ geometry** as the water column. At each state it inve
 $`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
 and effective volumetric heat capacity $`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a
 top Neumann flux $`G_{top}`$ and the bottom boundary of § The bottom thermal boundary, then commits a
-**conservative** energy update from the $`T^{n+1}`$ conductive faces plus optional upwind
+**conservative** energy update from the $`T^{n+1}`$ conductive faces plus the upwind
 water-enthalpy advection:
 
 ```math
@@ -268,7 +268,8 @@ Temperature and liquid fraction are re-diagnosed from the committed energy — s
 internal-energy plateau**, captured for free and unconditionally (ice-aware
 $`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `soil_temp` at the triple
 point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
-$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{root\_heat\_sink})\approx0`$, with the
+$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{water\_heat\_out}+qwf_n-qwf_0)\approx0`$, with
+`water_heat_out` the enthalpy leaving each layer with root uptake, exfiltration and drainage, and the
 infiltrating water's enthalpy, the top face's $`qwf_0`$, among the inputs. A sibling
 `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
 RK45 integrator; ESDIRK2's implicit stages take the BE step.
@@ -381,37 +382,18 @@ difference of large numbers, and a face valued at another temperature would swam
 
 ## Canopy interception
 
-Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
-`meds_canopy_water`): a capacity-limited bucket with a Beer interception fraction
-$`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`intercept_alpha`, `intercept_k`) and a wetted fraction
-$`\sigma_w = (W/W_{max})^{2/3}`$, each
-cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
-infiltration boundary sees. A film left above its capacity, when a cohort sheds leaf area under a full
-film, drips the excess to the layer below, so the water stays in the column. A cohort holds its films
-per plant, as it holds its tissue water, and the
-fast loop works with them per m² of ground. So a split, a patch fusion or a disturbance changes a
-cohort's density and leaves its films alone, and the plants that die take their films to the ground
-with their tissue water.
-
-In the fast loop the cascade runs once per `dt_fast`, at the step's start, as capture only; film
-evaporation is the energy stages' own flux. Each cohort holds one combined leaf-and-wood bucket, filled
-tallest first and shared between leaf and wood by capacity, and the update reaches both integrators as
-a constant rate whose Euler step over `dt_fast` reproduces it. Under a snowpack nothing is intercepted:
-the pack takes the rain and the snow. Snowfall below the new-snow threshold forms no pack and joins
-the rain as liquid: the films intercept it, and the rest reaches the pond. The films are clamped at their boundary after the march, not
-inside it. A film evaporates at a conductance frozen at the step's start and only roughly rescaled by
-what it holds, so it can overdraw below zero; left negative, it would create water in the next step's
-interception, so it is floored at zero and the shortfall is booked as a negative outflow, while water
-above capacity leaves as outflow.
+The canopy's interception film, whose throughfall and drip are the rain that reaches the pond, is
+described with the tissue it wets in [vegetation_energy_dynamics](vegetation_energy_dynamics.md)
+("The canopy's interception film").
 
 ## Soil heterotrophic respiration
 
-The heterotrophic soil CO₂ flux $`R_h`$ comes from **one authority**: the CENTURY transfer matrix
+The heterotrophic soil CO₂ flux $`R_h`$ comes from **one formula**: the CENTURY transfer matrix
 (`meds_respiration`: `heterotrophic_respiration`, reached through
 `patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the pools' daily step
 lives in `src/slow_dynamics/soil/`; [soil_carbon](soil_carbon.md)), but its flux enters the fast loop as a source term of
-the CAS CO₂ twin
-(see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The driver is its single authority
+the canopy air's CO₂
+(see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The frozen build computes it once per step
 and passes the resulting flux into the CO₂ source.
 
 ---
@@ -439,7 +421,6 @@ and passes the resulting flux into the CO₂ source.
 | explicit thermal tendency (RK45) | `meds_soil_heat`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
-| canopy interception | `meds_canopy_water`: `intercept_canopy_layer`, swept over the cohorts by `canopy_interception`; `limit_film_evaporation`, `clamp_canopy_film` |
 | soil heterotrophic Rh | `meds_respiration`: `heterotrophic_respiration`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_state_t`, `soil_energy_state_t` |
 

@@ -159,7 +159,7 @@ not a rounding detail: in the reference run it is roughly **23 %** of all carbon
 ## 6. Where the respired carbon goes
 
 All four limbs reach the canopy air space as part of the biotic CO₂ source driving the prognostic
-`can_co2` twin, assembled in the fast pre-pass as
+`can_co2`, assembled in the fast pre-pass as
 
 ```math
 \mathrm{NEE}_{\mathrm{biotic}} \;=\; R_d + R_{\mathrm{stem}} + R_{\mathrm{root}} + R_h \;-\; G \;+\; \dot{c}_{\mathrm{slow}} \qquad(7)

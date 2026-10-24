@@ -7,7 +7,7 @@ together the per-store kernels — each documented on its own page — and descr
 that weave the stores together:
 
 - [canopy_air_space_biophysics](canopy_air_space_biophysics.md) — the CAS coupling reservoir and its
-  three prognostic twins (enthalpy, humidity, CO₂).
+  three prognostic variables (enthalpy, humidity, CO₂).
 - [soil_biophysics](soil_biophysics.md) — the coupled soil water (Richards) and soil thermal
   (internal-energy heat) columns, canopy interception, ground evaporation, heterotrophic respiration.
 - [soil_plant_water](soil_plant_water.md) — the pond, soil layers and every cohort's wood and leaves,
@@ -42,7 +42,7 @@ that weave the stores together:
    per-kernel budgets would miss.
 
 The **canopy air space (CAS)** is the shared coupling reservoir. It carries three implicit prognostic
-twins — enthalpy, specific humidity, CO₂ mixing ratio — each advanced from its surface sources and an
+variables — enthalpy, specific humidity, CO₂ mixing ratio — each advanced from its surface sources and an
 implicit atmospheric-exchange term that shares the $`u_*\cdot\mathrm{temp1/temp2}`$ conductance from the
 aerodynamics kernel. See [canopy_air_space_biophysics](canopy_air_space_biophysics.md).
 
@@ -82,7 +82,7 @@ numerical_scheme §5a gives the measured errors and §6 the choice.
 `esdirk2_step` (`meds_fast_integ_esdirk2`) advances the coupled column with a two-stage L-stable implicit
 stepper (γ = 1 − 1/√2, the ARS(2,2,2) value). Each stage is a backward-Euler solve
 (`backward_euler_stage`, `meds_fast_integ_backward_euler`) that calls the stores' own implicit kernels —
-`cas_box_step_implicit` for the CAS twins, `soil_energy_step_implicit` for the soil heat — over
+`cas_box_step_implicit` for the canopy air, `soil_energy_step_implicit` for the soil heat — over
 the side-effect-free surface tendencies of `meds_fast_integ_derivs` (`surface_derivs`). Within every
 stage the leaf↔CAS block is solved implicitly by a direct 2×2 Newton (`newton_surface_solve`). Soil
 water and plant water move at the water network's rates, and canopy surface water is operator-split
@@ -174,7 +174,7 @@ fractions $`w_i = a_i/(a_1+a_2)`$:
 
 | Concept | Routine |
 |---|---|
-| CAS enthalpy + vapour + CO₂ twins | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
+| CAS enthalpy, humidity and CO₂ | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
 | soil and plant water (one network) | `meds_fast_integ_backward_euler`: `water_step`; `meds_fast_integ_derivs`: `water_derivs`, `set_water_state`; `meds_fast_integ_frozen`: `record_water_flows` |
 | canopy interception | `meds_canopy_water`: `canopy_interception`, `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |

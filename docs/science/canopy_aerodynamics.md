@@ -4,7 +4,7 @@ How MEDS computes the turbulent transfer that couples the canopy air space (CAS)
 atmosphere above and to the leaf, wood, and ground surfaces within. The kernel is a **pure function** of
 (free-atmosphere forcing, CAS state, canopy geometry) that produces every turbulence/conductance
 quantity the other fast-loop kernels take as forced input: the friction velocity $`u_*`$, the scalar
-profile factors that set the atm↔CAS conductances of all three CAS twins, the per-cohort in-canopy wind
+profile factors that set the atm↔CAS conductances of the canopy air's enthalpy, humidity and CO₂, the per-cohort in-canopy wind
 and leaf/wood boundary-layer conductances, and the ground↔CAS conductance. Like ED2's
 `canopy_turbulence8`, it carries **no integrated state** — it is recomputed each fast sub-step from the
 current CAS + vegetation state. The physics reconciles ED2 and CLM (see
@@ -37,14 +37,14 @@ the open-canopy blend of §3 acts. The height above the displacement,
 $`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$, is the surface-layer thickness the Monin-Obukhov solve integrates
 over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
 the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
-sets the CAS air mass per ground area, hence every twin's storage capacity.
+sets the CAS air mass per ground area, hence the storage capacity of each of its three variables.
 
 ## 2. The CLM5 Monin-Obukhov surface layer
 
 `mo_surface_layer` returns $`u_*`$ and the scalar profile factor from the atmosphere-to-CAS gradients.
 It is seeded by the analytic **MoninObukIni** bulk-Richardson guess and then does a **fixed** number of
-sweeps (`n_iter_mo`, default 4) — no data-dependent exit, so it is warp-uniform on the GPU and needs no
-root-find or I/O. Using virtual potential temperatures
+sweeps (`n_iter_mo`, default 4) — no convergence test, so every patch does the same work, and the result is the last sweep's, not a
+converged root. Using virtual potential temperatures
 $`\theta_v=\theta\,(1+0.60783\,q)`$ (the factor is $`M_{dry}/M_{h2o}-1`$, `virtual_temp_factor`) and the
 CAS↔atmosphere differences $`\Delta\theta_v`$:
 
@@ -93,11 +93,11 @@ safe under `-fpe0`. The
 neutral limit is $`u_*\to\kappa u/\ln(z_{ldis}/z_{0m})`$, $`\mathrm{temp1}\to\kappa/\ln(z_{ldis}/
 z_{0m})`$.
 
-### The scalar transfer factors that couple the CAS twins
+### The scalar transfer factors that couple the canopy air
 
 The canopy uses $`z_{0h}=z_{0m}`$ and $`z_{0q}=z_{0h}`$, so the heat and vapour profile factors are equal:
 $`\mathrm{temp2}=\mathrm{temp1}`$. These dimensionless Monin-Obukhov coefficients set the
-**atm↔CAS conductances** every CAS twin shares (the single most load-bearing output of this kernel):
+**atm↔CAS conductances** the canopy air's three variables share (the single most load-bearing output of this kernel):
 
 ```math
 g_{ah} = \rho\,u_*\,\mathrm{temp1}, \qquad
@@ -105,8 +105,8 @@ g_{aw} = \rho\,u_*\,\mathrm{temp2}, \qquad
 g_{ac} = \rho_{mol}\,u_*\,\mathrm{temp2} \qquad(5)
 ```
 
-$g_{ah}$ [kg m⁻² s⁻¹] drives the enthalpy twin, $g_{aw}$ the vapour twin, and $g_{ac}$ [mol m⁻² s⁻¹]
-the CO₂ twin (molar, using dry-air molar density). Dropping the profile factor ($`\mathrm{temp1}=1`$)
+$g_{ah}$ [kg m⁻² s⁻¹] drives the enthalpy, $g_{aw}$ the humidity, and $g_{ac}$ [mol m⁻² s⁻¹]
+the CO₂ (molar, using dry-air molar density). Dropping the profile factor ($`\mathrm{temp1}=1`$)
 over-couples the CAS to the free atmosphere by $`\sim1/\mathrm{temp1}`$ and damps the nocturnal
 sub-canopy CO₂ build-up. The kernel also reports the temperature scale
 $`t_*=\mathrm{temp1}\,\Delta\theta`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
@@ -226,7 +226,7 @@ g_{bh} = \max\!\Big(g_{bh,min},\ \big(\mathrm{Nu}_{forced}+\mathrm{Nu}_{free}\bi
 The kinematic viscosity $\nu$ and thermal diffusivity $\alpha_{th}$ are linear-in-temperature about a
 20 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`), and
 $`g_{bh,min}=`$ `gbhmos_min`. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$ (`gbh_2_gbw`).
-$g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas-exchange seam
+$g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas exchange
 forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{leaf})`$ the molar density of air at the leaf temperature [mol m⁻³].
 
 ## Parameters (config names, `[aerodynamics]` / `aero_params_t`)
@@ -237,7 +237,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`c_{z0}`$ | `z0m_ratio` | roughness / canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement / canopy height (0.63) |
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
-| — | `n_iter_mo` | fixed Monin-Obukhov iterations (4, GPU-uniform) |
+| — | `n_iter_mo` | fixed Monin-Obukhov iterations (4; no convergence test) |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
 | — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
 | $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |
@@ -268,7 +268,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 
 | Concept | Routine (`meds_canopy_aerodynamics`) |
 |---|---|
-| master per-patch seam | `canopy_aerodynamics` |
+| the per-patch entry point | `canopy_aerodynamics` |
 | roughness + displacement, eq. (1) | `canopy_roughness` |
 | open fraction $W$, eq. (6) | `open_canopy_fraction` |
 | Monin-Obukhov solve ($`u_*`$, temp1, $\zeta$) | `mo_surface_layer` |
@@ -277,7 +277,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_layer_conductance` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
-| per-stage re-solve of eq. (5) | `canopy_air_conductances`, called by `meds_fast_integ_derivs`' `cas_conductances` |
+| per-stage re-solve of eq. (5) | `canopy_air_conductances`, called by `meds_fast_integ_derivs`' `refresh_cas_conductances` |
 | types (params / env / args / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_args_t`, `aero_out_t` |
 | filling the environment | `set_aero_env_atm` (the reference level), `set_aero_env_canopy` (the canopy air and ground) |
 | bottom→top cohort order | `canopy_aerodynamics` (takes `static%order`); the ascending solve `aerodynamics_bottom_to_top` |

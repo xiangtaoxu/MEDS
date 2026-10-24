@@ -20,7 +20,7 @@ The pipeline has four stages, top to bottom: (1) the leaf-angle distribution and
 (`blend_cohort_optics`); and (4) the single-band adding solver. Stages 3 and 4 run inside
 `canopy_radiation` (`meds_canopy_radiation`). The pure optical-property kernels live in the
 shared library `meds_optics_lib` (`src/share/functions/`); the RT assembly, the two-stream solver,
-and the seam live together in `meds_canopy_radiation`.
+and its per-patch entry point live together in `meds_canopy_radiation`.
 
 ## 1. Leaf-angle distribution and the G-function
 
@@ -183,7 +183,7 @@ continuously; the snow's own albedo moves from its fresh to its aged value with 
 the pack's surface layer. Litter, standing water and soil moisture do not change the ground optics (see
 docs/ROADMAP.md).
 
-`canopy_radiation` (the sealed public seam, `meds_canopy_radiation`) loops the configured bands,
+`canopy_radiation` (the per-patch entry point, `meds_canopy_radiation`) loops the configured bands,
 blends optics per cohort, and dispatches each band to `solve_band`.
 
 **Co-dominant cohorts share a layer.** Cohorts of exactly equal height form one RT layer: its ETAI is
@@ -284,7 +284,7 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | per-cohort blend ($\beta, \beta_0, k$, leaf_frac), eqs. (5)–(7) | `meds_canopy_radiation`: `blend_cohort_optics` |
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_env_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
-| public per-patch seam (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
+| the per-patch entry point (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
 | LW emission temperature | `meds_canopy_radiation`: `radiative_temperature` |

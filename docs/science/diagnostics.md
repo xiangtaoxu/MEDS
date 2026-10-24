@@ -415,7 +415,7 @@ Look at these first.
 the sign flip is the integration test. `mean_et_py` — closes against `mean_le_py`, catches a
 latent-heat unit error instantly. `mean_cas_temp_py`, `mean_cas_vpd_py` — canopy-air coupling, the first
 thing to oscillate if `dt_fast` is too large. `mean_cas_co2_py` — drawdown amplitude; a stuck value
-means the CO₂ twin is not coupled. `mean_soil_temp_layer_si`, `mean_soil_water_layer_si` — the diurnal thermal wave
+means the canopy air's CO₂ is not coupled. `mean_soil_temp_layer_si`, `mean_soil_water_layer_si` — the diurnal thermal wave
 and the drydown shape. `mean_ustar_py` — is the surface layer turbulent at all?
 **`mean_resid_energy_py`, `mean_resid_water_py` — a nonzero value invalidates everything above.**
 

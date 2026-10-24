@@ -86,6 +86,33 @@ removes the residual but adds a lagged positive feedback (a warmer leaf raises t
 integrator to NaN when it was tried (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5) and has
 not been tried under `esdirk2`.
 
+## The canopy's interception film
+
+Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
+`meds_canopy_water`): a capacity-limited bucket with a Beer interception fraction
+$`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`intercept_alpha`, `intercept_k`) and a wetted fraction
+$`\sigma_w = (W/W_{max})^{2/3}`$, each
+cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
+infiltration boundary sees. A film left above its capacity, when a cohort sheds leaf area under a full
+film, drips the excess to the layer below, so the water stays in the column. A cohort holds its films
+per plant, as it holds its tissue water, and the
+fast loop works with them per m² of ground. So a split, a patch fusion or a disturbance changes a
+cohort's density and leaves its films alone, and the plants that die take their films to the ground
+with their tissue water.
+
+In the fast loop the cascade runs once per `dt_fast`, at the step's start, as capture only; film
+evaporation is the energy stages' own flux. Each cohort holds one combined leaf-and-wood bucket, filled
+tallest first and shared between leaf and wood by capacity, and the update reaches both integrators as
+a constant rate whose Euler step over `dt_fast` reproduces it. Under a snowpack nothing is intercepted:
+the pack takes the rain and the snow. Snowfall below the new-snow threshold forms no pack and joins
+the rain as liquid: the films intercept it, and the rest reaches the pond. The films are clamped at their boundary after the march, not
+inside it. A film evaporates at a conductance frozen at the step's start and only roughly rescaled by
+what it holds, so it can overdraw below zero; left negative, it would create water in the next step's
+interception, so it is floored at zero and the shortfall is booked as a negative outflow, while water
+above capacity leaves as outflow.
+
+The film's evaporation is the wetted share's latent pathway of eqs. (1)–(2) above.
+
 ## One formulation: the tissue relaxes exactly
 
 There is no diagnostic/prognostic *mode*. The tissue always carries a heat capacity and
@@ -147,7 +174,8 @@ temperature. Nothing switches; the physics chooses, per cohort, every step, cont
 
 ### The store is ON, and how its capacity is sized
 
-The store is always on (`build_frozen` in `meds_fast_integ_frozen`). The capacity splits its two
+The store is always on: each step's heat capacity is `tissue_hcap_per_dt` (`meds_plant_energy`), filled
+per cohort by `tissue_coefficients` in `meds_fast_integ_frozen`. The capacity splits its two
 halves across **different** masses, which is a physical distinction and not a detail:
 
 - **dry tissue → ALL the wood**, at the dry specific heat. Heartwood is dead structure but still
@@ -231,7 +259,7 @@ the one-node wood store, not of the integrator.
 
 Each cohort carries the internal energy of its leaves and of its wood, `leaf_energy` and `wood_energy`
 [J per plant], and their temperatures are derived from them. The energy is counted in the soil's
-datum, `temp_to_internal_energy` with the water liquid, which is the datum of every other store and of
+datum, `temp_to_internal_energy` with the water liquid (`tissue_temp_to_energy`), which is the datum of every other store and of
 every water flow:
 
 ```math
@@ -299,6 +327,7 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 | the fast step's energy commit | `meds_plant_energy`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
 | ground surface (the snow/bare blend) and skin fluxes | `meds_surface`: `ground_surface_exchange`, `ground_surface_fluxes` |
+| canopy interception | `meds_canopy_water`: `intercept_canopy_layer`, swept over the cohorts by `canopy_interception`; `limit_film_evaporation`, `clamp_canopy_film` |
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/rk4_derivs.f90` — the leaf/wood energy budget in the reference model.
