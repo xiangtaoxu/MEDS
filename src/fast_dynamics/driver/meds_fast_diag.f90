@@ -119,8 +119,10 @@ contains
       nl   = n_soil_layer_max
       if (do_pdiag .or. do_fast) then
          gpp_patch = sum(out%gpp_coh(1:ncoh) * static%nplant(1:ncoh))    ! [umol/m2/s]
+         !----- The net radiation the ground, the leaves and the wood absorb. ----------------------!
          rnet      = forcing%abs_sw_ground + forcing%abs_lw_ground                                    &
-                     + sum(forcing%abs_sw(1:ncoh)) + sum(forcing%abs_lw(1:ncoh))
+                     + sum(forcing%abs_sw(1:ncoh)) + sum(forcing%abs_lw(1:ncoh))                      &
+                     + sum(forcing%abs_sw_wood(1:ncoh)) + sum(forcing%abs_lw_wood(1:ncoh))
          npp_patch = gpp_patch - sum((out%leaf_resp_coh(1:ncoh) + out%stem_resp_coh(1:ncoh)              &
                                       + out%root_resp_coh(1:ncoh)) * static%nplant(1:ncoh))
          call patch_diag_row(prow, dt_fast, out%le_flux, out%h_flux, rnet,                              &
