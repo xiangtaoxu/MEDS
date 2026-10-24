@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_slow_update
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : tiny_num, lnexp_min, lnexp_max, almost_one, yr_sec
+   use meds_constants,          only : tiny_num, lnexp_min, lnexp_max, almost_one, yr_sec, rho_air_ref
    use meds_numerics,           only : equal_height_layers, conserved, pair_mean
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon,    &
                                        hold_cohort_tissue_temps, reorder_cohort_block,                   &
@@ -296,18 +296,12 @@ contains
    subroutine refresh_canopy_depth(poly, cfg, ledger)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      type(slow_ledger_t), intent(inout), optional :: ledger
-      real(wp)    :: h_top, depth_new, de, dw, dc, rho
+      type(slow_ledger_t), intent(inout) :: ledger   !< an inactive one books nothing
+      real(wp)    :: h_top, depth_new, de, dw, dc
       integer(ik) :: ip, i0, i1, i
       logical     :: book
       if (.not. allocated(poly%patch%cas)) return
-      !----- Without a ledger the resize is a plain geometry update. ----------------------!
-      book = .false.
-      rho = 0.0_wp
-      if (present(ledger)) then
-         book = ledger%active
-         rho  = ledger%rho_air
-      end if
+      book = ledger%active   ! without an active ledger the resize is a plain geometry update
       do ip = 1_ik, poly%patch%n
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
@@ -318,7 +312,7 @@ contains
          depth_new = max(cfg%aero%min_canopy_depth, h_top + cfg%aero%canopy_freeboard)
          if (book) then
             !----- Air entrained or detrained is declared (conservation.md §3). -----------!
-            call cas_set_depth(poly%patch%cas(ip), depth_new, rho_air=rho,                         &
+            call cas_set_depth(poly%patch%cas(ip), depth_new, rho_air=rho_air_ref,                 &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &
                      energy_in=patch_polygon_area(poly, ip) * de, water_in=patch_polygon_area(poly, ip) * dw, &
@@ -347,18 +341,18 @@ contains
       !      their tissues' heat and water. Recruitment stands in for the sizes below          !
       !      min_cohort_height, which the model does not represent, so the draw comes from the !
       !      free atmosphere, not the canopy air (demography.md §3; conservation.md §3). ------!
-      real(wp), optional,  intent(out)   :: carbon_drawn  !< [kgC/m2 site]
-      real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
-      real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
+      real(wp),            intent(out)   :: carbon_drawn  !< [kgC/m2 site]
+      real(wp),            intent(out)   :: heat_drawn    !< [J/m2 site]
+      real(wp),            intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
       real(wp)    :: recruit_dbh, endow, t_birth, psi_birth, c_tot, e_tot, w_tot
 
       c_tot = 0.0_wp
       e_tot = 0.0_wp
       w_tot = 0.0_wp
-      if (present(carbon_drawn)) carbon_drawn = 0.0_wp
-      if (present(heat_drawn))   heat_drawn   = 0.0_wp
-      if (present(water_drawn))  water_drawn  = 0.0_wp
+      carbon_drawn = 0.0_wp
+      heat_drawn   = 0.0_wp
+      water_drawn  = 0.0_wp
       np = poly%patch%n
       if (np < 1_ik) return
 
@@ -404,9 +398,9 @@ contains
          cohort%n = m
       end associate
 
-      if (present(carbon_drawn)) carbon_drawn = c_tot
-      if (present(heat_drawn))   heat_drawn   = e_tot
-      if (present(water_drawn))  water_drawn  = w_tot
+      carbon_drawn = c_tot
+      heat_drawn   = e_tot
+      water_drawn  = w_tot
 
       !----- Each new cohort takes a new id. ----------------------------------------------!
       do k = n_before + 1_ik, poly%cohort%n
@@ -432,7 +426,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
       !----- What the killed canopy handed on, for the caller to declare to the slow ledger. ---!
-      real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
+      real(wp),            intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
       real(wp)    :: frac, new_area, atot
       real(wp), allocatable :: donor_area(:)
@@ -440,7 +434,7 @@ contains
       real(wp)    :: kill_frac, w_kill, w_tot
 
       w_tot = 0.0_wp
-      if (present(water_shed)) water_shed = 0.0_wp
+      water_shed = 0.0_wp
 
       np0 = poly%patch%n
       if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
@@ -579,7 +573,7 @@ contains
          call inherit_patch_diag(poly%patch%diag, newp, donor_area)
       end do
 
-      if (present(water_shed)) water_shed = w_tot
+      water_shed = w_tot
 
       !----- The survivors copied into the gaps take new ids; the cohorts they came from keep theirs. ---!
       do i = m0 + 1_ik, poly%cohort%n
@@ -871,16 +865,16 @@ contains
    subroutine terminate_cohorts(poly, cfg, water_shed)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      !----- What the cull handed on, for the caller to declare to the slow ledger, which this !
-      !      library does not link (conservation.md §3). --------------------------------------!
-      real(wp), optional, intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
+      !----- What the cull handed on, for the caller to declare to the slow ledger            !
+      !      (conservation.md §3). ------------------------------------------------------------!
+      real(wp),           intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n, pf, ip
       real(wp)             :: lab_g, lab_s, str_g, str_s, lig_g, lig_s
       real(wp)             :: w_tot, w_cohort
 
       w_tot = 0.0_wp
-      if (present(water_shed)) water_shed = 0.0_wp
+      water_shed = 0.0_wp
       n = poly%cohort%n
       if (n < 1_ik) return
       allocate(keep(n))
@@ -923,7 +917,7 @@ contains
             patch%soil_carbon(ip)%struct_soil_lignin  = patch%soil_carbon(ip)%struct_soil_lignin  + lig_s
          end do
       end associate
-      if (present(water_shed)) water_shed = w_tot
+      water_shed = w_tot
       if (all(keep)) return
       call compact_cohort_block(poly%cohort, keep)
       call rebuild_cohort_map(poly)

@@ -9,6 +9,7 @@ program test_containers
    use meds_diag_vars,       only : alloc_cohort_diag, cohort_diag_value
    use meds_test_support, only : banner, build_test_config, check
    implicit none
+   real(wp)            :: shed_water   !< an operator's shed water, unread here
 
    type(meds_config_t) :: cfg
    type(polygon_t)  :: poly
@@ -72,7 +73,7 @@ program test_containers
    nbefore = poly%cohort%n
    gid_dropped = poly%cohort%global_id(poly%patch%cohort_offset(1))
    poly%cohort%nplant(poly%patch%cohort_offset(1)) = 1.0e-12_wp     ! below negligible_nplant
-   call terminate_cohorts(poly, cfg)
+   call terminate_cohorts(poly, cfg, shed_water)
    call check(poly%cohort%n == nbefore - 1_ik, 'termination did not drop exactly one cohort')
    call check(sum(poly%patch%cohort_count(1:poly%patch%n)) == poly%cohort%n, 'CSR inconsistent after terminate')
    !----- The culled cohort's id never reappears (ids are not reused). --------------------!

@@ -23,7 +23,7 @@ module meds_slow_state
                                             cohort_wood_store_carbon, hold_cohort_tissue_temps,          &
                                             cohort_water_enthalpy
    use meds_polygon_state_vars,      only : polygon_t, patch_polygon_area
-   use meds_slow_ledger,             only : slow_ledger_t, soilc_seam_t, slow_ledger_declare,            &
+   use meds_slow_ledger,             only : slow_ledger_t, slow_ledger_declare, slow_ledger_soil_check,  &
                                             KGC_PER_UMOL_C
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, cohort_carbon_demand,               &
                                             growth_window_so_far, growth_sink_limitation
@@ -81,16 +81,15 @@ contains
    ! tendencies and cue memory. No carbon moves here. A step with no fast sub-steps is skipped,   !
    ! so the memory never advances on a 0/0 mean.                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_leaf_phenology(poly, cfg, doy, latitude_deg)
+   subroutine advance_leaf_phenology(poly, cfg, doy)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: doy
-      real(wp),            intent(in), optional :: latitude_deg   !< the polygon's [deg] (default: the [site] latitude)
       type(pheno_env_t)    :: env
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf, is
-      real(wp)    :: dt_days, temp_day(poly%site%n), lat
+      real(wp)    :: dt_days, temp_day(poly%site%n)
       logical     :: north
 
       if (all(poly%site%pheno_tair_n(1:poly%site%n) < 1_ik)) return   ! no fast sub-steps -> no drivers
@@ -98,9 +97,7 @@ contains
       do is = 1_ik, poly%site%n
          temp_day(is) = site_air_temp_day(poly, is)
       end do
-      lat = cfg%forcing%latitude
-      if (present(latitude_deg)) lat = latitude_deg
-      north    = lat >= 0.0_wp
+      north = poly%latitude_deg >= 0.0_wp   ! the season windows' hemisphere
 
       do i = 1_ik, poly%cohort%n
          pf = poly%cohort%pft(i)
@@ -537,7 +534,7 @@ contains
       type(polygon_t),        intent(inout) :: poly
       type(meds_config_t),    intent(in)    :: cfg
       type(slow_step_data_t), intent(in)    :: step   !< reads d_leaf, d_fineroot
-      type(slow_ledger_t), intent(inout), optional :: ledger
+      type(slow_ledger_t),    intent(inout) :: ledger
       real(wp), allocatable :: patch_total(:), patch_enth(:)
       real(wp) :: shed_frac, shed_amount
       integer(ik) :: j, ip
@@ -579,7 +576,7 @@ contains
       end do
 
       !----- The shed water and its enthalpy: a declared handoff (docs/science/conservation.md §3). !
-      if (present(ledger)) then
+      if (ledger%active) then
          do ip = 1_ik, poly%patch%n
             call slow_ledger_declare(ledger, water_out  = patch_polygon_area(poly, ip) * patch_total(ip),     &
                                              energy_out = patch_polygon_area(poly, ip) * patch_enth(ip))
@@ -689,21 +686,20 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Advance each patch's soil-carbon pools one daily step on the step's litter,           !
    ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
-   ! on the pools directly). `seam` keeps the run's worst Rh gap, lignin residual and      !
+   ! on the pools directly). The ledger keeps the run's worst Rh gap, lignin residual and !
    ! lambda (soil_carbon.md §6-§7, §9).                                                    !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_soil_carbon(poly, cfg, seam, ledger)
+   subroutine advance_soil_carbon(poly, cfg, ledger)
       type(polygon_t),       intent(inout) :: poly
       type(meds_config_t),   intent(in)    :: cfg
-      type(soilc_seam_t), optional, intent(inout) :: seam   !< the run's worst fast/slow seam checks (soil_carbon.md §7)
       !----- The slow ledger: the litter declared leaving the live pools is declared       !
       !      arriving here, and the day's Rh is declared leaving (conservation.md §3). ----!
-      type(slow_ledger_t), optional, intent(inout) :: ledger
+      type(slow_ledger_t),   intent(inout) :: ledger
       real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
       type(soil_carbon_out_t) :: audit
       integer(ik)          :: ip
 
-      if (present(ledger)) then
+      if (ledger%active) then
          do ip = 1_ik, poly%patch%n
             associate (lit => poly%patch%litter_in(ip))
                call slow_ledger_declare(ledger, carbon_in = patch_polygon_area(poly, ip)           &
@@ -719,17 +715,10 @@ contains
             !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
             !      debit, should equal the fast loop's accumulated Rh. --------------------!
             audit%rh_seam_gap   = rh_today - xa%rh_fast
-            if (present(seam)) then
-               seam%worst_rh_gap = max(seam%worst_rh_gap, abs(audit%rh_seam_gap))
-               seam%worst_lignin = max(seam%worst_lignin, abs(audit%lignin_resid))
-               if (audit%lambda_max > seam%worst_lambda) then
-                  seam%worst_lambda = audit%lambda_max
-                  seam%lambda_pool  = audit%lambda_pool
-               end if
-            end if
+            call slow_ledger_soil_check(ledger, audit, poly%patch%n)
             !----- Declare the matrix's own Rh debit (conservation.md §3): what is left in !
             !      the residual is the fast/slow seam gap. --------------------------------!
-            if (present(ledger)) call slow_ledger_declare(ledger,                                  &
+            call slow_ledger_declare(ledger,                                  &
                                           carbon_out = patch_polygon_area(poly, ip) * rh_today)
          end associate
       end do

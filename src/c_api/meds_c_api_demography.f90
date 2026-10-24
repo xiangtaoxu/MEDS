@@ -32,6 +32,7 @@ module meds_c_api_demography
    use meds_init_bare_ground, only : init_bare_ground
    use meds_init_census, only : init_from_census, restructure_census_stand
    use meds_slow_dynamics, only : vegetation_dynamics, restructure_stand
+   use meds_slow_ledger,   only : slow_ledger_t
    use meds_slow_update, only : accumulate_recruit_pool, update_cohort_states, fill_cohort_deriv,        &
                                 age_patches, update_overtopping_lai, sort_cohorts
    use meds_output_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
@@ -131,12 +132,13 @@ contains
    !       and no output on this path, both orders leave the same stand.                           !
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
+      type(slow_ledger_t) :: no_ledger   !< inactive: this path books no ledger
       !----- The litter this step accumulates lands in poly%patch%litter_in and is left there: no
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
       !      wired here either.
-      call vegetation_dynamics(g_poly(sh), g_cfg(ch))
+      call vegetation_dynamics(g_poly(sh), g_cfg(ch), no_ledger)
       call age_patches(g_poly(sh)%patch, g_cfg(ch)%dt_years)
-      call restructure_stand(g_poly(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+      call restructure_stand(g_poly(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int, no_ledger)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow
 
@@ -157,6 +159,7 @@ contains
       real(wp)              :: seed_c
       real(wp) :: dbh_new, height_new
       real(wp) :: lc_new, fc_new, wc_new, nc_new
+      type(slow_ledger_t) :: no_ledger   !< inactive: this path books no ledger
 
       associate (poly => g_poly(sh), cfg => g_cfg(ch))
          n = poly%cohort%n ; np = poly%patch%n ; npft = cfg%pft%n
@@ -213,7 +216,7 @@ contains
          !      overtopping LAI the caller's next rates read.  ---------------------------------------!
          call sort_cohorts(poly)
          call age_patches(poly%patch, cfg%dt_years)
-         call restructure_stand(poly, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+         call restructure_stand(poly, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int, no_ledger)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_apply_rates

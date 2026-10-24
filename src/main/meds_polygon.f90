@@ -28,7 +28,7 @@ module meds_polygon
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_update,            only : refresh_canopy_depth, max_cohort_count
    use meds_slow_state,             only : acclimate_site_leaf_tables
-   use meds_slow_ledger,            only : soilc_seam_t, slow_ledger_t, slow_ledger_report
+   use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_biogeochem_params,      only : N_SOIL_POOL
    use meds_soil_carbon,            only : solve_soil_carbon_steady_state, build_litter_input,      &
                                            soil_carbon_bad_pool, soil_carbon_pool_name
@@ -72,16 +72,9 @@ module meds_polygon
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
       !      heat move with the water". ---------------------------------------------------------------!
       type(budget_t)         :: face_budget
-      type(slow_ledger_t)    :: slow_ledger                   !< site store across each SLOW step
-      !----- Worst soil-carbon SEAM gap over the run [kgC/m2]: |daily pool debit - the fast loop's   !
-      !      own accumulated Rh|. Both ends read the same frozen pool and the same per-pool xi       !
-      !      integral (docs/science/soil_carbon.md §7), so this is ~0 BY CONSTRUCTION; a nonzero     !
-      !      value means the double-counting contract broke (a stale frozen copy, a mid-day pool     !
-      !      write, a lost sub-step). Reported with the whole-column budgets rather than asserted    !
-      !      fatally, matching them. ----------------------------------------------------------------!
-      type(soilc_seam_t)     :: seam                        !< per-run worsts (rh gap, lignin, lambda)
-      character(len=19)      :: worst_rh_seam_when = ''     !< the date the rh gap peaked
-      integer(ik)            :: worst_rh_seam_npatch = 0_ik !< and the patch count then
+      !----- The SLOW step's ledger: the site store across each slow step, and the soil-carbon     !
+      !      seam's run-worst checks (docs/science/soil_carbon.md §7). -------------------------------!
+      type(slow_ledger_t)    :: slow_ledger
       !----- The most patches, and the most cohorts in one patch, that any restructuring left, and    !
       !      when. Above max_patch or max_cohort, the fusion tolerance ceilings kept dissimilar       !
       !      patches or cohorts apart; the end-of-run report says so.                                  !
@@ -110,11 +103,10 @@ contains
       !----- Threads for the polygon's patch loop: a site run gives it [run].n_threads, a region, whose  !
       !      threads go to the polygons, gives each polygon one. ----------------------------------!
       integer(ik),          intent(in)    :: patch_threads
+      type(slow_ledger_t) :: no_ledger   !< inactive: the first canopy-air depth books nothing
 
       run%energy_budget = budget_t() ; run%water_budget = budget_t() ; run%face_budget = budget_t()
       run%slow_ledger   = slow_ledger_t()
-      run%seam          = soilc_seam_t()
-      run%worst_rh_seam_when = '' ; run%worst_rh_seam_npatch = 0_ik
       run%most_patches = 0_ik ; run%most_cohorts = 0_ik
       run%most_patches_when = '' ; run%most_cohorts_when = ''
       run%fast_step_total = 0_ik ; run%status = DRIVER_OK
@@ -132,7 +124,7 @@ contains
       !----- The canopy-air depth follows the stand from the first step, whatever the stand came     !
       !      from (bare ground, census, restart); the slow step keeps it current after that. No      !
       !      ledger: a plain geometry update that keeps the canopy air's intensive state. -----------!
-      call refresh_canopy_depth(poly, cfg)
+      call refresh_canopy_depth(poly, cfg, no_ledger)
 
       !----- Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the real !
       !      persisted pools; otherwise the pools start at the allocation-time zero unless          !
@@ -163,11 +155,9 @@ contains
       logical,               intent(in)    :: is_new_month, is_new_year
       integer(ik),           intent(out)   :: status
       logical  :: is_new_day
-      real(wp) :: seam_prev
       integer(ik) :: n_cohort_max
 
       status = DRIVER_OK
-      seam_prev = run%seam%worst_rh_gap       ! so the date below records the step the max MOVED on
 
       !----- The boundary the last step ended on (restructure_pending): the stand's monthly and       !
       !      yearly restructuring, before this step's fast loop sees the stand. ----------------------!
@@ -193,15 +183,6 @@ contains
 
       !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
       call stepper(out_bufs)
-      !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
-      !      days a patch operator fires is telling you something quite different from one that      !
-      !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
-      !      done inside advance_soil_carbon (meds_slow_state), which sees every patch; this only    !
-      !      records the date on the step where the running maximum moved.  -------------------------!
-      if (run%seam%worst_rh_gap > seam_prev) then
-         run%worst_rh_seam_when   = time_to_string(now)
-         run%worst_rh_seam_npatch = poly%patch%n
-      end if
 
       !----- Output: replay the staged FAST samples, then fold this step -- its fluxes from `prev`  !
       !      to `now` and its post-dynamics state at `now` -- into the slower tiers' windows that   !
@@ -320,8 +301,7 @@ contains
                                run_energy_budget=run%energy_budget,                                 &
                                run_water_budget=run%water_budget,                                   &
                                run_face_budget=run%face_budget,                                     &
-                               slow_ledger=run%slow_ledger, seam=run%seam,                          &
-                               latitude_deg=poly%latitude_deg, patch_threads=run%patch_threads,     &
+                               slow_ledger=run%slow_ledger, patch_threads=run%patch_threads,       &
                                seed_canopy_air=run%seed_canopy_air)
       end subroutine stepper
 
@@ -376,27 +356,6 @@ contains
             write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail,   &
                ' whole-column budget checks breached tolerance (see [fast].debug_error to make this fatal)'
       end if
-      !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
-      !      that should be machine-zero, reported whether or not it ever breached.  ----------------!
-      if (cfg%soil_carbon%soil_carbon_on) then
-         write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
-               run%seam%worst_rh_gap, ' kgC/m2'
-         if (run%seam%worst_rh_gap > 0.0_wp)                                                      &
-            write(*,'(3a,i0,a)') '                       worst at ', run%worst_rh_seam_when,      &
-                  ' with ', run%worst_rh_seam_npatch, ' patches'
-         write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
-               run%seam%worst_lignin, ' kgC/m2/day'
-         !----- LAMBDA: the fraction of a pool one slow step withdraws -- the number that says      !
-         !      whether freezing the pool across the step is sound. Not a residual: it is expected   !
-         !      to be small-but-nonzero (3.6e-3/day measured on the mature Ithaca stand), and it is a  !
-         !      WARNING as it approaches 1, long before a pool could go negative.  ------------------!
-         write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
-               run%seam%worst_lambda, ' [-]  pool ',                                              &
-               trim(soil_carbon_pool_name(run%seam%lambda_pool))
-         if (run%seam%worst_lambda > 0.1_wp)                                                      &
-            write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
-                        // ' the frozen-pool approximation is degrading; shorten dt_slow.'
-      end if
       !----- Fusion targets the tolerance ceilings overrode. Silent when every restructuring      !
       !      reached them, which is the usual case.  -------------------------------------------------!
       if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. run%most_patches > cfg%max_patch)     &
@@ -407,8 +366,8 @@ contains
          write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', run%most_cohorts, ' cohorts in one patch on ',  &
                trim(run%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                          &
                '): cohort_size_tol_max kept dissimilar cohorts apart'
-      !----- The SLOW tier's ledger, over the window the two above cannot see                      !
-      !      (docs/science/order_of_processes.md §4). ---------------------------------------------!
+      !----- The soil-carbon seam, then the SLOW tier's ledger, over the window the two above      !
+      !      cannot see (docs/science/order_of_processes.md §4). ---------------------------------!
       call slow_ledger_report(run%slow_ledger)
    end subroutine polygon_report
 

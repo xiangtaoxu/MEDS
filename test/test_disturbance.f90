@@ -12,6 +12,7 @@ program test_disturbance
    use meds_output_reduce, only : total_area, total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
+   real(wp)            :: shed_water   !< an operator's shed water, unread here
 
    type(meds_config_t) :: cfg
    type(polygon_t)  :: poly
@@ -48,7 +49,7 @@ program test_disturbance
    w_canopy = poly%cohort%nplant(1) * (poly%cohort%leaf_water_mass(1) + poly%cohort%wood_water_mass(1))
    call check(w_canopy > 0.0_wp, 'the dying canopy holds tissue water')
 
-   call apply_patch_disturbance(poly, cfg, 1.0_wp)
+   call apply_patch_disturbance(poly, cfg, 1.0_wp, shed_water)
 
    !----- A new age-0 treefall gap patch was opened; area is conserved. --------------------!
    call check(poly%patch%n == 2_ik, 'disturbance should add exactly one gap patch')
@@ -135,7 +136,7 @@ program test_disturbance
    poly%patch%diag%w(1:2) = cfg%dt_slow
    poly%patch%diag%v(PA_LE, 1) = 100.0_wp * cfg%dt_slow
    poly%patch%diag%v(PA_LE, 2) = 300.0_wp * cfg%dt_slow
-   call apply_patch_disturbance(poly, cfg, 0.5_wp)
+   call apply_patch_disturbance(poly, cfg, 0.5_wp, shed_water)
    call patch_diag_value(poly%patch%diag, PA_LE, le, n_slot)
    call check(n_slot == poly%patch%n, 'the gap''s diagnostic slot is readable right after the disturbance')
    le_site = sum(poly%patch%area(1:n_slot) * le(1:n_slot))
@@ -166,7 +167,7 @@ program test_disturbance
       poly%patch%diag%v(PA_MORT_C_CULL, ip) = 1.0e-3_wp * real(ip, wp)
    end do
    cull_before = sum(poly%patch%area(1:poly%patch%n) * poly%patch%diag%v(PA_MORT_C_CULL, 1:poly%patch%n))
-   call apply_patch_disturbance(poly, cfg, 0.5_wp)
+   call apply_patch_disturbance(poly, cfg, 0.5_wp, shed_water)
    cull_after = sum(poly%patch%area(1:poly%patch%n) * poly%patch%diag%v(PA_MORT_C_CULL, 1:poly%patch%n))
    call check_close(cull_after, cull_before, 1.0e-15_wp,                                            &
                     'a boundary disturbance keeps the stand total of the events it carves')

@@ -232,9 +232,10 @@ contains
    subroutine restructure_census_stand(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
+      real(wp) :: water_shed   !< the cull's shed water; a start books no ledger
       if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg)
+         call terminate_cohorts(poly, cfg, water_shed)
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
       end if
@@ -243,7 +244,7 @@ contains
          call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg)
+         call terminate_cohorts(poly, cfg, water_shed)
          call sort_cohorts(poly)
       end if
    end subroutine restructure_census_stand
