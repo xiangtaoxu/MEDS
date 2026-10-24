@@ -108,7 +108,7 @@ base and a sealed one are its values of $f$ (`drain_factor`), not separate cases
 | `free_drain` (default) | drainage, $f = 1$: $`q = K(\theta_n)`$ | a deep, unseen water table |
 | leaky (soil maps only) | drainage, $`f = f_{leak}`$, the map's (0.05 in ED-SoilMaps v2) | soil on weathered rock that drains slowly |
 | `bedrock` | drainage, $f = 0$: $`q = 0`$ | an impermeable base |
-| `aquifer` | $`q = K_{bot}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
+| `aquifer` | $`q = \sqrt{K(\theta_n)\,K_{sat}}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
 
 `[soil].water_bottom_bc` names `free_drain`, `bedrock` or `aquifer`; a leaky base comes only from the soil
 maps (§ The column from the soil maps), which give each cell its own $`f_{leak}`$.
@@ -116,9 +116,13 @@ maps (§ The column from the soil maps), which give each cell its own $`f_{leak}
 **`aquifer` is a boundary condition, not a store.** The water table is *defined* to sit at the column
 base, so the modelled soil column **is** the unsaturated zone above it. There is no aquifer bucket, no
 baseflow, no prognostic or diagnosed water-table depth, and so no Dunne saturation-excess runoff and no
-Zeng–Decker equilibrium correction to key off one. $`K_{bot}`$ is upstream-weighted: $`K(\theta_n)`$
-when the flux is downward, $`K_{sat}`$ when it reverses, because the upstream cell is then the saturated zone (using
-$`K(\theta_n)`$ there under-predicts capillary rise).
+Zeng–Decker equilibrium correction to key off one. The face between the deepest node and the table
+is eq. (3) with the table as a saturated node half a layer below: the geometric mean of $`K(\theta_n)`$
+and $`K_{sat}`$, as at the pond face and as ED2 joins its aquifer, in both directions. Water rising from
+the table crosses a half-layer whose conductivity runs from $`K(\theta_n)`$ to $`K_{sat}`$, so taking
+$`K_{sat}`$ alone would be the upper bound: a 0.5 m bottom layer at −2 m head would draw 7 $`K_{sat}`$
+however dry it is, where the mean gives 0.2–0.4 $`K_{sat}`$. The mean is also smooth through zero
+gradient, so the network's Newton meets no corner there.
 
 Two things follow that are easy to get wrong:
 

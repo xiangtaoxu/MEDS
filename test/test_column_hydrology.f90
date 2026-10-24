@@ -391,6 +391,24 @@ contains
                       abs(head_n + delta) < 0.2_wp, head_n + delta)
       call check_true('AQUIFER: and the residual bottom flux has died', abs(col%water%flows%drain / 3600.0_wp) < 1.0e-5_wp, &
                       col%water%flows%drain / 3600.0_wp)
+      !----- The face is smooth through zero gradient: dq/dpsi is the same a hair either side of       !
+      !      hydrostatic equilibrium, and both derivatives match finite differences there. ------------!
+      block
+         real(wp) :: psi_eq, q_m, q_p, dqp_m, dqp_p, dqk, h_psi, q_k
+         psi_eq = -delta * grav_head
+         h_psi  = 1.0e-6_wp
+         call bottom_flux(params, opts, n, psi_eq - h_psi, 1.0e-7_wp, q_m, dqp_m, dqk)
+         call bottom_flux(params, opts, n, psi_eq + h_psi, 1.0e-7_wp, q_p, dqp_p, dqk)
+         call check('AQUIFER: dq/dpsi is continuous through zero gradient', dqp_m, dqp_p, 1.0e-12_wp * dqp_p)
+         call check('AQUIFER: dq/dpsi matches its finite difference', (q_p - q_m) / (2.0_wp * h_psi), dqp_p,  &
+                    1.0e-6_wp * dqp_p)
+         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp, q_m, dqp_m, dqk)
+         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp * (1.0_wp + 1.0e-6_wp), q_k)
+         call check('AQUIFER: dq/dK matches its finite difference', (q_k - q_m) / 1.0e-13_wp, dqk,          &
+                    1.0e-4_wp * abs(dqk))
+         call check('AQUIFER: rise at -2 m head crosses the geometric-mean face',                          &
+                    q_m, sqrt(1.0e-7_wp * params%ksat(n)) * (-2.0_wp / delta + 1.0_wp), 1.0e-12_wp * abs(q_m))
+      end block
    end subroutine test_aquifer_head_bc
 
    !=======================================================================================!
