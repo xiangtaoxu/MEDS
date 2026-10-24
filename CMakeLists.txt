@@ -671,7 +671,9 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_c_api_leaf test/test_c_api_leaf.f90)
    target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_leaf)
-   add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
+   #      Runs from the SOURCE dir: the canopy shim opens the reference configuration and the PFT
+   #      file it names, relative to it, and writes nothing.
+   add_test(NAME c_api_leaf COMMAND test_c_api_leaf WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    add_executable(test_c_api_phenology test/test_c_api_phenology.f90)
    target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_c_api)
