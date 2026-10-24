@@ -727,17 +727,14 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Canopy radiative-transfer test links meds_fast_kernels (state-free). ------------#
-   add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
-   target_link_libraries(test_canopy_radiation PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_canopy_radiation)
-   add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
-
-   #----- Canopy-aerodynamics test links meds_fast_kernels (state-free). ------------------#
-   add_executable(test_aerodynamics test/test_aerodynamics.f90)
-   target_link_libraries(test_aerodynamics PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_aerodynamics)
-   add_test(NAME aerodynamics COMMAND test_aerodynamics)
+   #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
+   #      its module. Each links the kernel library alone, so the kernels build and test standalone. #
+   foreach(t canopy_aerodynamics canopy_radiation)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 
    #----- Vertical soil-hydrology test links meds_fast (it runs the soil-plant water solve). #
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
