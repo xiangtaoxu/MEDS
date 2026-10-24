@@ -47,9 +47,8 @@ module meds_fast_integ_frozen
                                  tissue_hcap_per_dt, EFFAREA_HEAT, EFFAREA_TRANSP, EFFAREA_EVAP
    use meds_canopy_water, only : canopy_water_out_t, canopy_interception, limit_film_evaporation
    use meds_leaf_gas_exchange, only : leaf_gas_exchange_batch, cohort_leaf_par
-   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,           &
-                                      root_zone_temp_scale
-   use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
+   use meds_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration, root_zone_temp_scale, &
+                                decomposition_env_scalar, decomposition_transfer_matrix, heterotrophic_respiration
    use meds_surface, only : surface_env_t, prepare_snow_stage
    use meds_soil_water, only : pond_inflow
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp,                              &
@@ -487,12 +486,12 @@ contains
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: rh_kgc                                     !< [kgC/m2/day] the matrix's own currency
       if (cfg%soil_carbon%soil_carbon_on) then
-         call assemble_env_scalar(t_ground, soil_temp_root, theta_mean, soil%theta_res(1),                    &
+         call decomposition_env_scalar(t_ground, soil_temp_root, theta_mean, soil%theta_res(1),                    &
                                   soil%theta_sat(1), soil_carbon, cfg%soil_carbon, xi)
-         call assemble_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
+         call decomposition_transfer_matrix(soil_carbon, cfg%soil_carbon, a_mat, k_diag, er)
          !----- The matrix returns kgC/m2/day, the pools' currency, which exports%rh_matrix_step keeps for !
          !      the seam check; the canopy air gets umol/m2/s (docs/science/soil_carbon.md §7). ----------!
-         rh_kgc = heterotrophic_respiration_matrix(a_mat, k_diag, xi, soil_carbon)
+         rh_kgc = heterotrophic_respiration(a_mat, k_diag, xi, soil_carbon)
          exports%xi_step        = xi
          exports%rh_matrix_step = rh_kgc                           ! [kgC/m2/day] -- the seam's currency
          rh = rh_kgc * kgcday_2_umols                              ! [umol/m2/s]  -- what the CAS gets

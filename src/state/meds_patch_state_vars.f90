@@ -23,14 +23,15 @@ module meds_patch_state_vars
    use meds_state_defaults,   only : UNSET_POSITIVE, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
    use meds_soil_derive,      only : top_soil_psi
    use meds_site_state_vars,    only : site_surface_t
-   use meds_biogeochem_params,  only : N_SOIL_POOL
+   use meds_biogeochem_params,  only : N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,  &
+                                       IP_MICR, IP_SLOW, IP_PASSIVE
    implicit none
    private
 
    public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_t
    public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, cas_capacities, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
-   public :: soil_water_store, soil_energy_store
+   public :: soil_water_store, soil_energy_store, pack_pool_vector, unpack_pool_vector
    public :: blend_decomp_xi, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
@@ -297,6 +298,34 @@ contains
          e = e + soil_energy(k) * dz(k)
       end do
    end function soil_energy_store
+
+   !=======================================================================================!
+   !  MARSHALLING -- between the readable named type and the length-N_SOIL_POOL array the      !
+   !  matrix kernels operate on (keeps kernels array-based / GPU-friendly, state self-documenting).!
+   !=======================================================================================!
+   pure subroutine pack_pool_vector(pools, x)
+      type(soil_carbon_t), intent(in)  :: pools
+      real(wp),            intent(out) :: x(N_SOIL_POOL)
+      x(IP_FAST_GRND)   = pools%fast_grnd_carbon
+      x(IP_FAST_SOIL)   = pools%fast_soil_carbon
+      x(IP_STRUCT_GRND) = pools%struct_grnd_carbon
+      x(IP_STRUCT_SOIL) = pools%struct_soil_carbon
+      x(IP_MICR)        = pools%microbial_carbon
+      x(IP_SLOW)        = pools%slow_carbon
+      x(IP_PASSIVE)     = pools%passive_carbon
+   end subroutine pack_pool_vector
+
+   pure subroutine unpack_pool_vector(x, pools)
+      real(wp),            intent(in)    :: x(N_SOIL_POOL)
+      type(soil_carbon_t), intent(inout) :: pools   !< inout: only the 7 carbon pools are overwritten
+      pools%fast_grnd_carbon   = x(IP_FAST_GRND)
+      pools%fast_soil_carbon   = x(IP_FAST_SOIL)
+      pools%struct_grnd_carbon = x(IP_STRUCT_GRND)
+      pools%struct_soil_carbon = x(IP_STRUCT_SOIL)
+      pools%microbial_carbon   = x(IP_MICR)
+      pools%slow_carbon        = x(IP_SLOW)
+      pools%passive_carbon     = x(IP_PASSIVE)
+   end subroutine unpack_pool_vector
 
    !----- nlayer is the larger; the caller sets it to 0 when no snow is left. -------------!
    pure function blend_snow(w1, a, w2, b) result(c)

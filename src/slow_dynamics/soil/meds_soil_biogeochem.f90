@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_biogeochem -- THE stateless SLOW soil-carbon kernels (docs/science/soil_carbon.md).  !
+! meds_soil_biogeochem -- the soil carbon pools' daily step (docs/science/soil_carbon.md). !
 ! The per-patch decomposable soil carbon obeys the CENTURY-family carbon matrix ODE (eq. (1))    !
 !                                                                                          !
 !         dX/dt = B*I(t) + A*xi(t)*K*X(t)        [kgC/m2/day]                                       !
@@ -10,6 +10,7 @@
 ! to downstream pools). This is ED2's `update_C_and_N_pools` CENTURY, REORGANIZED as a matrix so a      !
 ! semi-analytic accelerated spin-up (SASU) and traceability diagnostics fall out of the same             !
 ! assembled (A, xi, K).                                                                                   !
+! The decay and respiration chemistry it integrates (xi, A, K, Rh) is meds_respiration's.  !
 !                                                                                          !
 ! LOAD-BEARING CORRECTNESS RULES (docs/science/soil_carbon.md §3, §4, §6, §8):                            !
 !   * Scalar placement is A*(xi*K*X), NOT xi*(A*K*X): each donor decays at ITS OWN xi_j*K_j, and ONLY     !
@@ -22,17 +23,18 @@
 !     xi_int_j = INT_day xi_j dt [day] (NOT xi recomputed from daily-mean T/theta) -- so the pool loss     !
 !     equals the day's integrated atmospheric Rh BY CONSTRUCTION (closes the Jensen gap, §6).              !
 !                                                                                          !
-! All compute kernels take bare scalars/arrays + small derived types and link only the shared,             !
-! state and config libraries; they are `pure` where the arithmetic allows and                              !
-! allocation/LAPACK-free (the active-block solve is meds_linear_algebra's dense LU), so they are            !
-! GPU-eligible.                                                                                            !
+! All compute kernels take bare scalars/arrays + small derived types and link the shared,  !
+! state and config libraries and meds_respiration; they are `pure` where the arithmetic    !
+! allows and allocation/LAPACK-free (the active-block solve is meds_linear_algebra's dense !
+! LU), so they are GPU-eligible.                                                           !
 !==========================================================================================!
 module meds_soil_biogeochem
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : yr_day, tiny_num, kgcday_2_umols
+   use meds_constants,        only : yr_day, tiny_num
    use meds_linear_algebra,   only : matrix_exp, lu_factor, lu_solve
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t
-   use meds_patch_state_vars,   only : soil_carbon_t
+   use meds_patch_state_vars,   only : soil_carbon_t, pack_pool_vector, unpack_pool_vector
+   use meds_respiration,        only : decomposition_transfer_matrix, heterotrophic_respiration
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,                            &
                                       DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL,                      &
                                       IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
@@ -40,10 +42,8 @@ module meds_soil_biogeochem
    implicit none
    private
 
-   public :: assemble_env_scalar, assemble_transfer_matrix, build_litter_input
-   public :: heterotrophic_respiration_matrix, soil_carbon_step
+   public :: build_litter_input, soil_carbon_step
    public :: solve_soil_carbon_steady_state, soil_carbon_diagnostics
-   public :: pack_pool_vector, unpack_pool_vector
    public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
 
    !=======================================================================================!
@@ -66,178 +66,6 @@ module meds_soil_biogeochem
 contains
 
    !=======================================================================================!
-   !  MARSHALLING -- between the readable named type and the length-N_SOIL_POOL array the      !
-   !  matrix kernels operate on (keeps kernels array-based / GPU-friendly, state self-documenting).!
-   !=======================================================================================!
-   pure subroutine pack_pool_vector(pools, x)
-      type(soil_carbon_t), intent(in)  :: pools
-      real(wp),            intent(out) :: x(N_SOIL_POOL)
-      x(IP_FAST_GRND)   = pools%fast_grnd_carbon
-      x(IP_FAST_SOIL)   = pools%fast_soil_carbon
-      x(IP_STRUCT_GRND) = pools%struct_grnd_carbon
-      x(IP_STRUCT_SOIL) = pools%struct_soil_carbon
-      x(IP_MICR)        = pools%microbial_carbon
-      x(IP_SLOW)        = pools%slow_carbon
-      x(IP_PASSIVE)     = pools%passive_carbon
-   end subroutine pack_pool_vector
-
-   pure subroutine unpack_pool_vector(x, pools)
-      real(wp),            intent(in)    :: x(N_SOIL_POOL)
-      type(soil_carbon_t), intent(inout) :: pools   !< inout: only the 7 carbon pools are overwritten
-      pools%fast_grnd_carbon   = x(IP_FAST_GRND)
-      pools%fast_soil_carbon   = x(IP_FAST_SOIL)
-      pools%struct_grnd_carbon = x(IP_STRUCT_GRND)
-      pools%struct_soil_carbon = x(IP_STRUCT_SOIL)
-      pools%microbial_carbon   = x(IP_MICR)
-      pools%slow_carbon        = x(IP_SLOW)
-      pools%passive_carbon     = x(IP_PASSIVE)
-   end subroutine unpack_pool_vector
-
-   !=======================================================================================!
-   !  ENVIRONMENTAL SCALAR xi = temperature x moisture x oxygen, per pool. Grnd pools (1,3) use   !
-   !  the SURFACE temperature (ED2 A_decomp); below pools (2,4,5,6,7) the ACTIVE-layer temperature  !
-   !  (B_decomp). Structural pools (3,4) additionally carry the lignin brake L = exp(-e_lignin*      !
-   !  f_lignin). Temperature form: scheme 5 = Collatz Q10 (UNCAPPED; xi can exceed 1), else ED2         !
-   !  scheme-0 capped exp min(1, exp(a*(T-T_sat))).                                                      !
-   !  Moisture is the one-sided exponential about resp_opt_water (dry side) / anoxia (wet side).         !
-   !  The fast loop's sub-daily Rh calls this same routine, so xi and the fast Rh reconcile at           !
-   !  matched inputs. Invariant: xi > 0 (scheme-0 additionally <= 1). For spin-up, evaluate at           !
-   !  climatological-mean T/theta to build xi_bar. docs/science/soil_carbon.md eqs. (3)-(4).             !
-   !=======================================================================================!
-   pure subroutine assemble_env_scalar(soil_temp_surf, soil_temp_active, theta_active, theta_dry, &
-                                       theta_sat, pools, opts, xi)
-      real(wp),                   intent(in)  :: soil_temp_surf, soil_temp_active     !< [K]
-      real(wp),                   intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
-      type(soil_carbon_t),        intent(in)  :: pools                               !< for f_lignin
-      type(soil_carbon_params_t), intent(in)  :: opts
-      real(wp),                   intent(out) :: xi(N_SOIL_POOL)                     !< [-] diagonal scalar, > 0
-      real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
-
-      f_temp_surf   = decomp_temperature_factor(soil_temp_surf,   opts)
-      f_temp_active = decomp_temperature_factor(soil_temp_active, opts)
-      rel     = min(1.0_wp, max(0.0_wp, (theta_active - theta_dry) / max(theta_sat - theta_dry, tiny_num)))
-      f_water = decomp_water_factor(rel, opts)
-
-      f_lig_g = lignin_fraction(pools%struct_grnd_lignin, pools%struct_grnd_carbon)
-      f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
-      brake_g = exp(-opts%e_lignin * f_lig_g)
-      brake_s = exp(-opts%e_lignin * f_lig_s)
-
-      xi(IP_FAST_GRND)   = f_temp_surf   * f_water
-      xi(IP_FAST_SOIL)   = f_temp_active * f_water
-      xi(IP_STRUCT_GRND) = f_temp_surf   * f_water * brake_g
-      xi(IP_STRUCT_SOIL) = f_temp_active * f_water * brake_s
-      xi(IP_MICR)        = f_temp_active * f_water
-      xi(IP_SLOW)        = f_temp_active * f_water
-      xi(IP_PASSIVE)     = f_temp_active * f_water
-   end subroutine assemble_env_scalar
-
-   !----- Decomposition temperature factor: scheme-5 UNCAPPED Q10; else ED2 capped exp. ----------!
-   pure function decomp_temperature_factor(soil_temp, opts) result(f_temp)
-      real(wp),                   intent(in) :: soil_temp
-      type(soil_carbon_params_t), intent(in) :: opts
-      real(wp) :: f_temp
-      if (opts%decomp_scheme == DECOMP_SCHEME_CENTURY5) then         ! Collatz/K13 Q10 (uncapped, > 1 above ref)
-         f_temp = opts%rh_q10 ** ((soil_temp - opts%rh_t_ref) * 0.1_wp)
-      else                                                           ! ED2 scheme-0 capped exp, min(1, .)
-         f_temp = min(1.0_wp, exp(opts%resp_temp_increase * (soil_temp - opts%resp_temp_ref)))
-      end if
-   end function decomp_temperature_factor
-
-   !----- One-sided moisture/oxygen modifier about resp_opt_water (SAME form as the fast Rh). ----!
-   pure function decomp_water_factor(rel, opts) result(f_water)
-      real(wp),                   intent(in) :: rel
-      type(soil_carbon_params_t), intent(in) :: opts
-      real(wp) :: f_water
-      if (rel <= opts%resp_opt_water) then
-         f_water = exp((rel - opts%resp_opt_water) * opts%resp_water_below_opt)      ! dry side
-      else
-         f_water = exp((opts%resp_opt_water - rel) * opts%resp_water_above_opt)      ! wet side (anoxia)
-      end if
-   end function decomp_water_factor
-
-   pure function lignin_fraction(lignin, carbon) result(f_lignin)
-      real(wp), intent(in) :: lignin, carbon
-      real(wp) :: f_lignin
-      if (carbon > tiny_num) then
-         f_lignin = min(1.0_wp, max(0.0_wp, lignin / carbon))
-      else
-         f_lignin = 0.0_wp                                            ! C=0 => f_lignin undefined, read as 0
-      end if
-   end function lignin_fraction
-
-   !=======================================================================================!
-   !  TRANSFER MATRIX A + decay diagonal K + respired fractions er. A(i,j) is the fraction of pool  !
-   !  j's decayed carbon entering pool i, a_jj = -1 UNIFORMLY, er_j = 1 - sum_{i!=j} a_ij. K is in    !
-   !  [1/day] (opts carries [1/yr]; converted by yr_day here). Default (scheme 0-4): metabolic litter  !
-   !  respires 100%, structural sends (1-er_struct) to slow (er_struct lignin-weighted), slow respires  !
-   !  100%, microbial/passive INERT (K=0). Scheme 5 (Bolker/Koven): fast->micr, struct non-lignin->micr  !
-   !  / lignin->slow, micr<->slow and slow<->passive back-transfers with clay/sand-controlled routing.    !
-   !=======================================================================================!
-   pure subroutine assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      type(soil_carbon_t),        intent(in)  :: pools
-      type(soil_carbon_params_t), intent(in)  :: opts
-      real(wp),                   intent(out) :: a_mat(N_SOIL_POOL, N_SOIL_POOL)   !< [-] a_ii=-1, a_ij transfer frac
-      real(wp),                   intent(out) :: k_diag(N_SOIL_POOL)               !< [1/day] baseline decay rates
-      real(wp),                   intent(out) :: er(N_SOIL_POOL)                   !< [-] respired fraction 1 - sum_i a_ij
-      real(wp)    :: f_lig_g, f_lig_s, er_stg, er_sts, er_micr, ex_mp, ex_sp
-      integer(ik) :: j
-
-      !----- decay diagonal K [1/day] (opts in /yr). -----------------------------------------------!
-      k_diag(IP_FAST_GRND)   = opts%k_fast   / yr_day
-      k_diag(IP_FAST_SOIL)   = opts%k_fast   / yr_day
-      k_diag(IP_STRUCT_GRND) = opts%k_struct / yr_day
-      k_diag(IP_STRUCT_SOIL) = opts%k_struct / yr_day
-      k_diag(IP_MICR)        = opts%k_micr   / yr_day
-      k_diag(IP_SLOW)        = opts%k_slow   / yr_day
-      k_diag(IP_PASSIVE)     = opts%k_pass   / yr_day
-
-      !----- lignin-weighted structural respired fractions. ----------------------------------------!
-      f_lig_g = lignin_fraction(pools%struct_grnd_lignin, pools%struct_grnd_carbon)
-      f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
-      er_stg  = (1.0_wp - f_lig_g) * opts%er_struct_nonlig + f_lig_g * opts%er_struct_lig
-      er_sts  = (1.0_wp - f_lig_s) * opts%er_struct_nonlig + f_lig_s * opts%er_struct_lig
-
-      !----- uniform a_jj = -1 (all decayed carbon leaves the donor), off-diagonals zeroed. --------!
-      a_mat = 0.0_wp
-      do j = 1_ik, N_SOIL_POOL
-         a_mat(j, j) = -1.0_wp
-      end do
-
-      if (opts%decomp_scheme == DECOMP_SCHEME_CENTURY5) then
-         !----- FULL CENTURY (5-active, Bolker/Koven): texture-controlled topology. ----------------!
-         er_micr = opts%er_micr_int + opts%er_micr_slp * opts%xsand             ! sand -> microbial respired frac
-         ex_mp   = min(1.0_wp - er_micr, opts%fx_micr_pass_int + opts%fx_micr_pass_slp * opts%xclay)
-         ex_sp   = min(1.0_wp - opts%er_slow, opts%fx_slow_pass_int + opts%fx_slow_pass_slp * opts%xclay)
-         !----- fast litter (1,2) -> microbial. ---------------------------------------------------!
-         a_mat(IP_MICR, IP_FAST_GRND) = 1.0_wp - opts%er_fast
-         a_mat(IP_MICR, IP_FAST_SOIL) = 1.0_wp - opts%er_fast
-         !----- structural (3,4): non-lignin -> microbial, lignin -> slow. -------------------------!
-         a_mat(IP_MICR, IP_STRUCT_GRND) = (1.0_wp - er_stg) * (1.0_wp - f_lig_g)
-         a_mat(IP_MICR, IP_STRUCT_SOIL) = (1.0_wp - er_sts) * (1.0_wp - f_lig_s)
-         a_mat(IP_SLOW, IP_STRUCT_GRND) = (1.0_wp - er_stg) * f_lig_g
-         a_mat(IP_SLOW, IP_STRUCT_SOIL) = (1.0_wp - er_sts) * f_lig_s
-         !----- microbial (5): -> passive (clay), remainder -> slow. -------------------------------!
-         a_mat(IP_PASSIVE, IP_MICR) = ex_mp
-         a_mat(IP_SLOW,    IP_MICR) = (1.0_wp - er_micr) - ex_mp
-         !----- slow (6): -> passive (clay), remainder -> microbial. -------------------------------!
-         a_mat(IP_PASSIVE, IP_SLOW) = ex_sp
-         a_mat(IP_MICR,    IP_SLOW) = (1.0_wp - opts%er_slow) - ex_sp
-         !----- passive (7): -> slow. -------------------------------------------------------------!
-         a_mat(IP_SLOW, IP_PASSIVE) = 1.0_wp - opts%er_pass
-      else
-         !----- DEFAULT (schemes 0-4, 3-active): structural -> slow, everything else terminal. -----!
-         a_mat(IP_SLOW, IP_STRUCT_GRND) = 1.0_wp - er_stg
-         a_mat(IP_SLOW, IP_STRUCT_SOIL) = 1.0_wp - er_sts
-      end if
-
-      !----- respired fraction er_j = 1 - sum_{i!=j} a_ij  (= -sum_i a_ij, since a_jj=-1). ---------!
-      do j = 1_ik, N_SOIL_POOL
-         er(j) = 1.0_wp - (sum(a_mat(:, j)) + 1.0_wp)      ! sum_i a_ij = a_jj(-1) + sum_{i!=j}; er = 1 - sum_{i!=j}
-      end do
-   end subroutine assemble_transfer_matrix
-
-   !=======================================================================================!
    !  Map the ALREADY-PARTITIONED, pool-destined litter fluxes onto the input vector u = B*I. The   !
    !  per-PFT labile/structural (f_labile) and above/below (agf) split is applied PER-COHORT by the   !
    !  driver BEFORE summing to the patch (docs/science/soil_carbon.md §5); this kernel does NO          !
@@ -256,29 +84,6 @@ contains
       lignin_in(1) = litter%lignin_grnd
       lignin_in(2) = litter%lignin_soil
    end subroutine build_litter_input
-
-   !=======================================================================================!
-   !  INSTANTANEOUS heterotrophic respiration Rh = sum_j er_j*xi_j*K_j*X_j = -1^T*A*xi*K*X            !
-   !  [kgC/m2/day] -- the respired complement A does NOT transfer (the carbon that leaves the network). !
-   !  This is ALSO what the fast loop respires into the canopy air, per sub-step, against the frozen    !
-   !  daily pool -- which is what makes the day's atmospheric Rh equal the daily step's pool debit by    !
-   !  construction (the rh_seam_gap contract). Callers crossing into the CAS must convert with           !
-   !  kgcday_2_umols; patch_heterotrophic_respiration is where that happens.                             !
-   !  docs/science/soil_carbon.md eq. (2) and §7.                                                        !
-   !=======================================================================================!
-   pure function heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools) result(rh)
-      real(wp),            intent(in) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
-      real(wp),            intent(in) :: xi(N_SOIL_POOL)
-      type(soil_carbon_t), intent(in) :: pools
-      real(wp) :: rh, x(N_SOIL_POOL), er_j
-      integer(ik) :: j
-      call pack_pool_vector(pools, x)
-      rh = 0.0_wp
-      do j = 1_ik, N_SOIL_POOL
-         er_j = -sum(a_mat(:, j))                    ! column sum of A is -er_j (a_jj=-1)
-         rh   = rh + er_j * xi(j) * k_diag(j) * x(j)
-      end do
-   end function heterotrophic_respiration_matrix
 
    !=======================================================================================!
    !  Advance the pools ONE DAILY step: X_new = X + u_day + A*diag(xi_int*K)*X, decrementing each      !
@@ -309,7 +114,7 @@ contains
       real(wp) :: lig0(2), lig1(2), d_s(2), surv(2), litter_in, dc_pool, lig_resid
       integer(ik) :: i, j
 
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       call pack_pool_vector(pools, x0)
       lig0(1) = pools%struct_grnd_lignin
       lig0(2) = pools%struct_soil_lignin
@@ -476,7 +281,7 @@ contains
       else
          diag%tau_e = 0.0_wp
       end if
-      diag%rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools)
+      diag%rh = heterotrophic_respiration(a_mat, k_diag, xi, pools)
    end subroutine soil_carbon_diagnostics
 
 

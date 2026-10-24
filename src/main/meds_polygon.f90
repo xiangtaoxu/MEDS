@@ -28,9 +28,9 @@ module meds_polygon
    use meds_slow_dynamics,          only : refresh_canopy_depth, acclimate_site_leaf_tables
    use meds_biogeochem_types,       only : litter_input_t, soilc_seam_t
    use meds_biogeochem_params,      only : N_SOIL_POOL
-   use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
-                                           build_litter_input, soil_carbon_bad_pool,             &
-                                           soil_carbon_pool_name
+   use meds_soil_biogeochem,        only : solve_soil_carbon_steady_state, build_litter_input,      &
+                                           soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_respiration,            only : decomposition_transfer_matrix
    use meds_met_types,          only : met_source_t, met_cursor_t
    use meds_met,             only : met_cursor_init
    use meds_output_reduce,      only : total_area
@@ -424,7 +424,7 @@ contains
       real(wp)    :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL), lignin_bar(2)
       integer(ik) :: ipp
       pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
-      call assemble_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
       xi_bar = cfg%soil_carbon%spinup_xi
       lit%labile_grnd = cfg%soil_carbon%spinup_labile_grnd
       lit%labile_soil = cfg%soil_carbon%spinup_labile_soil

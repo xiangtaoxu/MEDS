@@ -21,7 +21,7 @@ module meds_biogeochem_types
    !----- Slow soil-carbon matrix: its audit and diagnostic records. ----------------------------!
    public :: litter_input_t, soilc_audit_t, soilc_seam_t, soilc_diag_t
    !----- There is exactly ONE heterotrophic-respiration form: the CENTURY matrix                    !
-   !      (heterotrophic_respiration_matrix), reached through patch_heterotrophic_respiration.       !
+   !      (heterotrophic_respiration), reached through patch_heterotrophic_respiration.              !
    !      No Q10, capped-exponential or DAMM kernel is available (docs/science/soil_carbon.md        !
    !      §7, §10). ---------------------------------------------------------------------------------!
 

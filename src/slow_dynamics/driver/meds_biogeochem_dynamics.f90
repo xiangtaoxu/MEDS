@@ -6,7 +6,7 @@
 ! by the vegetation driver this step (`poly%patch%litter_in`, routed through build_litter_input)    !
 ! plus the fast loop's day-integrated environmental scalar (`poly%patch%decomp_xi`, accumulated     !
 ! once per (patch, sub-step) by the fast loop over the SAME frozen pool the fast loop's             !
-! heterotrophic_respiration_matrix respired against) drive soil_carbon_step, which commits the      !
+! heterotrophic_respiration respired against) drive soil_carbon_step, which commits the             !
 ! pool change once, at day-end (docs/science/soil_carbon.md §6).                                    !
 !                                                                                          !
 ! THE DOUBLE-COUNTING CONTRACT (docs/science/soil_carbon.md §7): the fast loop respires the FROZEN  !
