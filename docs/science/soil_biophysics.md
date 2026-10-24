@@ -307,8 +307,11 @@ time it arrives.
 layer's own conductivity:
 
 ```math
-hf_n = -\,g_{deep}\,(T_n - T_{deep}), \qquad g_{deep} = \frac{\kappa_n}{\ell} \qquad(12)
+hf_n = q_{geo} - g_{deep}\,(T_n - T_{deep}), \qquad g_{deep} = \frac{\kappa_n}{\ell} \qquad(12)
 ```
+
+with $`q_{geo}`$ the prescribed flux, 0, and $`g_{deep} = 0`$ under the `geothermal` boundary, so one
+expression serves both.
 
 The anchor enters the BE **matrix** (it adds $`g_{deep}`$ to the bottom diagonal and
 $`g_{deep}T_{deep}`$ to the residual), not the right-hand side alone, so the solve stays
