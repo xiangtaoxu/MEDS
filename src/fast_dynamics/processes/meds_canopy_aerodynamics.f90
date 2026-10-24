@@ -408,7 +408,7 @@ contains
       real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free   !< [m/s] the result; [m2/s] nu_v, al_th
       nu_v  = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (can_temp - cfg%t_ref_air))
       al_th = cfg%th_diff0  * (1.0_wp + cfg%dth_diff  * (can_temp - cfg%t_ref_air))
-      re    = max(wind * lchar / al_th, tiny_num)
+      re    = max(wind * lchar / nu_v, tiny_num)
       gr    = max(grav / (can_temp * nu_v * nu_v) * abs(elem_temp - can_temp) * lchar ** 3, 0.0_wp)
       if (is_leaf) then                                            ! flat plate
          nu_forced = max(cfg%aflat_lami * re ** cfg%nflat_lami, cfg%aflat_turb * re ** cfg%nflat_turb)

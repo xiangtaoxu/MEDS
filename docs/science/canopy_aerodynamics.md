@@ -205,7 +205,7 @@ the permutation is the identity for $n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
 Nusselt kernel `boundary_layer_conductance`, the parallel sum of forced (Reynolds) and free (Grashof) convection
-— the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
+— the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\nu`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
 (leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
 temperature for the wood layer. For the cylinder each forced term carries an offset,
@@ -224,7 +224,9 @@ g_{bh} = \max\!\Big(g_{bh,min},\ \big(\mathrm{Nu}_{forced}+\mathrm{Nu}_{free}\bi
 ```
 
 The kinematic viscosity $\nu$ and thermal diffusivity $\alpha_{th}$ are linear-in-temperature about a
-20 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`), and
+0 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`): 1.52×10⁻⁵ and
+2.15×10⁻⁵ m² s⁻¹ at 20 °C. ED2 forms the Reynolds number with $\alpha_{th}$; MEDS uses $\nu$, its
+definition ([ED2 comparison](../ed2_comparison.md) §4.9). The floor is
 $`g_{bh,min}=`$ `gbhmos_min`. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$ (`gbh_2_gbw`).
 $g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas exchange
 forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{leaf})`$ the molar density of air at the leaf temperature [mol m⁻³].

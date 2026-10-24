@@ -50,7 +50,7 @@ module meds_biophysics_params
       real(wp) :: gbh_2_gbw = 1.075_wp
       real(wp) :: kin_visc0 = 1.33e-5_wp, dkin_visc = 0.007_wp   !< kinematic viscosity [m2/s] @ t_ref_air
       real(wp) :: th_diff0  = 1.89e-5_wp, dth_diff  = 0.007_wp   !< thermal diffusivity [m2/s] @ t_ref_air
-      real(wp) :: t_ref_air = 293.15_wp             !< [K] 20 C reference for the linear-in-T props
+      real(wp) :: t_ref_air = 273.15_wp             !< [K] 0 C reference for the linear-in-T props
       !----- Nusselt coefficients -- flat plate (leaf). -----------------------------------!
       real(wp) :: aflat_lami = 0.60_wp, nflat_lami = 0.50_wp
       real(wp) :: aflat_turb = 0.032_wp, nflat_turb = 0.80_wp

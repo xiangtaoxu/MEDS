@@ -9,7 +9,8 @@
 !      (warm air aloft) a SMALLER one, at the same wind.                                          !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
 !   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
-!      (forced convection).                                                                      !
+!      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
+!      flat-plate value 0.6 Re^0.5 alpha/l, Re = u l/nu, with the air's 20 C nu and alpha.       !
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
 !      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
 !      in the open-canopy limit.                                                                 !
@@ -92,11 +93,16 @@ contains
    !----- 4. Boundary-layer conductance positive + increases with wind. ----------------------!
    subroutine test_boundary_layer()
       type(aero_params_t) :: cfg
-      real(wp) :: g_lo, g_hi
+      real(wp) :: g_lo, g_hi, g_20, nu_20, alpha_20
       g_lo = boundary_layer_conductance(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       g_hi = boundary_layer_conductance(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       call check_true('gbh positive above floor', g_lo > cfg%gbhmos_min, g_lo)
       call check_true('gbh increases with wind',  g_hi > g_lo, g_hi - g_lo)
+      nu_20    = 1.33e-5_wp * 1.14_wp                    ! [m2/s] air at 20 C
+      alpha_20 = 1.89e-5_wp * 1.14_wp
+      g_20 = boundary_layer_conductance(cfg, 1.0_wp, 293.15_wp, 293.15_wp, 0.05_wp, .true.)
+      call check('gbh laminar flat plate at 20 C', g_20,                                         &
+                 0.6_wp * sqrt(1.0_wp * 0.05_wp / nu_20) * alpha_20 / 0.05_wp, 1.0e-12_wp)
    end subroutine test_boundary_layer
 
    !----- 5. Master kernel on a 2-cohort patch. ----------------------------------------------!

@@ -126,7 +126,7 @@ kin_visc0        = 1.33e-5    # [m2/s] kinematic viscosity at t_ref_air
 dkin_visc        = 0.007      # [1/K] its linear temperature slope
 th_diff0         = 1.89e-5    # [m2/s] thermal diffusivity at t_ref_air
 dth_diff         = 0.007      # [1/K] its linear temperature slope
-t_ref_air        = 293.15     # [K]   reference temperature of the two air properties
+t_ref_air        = 273.15     # [K]   reference temperature of the two air properties
 
 [demography]
 # Cohort and patch fusion (docs/configuration.md "Cohort and patch fusion").
