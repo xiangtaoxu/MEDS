@@ -13,7 +13,8 @@
 ! and must give the same files. A region run in two halves, the second restarted from the  !
 ! first's state file, must write the second half's files exactly as the whole run does,    !
 ! and a region with a cell masked out must resume from that file, its polygons running on  !
-! as they do in the second half. A region freed without finalizing must open again in the  !
+! as they do in the second half; a state file written in a month a polygon failed in owes  !
+! the calendar's restructuring. A region freed without finalizing must open again in the   !
 ! same variable. Every run takes its soil from the archive's [maps] files                  !
 ! (docs/configuration.md §Input maps), so the three polygons have their own soil depth,    !
 ! layers and bottom boundaries (a leaky base drains at its cell's f_leak), and each site   !
@@ -259,6 +260,23 @@ program test_region
    call check_failed_month(trim(work)//'/out/fail-D-202102.nc')
    inquire(file=trim(work)//'/out/fail-M-202102.nc', exist=ex)
    call check_true('after a failure the end of the run writes nothing more', .not. ex)
+
+   !----- A state file written in a month a polygon failed in owes the calendar's restructuring, not  !
+   !      the failed polygon's. Polygon 1 fails at the run's first step; the others run on to        !
+   !      1 February, where the monthly state file falls due owing that boundary's restructuring. ---!
+   call derive(trim(work)//'/fail1.toml', '[output]'//nl()//'prefix = "fail1"'//nl()//                 &
+               'state_write = true'//nl()//'state_file_dir = "'//trim(work)//'/state"'//nl()//          &
+               'state_file_prefix = "fail1"'//nl()//'state_interval = "1 month"'//nl()//region_block(), &
+               region=.true.)
+   call region_open(trim(work)//'/fail1.toml', reg, ok, verbose=.false.)
+   if (.not. ok) error stop 'test_region: the region failing at polygon 1 did not open'
+   reg%poly(1)%patch%soil_carbon(1)%slow_carbon = -1.0_wp
+   call region_step_month(reg, st)
+   call check_true('the month polygon 1 fails in returns its status', st == DRIVER_ERR_BOUNDS)
+   call region_finalize(reg, st)
+   call region_free(reg)
+   call check_true('the state file of that month owes its boundary''s restructuring',                  &
+                   state_owes(trim(work)//'/state/fail1-S-20210201000000.nc') == 'month')
 
    !----- The cell mask: a 0/1 map that drops polygon 35 leaves 18 and 53, in their order. ----------!
    mask = 1.0_wp
@@ -585,6 +603,16 @@ contains
       n = 0_ik
       if (nc_inq_dimlen_f(ncid, name, len) == NC_NOERR) n = int(len, ik)
    end function dim_len
+
+   !----- The restructuring a state file owes: its global attribute restructure_pending. -----------!
+   function state_owes(path) result(owed)
+      character(len=*), intent(in) :: path
+      character(len=8) :: owed
+      integer(c_int)   :: ncid
+      ncid = open_nc(path)
+      call nc_check(nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', owed), 'restructure_pending')
+      call nc_check(nc_close(ncid), 'close')
+   end function state_owes
 
    !----- Read a whole variable of the given C-order shape into a flat array. -----------------------!
    subroutine read_var(ncid, name, shape_c, x, found)

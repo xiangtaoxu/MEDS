@@ -95,6 +95,9 @@ module meds_region
       !----- Last month's wall time per polygon: the next month starts the costliest first, so a   !
       !      slow polygon does not leave the other threads idle at the end of the month. ------------!
       real(wp),    allocatable :: cost(:)
+      !----- The restructuring the calendar owes after the last step. It is the same for every polygon  !
+      !      still running, so a state file takes it from here, not from a polygon that has failed. ---!
+      logical               :: restructure_pending = .false., restructure_new_year = .false.
       logical               :: verbose = .true.
    end type meds_region_t
 
@@ -251,6 +254,9 @@ contains
                                  verbose=reg%verbose .and. n == 1_ik)
          end associate
       end do
+      !----- A restart's polygons all read the restructuring their file owes; a new stand owes none. --!
+      reg%restructure_pending  = reg%poly(1)%restructure_pending
+      reg%restructure_new_year = reg%poly(1)%restructure_new_year
 
       reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
       allocate(reg%cost(n), source=0.0_wp)
@@ -569,6 +575,8 @@ contains
       reg%now   = step_end(nstep)
       reg%istep = reg%istep + nstep
       if (new_month(nstep)) reg%imonth = reg%imonth + 1_ik
+      reg%restructure_pending  = new_month(nstep)
+      reg%restructure_new_year = new_year(nstep)
 
       !----- A year's end: the summary line(s), and the forcing-read accounting. -------------------!
       if (new_year(nstep)) then
@@ -608,9 +616,9 @@ contains
       end select
    end function state_due
 
-   !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort, patch and   !
-   !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
-   !      boundary restructuring. --------------------------------------------------------------------!
+   !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort,   !
+   !      patch and site axes are the largest polygon's. The restructuring it owes is the calendar's   !
+   !      (the run's), which a polygon that has failed no longer tracks. -----------------------------!
    subroutine region_write_state(reg)
       type(meds_region_t), intent(in) :: reg
       type(restart_file_t)       :: sf
@@ -632,8 +640,8 @@ contains
       call restart_file_open(sf, trim(reg%cfg%output%state_file_dir), trim(reg%cfg%output%state_file_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
-                           restructure_pending=reg%poly(1)%restructure_pending,                            &
-                           restructure_new_year=reg%poly(1)%restructure_new_year)
+                           restructure_pending=reg%restructure_pending,                                    &
+                           restructure_new_year=reg%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
          call restart_file_write(sf, reg%poly(p), reg%now, p)
       end do
