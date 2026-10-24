@@ -784,7 +784,10 @@ balances booked (#512).
   capacity, and the commit reads the temperature back with the end-of-step film: with the film in the
   step's capacity, a film far heavier than its tissue that evaporated within the step left its heat to
   the tissue, and at Palo Verde a nearly leafless cohort's leaf read back at 107 K and the inventory run
-  stopped. The region's LE −0.23 %, H +0.47 %, GPP −0.21 %; Palo Verde's inventory (2008–2011) LE
+  stopped. Water one film passes to the other within a cohort, as the cohort's film is re-shared by
+  capacity, is valued at the giver's temperature: valued at the rain's, a falling leaf handing its film
+  to its wood was charged the difference against couplings near 1e-17 W/m²/K, and Palo Verde's
+  regrowth stopped in 1880. The region's LE −0.23 %, H +0.47 %, GPP −0.21 %; Palo Verde's inventory (2008–2011) LE
   −0.48 %, H +0.53 %. `t_film_valuation` and `film_liquid_enthalpy` go.
 - **The Kirchhoff sapflow law under gravity, documented** (#509). The law is the exact steady flux
   without gravity; with it the exact flux solves an implicit equation, and the law overstates it by
