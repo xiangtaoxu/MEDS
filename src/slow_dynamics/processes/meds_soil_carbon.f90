@@ -140,7 +140,7 @@ contains
    !  DECOMP_STEP_EXPM the exact exponential of the frozen operator, for large accelerated !
    !  steps. rh_today = litter in - pool change for either solver; it is an audit value    !
    !  and is not fed back to the canopy air. u is one day's input [kgC/m2/day]. The new    !
-   !  pools come back in out%pools; the caller commits them.                              !
+   !  pools come back in out%pools; the caller commits them.                               !
    !=======================================================================================!
    subroutine soil_carbon_step(pools, u, lignin_in, xi_int, params, rh_today, out)
       type(soil_carbon_state_t),  intent(in)    :: pools

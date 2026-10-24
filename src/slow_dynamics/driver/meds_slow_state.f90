@@ -131,11 +131,12 @@ contains
    end subroutine advance_leaf_phenology
 
    !---------------------------------------------------------------------------------------!
-   ! Light trait plasticity over one slow step: each cohort's sla, vcmax25, rd25 and leaf        !
-   ! turnover rate relax toward their targets at the LAI above, as fast as leaves are replaced.  !
-   ! Leaf carbon above the new leaf target is resorbed to storage: leaf_carbon_new and          !
-   ! storage_new are the pools meds_slow_update's commit_trait_carbon writes. Called only with  !
-   ! trait_plasticity_on (docs/science/plant_traits.md eqs. (1)-(2), §4).                        !
+   ! Light trait plasticity over one slow step: each cohort's sla, vcmax25, rd25 and leaf  !
+   ! turnover rate relax toward their targets at the LAI above, as fast as leaves are      !
+   ! replaced. Leaf carbon above the new leaf target is resorbed to storage:               !
+   ! leaf_carbon_new and storage_new are the pools meds_slow_update's commit_trait_carbon  !
+   ! writes. Called only with trait_plasticity_on (docs/science/plant_traits.md eqs.       !
+   ! (1)-(2), §4).                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine advance_plant_traits(poly, dt_yr, leaf_carbon_new, storage_new, instantaneous)
       type(polygon_t),       intent(inout) :: poly
@@ -184,9 +185,9 @@ contains
    ! ([init].reacclimate_traits): the census start's instant acclimation with plasticity on,   !
    ! the top-of-canopy values without. Leaf area is kept: leaf carbon scales by the SLA's       !
    ! change, storage taking up the difference, and a lower SLA takes at most the storage there  !
-   ! is, so no carbon is made. leaf_carbon_new and storage_new are the pools                   !
-   ! meds_slow_update's commit_trait_carbon writes (docs/configuration.md, "How a run         !
-   ! starts"; plant_traits.md §5).                                                             !
+   ! is, so no carbon is made. leaf_carbon_new and storage_new are the pools               !
+   ! meds_slow_update's commit_trait_carbon writes (docs/configuration.md, "How a run      !
+   ! starts"; plant_traits.md §5).                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine reacclimate_plant_traits(poly, cfg, leaf_carbon_new, storage_new)
       type(polygon_t),       intent(inout) :: poly
@@ -414,8 +415,8 @@ contains
    end subroutine compute_carbon_allocation
 
    !---------------------------------------------------------------------------------------!
-   ! Each cohort's recruit efficiency this step, by the law of meds_demography on its patch's !
-   ! LAI (docs/science/demography.md eq. (5)).                                                !
+   ! Each cohort's recruit efficiency this step, by the law of meds_demography on its      !
+   ! patch's LAI (docs/science/demography.md eq. (5)).                                     !
    !---------------------------------------------------------------------------------------!
    function cohort_recruit_efficiency(poly) result(efficiency)
       type(polygon_t), intent(in) :: poly
@@ -692,8 +693,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Step each patch's soil-carbon pools one day on the step's litter,                     !
    ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
-   ! on the pools directly), into pools_new, which meds_slow_update's commit_soil_carbon  !
-   ! writes. The ledger keeps the run's worst Rh gap, lignin residual and lambda          !
+   ! on the pools directly), into pools_new, which meds_slow_update's commit_soil_carbon   !
+   ! writes. The ledger keeps the run's worst Rh gap, lignin residual and lambda           !
    ! (soil_carbon.md §6-§7, §9).                                                           !
    !---------------------------------------------------------------------------------------!
    subroutine advance_soil_carbon(poly, cfg, ledger, pools_new)

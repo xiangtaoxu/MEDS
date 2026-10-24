@@ -153,11 +153,11 @@ contains
    end subroutine fill_cohort_deriv
 
    !---------------------------------------------------------------------------------------!
-   ! Advance every cohort's pools (advance_pool, eq. (8)) and density (advance_density, in   !
-   ! log space, stopped at the floor `negligible`) by the tendencies over dt_yr, then derive !
-   ! the geometry from the committed carbon, as fusion and fission derive it. The tissue made !
-   ! or lost came or went at the tissue's temperature, which its energy is held to           !
-   ! (demography.md §2; conservation.md §4).                                                 !
+   ! Advance every cohort's pools (advance_pool, eq. (8)) and density (advance_density, in !
+   ! log space, stopped at the floor `negligible`) by the tendencies over dt_yr, then      !
+   ! derive the geometry from the committed carbon, as fusion and fission derive it. The   !
+   ! tissue made or lost came or went at the tissue's temperature, which its energy is     !
+   ! held to (demography.md §2; conservation.md §4).                                       !
    !---------------------------------------------------------------------------------------!
    subroutine update_cohort_states(cohort, deriv, dt_yr, negligible)
       type(cohort_block),       intent(inout) :: cohort
@@ -261,7 +261,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! The leaf and storage carbon a trait change leaves, at constant total carbon: the      !
    ! light plasticity's resorption and a restart's re-acclimation, from meds_slow_state    !
-   ! (docs/science/plant_traits.md §4-§5). Leaf area follows the new SLA; the tissues     !
+   ! (docs/science/plant_traits.md §4-§5). Leaf area follows the new SLA; the tissues      !
    ! keep their temperatures.                                                              !
    !---------------------------------------------------------------------------------------!
    subroutine commit_trait_carbon(poly, leaf_carbon_new, storage_new)
@@ -357,7 +357,7 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Recruitment: a recruit pool the founding law releases founds one cohort at the       !
+   ! Recruitment: a recruit pool the founding law releases founds one cohort at the        !
    ! smallest tracked height and is reset; a smaller pool carries over. The driver credits !
    ! the pool daily (accumulate_recruit_pool) and this consumes it monthly (demography.md  !
    ! §2-§3). It changes the cohort count, so it lives with the cohort operators.           !

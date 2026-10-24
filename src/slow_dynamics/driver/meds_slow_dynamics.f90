@@ -190,13 +190,14 @@ contains
    end subroutine advance_boundary_dynamics
 
    !---------------------------------------------------------------------------------------!
-   ! restructure_stand -- the calendar's restructuring: monthly recruitment, cohort fusion,   !
-   ! cull, fission and sort; yearly patch disturbance, then patch fusion and termination. It  !
-   ! runs at the boundary, after the output has read the period's last step, so each record   !
-   ! describes one stand and the boundary's events belong to the period it opens              !
-   ! (docs/science/order_of_processes.md §5). The operators change the tissues' thermal mass  !
-   ! (fusion and fission re-derive the sapwood ring, nonlinear in dbh; the cull and the       !
-   ! treefall remove cohorts): one exchange per phase, declared (conservation.md §4).         !
+   ! restructure_stand -- the calendar's restructuring: monthly recruitment, cohort        !
+   ! fusion, cull, fission and sort; yearly patch disturbance, then patch fusion and       !
+   ! termination. It runs at the boundary, after the output has read the period's last     !
+   ! step, so each record describes one stand and the boundary's events belong to the      !
+   ! period it opens (docs/science/order_of_processes.md §5). The operators change the     !
+   ! tissues' thermal mass (fusion and fission re-derive the sapwood ring, nonlinear in    !
+   ! dbh; the cull and the treefall remove cohorts): one exchange per phase, declared      !
+   ! (conservation.md §4).                                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine restructure_stand(poly, cfg, is_new_month, is_new_year, ledger)
       type(polygon_t),     intent(inout) :: poly

@@ -30,7 +30,7 @@ module meds_plant_carbon_allocation
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! One cohort's carbon demand: apply turnover first (leaf_turnover_step for                 !
+   ! One cohort's carbon demand: apply turnover first (leaf_turnover_step for              !
    ! the leaves; the fine roots at their own rate under the leaves' gate, not dropping with      !
    ! them), and form the flush-capped growth demands from the post-shed pools                    !
    ! (docs/science/plant_phenology.md eq. (9) and §5).                                           !
