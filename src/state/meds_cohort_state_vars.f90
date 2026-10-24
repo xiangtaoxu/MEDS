@@ -698,31 +698,31 @@ contains
           * internal_energy_liquid(cohort%wood_temp(i))
    end function cohort_water_enthalpy
 
-   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The!
-   !      wood holds the whole wood store's water, its fine roots' share included. The fusion     !
-   !      weights, the demography operators and the slow ledger all take it from here, so they    !
-   !      agree on a cohort's thermal mass. ------------------------------------------------------!
+   !----- One cohort's leaf and wood heat capacity [J/m2 ground/K], from tissue_heat_capacity. The !
+   !      wood holds the whole wood store's water, its fine roots' share included, and each tissue !
+   !      the film it carries. The fusion weights, the demography operators and the slow ledger    !
+   !      all take it from here, so they agree on a cohort's thermal mass. ------------------------!
    pure subroutine cohort_tissue_heat_capacity(cohort, i, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
       real(wp),           intent(out) :: cap_leaf, cap_wood             !< [J/m2 ground/K]
       cap_leaf = tissue_heat_capacity(cohort%nplant(i), cohort%leaf_carbon(i), tissue_c_leaf,           &
-                                      max(cohort%leaf_water_mass(i), 0.0_wp))
+                                      max(cohort%leaf_water_mass(i), 0.0_wp) + cohort%leaf_surf_water(i))
       cap_wood = tissue_heat_capacity(cohort%nplant(i), cohort%wood_carbon(i), tissue_c_wood_dry,       &
-                                      max(cohort%wood_water_mass(i), 0.0_wp))
+                                      max(cohort%wood_water_mass(i), 0.0_wp) + cohort%wood_surf_water(i))
    end subroutine cohort_tissue_heat_capacity
 
    !----- A cohort's per-plant tissue masses, on which its energies are counted: each tissue's dry   !
-   !      heat capacity [J/K/plant] and its water [kg/plant] (docs/science/vegetation_energy_dynamics.md !
-   !      eq. (8)). --------------------------------------------------------------------------------!
+   !      heat capacity [J/K/plant] and its water [kg/plant], its own and the film it carries         !
+   !      (docs/science/vegetation_energy_dynamics.md eq. (8)). -------------------------------------!
    pure subroutine cohort_tissue_masses(cohort, i, dry_leaf, w_leaf, dry_wood, w_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
       real(wp),           intent(out) :: dry_leaf, w_leaf, dry_wood, w_wood
       dry_leaf = tissue_dry_heat_capacity(1.0_wp, cohort%leaf_carbon(i), tissue_c_leaf)
       dry_wood = tissue_dry_heat_capacity(1.0_wp, cohort%wood_carbon(i), tissue_c_wood_dry)
-      w_leaf   = max(cohort%leaf_water_mass(i), 0.0_wp)
-      w_wood   = max(cohort%wood_water_mass(i), 0.0_wp)
+      w_leaf   = max(cohort%leaf_water_mass(i), 0.0_wp) + cohort%leaf_surf_water(i)
+      w_wood   = max(cohort%wood_water_mass(i), 0.0_wp) + cohort%wood_surf_water(i)
    end subroutine cohort_tissue_masses
 
    !----- The tissue temperatures a cohort's energies give with the masses it holds (eq. (10)). A    !

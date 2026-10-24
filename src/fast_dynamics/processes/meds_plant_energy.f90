@@ -10,7 +10,7 @@
 module meds_plant_energy
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, stefan_boltzmann, latent_heat_vap, cp_liq
-   use meds_therm_lib,        only : enthalpy_vapor, tissue_energy_to_temp
+   use meds_therm_lib,        only : enthalpy_vapor, tissue_energy_to_temp, internal_energy_liquid
    use meds_canopy_water,     only : canopy_water_out_t
    implicit none
    private
@@ -62,11 +62,12 @@ module meds_plant_energy
       real(wp), allocatable :: leaf_emiss(:)  !< [-]       leaf LW emissivity
       real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
       !----- The heat-capacity inputs behind leaf_hcap_per_dt and wood_hcap_per_dt = (dry hcap +   !
-      !      water mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------!
+      !      water mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). The water !
+      !      is the tissue's own: the film it holds joins at the commit. --------------------------!
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry wood heat capacity
-      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood and fine roots)
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the wood store's water (sapwood, fine roots)
       real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity
-      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
+      real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water
    end type plant_energy_env_t
 
    !----- One latent pathway of a tissue's balance (docs/science/vegetation_energy_dynamics.md eq. !
@@ -173,16 +174,19 @@ contains
    ! (docs/science/vegetation_energy_dynamics.md eq. (2)). Wood comes first, because a     !
    ! leaf with no area takes its wood's temperature. A tissue pays the full specific       !
    ! enthalpy of the vapour it sheds, enthalpy_vapor at t_cas (the linearization base),    !
-   ! and the canopy air receives the same number; the film's pathway pays it less the      !
-   ! liquid enthalpy the film's water arrived with, so film, tissue and canopy air close   !
-   ! with no slack. The latent terms take the saturation deficit and its slope at this     !
-   ! canopy-air state; the conductances are env's and film's.                              !
+   ! and the canopy air receives the same number. Its film is part of it, at its           !
+   ! temperature: the film's pathway pays that enthalpy less the liquid enthalpy the       !
+   ! tissue's energy holds for the water (u_liq at its start-of-step temperature, as the   !
+   ! commit values the film's change), and the film's capture brings in the rain's liquid  !
+   ! enthalpy less that, so film, tissue and canopy air close with no slack. The latent    !
+   ! terms take the saturation deficit and its slope at this canopy-air state; the         !
+   ! conductances are env's and film's.                                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine canopy_tissue_energy(env, film, t_cas, q_cas, qsat_cas, dqsat_dt, rho, n, leaf_temp,       &
                                         wood_temp, transp, film_evap_leaf, film_evap_wood, h_canopy, qw_canopy, &
                                         transp_canopy, film_evap_canopy, rnet_canopy)
       type(plant_energy_env_t), intent(in)    :: env    !< the cohorts' energy-balance inputs
-      type(canopy_water_out_t), intent(in)    :: film   !< the films' wetted fractions, conductances and enthalpy
+      type(canopy_water_out_t), intent(in)    :: film   !< the films' wetted fractions, conductances and capture
       real(wp),                 intent(in)    :: t_cas      !< [K]       canopy-air temperature
       real(wp),                 intent(in)    :: q_cas      !< [kg/kg]   canopy-air specific humidity
       real(wp),                 intent(in)    :: qsat_cas   !< [kg/kg]   saturation specific humidity at t_cas
@@ -198,12 +202,11 @@ contains
       real(wp),                 intent(out)   :: film_evap_canopy   !< [kg/m2/s]  film evaporation into it
       real(wp),                 intent(out)   :: rnet_canopy        !< [W/m2]     net radiation the canopy absorbs
       type(latent_pathway_t) :: leaf_dry, leaf_wet, wood_dry, wood_wet
-      real(wp)    :: q_def, h_evap, h_film, lw_slope, lw_slope_w
+      real(wp)    :: q_def, h_evap, lw_slope, lw_slope_w, u_leaf0, u_wood0, q_film_leaf, q_film_wood
       real(wp)    :: dtl, transp_i, dh, drnet, dtw, transp_w, dh_w, drnet_w
       integer(ik) :: i
       q_def  = qsat_cas - q_cas
       h_evap = enthalpy_vapor(t_cas)
-      h_film = h_evap - film%film_liquid_enthalpy
       h_canopy         = 0.0_wp
       qw_canopy        = 0.0_wp
       transp_canopy    = 0.0_wp
@@ -219,17 +222,32 @@ contains
          else
             leaf_dry = latent_pathway(h_evap, rho, env%g_transp_leaf(i), dqsat_dt, q_def)
          end if
-         leaf_wet = latent_pathway(h_film, rho, film%g_film_leaf(i), dqsat_dt, q_def)
+         !----- Each film at its tissue's start-of-step temperature: it evaporates at the vapour's !
+         !      enthalpy less the liquid enthalpy its tissue holds for it, and its share of the    !
+         !      cohort's net capture brings the rain's liquid enthalpy less that. Water one film   !
+         !      passes to the other within the cohort leaves the giver at its own enthalpy,        !
+         !      charging it nothing, and reaches the receiver at the giver's: a falling leaf's     !
+         !      film, passed to its wood, cannot charge the vanishing leaf for the rain's          !
+         !      valuation. ------------------------------------------------------------------------!
+         u_leaf0     = internal_energy_liquid(env%t_leaf0(i))
+         u_wood0     = internal_energy_liquid(env%t_wood0(i))
+         q_film_leaf = (film%intercept_leaf(i) + film%transfer_lw(i)) * (film%rain_liquid_enthalpy - u_leaf0)     &
+                       + max(-film%transfer_lw(i), 0.0_wp) * (u_wood0 - u_leaf0)
+         q_film_wood = (film%intercept_wood(i) - film%transfer_lw(i)) * (film%rain_liquid_enthalpy - u_wood0)     &
+                       + max(film%transfer_lw(i), 0.0_wp) * (u_leaf0 - u_wood0)
+         leaf_wet = latent_pathway(h_evap - u_leaf0, rho, film%g_film_leaf(i), dqsat_dt, q_def)
          wood_dry = latent_pathway_t(h_vap=h_evap)                ! wood does not transpire
-         wood_wet = latent_pathway(h_film, rho, film%g_film_w(i), dqsat_dt, q_def)
+         wood_wet = latent_pathway(h_evap - u_wood0, rho, film%g_film_w(i), dqsat_dt, q_def)
          lw_slope   = lw_emission_slope(env%leaf_emiss(i), t_cas, env%lai(i))
          lw_slope_w = lw_emission_slope(env%wood_emiss(i), t_cas, env%wai(i))
          !----- Wood: q_wood_net enters as q_extra, as qwflux_wl does for the leaf. ----------------!
-         call tissue_energy_balance(env%abs_sw_wood(i), env%abs_lw_wood(i), env%q_wood_net(i), env%h_coeff_w(i), &
+         call tissue_energy_balance(env%abs_sw_wood(i), env%abs_lw_wood(i), env%q_wood_net(i) + q_film_wood,      &
+                                    env%h_coeff_w(i),                                                            &
                                     lw_slope_w, wood_dry, wood_wet, film%f_wet_c(i), t_cas, t_cas,              &
                                     env%wood_hcap_per_dt(i), env%t_wood0(i), dtw, wood_temp(i), transp_w,       &
                                     film_evap_wood(i), dh_w, drnet_w)
-         call tissue_energy_balance(env%abs_sw(i), env%abs_lw(i), env%qwflux_wl(i), env%h_coeff_leaf(i),         &
+         call tissue_energy_balance(env%abs_sw(i), env%abs_lw(i), env%qwflux_wl(i) + q_film_leaf,                 &
+                                    env%h_coeff_leaf(i),                                                         &
                                     lw_slope, leaf_dry, leaf_wet, film%f_wet_c(i), t_cas, wood_temp(i),          &
                                     env%leaf_hcap_per_dt(i), env%t_leaf0(i), dtl, leaf_temp(i), transp_i,       &
                                     film_evap_leaf(i), dh, drnet)
@@ -251,20 +269,26 @@ contains
    ! commit_tissue_energy -- each tissue's end-of-step energy and temperature, and the     !
    ! tissue store before and after, for the column's energy budget                         !
    ! (docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)). The energy gains the heat !
-   ! cap*(t_avg - t0), t_avg being the step's time-average of where the tissue relaxed to, !
-   ! and the enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)); the     !
-   ! temperature is read back with the end-of-step water. A tissue with no heat capacity   !
-   ! keeps a temperature: wood its own, a leaf its wood's.                                 !
+   ! cap*(t_avg - t0) at the capacity the step's balance ran on, the tissue's own without  !
+   ! its film, t_avg being the step's time-average of where the tissue relaxed to; the     !
+   ! enthalpy its water gained (docs/science/soil_plant_water.md eq. (5)); and its film's  !
+   ! change at the liquid enthalpy of its start-of-step temperature. The temperature is    !
+   ! read back with the end-of-step water and film, so the film's share of the heat is a   !
+   ! step behind, and it lies between the start-of-step temperature and t_avg even where a !
+   ! film far heavier than its tissue evaporated within the step. A tissue with no heat    !
+   ! capacity keeps a temperature: wood its own, a leaf its wood's.                        !
    !---------------------------------------------------------------------------------------!
    pure subroutine commit_tissue_energy(env, nplant, dt, t_leaf_avg, t_wood_avg, n, leaf_water_mass,          &
-                                        wood_water_mass, leaf_energy, wood_energy, leaf_temp, wood_temp,       &
-                                        store0, store1)
+                                        wood_water_mass, leaf_film0, wood_film0, leaf_film1, wood_film1,     &
+                                        leaf_energy, wood_energy, leaf_temp, wood_temp, store0, store1)
       type(plant_energy_env_t), intent(in)    :: env                                !< the cohorts' inputs for the step
       real(wp),                 intent(in)    :: nplant(:)                          !< [plant/m2]
       real(wp),                 intent(in)    :: dt                                 !< [s]
       real(wp),                 intent(in)    :: t_leaf_avg(:), t_wood_avg(:)       !< [K] each tissue's step average
       integer(ik),              intent(in)    :: n                                  !< [-] number of cohorts
       real(wp),                 intent(in)    :: leaf_water_mass(:), wood_water_mass(:)   !< [kg/plant] end of step
+      real(wp),                 intent(in)    :: leaf_film0(:), wood_film0(:)       !< [kg/m2 ground] films, start of step
+      real(wp),                 intent(in)    :: leaf_film1(:), wood_film1(:)       !< [kg/m2 ground] films, end of step
       real(wp),                 intent(inout) :: leaf_energy(:), wood_energy(:)     !< [J/m2 ground]
       real(wp),                 intent(inout) :: leaf_temp(:), wood_temp(:)         !< [K]
       real(wp),                 intent(out)   :: store0, store1                     !< [J/m2 ground] the tissue store
@@ -275,14 +299,16 @@ contains
       do i = 1_ik, n
          heat_leaf = env%leaf_hcap_per_dt(i) * dt * (t_leaf_avg(i) - env%t_leaf0(i))
          heat_wood = env%wood_hcap_per_dt(i) * dt * (t_wood_avg(i) - env%t_wood0(i))
-         enth_leaf = env%leaf_water_enth(i) * dt
-         enth_wood = env%wood_water_enth(i) * dt
+         enth_leaf = env%leaf_water_enth(i) * dt                                                           &
+                     + (leaf_film1(i) - leaf_film0(i)) * internal_energy_liquid(env%t_leaf0(i))
+         enth_wood = env%wood_water_enth(i) * dt                                                           &
+                     + (wood_film1(i) - wood_film0(i)) * internal_energy_liquid(env%t_wood0(i))
          store0 = store0 + leaf_energy(i) + wood_energy(i)
          leaf_energy(i) = leaf_energy(i) + heat_leaf + enth_leaf
          wood_energy(i) = wood_energy(i) + heat_wood + enth_wood
          store1 = store1 + leaf_energy(i) + wood_energy(i)
-         w_leaf = max(leaf_water_mass(i), 0.0_wp) * nplant(i)
-         w_wood = max(wood_water_mass(i), 0.0_wp) * nplant(i)
+         w_leaf = max(leaf_water_mass(i), 0.0_wp) * nplant(i) + leaf_film1(i)
+         w_wood = max(wood_water_mass(i), 0.0_wp) * nplant(i) + wood_film1(i)
          if (env%wood_dry_hcap(i) + w_wood * cp_liq > 0.0_wp)                                              &
             wood_temp(i) = tissue_energy_to_temp(wood_energy(i), w_wood, env%wood_dry_hcap(i))
          leaf_temp(i) = wood_temp(i)

@@ -20,7 +20,7 @@ module meds_fast_integ_update
    use meds_patch_state_vars, only : soil_water_store, soil_energy_store
    use meds_diag_vars,        only : CO_TRANSP
    use meds_surface, only : snow_take_exchange
-   use meds_therm_lib,        only : internal_energy_liquid, cas_enthalpy_to_temp
+   use meds_therm_lib,        only : cas_enthalpy_to_temp
    use meds_budget_check,     only : budget_check, BUDGET_ENERGY_RATE_FLOOR, BUDGET_WATER_RATE_FLOOR,           &
                                      BUDGET_CO2_RATE_FLOOR
    implicit none
@@ -29,11 +29,14 @@ module meds_fast_integ_update
    public :: commit_amounts_t, update_dynamic_state, close_ledgers
    public :: unpack_column_state, transp_per_leaf_area   ! used only by the tests
 
-   !----- What the update moved besides the march, which the ledgers book: the films' overflow at   !
-   !      their capacity and deficit below zero, the condensate deposited in the top soil layer with  !
-   !      its enthalpy, the tissue store before and after, and the snow pack after its exchange. ----!
+   !----- What the update moved besides the march, which the ledgers book: the films' overflow at  !
+   !      their capacity and deficit below zero, and their net enthalpy at the tissues'            !
+   !      start-of-step temperatures, the condensate deposited in the top soil layer with its      !
+   !      enthalpy, the tissue store (films included) before and after, and the snow pack after    !
+   !      its exchange. ---------------------------------------------------------------------------!
    type :: commit_amounts_t
       real(wp) :: surf_overflow = 0.0_wp, surf_deficit = 0.0_wp   !< [kg/m2]
+      real(wp) :: surf_net_enth = 0.0_wp                          !< [J/m2] (overflow - deficit) x u_liq
       real(wp) :: cond_mass     = 0.0_wp                          !< [kg/m2]
       real(wp) :: cond_enth     = 0.0_wp                          !< [J/m2]
       real(wp) :: tissue_store0 = 0.0_wp, tissue_store1 = 0.0_wp  !< [J/m2]
@@ -67,10 +70,12 @@ contains
       type(fast_dynamic_state_t), intent(inout) :: dynamic
       type(fast_output_t),        intent(inout) :: out
       type(commit_amounts_t),     intent(out)   :: moved
-      real(wp)    :: t_leaf_avg(static%n), t_wood_avg(static%n)
+      real(wp)    :: t_leaf_avg(static%n), t_wood_avg(static%n), leaf_film0(static%n), wood_film0(static%n)
       integer(ik) :: n, nsl
 
       n   = static%n
+      leaf_film0(1:n) = dynamic%leaf_surf_water(1:n)              ! the films at the step's start
+      wood_film0(1:n) = dynamic%wood_surf_water(1:n)
       nsl = site%soil_profile%n_active
       y_out%theta(1:nsl)     = frozen%hydrology%theta1(1:nsl)
       y_out%w_surface        = frozen%hydrology%w_surface1
@@ -78,8 +83,9 @@ contains
       if (cfg%canopy_water_on) then
          call clamp_canopy_film(y_out%leaf_surf_water, y_out%wood_surf_water, static%lai, static%wai,             &
                                 cfg%pft%leaf_surf_water_max(static%pft(1:n)),                                  &
-                                cfg%pft%wood_surf_water_max(static%pft(1:n)), n, moved%surf_overflow,          &
-                                moved%surf_deficit)
+                                cfg%pft%wood_surf_water_max(static%pft(1:n)), frozen%tissue%t_leaf0,           &
+                                frozen%tissue%t_wood0, n, moved%surf_overflow, moved%surf_deficit,             &
+                                moved%surf_net_enth)
       end if
       !----- The condensate lands before the soil's temperatures are diagnosed, so the top layer's  !
       !      temperature includes its water and enthalpy. ------------------------------------------!
@@ -97,7 +103,8 @@ contains
       t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
       t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast
       call commit_tissue_energy(frozen%tissue, static%nplant, dt_fast, t_leaf_avg, t_wood_avg, n,                 &
-                                dynamic%leaf_water_mass, dynamic%wood_water_mass, dynamic%leaf_energy,            &
+                                dynamic%leaf_water_mass, dynamic%wood_water_mass, leaf_film0, wood_film0,         &
+                                dynamic%leaf_surf_water, dynamic%wood_surf_water, dynamic%leaf_energy,            &
                                 dynamic%wood_energy, dynamic%leaf_temp, dynamic%wood_temp, moved%tissue_store0,   &
                                 moved%tissue_store1)
       !----- Each cohort's transpiration over the step, as the leaf water was debited. -------------!
@@ -135,7 +142,7 @@ contains
       type(step_report_t),       intent(inout) :: report
       real(wp)    :: cas_mass_capacity, cas_molar_capacity, enth0, shv0, co20, enth1, shv1, co21
       real(wp)    :: e_soil0, e_soil1, w_soil0, w_soil1, w_plant0, w_plant1, w_surface0, e_pond0, e_pond1
-      real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1, intercept_total
+      real(wp)    :: surf_water0, surf_water1, intercept_total
       integer(ik) :: n, nsl
 
       n   = static%n
@@ -160,12 +167,10 @@ contains
       !      (docs/science/plant_hydraulics.md eqs. (1)-(2)). ----------------------------------------!
       w_plant0 = plant_water_store(static%nplant, y%leaf_water_mass,     y%wood_water_mass,     n)
       w_plant1 = plant_water_store(static%nplant, y_out%leaf_water_mass, y_out%wood_water_mass, n)
-      !----- The films, per m2 of ground, valued at the liquid enthalpy the intercepted water arrived  !
-      !      with, as surface_derivs charges the tissue (0 with canopy_water_on off). ----------------!
+      !----- The films, per m2 of ground (0 with canopy_water_on off). Their energy is their       !
+      !      tissues', in the tissue store. -------------------------------------------------------!
       surf_water0 = canopy_film_store(y%leaf_surf_water,     y%wood_surf_water,     n)
       surf_water1 = canopy_film_store(y_out%leaf_surf_water, y_out%wood_surf_water, n)
-      surf_enth0  = surf_water0 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
-      surf_enth1  = surf_water1 * internal_energy_liquid(frozen%hydrology%t_film_valuation)
       intercept_total = sum(frozen%film%intercept_leaf(1:n) + frozen%film%intercept_wood(1:n))
 
       report%exports%atm_heat_export = acc%atm_heat_out
@@ -201,17 +206,15 @@ contains
                         acc%whole_wat_out + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast  &
                         + moved%surf_overflow - moved%surf_deficit,                                        &
                         dt_fast, BUDGET_WATER_RATE_FLOOR, 'whole_water', halt)
-      !----- Whole energy: meltwater passes pack -> pond, both stores, so it telescopes. -------------!
+      !----- Whole energy: meltwater passes pack -> pond, both stores, so it telescopes. The       !
+      !      films' capture comes in at the rain's liquid enthalpy, and the update's cut leaves at !
+      !      the tissues' (moved%surf_net_enth). --------------------------------------------------!
       call budget_check(report%ledgers%whole_energy,                                                               &
-                        e_soil0 + cas_mass_capacity*enth0 + surf_enth0 + frozen%snow%enth0 + e_pond0               &
-                        + moved%tissue_store0,                                                             &
-                        e_soil1 + cas_mass_capacity*enth1 + surf_enth1 + moved%snow_enth1 + e_pond1                &
-                        + moved%tissue_store1,                                                             &
-                        acc%whole_enth_in + intercept_total*dt_fast*internal_energy_liquid(frozen%hydrology%t_film_valuation) &
+                        e_soil0 + cas_mass_capacity*enth0 + frozen%snow%enth0 + e_pond0 + moved%tissue_store0,      &
+                        e_soil1 + cas_mass_capacity*enth1 + moved%snow_enth1 + e_pond1 + moved%tissue_store1,       &
+                        acc%whole_enth_in + intercept_total*dt_fast*frozen%film%rain_liquid_enthalpy               &
                                           + frozen%snow%acc_enth + frozen%hydrology%ground_inflow_enth*dt_fast, &
-                        acc%whole_enth_out + (moved%surf_overflow - moved%surf_deficit)                     &
-                        * internal_energy_liquid(frozen%hydrology%t_film_valuation)                         &
-                                           + frozen%hydrology%runoff_enth*dt_fast,                          &
+                        acc%whole_enth_out + moved%surf_net_enth + frozen%hydrology%runoff_enth*dt_fast,         &
                         dt_fast, BUDGET_ENERGY_RATE_FLOOR, 'whole_energy', halt)
    end subroutine close_ledgers
 

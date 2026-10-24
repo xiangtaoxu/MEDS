@@ -49,6 +49,12 @@ program test_fusion_cohort
    poly%cohort%wood_water_mass(1) = 3.0_wp ; poly%cohort%wood_water_mass(2) = 7.0_wp
    poly%cohort%leaf_temp(1) = 300.0_wp ; poly%cohort%leaf_temp(2) = 305.0_wp
    poly%cohort%wood_temp(1) = 298.0_wp ; poly%cohort%wood_temp(2) = 306.0_wp
+   !----- And the canopy films [kg/plant]: nplant-weighted like the tissue water, and part of the  !
+   !      tissues' heat capacity, so set before the energies. ------------------------------------!
+   poly%cohort%leaf_surf_water(1) = 0.02_wp
+   poly%cohort%leaf_surf_water(2) = 0.06_wp
+   poly%cohort%wood_surf_water(1) = 0.01_wp
+   poly%cohort%wood_surf_water(2) = 0.00_wp
    !----- ...through their energies, the state: each tissue holds what it does at those temperatures. !
    call hold_cohort_tissue_temps(poly%cohort, 1_ik)
    call hold_cohort_tissue_temps(poly%cohort, 2_ik)
@@ -60,11 +66,6 @@ program test_fusion_cohort
    poly%cohort%leaf_resp_accum(1) = 0.2_wp ; poly%cohort%leaf_resp_accum(2) = 0.9_wp
    poly%cohort%stem_resp_accum(1) = 0.1_wp ; poly%cohort%stem_resp_accum(2) = 0.6_wp
    poly%cohort%root_resp_accum(1) = 0.3_wp ; poly%cohort%root_resp_accum(2) = 0.8_wp
-   !----- And the canopy films [kg/plant]: nplant-weighted like the tissue water. ------------------!
-   poly%cohort%leaf_surf_water(1) = 0.02_wp
-   poly%cohort%leaf_surf_water(2) = 0.06_wp
-   poly%cohort%wood_surf_water(1) = 0.01_wp
-   poly%cohort%wood_surf_water(2) = 0.00_wp
    wr = poly%cohort%nplant(1) * poly%cohort%leaf_area(1)
    wd = poly%cohort%nplant(2) * poly%cohort%leaf_area(2)
    np1 = poly%cohort%nplant(1) ; np2 = poly%cohort%nplant(2)   ! captured BEFORE the fuse

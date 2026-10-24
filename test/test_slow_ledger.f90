@@ -85,10 +85,10 @@ program test_slow_ledger
    poly%patch%recruit_pool(:,1)          = 0.0_wp
    poly%cohort%leaf_water_mass(1:2) = 0.02_wp
    poly%cohort%wood_water_mass(1:2) = 0.05_wp
-   call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! the tissues' energy with that water
-   call hold_cohort_tissue_temps(poly%cohort, 2_ik)
    poly%cohort%leaf_surf_water(1:2) = 0.01_wp
    poly%cohort%wood_surf_water(1:2) = 0.03_wp
+   call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! the tissues' energy with that water and film
+   call hold_cohort_tissue_temps(poly%cohort, 2_ik)
 
    !=== 1. STORE COVERAGE: every reservoir must reach the total, in its own currency. =========!
    call moves_water ('soil theta',        perturb_theta,        0.01_wp * soil%dz(1) * 1000.0_wp)

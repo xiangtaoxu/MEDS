@@ -415,7 +415,6 @@ module meds_fast_integ_types
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water
       real(wp) :: w_surface_energy1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff
-      real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
       !----- Water a supersaturated top layer pushed up into the pond, and the enthalpy it took, valued at !
       !      the layer's start-of-step temperature (the pond received the same number). ----------------!
       real(wp) :: exfiltration  = 0.0_wp          !< [kg/m2/s] top layer -> pond

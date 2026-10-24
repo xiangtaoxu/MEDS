@@ -164,11 +164,9 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
 [`science/vegetation_energy_dynamics.md`](science/vegetation_energy_dynamics.md).
 
-- **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water
-  has no thermal state of its own: it is valued at one reference temperature per step
-  (`t_film_valuation`) and cannot freeze. Now that a tissue's energy is its state, a film could join
-  its tissue's energy, at the tissue's temperature, so that rain warms or cools the leaves it wets; a
-  wet leaf's heat capacity would rise by about 10–20 %.
+- **A freezing canopy film.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water is part of its tissue's energy, at the
+  tissue's temperature (*done in beta*), but stays liquid below 0 °C, as tissue water does; rime and
+  glaze wait for tissue freezing (#456).
 - **Intercepted-water evaporation under ERA5-Land forcing.** *Open question.* [#433](https://github.com/xiangtaoxu/MEDS/issues/433) At BCI the
   canopy films evaporate about 34 % of the rain and 75 % of ET on ERA5-Land, against about 11 % and 20 %
   on the tower's forcing; the drizzle of the reanalysis, the film capacities and the wet fraction's form
