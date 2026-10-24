@@ -74,7 +74,7 @@ contains
       call update_cohort_derivatives(poly, step, cfg%dt_years, n_window, poly%growth_hist_pos)
       step%nplant_before      = poly%cohort%nplant(1:poly%cohort%n)
       step%leaf_carbon_before = poly%cohort%leaf_carbon(1:poly%cohort%n)
-      call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%negligible_nplant)
+      call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%demography%negligible_nplant)
    end subroutine commit_vegetation_step
 
    !---------------------------------------------------------------------------------------!
@@ -664,36 +664,28 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Cohort fusion in passes, the tolerance growing geometrically from                     !
-   ! cohort_size_tol_min, until no patch holds more than max_cohort cohorts; a negative    !
-   ! max_cohort fuses every same-PFT pair (demography.md §3).                              !
+   ! cohort_size_tol_min, until no patch holds more than max_cohort cohorts              !
+   ! (demography.md §3).                                                                   !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_cohorts(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
-      integer(ik) :: ifus, maxc
-      logical     :: force
+      integer(ik) :: ifus
 
-      if (cfg%max_cohort == 0_ik) return
-      force = (cfg%max_cohort < 0_ik)
-      maxc  = abs(cfg%max_cohort)
-      tol   = cfg%cohort_size_tol_min
-
-      do ifus = 1_ik, cfg%n_cohort_fusion_iter
-         call fuse_pass(poly, cfg, tol, force)
-         if (.not. force) then
-            if (max_cohort_count(poly) <= maxc) exit
-         end if
-         tol = tol * cfg%cohort_size_tol_mult
+      tol = cfg%demography%cohort_size_tol_min
+      do ifus = 1_ik, cfg%demography%n_cohort_fusion_iter
+         call fuse_pass(poly, cfg, tol)
+         if (max_cohort_count(poly) <= cfg%demography%max_cohort) exit
+         tol = tol * cfg%demography%cohort_size_tol_mult
       end do
    end subroutine fuse_cohorts
 
    !----- One fusion sweep over all patches at a fixed tolerance. --------------------------!
-   subroutine fuse_pass(poly, cfg, tol, force)
+   subroutine fuse_pass(poly, cfg, tol)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
-      logical,             intent(in)    :: force
       logical, allocatable :: alive(:)
       integer(ik) :: ip, i0, i1, recc, donc
       real(wp)    :: diff_height, lai_comb, h_top
@@ -718,10 +710,10 @@ contains
                   if (.not. alive(donc)) cycle
                   if (cohort%pft(donc) /= cohort%pft(recc)) cycle
                   lai_comb = cohort%nplant(recc) * cohort%leaf_area(recc) + cohort%nplant(donc) * cohort%leaf_area(donc)
-                  if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
+                  if (lai_comb >= cfg%demography%cohort_lai_cap) cycle
                   diff_height = abs(cohort%height(donc) - cohort%height(recc))
-                  if (force .or. diff_height < h_top * tol) then
-                     call fuse_2_cohorts(poly, recc, donc, cfg%conservation_tol)
+                  if (diff_height < h_top * tol) then
+                     call fuse_2_cohorts(poly, recc, donc, cfg%demography%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.
                   end if
@@ -826,14 +818,13 @@ contains
       integer(ik) :: iter, i, n0, m, nsplit
       real(wp)    :: eps, agb_before, agb_after, wc0
 
-      if (.not. cfg%enable_cohort_fission) return
-      eps = cfg%split_eps
+      eps = cfg%demography%split_eps
 
-      do iter = 1_ik, cfg%n_cohort_fusion_iter
+      do iter = 1_ik, cfg%demography%n_cohort_fusion_iter
          n0 = poly%cohort%n
          nsplit = 0_ik
          do i = 1_ik, n0
-            if (poly%cohort%nplant(i) * poly%cohort%leaf_area(i) > cfg%cohort_lai_cap) nsplit = nsplit + 1_ik
+            if (poly%cohort%nplant(i) * poly%cohort%leaf_area(i) > cfg%demography%cohort_lai_cap) nsplit = nsplit + 1_ik
          end do
          if (nsplit == 0_ik) exit
          agb_before = sum(poly%cohort%nplant(1:n0) * poly%cohort%agb(1:n0))
@@ -841,7 +832,7 @@ contains
          m = n0
          associate (cohort => poly%cohort)
             do i = 1_ik, n0
-               if (cohort%nplant(i) * cohort%leaf_area(i) <= cfg%cohort_lai_cap) cycle
+               if (cohort%nplant(i) * cohort%leaf_area(i) <= cfg%demography%cohort_lai_cap) cycle
                cohort%nplant(i) = 0.5_wp * cohort%nplant(i)
                m = m + 1_ik
                !----- The wood carbon, not the diameter, moves by +/-eps and the other pools stay !
@@ -866,7 +857,7 @@ contains
          do i = n0 + 1_ik, m
             call assign_cohort_id(poly, i)
          end do
-         if (.not. conserved(agb_before, agb_after, agb_before, cfg%conservation_tol))             &
+         if (.not. conserved(agb_before, agb_after, agb_before, cfg%demography%conservation_tol))             &
             error stop 'split_cohorts: AGB conservation violated'
          call rebuild_cohort_map(poly)
          call sort_cohorts(poly)
@@ -898,8 +889,8 @@ contains
       allocate(keep(n))
       associate (cohort => poly%cohort, pft => poly%cohort%pft_table, patch => poly%patch)
          do i = 1_ik, n
-            keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
-                      (cohort%nplant(i) > cfg%negligible_nplant)
+            keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%demography%min_cohort_agb) .and.               &
+                      (cohort%nplant(i) > cfg%demography%negligible_nplant)
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
             !----- The culled cohort's water goes to the ground down the channel turnover        !
@@ -979,7 +970,7 @@ contains
       type(polygon_t),       intent(in)  :: poly
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip
-      real(wp),            intent(out) :: light(:)         ! size cfg%n_height_layers
+      real(wp),            intent(out) :: light(:)         ! size cfg%demography%n_height_layers
       call light_profile_of(poly, cfg, ip, poly%patch%cohort_offset(ip),                                   &
                             poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik, light)
    end subroutine patch_light_profile
@@ -990,14 +981,14 @@ contains
       type(polygon_t),     intent(in)  :: poly
       type(meds_config_t), intent(in)  :: cfg
       integer(ik),         intent(in)  :: ip, i0, i1
-      real(wp),            intent(out) :: light(:)         ! size cfg%n_height_layers
-      real(wp)    :: cum_lai(cfg%n_height_layers)
+      real(wp),            intent(out) :: light(:)         ! size cfg%demography%n_height_layers
+      real(wp)    :: cum_lai(cfg%demography%n_height_layers)
       integer(ik) :: i, ihgt, nl
-      nl = cfg%n_height_layers
+      nl = cfg%demography%n_height_layers
       cum_lai = 0.0_wp
       do i = i0, i1
          if (poly%cohort%owner_patch(i) /= ip) cycle
-         ihgt = min(nl, max(1_ik, count(cfg%height_edges < poly%cohort%height(i)) + 1_ik))
+         ihgt = min(nl, max(1_ik, count(cfg%demography%height_edges < poly%cohort%height(i)) + 1_ik))
          cum_lai(ihgt) = cum_lai(ihgt) + poly%cohort%nplant(i) * poly%cohort%leaf_area(i)
       end do
       !----- Integrate top-down: cum_lai(ihgt) = LAI in this layer and every layer above. --!
@@ -1005,43 +996,37 @@ contains
          cum_lai(ihgt) = cum_lai(ihgt) + cum_lai(ihgt + 1_ik)
       end do
       do ihgt = 1_ik, nl
-         light(ihgt) = exp(-cfg%light_ext_coeff_fusefiss * cum_lai(ihgt))
+         light(ihgt) = exp(-cfg%demography%light_ext_coeff_fusefiss * cum_lai(ihgt))
       end do
    end subroutine light_profile_of
 
    !---------------------------------------------------------------------------------------!
    ! Patch fusion (demography.md §4) in passes, the tolerance growing from                 !
    ! patch_light_tol to patch_light_tol_max, until no site holds more than max_patch       !
-   ! patches. Patches less alike than the last tolerance stay apart even then, unless      !
-   ! max_patch < 0 forces fusion. Only patches of one site fuse.                           !
+   ! patches. Patches less alike than the last tolerance stay apart even then. Only        !
+   ! patches of one site fuse.                                                             !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
-      integer(ik) :: it, maxp
-      logical     :: force
+      integer(ik) :: it
 
-      if (cfg%max_patch == 0_ik) return
-      force = (cfg%max_patch < 0_ik)
-      maxp  = abs(cfg%max_patch)
-      tol   = cfg%patch_light_tol
-
-      do it = 1_ik, cfg%n_patch_fusion_iter
-         call patch_fuse_pass(poly, cfg, tol, force)
-         if (.not. force .and. maxval(poly%site%patch_count(1:poly%site%n)) <= maxp) exit
-         tol = tol * cfg%patch_light_tol_mult
+      tol = cfg%demography%patch_light_tol
+      do it = 1_ik, cfg%demography%n_patch_fusion_iter
+         call patch_fuse_pass(poly, cfg, tol)
+         if (maxval(poly%site%patch_count(1:poly%site%n)) <= cfg%demography%max_patch) exit
+         tol = tol * cfg%demography%patch_light_tol_mult
       end do
    end subroutine fuse_patches
 
    !----- One fusion pass at a fixed tolerance: a receptor only absorbs patches after it, and an !
    !      absorbed patch absorbs nothing, so the cohort block can stay as it is until the pass   !
    !      ends. patch_compact then regroups it once. --------------------------------------------!
-   subroutine patch_fuse_pass(poly, cfg, tol, force)
+   subroutine patch_fuse_pass(poly, cfg, tol)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: tol
-      logical,             intent(in)    :: force
       logical,     allocatable :: alive(:)
       real(wp),    allocatable :: prof(:,:), lr(:), ld(:)
       integer(ik), allocatable :: last(:), ncoh(:)   !< each patch's last cohort position and its count
@@ -1051,7 +1036,7 @@ contains
 
       np = poly%patch%n
       if (np < 2_ik) return
-      nl = cfg%n_height_layers
+      nl = cfg%demography%n_height_layers
       allocate(alive(np), prof(nl, np), lr(nl), ld(nl), last(np), ncoh(np))
       alive = .true.
       do recp = 1_ik, np
@@ -1084,9 +1069,9 @@ contains
                   npop = npop + 1_ik
                end do
                if (npop > 0_ik) davg = davg / real(npop, wp)
-               similar = (davg <= tol) .and. (dmax <= tol * cfg%patch_light_maxdev_factor)
+               similar = (davg <= tol) .and. (dmax <= tol * cfg%demography%patch_light_maxdev_factor)
             end if
-            if (force .or. similar) then
+            if (similar) then
                call fuse_patch_into(poly, recp, donp, poly%patch%cohort_offset(recp), last(recp))
                last(recp) = max(last(recp), last(donp))
                ncoh(recp) = ncoh(recp) + ncoh(donp)
@@ -1180,7 +1165,7 @@ contains
       np = poly%patch%n
       if (np < 1_ik) return
       allocate(pkeep(np))
-      pkeep = poly%patch%area(1:np) >= cfg%min_patch_area
+      pkeep = poly%patch%area(1:np) >= cfg%demography%min_patch_area
       !----- Every site keeps at least its largest patch. -------------------------------------!
       do is = 1_ik, poly%site%n
          p0 = poly%site%patch_offset(is)

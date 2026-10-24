@@ -30,6 +30,8 @@ module meds_config
    use meds_soil_derive,        only : soil_layers, build_soil_profile, map_layer_texture
    use meds_biophysics_params,  only : snow_params_t, aero_params_t
    use meds_biogeochem_params,  only : soil_carbon_params_t
+   use meds_demography_params,  only : demography_params_t
+   use meds_trait_dynamics_params, only : trait_dynamics_params_t
    use meds_forcing_params,     only : forcing_params_t
    use meds_output_params,      only : output_params_t
    use meds_region_params,      only : region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -77,6 +79,7 @@ module meds_config
       !----- [fast]. --------------------------------------------------------------------------!
       logical     :: fast_biophysics_on                   !< the sub-daily loop
       real(wp)    :: dt_fast                              !< [s] sub-daily step
+      real(wp)    :: gpp_ref = 0.0_wp                     !< [kgC/m2 leaf/yr] the stub GPP, loop off
       integer(ik) :: time_integrator     = INTEG_ESDIRK2  !< INTEG_ESDIRK2 | INTEG_RK45
       logical     :: esdirk2_adaptive    = .true.         !< adaptive sub-steps; .false.: esdirk2_fixed_substep
       integer(ik) :: esdirk2_fixed_substep = 4_ik         !< sub-steps per dt_fast when not adaptive
@@ -101,38 +104,15 @@ module meds_config
       type(snow_params_t) :: snow
       type(aero_params_t) :: aero
 
-      !----- [demography]. ---------------------------------------------------------------------!
-      logical     :: demography_on                        !< .false.: the stand's structure is frozen
-      logical     :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
-      integer(ik) :: max_cohort, n_cohort_fusion_iter
-      real(wp)    :: cohort_size_tol_min, cohort_size_tol_max
-      real(wp)    :: cohort_lai_cap                       !< [m2/m2]
-      real(wp)    :: min_cohort_agb                       !< [kgC/m2]
-      real(wp)    :: negligible_nplant                    !< [plant/m2]
-      real(wp)    :: split_eps
-      logical     :: enable_cohort_fission
-      integer(ik) :: n_height_layers, max_patch, n_patch_fusion_iter
-      real(wp)    :: patch_light_tol, patch_light_tol_max
-      real(wp)    :: light_ext_coeff_fusefiss = 0.5_wp    !< [-]
-      real(wp)    :: patch_light_maxdev_factor
-      real(wp)    :: min_patch_area, conservation_tol
-      real(wp)    :: growth_memory_days                   !< [day]
-      real(wp)    :: cohort_size_tol_mult                 !< DERIVED geometric step of the cohort tolerance
-      real(wp)    :: patch_light_tol_mult                 !< DERIVED geometric step of the patch tolerance
-      real(wp), allocatable :: height_edges(:)            !< [m] DERIVED interior edges of the height layers
-      !----- [disturbance], [recruitment]. ------------------------------------------------------!
-      real(wp) :: patch_disturbance_rate                  !< [1/yr]
-      real(wp) :: disturbance_survive_height              !< [m]
-      real(wp) :: min_recruit_size                        !< [plant/m2]
+      !----- [demography], with the treefall gaps and recruitment. --------------------------!
+      type(demography_params_t) :: demography
 
       !----- [init], [output] (the diagnostics and the state files). -----------------------------!
       type(init_params_t)   :: init
       type(output_params_t) :: output
 
-      !----- [carbon], [trait_dynamics]. --------------------------------------------------------!
-      real(wp) :: gpp_ref = 0.0_wp                        !< [kgC/m2 leaf/yr] stub GPP, fast loop off
-      logical  :: trait_plasticity_on       = .false.     !< light acclimation of the leaf traits
-      logical  :: fineroot_turnover_plastic = .false.     !< fine roots turn over with their leaves
+      !----- [trait_dynamics]. ---------------------------------------------------------------!
+      type(trait_dynamics_params_t) :: trait_dynamics
 
       !----- [leaf_physiology]. ------------------------------------------------------------------!
       type(leaf_physiology_params_t) :: leaf_physiology
@@ -164,24 +144,26 @@ contains
       else
          cfg%n_fast_per_slow = 1_ik
       end if
-      if (cfg%n_cohort_fusion_iter > 1_ik) then
-         cfg%cohort_size_tol_mult = (cfg%cohort_size_tol_max / cfg%cohort_size_tol_min)             &
-                               ** (1.0_wp / real(cfg%n_cohort_fusion_iter - 1_ik, wp))
-      else
-         cfg%cohort_size_tol_mult = 1.0_wp
-      end if
-      if (cfg%n_patch_fusion_iter > 1_ik .and. cfg%patch_light_tol > 0.0_wp) then
-         cfg%patch_light_tol_mult = (cfg%patch_light_tol_max / cfg%patch_light_tol)                  &
-                               ** (1.0_wp / real(cfg%n_patch_fusion_iter - 1_ik, wp))
-      else
-         cfg%patch_light_tol_mult = 1.0_wp
-      end if
-      if (allocated(cfg%height_edges)) deallocate(cfg%height_edges)
-      allocate(cfg%height_edges(cfg%n_height_layers - 1_ik))
-      do i = 1_ik, cfg%n_height_layers - 1_ik
-         cfg%height_edges(i) = real(i, wp) * maxval(cfg%pft%allom(1:cfg%pft%n)%hgt_max)          &
-                               / real(cfg%n_height_layers, wp)
-      end do
+      associate (d => cfg%demography)
+         if (d%n_cohort_fusion_iter > 1_ik) then
+            d%cohort_size_tol_mult = (d%cohort_size_tol_max / d%cohort_size_tol_min)             &
+                                  ** (1.0_wp / real(d%n_cohort_fusion_iter - 1_ik, wp))
+         else
+            d%cohort_size_tol_mult = 1.0_wp
+         end if
+         if (d%n_patch_fusion_iter > 1_ik .and. d%patch_light_tol > 0.0_wp) then
+            d%patch_light_tol_mult = (d%patch_light_tol_max / d%patch_light_tol)                  &
+                                  ** (1.0_wp / real(d%n_patch_fusion_iter - 1_ik, wp))
+         else
+            d%patch_light_tol_mult = 1.0_wp
+         end if
+         if (allocated(d%height_edges)) deallocate(d%height_edges)
+         allocate(d%height_edges(d%n_height_layers - 1_ik))
+         do i = 1_ik, d%n_height_layers - 1_ik
+            d%height_edges(i) = real(i, wp) * maxval(cfg%pft%allom(1:cfg%pft%n)%hgt_max)          &
+                                  / real(d%n_height_layers, wp)
+         end do
+      end associate
    end subroutine derive_config
 
    !----- Every derived value, in one place for the loader and the test builder: the run's     !
@@ -227,7 +209,7 @@ contains
    !      moving-average ring. --------------------------------------------------------------!
    pure integer(ik) function growth_window_steps(cfg) result(nw)
       type(meds_config_t), intent(in) :: cfg
-      nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
+      nw = max(1_ik, nint(cfg%demography%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
 
    !----- Site `is`'s configuration: the polygon's, with the site's ground when its table gives  !

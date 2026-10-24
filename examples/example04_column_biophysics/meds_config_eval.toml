@@ -21,9 +21,10 @@ canopy_water_on     = true       # the canopy intercepts rain and its film evapo
 
 [demography]
 demography_on             = true
-do_cohort_fissfuse        = true
-do_patch_disturbance      = true
-do_patch_fissfuse         = true
+recruitment_on            = true
+cohort_fusion_on          = true
+patch_disturbance_on      = true
+patch_fusion_on           = true
 max_cohort                = 60
 n_cohort_fusion_iter      = 6
 cohort_size_tol_min       = 0.02
@@ -32,7 +33,7 @@ cohort_lai_cap            = 1.0
 min_cohort_agb            = 1.0e-6
 negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
-enable_cohort_fission     = true
+cohort_fission_on         = true
 n_height_layers           = 16
 max_patch                 = 60
 n_patch_fusion_iter       = 6
@@ -42,13 +43,9 @@ patch_light_maxdev_factor = 1.5
 min_patch_area            = 1.0e-4
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
-
-[disturbance]
-patch_disturbance_rate     = 0.014
+patch_disturbance_rate    = 0.014
 disturbance_survive_height = 10.0
-
-[recruitment]
-min_recruit_size = 1.0e-2
+min_recruit_size          = 1.0e-2
 
 [init]
 init_mode    = 1                  # a census: one patch per 20 m quadrat, fused by MEDS before the first step
@@ -56,7 +53,6 @@ census_file  = "data/bci_census2010_meds.csv"   # run_example.py builds it from 
 pft_config   = "pft_parameters.toml"
 soil_temp    = 298.65             # [K] the tower's mean air temperature, as [soil].deep_temp
 soil_theta   = 0.42               # [m3/m3] wet season: August is three months into it ([soil] field capacity)
-
 
 [output]
 state_write       = false

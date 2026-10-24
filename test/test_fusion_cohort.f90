@@ -85,7 +85,7 @@ program test_fusion_cohort
    poly%cohort%diag%v(CO_LEAF_TEMP, 1:2) = [300.0_wp, 305.0_wp]
    poly%cohort%diag%v(CO_WOOD_TEMP, 1:2) = [298.0_wp, 306.0_wp]
    poly%cohort%diag%w(1:2) = 1.0_wp
-   call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%conservation_tol)
+   call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%demography%conservation_tol)
    call check_close(poly%cohort%nplant(1), 0.8_wp, 1.0e-12_wp, 'fused nplant must be summed')
    call check_close(poly%cohort%nplant(1)*poly%cohort%agb(1), agb_tot, 1.0e-12_wp,                  &
                     'fused total AGB not conserved')
@@ -145,9 +145,9 @@ program test_fusion_cohort
    n0   = total_nplant(poly)
    agb0 = total_agb(poly)
    call fuse_cohorts(poly, cfg)
-   call check(max_cohort_count(poly) <= abs(cfg%max_cohort), 'fusion did not reach max_cohort')
+   call check(max_cohort_count(poly) <= abs(cfg%demography%max_cohort), 'fusion did not reach max_cohort')
    call check_close(total_nplant(poly), n0,   1.0e-10_wp, 'fusion broke nplant conservation')
-   call check_close(total_agb(poly),    agb0, cfg%conservation_tol, 'fusion broke AGB conservation')
+   call check_close(total_agb(poly),    agb0, cfg%demography%conservation_tol, 'fusion broke AGB conservation')
 
    !=== 2b. The fusion tolerance is a share of the patch's top height. Two saplings 1.0 and 1.1 cm  !
    !        wide (about 0.15 m apart) stay apart in a stand of saplings, where 0.02 of the top is   !
@@ -179,7 +179,7 @@ program test_fusion_cohort
    call split_cohorts(poly, cfg)
    call check(poly%cohort%n >= 2_ik, 'split did not create a second cohort')
    call check_close(total_nplant(poly), n0,   1.0e-12_wp, 'split broke nplant conservation')
-   call check_close(total_agb(poly),    agb0, cfg%conservation_tol, 'split broke AGB conservation')
+   call check_close(total_agb(poly),    agb0, cfg%demography%conservation_tol, 'split broke AGB conservation')
    call check_close(sum(poly%cohort%nplant(1:poly%cohort%n) * (poly%cohort%leaf_surf_water(1:poly%cohort%n)        &
                                                              + poly%cohort%wood_surf_water(1:poly%cohort%n))),   &
                     film0, 1.0e-12_wp, 'split broke canopy film water conservation')
@@ -218,7 +218,7 @@ program test_fusion_cohort
       fc_t = nr5*poly%cohort%fineroot_carbon(1)      + nd5*poly%cohort%fineroot_carbon(2)
       wc_t = nr5*poly%cohort%wood_carbon(1)          + nd5*poly%cohort%wood_carbon(2)
       nc_t = nr5*poly%cohort%nonstructural_carbon(1) + nd5*poly%cohort%nonstructural_carbon(2)
-      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%conservation_tol)
+      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%demography%conservation_tol)
       call check_close(poly%cohort%nplant(1)*poly%cohort%leaf_carbon(1),          lc_t, 1.0e-9_wp, &
                        'carbon fuse: leaf_carbon not conserved')
       call check_close(poly%cohort%nplant(1)*poly%cohort%fineroot_carbon(1),      fc_t, 1.0e-9_wp, &
@@ -253,7 +253,7 @@ program test_fusion_cohort
       lai0 = poly%cohort%nplant(1)*poly%cohort%leaf_area(1) + poly%cohort%nplant(2)*poly%cohort%leaf_area(2)
       loss0 = poly%cohort%nplant(1)*poly%cohort%leaf_carbon(1)*poly%cohort%leaf_turnover_rate(1)       &
             + poly%cohort%nplant(2)*poly%cohort%leaf_carbon(2)*poly%cohort%leaf_turnover_rate(2)
-      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%conservation_tol)
+      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%demography%conservation_tol)
       call check_close(poly%cohort%nplant(1)*poly%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
                        'fusion of cohorts with different SLA must conserve leaf area')
       call check_close(poly%cohort%nplant(1)*poly%cohort%leaf_carbon(1)*poly%cohort%leaf_turnover_rate(1), &
@@ -269,7 +269,7 @@ program test_fusion_cohort
       call set_cohort_size_from_carbon(poly%cohort, 1_ik)
       call set_cohort_size_from_carbon(poly%cohort, 2_ik)
       lai0 = poly%cohort%nplant(1)*poly%cohort%leaf_area(1) + poly%cohort%nplant(2)*poly%cohort%leaf_area(2)
-      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%conservation_tol)
+      call fuse_2_cohorts(poly, 1_ik, 2_ik, cfg%demography%conservation_tol)
       call check(abs(poly%cohort%nplant(1)*poly%cohort%leaf_area(1) - lai0) <= 1.0e-12_wp * lai0,      &
                  'fusion of leafless cohorts with different SLA must conserve their leaf area too')
    end block

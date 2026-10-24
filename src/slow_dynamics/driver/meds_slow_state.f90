@@ -209,7 +209,7 @@ contains
       associate (cohort => poly%cohort, pft => poly%cohort%pft_table)
          do j = 1_ik, cohort%n
             pf = cohort%pft(j)
-            if (cfg%trait_plasticity_on) then
+            if (cfg%trait_dynamics%trait_plasticity_on) then
                call light_plastic_traits(cohort%overtopping_lai(j),                              &
                         pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_turnover_rate_toc(pf), &
                         pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),          &
@@ -336,7 +336,7 @@ contains
             !----- Fine-root turnover, slowed with the leaves' when fineroot_turnover_plastic      !
             !      (docs/science/plant_traits.md §4); then the turnover and the growth demands. ----!
             root_turn = pft%fineroot_turnover_rate(pf)
-            if (cfg%fineroot_turnover_plastic)                                                     &
+            if (cfg%trait_dynamics%fineroot_turnover_plastic)                                                     &
                root_turn = root_turn * cohort%leaf_turnover_rate(j) / pft%leaf_turnover_rate_toc(pf)
             call cohort_carbon_supply(cohort, j, cfg%fast_biophysics_on, cfg%gpp_ref, dt_yr,       &
                                       gross_gpp, resp_maint)
@@ -489,7 +489,7 @@ contains
             !----- A cohort with no leaves and no storage cannot flush again: its density goes to the  !
             !      floor this step (docs/science/demography.md eq. (4); plant_carbon_allocation.md §2). !
             if (exhausted(j)) mortality(j) = max(mortality(j),                                      &
-                    decline_to_floor_mortality(cohort%nplant(j), cfg%negligible_nplant, dt_yr))
+                    decline_to_floor_mortality(cohort%nplant(j), cfg%demography%negligible_nplant, dt_yr))
             !----- Reproduction carbon to recruits, a yearly rate the recruit pool takes daily; a  !
             !      disabled PFT recruits nothing (docs/science/demography.md eq. (6)). ------------!
             if (pft%include_pft(pf) == 1_ik)                                                       &
@@ -752,7 +752,7 @@ contains
       np = poly%patch%n
       allocate(found(poly%n_pft, max(np, 1_ik)))
       found = .false.
-      found(:, 1:np) = founds_cohort(poly%patch%recruit_pool(1:poly%n_pft, 1:np), cfg%min_recruit_size)
+      found(:, 1:np) = founds_cohort(poly%patch%recruit_pool(1:poly%n_pft, 1:np), cfg%demography%min_recruit_size)
    end subroutine decide_recruitment
 
    !----- The year's treefall decision, by the laws of meds_demography: the share of every   !
@@ -766,11 +766,11 @@ contains
       logical, allocatable, intent(out) :: survives(:)   !< (cohort)
       integer(ik) :: n
       frac = 0.0_wp
-      if (cfg%patch_disturbance_rate > 0.0_wp) frac = disturbed_fraction(cfg%patch_disturbance_rate, dt_yr)
+      if (cfg%demography%patch_disturbance_rate > 0.0_wp) frac = disturbed_fraction(cfg%demography%patch_disturbance_rate, dt_yr)
       n = poly%cohort%n
       allocate(survives(max(n, 1_ik)))
       survives = .true.
-      survives(1:n) = survives_treefall(poly%cohort%height(1:n), cfg%disturbance_survive_height)
+      survives(1:n) = survives_treefall(poly%cohort%height(1:n), cfg%demography%disturbance_survive_height)
    end subroutine decide_disturbance
 
    !----- An empty kill report with room for `capacity` rows: an operator kills each cohort !

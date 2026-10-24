@@ -358,13 +358,13 @@ contains
       end if
       !----- Fusion targets the tolerance ceilings overrode. Silent when every restructuring      !
       !      reached them, which is the usual case.  -------------------------------------------------!
-      if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. run%most_patches > cfg%max_patch)     &
+      if (cfg%demography%patch_fusion_on .and. run%most_patches > cfg%demography%max_patch)               &
          write(*,'(a,i0,3a,i0,a)') ' NOTE: patch fusion left ', run%most_patches, ' patches on ',         &
-               trim(run%most_patches_when), ' (max_patch = ', cfg%max_patch,                            &
+               trim(run%most_patches_when), ' (max_patch = ', cfg%demography%max_patch,                            &
                '): patch_light_tol_max kept dissimilar patches apart'
-      if (cfg%do_cohort_fissfuse .and. cfg%max_cohort > 0_ik .and. run%most_cohorts > cfg%max_cohort)  &
+      if (cfg%demography%cohort_fusion_on .and. run%most_cohorts > cfg%demography%max_cohort)             &
          write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', run%most_cohorts, ' cohorts in one patch on ',  &
-               trim(run%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                          &
+               trim(run%most_cohorts_when), ' (max_cohort = ', cfg%demography%max_cohort,                          &
                '): cohort_size_tol_max kept dissimilar cohorts apart'
       !----- The soil-carbon seam, then the SLOW tier's ledger, over the window the two above      !
       !      cannot see (docs/science/order_of_processes.md §4). ---------------------------------!

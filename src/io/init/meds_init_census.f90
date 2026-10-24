@@ -235,22 +235,19 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       real(wp) :: water_shed, kill_carbon   !< what the cull handed on; a start books no ledger
       type(kill_report_t) :: kills
-      if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
-         call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, water_shed, kills)
-         call kill_litter(poly, kills, kill_carbon)
-         call split_cohorts(poly, cfg)
-         call sort_cohorts(poly)
-      end if
-      if (cfg%demography_on .and. cfg%do_patch_fissfuse) then
-         call sort_patches(poly)
-         call fuse_patches(poly, cfg)
-         call terminate_patches(poly, cfg)
-         call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, water_shed, kills)
-         call kill_litter(poly, kills, kill_carbon)
-         call sort_cohorts(poly)
-      end if
+      if (.not. cfg%demography%demography_on) return
+      if (cfg%demography%cohort_fusion_on) call fuse_cohorts(poly, cfg)
+      call terminate_cohorts(poly, cfg, water_shed, kills)
+      call kill_litter(poly, kills, kill_carbon)
+      if (cfg%demography%cohort_fission_on) call split_cohorts(poly, cfg)
+      call sort_cohorts(poly)
+      call sort_patches(poly)
+      if (cfg%demography%patch_fusion_on) call fuse_patches(poly, cfg)
+      call terminate_patches(poly, cfg)
+      if (cfg%demography%cohort_fusion_on) call fuse_cohorts(poly, cfg)
+      call terminate_cohorts(poly, cfg, water_shed, kills)
+      call kill_litter(poly, kills, kill_carbon)
+      call sort_cohorts(poly)
    end subroutine restructure_census_stand
 
    !----- A line carries data unless it is blank or a '#' comment. ------------------------!

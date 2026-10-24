@@ -387,24 +387,27 @@ contains
       end if
    end subroutine check_soil
 
-   !----- [demography], [disturbance], [recruitment]. A recruit must survive its own birth: the  !
-   !      pool threshold exceeds the cull. ---------------------------------------------------------!
+   !----- [demography]. A recruit must survive its own birth: the pool threshold exceeds the   !
+   !      cull. An operator is turned off by its switch, not by a zero setting. ----------------!
    subroutine check_demography(cfg)
       type(meds_config_t), intent(in) :: cfg
-      if (cfg%cohort_size_tol_min <= 0.0_wp)                 error stop TAG//'cohort_size_tol_min <= 0'
-      if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop TAG//'cohort_size_tol_max < min'
-      if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop TAG//'n_cohort_fusion_iter < 1'
-      if (cfg%n_patch_fusion_iter < 1_ik)                    error stop TAG//'n_patch_fusion_iter < 1'
-      if (cfg%patch_light_tol <= 0.0_wp)                     error stop TAG//'patch_light_tol <= 0'
-      if (cfg%patch_light_tol_max < cfg%patch_light_tol)                                              &
+      if (cfg%demography%max_cohort < 1_ik)                  error stop TAG//'max_cohort < 1'
+      if (cfg%demography%max_patch < 1_ik)                   error stop TAG//'max_patch < 1'
+      if (cfg%demography%cohort_size_tol_min <= 0.0_wp)                 error stop TAG//'cohort_size_tol_min <= 0'
+      if (cfg%demography%cohort_size_tol_max < cfg%demography%cohort_size_tol_min) error stop TAG//'cohort_size_tol_max < min'
+      if (cfg%demography%n_cohort_fusion_iter < 1_ik)                   error stop TAG//'n_cohort_fusion_iter < 1'
+      if (cfg%demography%n_patch_fusion_iter < 1_ik)                    error stop TAG//'n_patch_fusion_iter < 1'
+      if (cfg%demography%patch_light_tol <= 0.0_wp)                     error stop TAG//'patch_light_tol <= 0'
+      if (cfg%demography%patch_light_tol_max < cfg%demography%patch_light_tol)                                              &
          error stop TAG//'patch_light_tol_max < patch_light_tol'
-      if (cfg%n_height_layers < 2_ik)               error stop TAG//'n_height_layers < 2'
-      if (cfg%min_patch_area <= 0.0_wp)             error stop TAG//'min_patch_area <= 0'
-      if (cfg%cohort_lai_cap <= 0.0_wp)             error stop TAG//'cohort_lai_cap <= 0'
-      if (cfg%growth_memory_days <= 0.0_wp)         error stop TAG//'growth_memory_days <= 0'
-      if (cfg%patch_disturbance_rate < 0.0_wp)      error stop TAG//'patch_disturbance_rate < 0'
-      if (cfg%disturbance_survive_height <= 0.0_wp) error stop TAG//'disturbance_survive_height <= 0'
-      if (cfg%min_recruit_size <= cfg%negligible_nplant)                                              &
+      if (cfg%demography%n_height_layers < 2_ik)               error stop TAG//'n_height_layers < 2'
+      if (cfg%demography%min_patch_area <= 0.0_wp)             error stop TAG//'min_patch_area <= 0'
+      if (cfg%demography%cohort_lai_cap <= 0.0_wp)             error stop TAG//'cohort_lai_cap <= 0'
+      if (cfg%demography%growth_memory_days <= 0.0_wp)         error stop TAG//'growth_memory_days <= 0'
+      if (cfg%demography%patch_disturbance_on .and. cfg%demography%patch_disturbance_rate <= 0.0_wp)    &
+         error stop TAG//'patch_disturbance_rate <= 0: turn the gaps off with patch_disturbance_on'
+      if (cfg%demography%disturbance_survive_height <= 0.0_wp) error stop TAG//'disturbance_survive_height <= 0'
+      if (cfg%demography%min_recruit_size <= cfg%demography%negligible_nplant)                                              &
          error stop TAG//'min_recruit_size must exceed negligible_nplant'
    end subroutine check_demography
 
@@ -436,7 +439,7 @@ contains
    !----- [trait_dynamics]. ----------------------------------------------------------------------!
    subroutine check_trait_dynamics(cfg)
       type(meds_config_t), intent(in) :: cfg
-      if (cfg%fineroot_turnover_plastic .and. .not. cfg%trait_plasticity_on)                          &
+      if (cfg%trait_dynamics%fineroot_turnover_plastic .and. .not. cfg%trait_dynamics%trait_plasticity_on)    &
          error stop TAG//'trait_dynamics.fineroot_turnover_plastic needs trait_plasticity_on = true'
    end subroutine check_trait_dynamics
 

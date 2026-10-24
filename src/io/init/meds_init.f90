@@ -100,7 +100,7 @@ contains
       !      plasticity on their leaf traits acclimate to their light at once. Bare ground starts !
       !      at top of canopy; a restart keeps the traits it read, unless                         !
       !      [init].reacclimate_traits asks for this run's PFT file instead.                      !
-      if (cfg%trait_plasticity_on .and. cfg%init%init_mode == INIT_CENSUS) then
+      if (cfg%trait_dynamics%trait_plasticity_on .and. cfg%init%init_mode == INIT_CENSUS) then
          call update_overtopping_lai(poly)
          call advance_plant_traits(poly, cfg%dt_years, leaf_carbon_new, storage_new, instantaneous=.true.)
          call commit_trait_carbon(poly, leaf_carbon_new, storage_new)
