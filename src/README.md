@@ -145,8 +145,8 @@ per-cohort state a kernel reads and writes back (`pheno_state_t`).
 
 **4. Laws and operators do not touch.** The demographic laws decide: they are a process module,
 `slow_dynamics/processes/meds_demography`. `meds_slow_update` applies what it is given (the commit,
-recruitment, disturbance, fusion and fission): it takes rate **arrays** as arguments and never uses
-the laws. `meds_slow_dynamics` is the one place a rate meets its application. The C API's
+recruitment, disturbance, fusion and fission): it takes rate and decision **arrays** as arguments
+and never uses the laws. `meds_slow_dynamics` is the one place a rate meets its application. The C API's
 `apply_rates` path, which feeds externally computed rates through the same update routines, is the
 standing test that the separation holds.
 

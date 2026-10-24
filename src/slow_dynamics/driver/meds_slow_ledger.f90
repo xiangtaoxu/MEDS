@@ -5,9 +5,10 @@
 ! carbon, water and energy store and attributes what the operator did not declare to its   !
 ! phase (§3, eq. (1)); a breach of eq. (2) is reported at the end of the run (§5). It      !
 ! measures; it corrects nothing. Routines: slow_ledger_open, _rebase, _declare, _mark,     !
-! _report; slow_site_store (§2); the declared amounts slow_fast_carbon_handover,           !
-! slow_co2_handoff and litter_carbon_total (§3); check_plausible (§6). soilc_seam_t keeps  !
-! the run's worst soil-carbon checks.                                                      !
+! _report; slow_ledger_heat_open/_close, an operator's thermal-mass exchange (§4);         !
+! slow_site_store (§2); the declared amounts slow_fast_carbon_handover, slow_co2_handoff   !
+! and litter_carbon_total (§3); check_plausible (§6). slow_ledger_soil_check keeps the     !
+! run's worst soil-carbon checks.                                                          !
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
