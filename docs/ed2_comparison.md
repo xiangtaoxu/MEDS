@@ -506,6 +506,20 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
 - **Carbon bookkeeping** (`meds_fast_state`). Gross GPP and the maintenance losses are summed apart
   over the day and netted by the daily allocator, as ED2 does.
 
+### 4.11 Where the run loop's form comes from
+
+- **ED2.** `edmain` calls `ed_driver`, which initializes the run and calls `ed_model`, one time loop
+  at the integration step (`DTLSM`): each step the canopy radiation and the integrator advance every
+  site, a new day calls `veg_dynamics_driver`, a new month reads the meteorological drivers, and the
+  output is written at its intervals.
+- **MEDS.** `meds_main` drives `meds_region`: `region_open` builds the run, `region_step_month`
+  steps it a month at a time, and `region_finalize` closes it. Each slow step of each polygon is
+  `polygon_step`, and `meds_stepper`'s `advance_one_step` runs the fast loop's sub-steps inside it,
+  then the slow dynamics ([order_of_processes](science/order_of_processes.md) §1–§2). The loop is
+  the slow step, with the fast loop nested in it, where ED2's is the fast step with the dynamics
+  called on the calendar. The forcing is loaded, and the output written, between the steps of
+  every polygon rather than inside them.
+
 ---
 
 ## 5. Quick checklist: what an ED2 user will find missing

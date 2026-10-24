@@ -1,19 +1,18 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_main -- THE executable entry point of MEDS: parse the command line, drive the run,       !
-! translate a run status into an exit code.                                                    !
+! meds_main -- the executable: parse the command line, drive the run, and turn a run       !
+! status into an exit code.                                                                !
 !                                                                                          !
-! The model itself lives in `meds_region` (open / step / finalize), and this program is one of !
-! its two callers; the other is the C-API shim `meds_c_api_run`, which lets Python drive the   !
-! full coupled model (`meds.model`). Keeping the program this thin is the point: anything      !
-! added here is, by construction, unreachable from Python.                                     !
+! The model lives in meds_region (open / step / finalize), and this program is one of its  !
+! two callers; the other is the C-API shim meds_c_api_run, which lets Python drive the     !
+! coupled model (meds.model). Anything added here is unreachable from Python, so the       !
+! program stays this thin.                                                                 !
 !                                                                                          !
-! Usage:  meds_main [main.toml]           (defaults to ./meds_config_main.toml; hard error if a !
-!                                          config file or any required parameter is missing --  !
-!                                          see docs/configuration.md)                            !
-!         meds_main --dump-io-config [main.toml]                                                 !
-!                                          write a fully-commented meds_io_config.toml listing   !
-!                                          every registered output variable, then exit.          !
+! Usage:  meds_main [main.toml]      (default ./meds_config_main.toml; a missing file or   !
+!                                     required key is an error: docs/configuration.md)     !
+!         meds_main --dump-io-config [main.toml]                                           !
+!                                     write meds_io_config.toml, listing every output      !
+!                                     variable with a comment, and exit                    !
 !==========================================================================================!
 program meds_main
    use meds_kinds,            only : ik
@@ -34,9 +33,9 @@ program meds_main
    path = 'meds_config_main.toml'
    if (command_argument_count() >= 1_ik) call get_command_argument(1, path)
 
-   !----- `--dump-io-config [main.toml]` is the discoverability half of per-variable output      !
-   !      control: it lists every name an override can switch. It builds the registry and exits  !
-   !      without running anything, so it stays here in the CLI rather than in the run. ---------!
+   !----- `--dump-io-config [main.toml]` is the discoverability half of per-variable output        !
+   !      control: it lists every name an override can switch. It builds the registry and exits    !
+   !      without running anything, so it stays here in the CLI rather than in the run. -----------!
    if (trim(path) == '--dump-io-config') then
       block
          type(meds_config_t)     :: cfg
