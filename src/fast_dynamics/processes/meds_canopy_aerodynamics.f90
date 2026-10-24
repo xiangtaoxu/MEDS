@@ -15,6 +15,7 @@ module meds_canopy_aerodynamics
    use meds_biophysics_params, only : aero_params_t
    use meds_therm_lib,        only : cas_molar_density
    implicit none
+   private
 
    !----- Bounds of the Monin-Obukhov initial guess, from CLM5's MoninObukIni (Zeng et al. 1998,   !
    !      J. Climate 11, 2628-2644): |zeta| starts at least 0.01 from neutral, a stable guess uses !
@@ -31,7 +32,13 @@ module meds_canopy_aerodynamics
    !      conductance (whose cs_dense and gamma_g it uses): at 10, its factor 1/(1+gamma_g*stab)   !
    !      is 1/6. ---------------------------------------------------------------------------------!
    real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp               !< [-]
-   private
+   !----- The in-canopy wind's extinction per unit leaf area of a layer of closed crowns, through  !
+   !      the whole layer and to its mid-depth (ED2's canopy_struct_dynamics, crown area 1). ------!
+   real(wp), parameter :: WIND_EXTINCTION_LAYER = 0.50_wp   !< [-]
+   real(wp), parameter :: WIND_EXTINCTION_MID   = 0.25_wp   !< [-]
+   !----- The least ratio of the height above the displacement to the roughness length in the wind !
+   !      profile, so its logarithm stays positive. -----------------------------------------------!
+   real(wp), parameter :: WIND_HEIGHT_ROUGH_MIN = 1.001_wp  !< [-]
 
    public :: canopy_aerodynamics             !< the per-patch entry point: winds, conductances, boundary layers
    public :: canopy_roughness                !< roughness length + displacement height of a patch
@@ -228,8 +235,8 @@ contains
             ico0 = ico0 - 1_ik
             lai_layer = lai_layer + lai(ico0)
          end do
-         out%wind(ico0:ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai_layer))   ! wind at crown mid-depth
-         uh                 = uh * safe_exp(-0.50_wp * lai_layer)                     ! attenuate for the layer below
+         out%wind(ico0:ico) = max(cfg%ugbmin, uh * safe_exp(-WIND_EXTINCTION_MID * lai_layer))   ! wind at crown mid-depth
+         uh                 = uh * safe_exp(-WIND_EXTINCTION_LAYER * lai_layer)                    ! attenuate for the layer below
          ico = ico0 - 1_ik
       end do
 
@@ -382,7 +389,7 @@ contains
       type(aero_params_t), intent(in) :: cfg   !< aerodynamic parameters
       real(wp),            intent(in) :: ustar, zeta, height, displace, rough, zldis   !< [m/s], [-], [m], [m], [m], [m]
       real(wp) :: u, hd, zeta_h, zeta_0        !< [m/s] the wind (the result); [m] height - displace
-      hd     = max(height - displace, rough * 1.001_wp)
+      hd     = max(height - displace, rough * WIND_HEIGHT_ROUGH_MIN)
       zeta_h = zeta * hd    / zldis
       zeta_0 = zeta * rough / zldis
       u      = (ustar / von_karman) * (log(hd / rough) - psim(zeta_h) + psim(zeta_0))

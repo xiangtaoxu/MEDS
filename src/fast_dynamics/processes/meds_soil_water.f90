@@ -31,6 +31,12 @@ module meds_soil_water
    real(wp), parameter :: DSL_THETA_WIDTH     = 1.0e-3_wp
    !----- CLM5 eq 5.78: the 'air dry' matric head [m], where the soil counts as dry (CLM5's 1e7 mm). !
    real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp
+   !----- Water vapour's diffusivity in air, D = DVAP_AIR_0 (T/t_kelvin)^DVAP_AIR_TEXP, as CLM5    !
+   !      takes it (Swenson & Lawrence 2014), and the Millington-Quirk (1961) tortuosity           !
+   !      exponent. -------------------------------------------------------------------------------!
+   real(wp), parameter :: DVAP_AIR_0        = 2.12e-5_wp            !< [m2/s] at t_kelvin
+   real(wp), parameter :: DVAP_AIR_TEXP     = 1.75_wp               !< [-]
+   real(wp), parameter :: MQ_TORTUOSITY_EXP = 10.0_wp / 3.0_wp      !< [-]
 
    !----- The boundary ground_evaporation_rate reads: the ground skin and the canopy air over it,    !
    !      and the terms that depend only on them and the top layer's curve. -------------------------!
@@ -123,10 +129,10 @@ contains
       theta_air = soil_head_to_theta(profile%retention, PSI_AIR_DRY, profile%theta_sat(1), profile%theta_res(1),  &
                                      profile%curve_par_a(1), profile%curve_par_n(1))
       forcing%theta_init = soil%dsl_theta_init * profile%theta_sat(1)
-      dvap    = 2.12e-5_wp * (forcing%t_ground / t_kelvin) ** 1.75_wp   ! [m2/s] vapour diffusivity in air
+      dvap    = DVAP_AIR_0 * (forcing%t_ground / t_kelvin) ** DVAP_AIR_TEXP   ! [m2/s] vapour diffusivity in air
       phi     = profile%theta_sat(1)
       phi_air = max(phi - theta_air, tiny_num)
-      tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)   ! [-] Millington-Quirk tortuosity
+      tau     = phi_air ** MQ_TORTUOSITY_EXP / max(phi * phi, tiny_num)   ! [-] Millington-Quirk tortuosity
       forcing%theta_span      = max(forcing%theta_init - theta_air, tiny_num)
       forcing%dsl_diffusivity = max(dvap * tau, tiny_num)
    end subroutine ground_evaporation_setup

@@ -50,7 +50,7 @@ module meds_canopy_radiation
    type :: ground_optics_env_t
       integer(ik)           :: n_band = 0_ik     !< number of bands
       real(wp), allocatable :: soil_albedo(:)    !< (band) [-] shortwave ground albedo; unused for emission bands
-      real(wp)              :: soil_emiss = 0.96_wp   !< [-] thermal emissivity of the ground
+      real(wp)              :: soil_emiss = 0.95_wp   !< [-] thermal emissivity of the ground
       real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
    end type ground_optics_env_t
 

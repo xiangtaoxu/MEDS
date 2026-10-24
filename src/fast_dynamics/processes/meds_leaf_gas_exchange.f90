@@ -15,13 +15,17 @@ module meds_leaf_gas_exchange
    use meds_therm_lib,     only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root, root_bracket_t, regula_falsi_point, illinois_narrow
    implicit none
+   private
 
    !----- The O2 mole fraction and the pressure gstar25 is stated at (Bernacchi et al. 2001).      !
    !      Gamma* scales with the O2 mole fraction and not with pressure                            !
    !      (docs/science/leaf_gas_exchange.md eq. (3)). --------------------------------------------!
    real(wp), parameter :: O2_REF_GSTAR = 0.209_wp   !< [mol/mol]
    real(wp), parameter :: P_REF_GSTAR  = 1.0e5_wp   !< [Pa]
-   private
+   !----- The finite-difference step in Ci of Katul's optimality condition: a share of Ci, and no  !
+   !      less than a floor [umol/mol]. -----------------------------------------------------------!
+   real(wp), parameter :: KATUL_DCI_REL = 1.0e-3_wp   !< [-]
+   real(wp), parameter :: KATUL_DCI_MIN = 1.0e-2_wp   !< [umol/mol]
 
    !----- The leaf's environment and fluxes, and the limitation flags. ------------------!
    public :: leaf_env_t, leaf_out_t
@@ -546,7 +550,7 @@ contains
       !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB       !
       !      envelope, so the slope is taken numerically). The step is 1e-3 of Ci, and at least    !
       !      1e-2 umol/mol. -----------------------------------------------------------------------!
-      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)   ! clamp-ok: the finite-difference step [umol/mol]
+      dci     = max(KATUL_DCI_REL * abs(ci), KATUL_DCI_MIN)   ! the finite-difference step [umol/mol]
       dAn_dci = (ci_net_assimilation(prob, ci + dci) - ci_net_assimilation(prob, ci - dci))          &
                 / (2.0_wp * dci)
       !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). ----!

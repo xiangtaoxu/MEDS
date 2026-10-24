@@ -23,6 +23,9 @@ module meds_surface
    implicit none
    private
 
+   !----- [kg/m3] The snow density Niu & Yang (2007)'s cover-fraction scale is referenced to. ----!
+   real(wp), parameter :: NY07_RHO_REF = 100.0_wp
+
    public :: ground_surface_exchange, ground_surface_fluxes, prepare_snow_stage
    public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater, snow_blend_ground_optics
    public :: snow_surface_balance, snow_take_exchange
@@ -146,7 +149,7 @@ contains
       if (swe <= params%tiny_snow_mass) then
          snowfac = 0.0_wp
       else
-         scale   = max(params%ny07_a * snow_rough * (params%rho_snow / 100.0_wp) ** params%ny07_m, tiny_num)
+         scale   = max(params%ny07_a * snow_rough * (params%rho_snow / NY07_RHO_REF) ** params%ny07_m, tiny_num)
          snowfac = tanh(snow_depth / scale)
       end if
    end function snow_cover_fraction

@@ -13,7 +13,8 @@ module meds_plant_hydraulics
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : grav_head, tiny_num
    use meds_pft_params,     only : hydraulics_pft_t, kirchhoff_table_t, KIRCHHOFF_TABLE_NTAB
-   use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi, conductance_retained_fraction
+   use meds_plant_hydr_lib, only : root_fraction_profile, tissue_water_to_psi, conductance_retained_fraction,  &
+                                   KEXP_TOL
    use meds_numerics,       only : smooth_max0
    implicit none
    private
@@ -119,7 +120,7 @@ contains
       real(wp),            intent(in) :: psi_a, psi_b, psi50, kexp   !< [MPa], [MPa], [MPa], [-]
       type(kirchhoff_table_t), intent(in) :: table                   !< the PFT's Kirchhoff table
       real(wp) :: r_a, r_b
-      if (psi_a <= 0.0_wp .and. psi_b <= 0.0_wp .and. abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+      if (psi_a <= 0.0_wp .and. psi_b <= 0.0_wp .and. abs(kexp - 2.0_wp) < KEXP_TOL) then
          r_a  = psi_a / psi50
          r_b  = psi_b / psi50
          dphi = psi50 * atan((r_a - r_b) / (1.0_wp + r_a * r_b))
@@ -173,7 +174,7 @@ contains
    !----- Whether the vulnerability exponent is 1 or 2, where Phi has a closed form. ------!
    pure logical function has_closed_form(kexp)
       real(wp), intent(in) :: kexp   !< [-]
-      has_closed_form = abs(kexp - 1.0_wp) < 1.0e-9_wp .or. abs(kexp - 2.0_wp) < 1.0e-9_wp
+      has_closed_form = abs(kexp - 1.0_wp) < KEXP_TOL .or. abs(kexp - 2.0_wp) < KEXP_TOL
    end function has_closed_form
 
    !----- The closed forms [MPa]: psi50 ln(1+r) for kexp 1, psi50 atan(r) for kexp 2. -----!
@@ -181,7 +182,7 @@ contains
       real(wp), intent(in) :: psi, psi50, kexp   !< [MPa], [MPa], [-]
       real(wp) :: r
       r = max(psi/psi50, 0.0_wp)
-      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
+      if (abs(kexp - 1.0_wp) < KEXP_TOL) then
          phi = psi50 * log(1.0_wp + r)
       else
          phi = psi50 * atan(r)
@@ -214,7 +215,7 @@ contains
    !      grows, so the potential keeps rising toward its asymptote. ----------------------!
    pure real(wp) function kirchhoff_tail(a, b, kexp) result(g)
       real(wp), intent(in) :: a, b, kexp   !< [-] the limits in r = psi/psi50, and the exponent
-      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
+      if (abs(kexp - 1.0_wp) < KEXP_TOL) then
          g = log(b / a)
       else
          g = (b**(1.0_wp - kexp) - a**(1.0_wp - kexp)) / (1.0_wp - kexp)
