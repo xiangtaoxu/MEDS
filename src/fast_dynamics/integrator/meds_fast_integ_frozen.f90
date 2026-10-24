@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_fast_integ_frozen
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, t_3ple, r_gas,              &
+   use meds_constants,        only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, r_gas,                      &
                                      kgcday_2_umols
    use meds_diag_vars,        only : CO_ANET, CO_AGROSS, CO_GSW, CO_GBW, CO_CI, CO_CS, CO_RD, CO_BETA_STOM,     &
                                      CO_BETA_NONSTOM, CO_LEAF_TEMP, CO_WOOD_TEMP, CO_LEAF_VPD, CO_PSI_LEAF,      &
@@ -34,12 +34,12 @@ module meds_fast_integ_frozen
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
                                      march_state_t, frozen_t, surface_state_t,                            &
-                                     surface_tend_t, snow_stage_t, cas_boundary_t, ground_boundary_t,             &
+                                     surface_tend_t, cas_boundary_t,                                              &
                                      plant_water_t, step_exports_t,                                              &
                                      water_work_t, POND, WOOD, WORK_WATER_NFAIL
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
-   use meds_biophysics_params, only : aero_params_t, snow_params_t
+   use meds_biophysics_params, only : aero_params_t
    use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t, cas_capacities
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
@@ -50,8 +50,9 @@ module meds_fast_integ_frozen
    use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,           &
                                       root_zone_temp_scale
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
-   use meds_surface, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
-   use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
+   use meds_surface, only : surface_env_t, prepare_snow_stage
+   use meds_soil_water, only : pond_inflow
+   use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp,                              &
                                      cas_enthalpy_to_temp, air_vpd,                                             &
                                      soil_thermal_conductivity, specific_humidity_to_vapor_pressure
    use meds_numerics,         only : weighted_mean
@@ -88,7 +89,6 @@ contains
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
-      real(wp)    :: k_soil_top    !< [W/m/K] the top soil layer's conductivity, under the snow's base
       type(snow_state_t) :: pack   !< the snow pack the stage advances
       integer(ik) :: n, nsl
 
@@ -133,11 +133,14 @@ contains
       !      that water this step. The pack's exchange with the canopy air and the soil is the march's.   !
       !      A no-op without a pack. -----------------------------------------------------------------!
       pack = dynamic%snow
+      call prepare_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, forcing%snowfall, forcing%rainfall,              &
+                              forcing%air_temp, dt_fast, frozen%snow)
+      !----- The top soil node the ground surface conducts to, under the snow's base. -----------------!
       associate (prof => site%soil_profile)
-         k_soil_top = soil_thermal_conductivity(dynamic%soil_water%theta(1), dynamic%soil_energy%soil_fliq(1),     &
-                                                prof%theta_sat(1), prof%solid_conductivity(1), prof%dry_conductivity(1))
-         call prepare_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, max(-prof%z_node(1), tiny_num), k_soil_top,   &
-                                 forcing%snowfall, forcing%rainfall, forcing%air_temp, dt_fast, frozen%snow)
+         frozen%ground%dz_soil_top = max(-prof%z_node(1), tiny_num)
+         frozen%ground%k_soil_top  = soil_thermal_conductivity(dynamic%soil_water%theta(1),                       &
+                                                               dynamic%soil_energy%soil_fliq(1), prof%theta_sat(1), &
+                                                               prof%solid_conductivity(1), prof%dry_conductivity(1))
       end associate
 
       call intercept_rain(dt_fast, cfg, static, forcing, dynamic, frozen%snow%exists, frozen%film, throughfall)
@@ -500,58 +503,6 @@ contains
    end subroutine patch_heterotrophic_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! prepare_snow_stage -- the pack before the march: this step's snowfall and rain-on-snow,     !
-   ! then the drainage of the liquid it holds (the last step's melt and this step's rain) to the !
-   ! pond as a paired (mass, enthalpy) transfer, reported as melt_rate and t_melt, and its cover !
-   ! fraction. The march exchanges with the pack this leaves at every evaluation, and the update !
-   ! commits the exchange to it (docs/science/snow_biophysics.md §The snow store). Advances the  !
-   ! pack it is given (the build's copy) and reports it in st.                                   !
-   !---------------------------------------------------------------------------------------!
-   subroutine prepare_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top, snowfall, rainfall,   &
-                                 t_air, dt_fast, st)
-      type(snow_state_t),   intent(inout) :: snow           !< the pack, advanced in place
-      type(snow_params_t),  intent(in)    :: snow_params
-      real(wp),             intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
-      real(wp),             intent(in)    :: dz_soil_top    !< [m]       top soil-node depth |z_node(1)|
-      real(wp),             intent(in)    :: k_soil_top     !< [W/m/K]   top soil layer's thermal conductivity
-      real(wp),             intent(in)    :: snowfall       !< [kg/m2/s] frozen precipitation
-      real(wp),             intent(in)    :: rainfall       !< [kg/m2/s] liquid precipitation (rain-on-snow)
-      real(wp),             intent(in)    :: t_air          !< [K]       reference-level air temperature
-      real(wp),             intent(in)    :: dt_fast
-      type(snow_stage_t),   intent(out)   :: st
-      type(snow_out_t) :: smelt
-      real(wp)          :: snow_e0
-
-      st%params      = snow_params
-      st%dz_soil_top = dz_soil_top
-      st%k_soil_top  = k_soil_top
-      st%dt          = dt_fast
-      st%swe0        = snow%swe(1)
-      st%enth0       = snow%snow_energy(1)
-      snow_e0 = snow%snow_energy(1)
-      call snow_accumulate(snow, snowfall, rainfall, t_air, dt_fast, snow_params)
-      st%acc_enth = snow%snow_energy(1) - snow_e0   ! precipitation (rain and snow) enthalpy into the pack
-      st%exists   = snow%nlayer >= 1_ik             ! accumulate took snow+rain -> rainfall routing
-
-      if (st%exists) then
-         !----- Meltwater goes to the pond with its enthalpy, valued at t_melt, and nowhere else. Pack and !
-         !      pond are both tracked stores, so the transfer cancels in the whole-column ledger         !
-         !      (docs/science/numerical_scheme.md §5b, "The pond holds heat"). -------------------------!
-         call snow_drain_meltwater(snow, snow_params, smelt)
-         st%melt_rate = (smelt%melt_mass + smelt%dump_mass) / dt_fast
-         st%melt_enth = smelt%melt_enth + smelt%dump_enth
-         st%t_melt    = t_3ple
-         if (smelt%melt_mass + smelt%dump_mass > 0.0_wp)                                            &
-            st%t_melt = liquid_energy_to_temp(st%melt_enth / (smelt%melt_mass + smelt%dump_mass))
-         !----- snowfac is snow, 1 - snowfac bare soil; the pack's exchange scales by it, so a patchy pack !
-         !      barely exchanges and its fluxes come snowfac-weighted. -------------------------------!
-         if (snow%nlayer >= 1_ik .and. snow%swe(1) > snow_params%tiny_snow_mass)                        &
-            st%snowfac = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), snow_params, snow_rough)
-      end if
-      st%pack = snow
-   end subroutine prepare_snow_stage
-
-   !---------------------------------------------------------------------------------------!
    ! intercept_rain -- the step's canopy interception (canopy_interception) with the canopy  !
    ! water store on. None under a pack, which takes the rain and the snow; throughfall        !
    ! carries sub-threshold snowfall, which forms no pack, as liquid.                          !
@@ -650,7 +601,7 @@ contains
       type(fast_forcing_t),    intent(in)    :: forcing
       real(wp),                intent(in)    :: rho, press
       type(cas_boundary_t),    intent(inout) :: cas
-      type(ground_boundary_t), intent(inout) :: ground
+      type(surface_env_t),     intent(inout) :: ground
       cas%aero_cfg     = aero_cfg
       cas%geom         = geom
       !----- Live inputs license the per-stage re-solve; a record not built here (a test fixture)    !
@@ -661,9 +612,9 @@ contains
       cas%box%atm_co2 = forcing%co2_atm
       cas%rho   = rho
       cas%press = press
-      ground%abs_sw_ground = forcing%abs_sw_ground
-      ground%abs_lw_ground = forcing%abs_lw_ground
-      ground%ggnet = aero%ggnet
+      ground%abs_sw = forcing%abs_sw_ground
+      ground%abs_lw = forcing%abs_lw_ground
+      ground%ggnet  = aero%ggnet
    end subroutine canopy_air_boundary
 
    !---------------------------------------------------------------------------------------!
@@ -701,12 +652,11 @@ contains
    end subroutine transpiration_demand
 
    !---------------------------------------------------------------------------------------!
-   ! ground_inflow -- what drives the water network besides the transpiration demand          !
-   ! (docs/science/soil_plant_water.md §5, "The ground inflow"): the water reaching the pond   !
-   ! (the meltwater under a pack, which took the rain and snow; the throughfall on bare       !
-   ! ground; to either the shed water adds itself), the temperature that values it, the        !
-   ! enthalpy it brings across the column's boundary, each layer's temperature and the ground  !
-   ! evaporation's boundary. Also the canopy film's valuation temperature, which is the rain's.!
+   ! ground_inflow -- what drives the water network besides the transpiration demand       !
+   ! (docs/science/soil_plant_water.md §5, "The ground inflow"): the water reaching the    !
+   ! pond, the temperature that values it and the enthalpy it brings across the column's   !
+   ! boundary (pond_inflow), each layer's temperature and the ground evaporation's         !
+   ! boundary. Also the canopy film's valuation temperature, which is the rain's.          !
    !---------------------------------------------------------------------------------------!
    subroutine ground_inflow(static, forcing, dynamic, ggnet, throughfall, tcas, qcas, rho, t_ground, nsl, frozen)
       type(fast_static_state_t),  intent(in)    :: static
@@ -717,16 +667,11 @@ contains
       real(wp),                   intent(in)    :: tcas, qcas, rho, t_ground
       integer(ik),                intent(in)    :: nsl
       type(frozen_t),      intent(inout) :: frozen
-      !----- The water reaching the ground besides the shed water [kg/m2/s], its temperature [K], and   !
-      !      the enthalpy all of it brings [W/m2]. ---------------------------------------------------!
-      real(wp) :: water_base, t_water_base, inflow_enth, precip_ground, t_pond_inflow
+      real(wp) :: t_water_base   !< [K] the meltwater's or the rain's, before the shed water joins it
       associate (snow => frozen%snow, drive => frozen%water_drive)
-         if (snow%exists) then
-            water_base = snow%melt_rate
-         else
-            water_base = throughfall
-         end if
-         precip_ground                = water_base + static%shed_water_rate
+         call pond_inflow(snow%exists, snow%melt_rate, snow%t_melt, throughfall, forcing%rainfall, forcing%snowfall,  &
+                          forcing%air_temp, tcas, static%shed_water_rate, static%shed_water_enth, drive%rain,         &
+                          drive%t_rain, t_water_base, frozen%hydrology%ground_inflow_enth)
          drive%ground%snow_free_frac  = 1.0_wp - snow%snowfac
          drive%ground%t_ground        = t_ground
          drive%ground%q_air           = qcas
@@ -734,27 +679,8 @@ contains
          !----- Phase of the evaporating surface, for the ice saturation branch                             !
          !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
          drive%ground%ground_fliq     = dynamic%soil_energy%soil_fliq(1)
-         !----- The temperature that values it: the meltwater's under a pack; on bare ground that of the rain  !
-         !      and sub-threshold snowfall valued at the air temperature above the canopy; then mixed with the  !
-         !      shed water's enthalpy. -------------------------------------------------------------------------!
-         t_water_base = tcas
-         if (snow%exists) then
-            t_water_base = snow%t_melt
-         else if (forcing%rainfall + forcing%snowfall > tiny_num) then
-            t_water_base = liquid_energy_to_temp(precip_enthalpy(forcing%rainfall, forcing%snowfall, forcing%air_temp) &
-                                                   / (forcing%rainfall + forcing%snowfall))
-         end if
-         inflow_enth = water_base * internal_energy_liquid(t_water_base) + static%shed_water_enth
-         t_pond_inflow = t_water_base
-         if (static%shed_water_rate > 0.0_wp) t_pond_inflow = liquid_energy_to_temp(inflow_enth / precip_ground)
-         !----- The enthalpy it brings across the column's boundary: all of it on bare ground; under a pack  !
-         !      only the shed water's, since the meltwater's comes from the pack, inside the column. --------!
-         frozen%hydrology%ground_inflow_enth = inflow_enth
-         if (snow%exists) frozen%hydrology%ground_inflow_enth = static%shed_water_enth
          !----- Bare-soil aerodynamic resistance; snow_free_frac above weights the flux, not this. -------!
          drive%ground%r_aero = 1.0_wp / max(ggnet, tiny_num)
-         drive%rain          = precip_ground
-         drive%t_rain        = t_pond_inflow
          drive%t_soil(1:nsl) = dynamic%soil_energy%soil_temp(1:nsl)
          !----- The canopy film's valuation temperature, a reference its store, interception and evaporation  !
          !      share: the rain's on bare ground; under a pack, where nothing is intercepted, tsupercool_liq.   !

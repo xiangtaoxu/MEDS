@@ -30,11 +30,10 @@
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store
    use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
@@ -297,7 +296,7 @@ contains
       type(slow_store_t)              :: store
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
       real(wp)    :: c_min(cfg%pft%n)
-      integer(ik) :: ip, i, i0, i1, k, pf
+      integer(ik) :: ip, i, i0, i1, pf
 
       !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
       do pf = 1_ik, cfg%pft%n
@@ -309,15 +308,11 @@ contains
          a = patch_polygon_area(poly, ip)
          if (a <= 0.0_wp) cycle
 
-         !----- Soil column: theta is volumetric and soil_energy is per m3, so both integrate     !
-         !      over the layer thicknesses of the patch's site (identical to soil_water_store /    !
-         !      soil_energy_store). ---------------------------------------------------------------!
-         w_soil = 0.0_wp ; e_soil = 0.0_wp
+         !----- Soil column: the totals the fast step's ledgers take, over the layer thicknesses of  !
+         !      the patch's site. -------------------------------------------------------------------!
          associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
-            do k = 1_ik, soil%n_active
-               w_soil = w_soil + poly%patch%soil_water(ip)%theta(k)       * soil%dz(k) * rho_h2o
-               e_soil = e_soil + poly%patch%soil_energy(ip)%soil_energy(k) * soil%dz(k)
-            end do
+            w_soil = soil_water_store(poly%patch%soil_water(ip)%theta, soil%dz, soil%n_active)
+            e_soil = soil_energy_store(poly%patch%soil_energy(ip)%soil_energy, soil%dz, soil%n_active)
          end associate
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil

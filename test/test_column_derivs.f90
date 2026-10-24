@@ -128,10 +128,10 @@ contains
          b%atm_co2                  = 400.0_wp
       end associate
       frozen%cas%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
-      frozen%ground%abs_sw_ground = 60.0_wp
-      frozen%ground%abs_lw_ground = -10.0_wp
-      frozen%ground%ggnet         = 0.02_wp
-      frozen%ground%soil_evap     = 2.0e-5_wp
+      frozen%ground%abs_sw    = 60.0_wp
+      frozen%ground%abs_lw    = -10.0_wp
+      frozen%ground%ggnet     = 0.02_wp
+      frozen%ground%soil_evap = 2.0e-5_wp
    end subroutine make_frozen
 
    !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
@@ -987,7 +987,7 @@ contains
          b%atm_enthalpy = cas_temp_to_enthalpy(300.0_wp, 0.011_wp) ; b%atm_specific_humidity = 0.011_wp
          b%atm_co2 = 400.0_wp
       end associate
-      frozen%ground%abs_sw_ground = 60.0_wp ; frozen%ground%abs_lw_ground = -10.0_wp
+      frozen%ground%abs_sw = 60.0_wp ; frozen%ground%abs_lw = -10.0_wp
       frozen%ground%ggnet = 0.02_wp ; frozen%ground%soil_evap = 2.0e-5_wp
       y%cas_enthalpy = cas_temp_to_enthalpy(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))

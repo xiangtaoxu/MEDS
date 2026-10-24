@@ -6,7 +6,8 @@
 !                                layer, eqs. (3)-(4);                                      !
 !   * ground_evaporation_rate -- evaporation from the top layer, on the terms              !
 !                                ground_evaporation_setup sets once per water step;        !
-!   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer.!
+!   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer;!
+!   * pond_inflow             -- the water reaching the pond and the temperature it brings.!
 ! A layer's water relations are in meds_soil_hydr_lib, root uptake in meds_plant_hydr_lib. !
 !==========================================================================================!
 module meds_soil_water
@@ -15,12 +16,13 @@ module meds_soil_water
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_AQUIFER
    use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
-   use meds_therm_lib,        only : sat_specific_humidity
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, liquid_energy_to_temp,    &
+                                     precip_enthalpy
    implicit none
    private
 
    public :: soil_water_flux, ground_evaporation_rate, bottom_flux
-   public :: ground_evap_env_t, ground_evaporation_setup
+   public :: ground_evap_env_t, ground_evaporation_setup, pond_inflow
 
    !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
    !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
@@ -158,5 +160,50 @@ contains
       de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * forcing%q_sat * dalpha / resist
       de_dtheta = -e_soil * dr_dtheta / resist
    end subroutine ground_evaporation_rate
+
+   !---------------------------------------------------------------------------------------!
+   ! pond_inflow -- the water reaching the pond and the temperature that values it         !
+   ! (docs/science/soil_plant_water.md §5, "The ground inflow"). Under a pack, which took  !
+   ! the rain and the snow, it is the meltwater at t_melt; on bare ground, the             !
+   ! throughfall, at the temperature of the rain and sub-threshold snowfall valued at the  !
+   ! air temperature (t_cas when nothing falls). The water the tissues shed joins either   !
+   ! with its enthalpy, and the mixture's temperature follows. boundary_enth is the        !
+   ! enthalpy the inflow brings across the column's boundary: all of it on bare ground,    !
+   ! only the shed water's under a pack, whose meltwater comes from inside the column.     !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine pond_inflow(pack_exists, melt_rate, t_melt, throughfall, rainfall, snowfall, t_air, t_cas,     &
+                               shed_rate, shed_enth, inflow, t_inflow, t_water_base, boundary_enth)
+      logical,  intent(in)  :: pack_exists
+      real(wp), intent(in)  :: melt_rate       !< [kg/m2/s] the pack's meltwater
+      real(wp), intent(in)  :: t_melt          !< [K]       its temperature
+      real(wp), intent(in)  :: throughfall     !< [kg/m2/s] rain and snow through the canopy
+      real(wp), intent(in)  :: rainfall, snowfall   !< [kg/m2/s] above the canopy
+      real(wp), intent(in)  :: t_air           !< [K]       the air temperature precipitation is valued at
+      real(wp), intent(in)  :: t_cas           !< [K]       canopy-air temperature (nothing falling)
+      real(wp), intent(in)  :: shed_rate       !< [kg/m2/s] water the tissues shed to the ground
+      real(wp), intent(in)  :: shed_enth       !< [W/m2]    its enthalpy
+      real(wp), intent(out) :: inflow          !< [kg/m2/s] all the water reaching the pond
+      real(wp), intent(out) :: t_inflow        !< [K]       the temperature that values it
+      real(wp), intent(out) :: t_water_base    !< [K]       the meltwater's or the rain's, before the shed water
+      real(wp), intent(out) :: boundary_enth   !< [W/m2]    what it brings across the column's boundary
+      real(wp) :: water_base, inflow_enth
+      if (pack_exists) then
+         water_base = melt_rate
+      else
+         water_base = throughfall
+      end if
+      inflow = water_base + shed_rate
+      t_water_base = t_cas
+      if (pack_exists) then
+         t_water_base = t_melt
+      else if (rainfall + snowfall > tiny_num) then
+         t_water_base = liquid_energy_to_temp(precip_enthalpy(rainfall, snowfall, t_air) / (rainfall + snowfall))
+      end if
+      inflow_enth = water_base * internal_energy_liquid(t_water_base) + shed_enth
+      t_inflow = t_water_base
+      if (shed_rate > 0.0_wp) t_inflow = liquid_energy_to_temp(inflow_enth / inflow)
+      boundary_enth = inflow_enth
+      if (pack_exists) boundary_enth = shed_enth
+   end subroutine pond_inflow
 
 end module meds_soil_water

@@ -13,10 +13,11 @@
 !==========================================================================================!
 module meds_fast_integ_backward_euler
    use meds_kinds, only : wp, ik
-   use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_soil_heat, only : soil_heat_env_t, soil_heat_out_t
+   use meds_constants, only : tiny_num, cp_air
+   use meds_soil_heat, only : soil_heat_env_t, soil_heat_out_t, soil_energy_step_implicit, set_soil_heat_env,     &
+                              soil_layer_temp
    use meds_patch_state_vars,   only : soil_energy_state_t
-   use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs, assemble_soil_energy_forcing
+   use meds_fast_integ_derivs, only : surface_derivs, cas_conductances, water_derivs
    use meds_fast_integ_control, only : water_scales
    use meds_canopy_air_space, only : cas_box_step_implicit, cas_env_t
    use meds_fast_integ_types, only : march_state_t, frozen_t, surface_state_t, cas_boundary_t,                  &
@@ -25,9 +26,7 @@ module meds_fast_integ_backward_euler
                                GRP_THETA, POND, WOOD, LEAF, COHORT_STORES, WORK_WATER_NSUB, WORK_WATER_NEWTON,    &
                                WORK_WATER_REJECT, WORK_WATER_NFAIL, state_init
    use meds_site_state_vars, only : site_surface_t
-   use meds_soil_heat, only : soil_energy_step_implicit
-   use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, internal_energy_to_temp,             &
-                              liquid_energy_to_temp
+   use meds_therm_lib, only : cas_enthalpy_to_temp, internal_energy_liquid, liquid_energy_to_temp
    use meds_numerics,     only : sufficient_decrease, fraction_to_boundary
    use meds_soil_hydr_lib, only : pond_water_to_head
    use meds_soil_water,    only : ground_evaporation_setup
@@ -89,7 +88,7 @@ contains
       type(soil_energy_state_t) :: se
       type(soil_heat_env_t)     :: eforc
       type(soil_heat_out_t)        :: eflux
-      real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
+      real(wp)    :: t_ground, fliq1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
       real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21
       integer(ik) :: nfeval
@@ -98,8 +97,7 @@ contains
       call state_init(y, n, nsl, y_out)
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
-      wmass1 = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       cas_mass_capacity = frozen%cas%box%air_mass_capacity
       cas_molar_capacity = frozen%cas%box%air_molar_capacity
@@ -133,13 +131,11 @@ contains
       !      temperature (what the wood and the pond were credited), and out with drainage                !
       !      (docs/science/soil_plant_water.md §5). The leaf pays its transpiration's full vapour         !
       !      enthalpy in surface_derivs. ---------------------------------------------------------------!
-      water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
-      water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
+      call set_soil_heat_env(nsl, surf_tend%g_top, y%theta, frozen%roots%root_heat, frozen%hydrology%exfil_enth,  &
+                             frozen%hydrology%w_flux_frozen, frozen%hydrology%infiltration,                       &
+                             frozen%hydrology%t_infil, frozen%hydrology%drainage, frozen%hydrology%t_bot, eforc,  &
+                             water_heat, e_drain)
       e_infil = frozen%hydrology%infiltration * internal_energy_liquid(frozen%hydrology%t_infil)
-      e_drain = frozen%hydrology%drainage     * internal_energy_liquid(frozen%hydrology%t_bot)
-      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
-                                        water_heat, frozen%hydrology%w_flux_frozen,                                &
-                                        frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
       call soil_energy_step_implicit(se, eforc, site%soil_profile, site%soil, dt, eflux)
       !----- [fast].debug_error stops the run when the soil heat's own budget misses by more than  !
       !      soil_energy_budget_atol [K] of the column's heat capacity. -----------------------------!

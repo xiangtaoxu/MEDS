@@ -17,7 +17,7 @@
 module meds_patch_state_vars
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple
+   use meds_constants,        only : n_soil_layer_max, n_snow_layer_max, tiny_num, t_3ple, rho_h2o
    use meds_therm_lib,        only : cas_molar_density
    use meds_diag_vars,        only : patch_diag_block, expand_patch_diag, reorder_patch_diag
    use meds_state_defaults,   only : UNSET_POSITIVE, CAN_CO2_UNSEEDED, CAN_DEPTH_UNSET
@@ -30,6 +30,7 @@ module meds_patch_state_vars
    public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_t
    public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, cas_capacities, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
+   public :: soil_water_store, soil_energy_store
    public :: blend_decomp_xi, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
@@ -271,6 +272,31 @@ contains
       mass_capacity  = rho_air * depth
       molar_capacity = molar_density * depth
    end subroutine cas_capacities
+
+   !----- The soil column's water [kg/m2] and internal energy [J/m2], from theta [m3/m3] and the energy  !
+   !      per volume [J/m3] over the layer thicknesses: plain ascending loops, which the fast step's and  !
+   !      the slow step's ledgers both take from here. --------------------------------------------!
+   pure function soil_water_store(theta, dz, nsl) result(w)
+      real(wp),    intent(in) :: theta(:), dz(:)
+      integer(ik), intent(in) :: nsl
+      real(wp) :: w
+      integer(ik) :: k
+      w = 0.0_wp
+      do k = 1_ik, nsl
+         w = w + theta(k) * dz(k) * rho_h2o
+      end do
+   end function soil_water_store
+
+   pure function soil_energy_store(soil_energy, dz, nsl) result(e)
+      real(wp),    intent(in) :: soil_energy(:), dz(:)
+      integer(ik), intent(in) :: nsl
+      real(wp) :: e
+      integer(ik) :: k
+      e = 0.0_wp
+      do k = 1_ik, nsl
+         e = e + soil_energy(k) * dz(k)
+      end do
+   end function soil_energy_store
 
    !----- nlayer is the larger; the caller sets it to 0 when no snow is left. -------------!
    pure function blend_snow(w1, a, w2, b) result(c)
