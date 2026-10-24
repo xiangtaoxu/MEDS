@@ -152,59 +152,28 @@ contains
    end subroutine fill_cohort_deriv
 
    !---------------------------------------------------------------------------------------!
-   ! Advance every cohort's pools and density by the tendencies over dt_yr, then derive    !
-   ! the geometry from the committed carbon (demography.md §2).                            !
+   ! Advance every cohort's pools (advance_pool, eq. (8)) and density (advance_density, in   !
+   ! log space, stopped at the floor `negligible`) by the tendencies over dt_yr, then derive !
+   ! the geometry from the committed carbon, as fusion and fission derive it. The tissue made !
+   ! or lost came or went at the tissue's temperature, which its energy is held to           !
+   ! (demography.md §2; conservation.md §4).                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine update_cohort_states(cohort, deriv, dt_yr, negligible)
       type(cohort_block),       intent(inout) :: cohort
       type(cohort_deriv_block), intent(in)    :: deriv
       real(wp),                 intent(in)    :: dt_yr, negligible
       integer(ik) :: i
-      call update_cohort_states_kernel(cohort%n, cohort%leaf_carbon, cohort%fineroot_carbon,      &
-                                       cohort%wood_carbon, cohort%nonstructural_carbon,            &
-                                       cohort%nplant, deriv%d_leaf_carbon_dt,                      &
-                                       deriv%d_fineroot_carbon_dt, deriv%d_wood_carbon_dt,          &
-                                       deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt,        &
-                                       dt_yr, negligible)
-      !----- The geometry from the committed carbon, as fusion and fission derive it; the tissue !
-      !      made or lost came or went at the tissue's temperature, which its energy is held to  !
-      !      (conservation.md §4). --------------------------------------------------------------!
       do i = 1_ik, cohort%n
+         cohort%leaf_carbon(i)          = advance_pool(cohort%leaf_carbon(i),          deriv%d_leaf_carbon_dt(i) * dt_yr)
+         cohort%fineroot_carbon(i)      = advance_pool(cohort%fineroot_carbon(i),      deriv%d_fineroot_carbon_dt(i) * dt_yr)
+         cohort%wood_carbon(i)          = advance_pool(cohort%wood_carbon(i),          deriv%d_wood_carbon_dt(i) * dt_yr)
+         cohort%nonstructural_carbon(i) = advance_pool(cohort%nonstructural_carbon(i),                    &
+                                                       deriv%d_nonstructural_carbon_dt(i) * dt_yr)
+         cohort%nplant(i)               = advance_density(cohort%nplant(i), deriv%dln_nplant_dt(i) * dt_yr, negligible)
          call set_cohort_size_from_carbon(cohort, i)
          call hold_cohort_tissue_temps(cohort, i)
       end do
    end subroutine update_cohort_states
-
-   !---------------------------------------------------------------------------------------!
-   ! Each pool moves by its change over the step (advance_pool) and the density by its     !
-   ! log-space change, stopped at the floor `negligible` (advance_density).                !
-   ! The loop is an OpenMP target region.                                                  !
-   !---------------------------------------------------------------------------------------!
-   subroutine update_cohort_states_kernel(n, leaf_carbon, fineroot_carbon, wood_carbon,           &
-                                   nonstructural_carbon, nplant, d_leaf_carbon_dt,                  &
-                                   d_fineroot_carbon_dt, d_wood_carbon_dt, d_nonstructural_carbon_dt,&
-                                   dln_nplant_dt, dt_yr, negligible)
-      integer(ik), intent(in)    :: n
-      real(wp),    intent(inout) :: leaf_carbon(:), fineroot_carbon(:), wood_carbon(:), nonstructural_carbon(:)
-      real(wp),    intent(inout) :: nplant(:)
-      real(wp),    intent(in)    :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:), d_wood_carbon_dt(:)
-      real(wp),    intent(in)    :: d_nonstructural_carbon_dt(:), dln_nplant_dt(:)
-      real(wp),    intent(in)    :: dt_yr, negligible
-      integer(ik) :: i
-
-      !$omp target teams distribute parallel do simd                                        &
-      !$omp&        map(to: d_leaf_carbon_dt, d_fineroot_carbon_dt, d_wood_carbon_dt,             &
-      !$omp&               d_nonstructural_carbon_dt, dln_nplant_dt)                              &
-      !$omp&        map(tofrom: leaf_carbon, fineroot_carbon, wood_carbon, nonstructural_carbon,  &
-      !$omp&                    nplant)
-      do i = 1_ik, n
-         leaf_carbon(i)          = advance_pool(leaf_carbon(i),          d_leaf_carbon_dt(i)          * dt_yr)
-         fineroot_carbon(i)      = advance_pool(fineroot_carbon(i),      d_fineroot_carbon_dt(i)      * dt_yr)
-         wood_carbon(i)          = advance_pool(wood_carbon(i),          d_wood_carbon_dt(i)          * dt_yr)
-         nonstructural_carbon(i) = advance_pool(nonstructural_carbon(i), d_nonstructural_carbon_dt(i) * dt_yr)
-         nplant(i)               = advance_density(nplant(i), dln_nplant_dt(i) * dt_yr, negligible)
-      end do
-   end subroutine update_cohort_states_kernel
 
    !---------------------------------------------------------------------------------------!
    ! The density after the log-space change dln, stopped at the floor (demography.md §2).  !
