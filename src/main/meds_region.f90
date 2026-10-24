@@ -108,13 +108,25 @@ contains
    !---------------------------------------------------------------------------------------!
    ! region_open -- config -> the polygons (one at the [site], or the box's cells) -> the shared  !
    ! forcing source -> each polygon's initial community and preparation -> the output files:      !
-   ! everything before the first step.                                                            !
+   ! everything before the first step. A run that cannot open holds nothing open: what it opened  !
+   ! before it stopped is closed and freed, so the variable (a C-API handle's slot) can open      !
+   ! another run.                                                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine region_open(path, reg, ok, verbose)
       character(len=*),    intent(in)    :: path
       type(meds_region_t), intent(inout) :: reg
       logical,             intent(out)   :: ok
       logical, optional,   intent(in)    :: verbose
+      if (present(verbose)) reg%verbose = verbose
+      call open_run(path, reg, ok)
+      if (.not. ok) call region_free(reg)
+   end subroutine region_open
+
+   !----- Everything region_open does; ok = .false. (after saying why) when the run cannot start. --!
+   subroutine open_run(path, reg, ok)
+      character(len=*),    intent(in)    :: path
+      type(meds_region_t), intent(inout) :: reg
+      logical,             intent(out)   :: ok
       type(met_cells_t)          :: cells
       type(met_grid_t)           :: grid
       integer(ik)                :: st, p, n
@@ -127,15 +139,6 @@ contains
       logical                    :: region, started
 
       ok = .false.
-      if (present(verbose)) reg%verbose = verbose
-      !----- The C-API reuses a freed registry slot, so the counters start again here. ------------!
-      reg%istep = 0_ik
-      reg%iyear = 0_ik
-      reg%imonth = 0_ik
-      reg%read_seconds = 0.0_wp
-      reg%year_read_seconds = 0.0_wp
-      reg%year_loads0 = 0_ik
-
       call load_meds_config(trim(path), reg%cfg)
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
       associate (cfg => reg%cfg)
@@ -297,7 +300,7 @@ contains
       end if
       end associate
       ok = .true.
-   end subroutine region_open
+   end subroutine open_run
 
    !----- A polygon's sites from its configuration's [[sites]]: each one's configuration (the        !
    !      polygon's, with the site's own ground when it has one) and its share of the polygon, the   !
