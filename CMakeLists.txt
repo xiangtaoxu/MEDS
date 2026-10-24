@@ -261,31 +261,32 @@ meds_fortran_flags(meds_state)
 #  holds the integrator machinery (integrator/) and the loop that drives it (driver/).            #
 #==========================================================================================#
 
-#----- SLOW kernels (daily / annual): phenology, carbon allocation, trait dynamics, the CENTURY #
-#      soil-carbon matrix and the litter-destination split. Stateless and `pure`-where-possible; #
-#      links the patch store types it reads/writes plus the config leaves. Builds standalone.   #
-file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/plant/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/soil/*.f90)
-add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
-target_link_libraries(meds_slow_kernels PUBLIC meds_state meds_config)
-meds_fortran_flags(meds_slow_kernels)
-
 #----- FAST kernels (sub-daily): the process modules in processes/, one per process: canopy      #
-#      radiation, aerodynamics and the canopy air space; leaf gas exchange, maintenance           #
-#      respiration, the plant's energy, the canopy's water and plant hydraulics; soil water,     #
-#      soil heat and the surface (snow and bare ground). State-free apart from the patch store   #
-#      types; builds standalone.                                                                  #
+#      radiation, aerodynamics and the canopy air space; leaf gas exchange, respiration (the       #
+#      plants' maintenance and the soil's heterotrophic), the plant's energy, the canopy's water   #
+#      and plant hydraulics; soil water, soil heat and the surface (snow and bare ground).         #
+#      State-free apart from the patch store types; builds standalone.                             #
 #                                                                                                  #
-#      It links meds_state and meds_config only: the fast kernels import nothing from                #
-#      slow_dynamics/, and the one fast->slow edge (the heterotrophic-respiration seam,              #
-#      docs/science/soil_carbon.md §7) sits on meds_fast.                                            #
+#      It links meds_state and meds_config only, and imports nothing from slow_dynamics/.         #
 file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/processes/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
 target_link_libraries(meds_fast_kernels PUBLIC meds_state meds_config)
 meds_fortran_flags(meds_fast_kernels)
+
+#----- SLOW kernels (daily / annual): phenology, carbon allocation, trait dynamics, the CENTURY #
+#      soil carbon pools' daily step and the litter-destination split. Stateless and            #
+#      `pure`-where-possible; links the patch store types it reads/writes, the config leaves,   #
+#      and the fast kernels for the soil's respiration chemistry (meds_respiration), which the  #
+#      fast loop respires and the daily step integrates, so the two debit the same CENTURY     #
+#      matrix (docs/science/soil_carbon.md §7). Builds standalone.                              #
+file(GLOB SLOW_KERNEL_SOURCES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/plant/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/slow_dynamics/soil/*.f90)
+add_library(meds_slow_kernels STATIC ${SLOW_KERNEL_SOURCES})
+target_link_libraries(meds_slow_kernels PUBLIC meds_state meds_config meds_fast_kernels)
+meds_fortran_flags(meds_slow_kernels)
 
 #----- DEMOGRAPHY: the vital-rate laws (growth / mortality / recruitment) and the apply-operators #
 #      that change the population -- state update, cohort and patch fuse-fission, termination,     #
@@ -368,16 +369,12 @@ meds_fortran_flags(meds_maps)
 #      driver that walks a slow step in dt_fast sub-steps over the patch axis (driver/).          #
 #                                                                                                  #
 #      The frozen build's process rates sit in integrator/, not driver/, because the step calls   #
-#      them once per dt_fast, so filing them under driver/ would make a cycle. It links            #
-#      meds_slow_kernels for the one fast->slow seam                                               #
-#      (docs/science/soil_carbon.md §7): the sub-daily heterotrophic respiration must respire       #
-#      the SAME CENTURY matrix the daily step debits.                                               #
+#      them once per dt_fast, so filing them under driver/ would make a cycle.                    #
 file(GLOB FAST_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/integrator/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/driver/*.f90)
 add_library(meds_fast STATIC ${FAST_SOURCES})
-target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_slow_kernels meds_state
-                                       meds_met meds_output)
+target_link_libraries(meds_fast PUBLIC meds_fast_kernels meds_state meds_met meds_output)
 meds_fortran_flags(meds_fast)
 
 #----- The SLOW loop: the thin coordinator and the two peer domain drivers (vegetation dynamics, #

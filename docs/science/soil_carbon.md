@@ -55,7 +55,7 @@ array the kernels use.
 
 ## 3. The transfer matrix, and the respired complement
 
-`assemble_transfer_matrix` builds $A$, $K$ and the respired fractions together. Each donor loses *all*
+`decomposition_transfer_matrix` builds $A$, $K$ and the respired fractions together. Each donor loses *all*
 of its decayed carbon, so the diagonal is uniform; Rh is exactly what $A$ does *not* transfer:
 
 ```math
@@ -83,7 +83,7 @@ those back-transfers sit above the diagonal, so scheme 5's active block is non-t
 
 ## 4. The environmental scalar, and where it sits in the product
 
-`assemble_env_scalar` returns one scalar per pool: temperature × moisture/oxygen × (structural only) a
+`decomposition_env_scalar` returns one scalar per pool: temperature × moisture/oxygen × (structural only) a
 lignin brake, over the relative saturation $`m`$ clipped to $`[0,1]`$.
 
 ```math
@@ -192,7 +192,7 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 **daily** — the classic double-counting hazard. MEDS resolves it by having both ends read the same
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
-sub-step, `heterotrophic_respiration_matrix` evaluates eq. (2) on it, and the fast pre-pass converts
+sub-step, `heterotrophic_respiration` evaluates eq. (2) on it, and the fast pre-pass converts
 $`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy-air CO₂ twin;
 the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\xi^{\mathrm{int}}`$ of
 eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
@@ -309,13 +309,13 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 
 | Concept | Routine |
 |---|---|
-| $\xi$; and $A$, $K$, $`e_r`$ | `meds_soil_biogeochem`: `assemble_env_scalar`, `assemble_transfer_matrix` |
+| $\xi$; and $A$, $K$, $`e_r`$ | `meds_respiration`: `decomposition_env_scalar`, `decomposition_transfer_matrix` |
 | litter → source term $u$; necromass → destinations | `meds_soil_biogeochem`: `build_litter_input`; `meds_litter_partition`: `necromass_to_litter` |
 | daily pool advance (Euler / EXPM) + audits | `meds_soil_biogeochem`: `soil_carbon_step` |
-| instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix` |
+| instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_respiration`: `heterotrophic_respiration` |
 | steady state; capacity / potential / residence time | `meds_soil_biogeochem`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
 | pool plausibility | `meds_soil_biogeochem`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_t` / `decomp_xi_t` / `litter_input_t` in `meds_patch_state_vars` |
+| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
 | daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
 | litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |

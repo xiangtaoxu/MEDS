@@ -20,8 +20,7 @@ program test_plant_respiration
    use meds_kinds,         only : wp, ik
    use meds_constants,     only : pi, t_ref_photo
    use meds_therm_lib,     only : peaked_arrhenius_scale
-   use meds_plant_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration,     &
-                                     root_zone_temp_scale
+   use meds_respiration, only : stem_maintenance_respiration, fine_root_maintenance_respiration, root_zone_temp_scale
    implicit none
    !----- Leaf Rd's peaked response, as the reference configuration sets it ([leaf_physiology]). -!
    real(wp), parameter :: EA_RD = 46390.0_wp, HD_RD = 200000.0_wp, DS_RD = 490.0_wp

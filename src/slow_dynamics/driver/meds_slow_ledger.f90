@@ -33,11 +33,10 @@ module meds_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, pack_pool_vector
    use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
-   use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
-                                       pack_pool_vector
+   use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private

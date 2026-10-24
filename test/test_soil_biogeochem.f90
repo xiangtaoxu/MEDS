@@ -25,16 +25,16 @@ program test_soil_biogeochem
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgcday_2_umols
    use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t
-   use meds_patch_state_vars,   only : soil_carbon_t
+   use meds_patch_state_vars,   only : soil_carbon_t, pack_pool_vector
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2,         &
                                       DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL,                      &
                                       IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_soil_biogeochem,  only : soil_carbon_bad_pool, soil_carbon_pool_name,                   &
-                                     SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,                            &
-                                     assemble_env_scalar, assemble_transfer_matrix,                &
-                                     build_litter_input, heterotrophic_respiration_matrix,          &
+                                     SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE, build_litter_input,         &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
-                                     soil_carbon_diagnostics, pack_pool_vector
+                                     soil_carbon_diagnostics
+   use meds_respiration,      only : decomposition_env_scalar, decomposition_transfer_matrix,      &
+                                     heterotrophic_respiration
    use meds_litter_partition, only : necromass_to_litter, add_necromass
    implicit none
 
@@ -93,7 +93,7 @@ contains
       call pack_pool_vector(pools, x) ; sx = max(sum(x), 1.0_wp)
 
       opts%step_solver = DECOMP_STEP_EULER
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       block
          type(soil_carbon_t) :: p
          real(wp) :: rh_indep, dc
@@ -149,10 +149,10 @@ contains
       pools%fast_grnd_carbon=0.4_wp; pools%fast_soil_carbon=0.6_wp
       pools%struct_grnd_carbon=2.0_wp; pools%struct_soil_carbon=3.0_wp
       pools%microbial_carbon=0.5_wp; pools%slow_carbon=8.0_wp; pools%passive_carbon=20.0_wp
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       xi = [ (0.4_wp + 0.3_wp*frac(int(i,ik)), i = 1, N_SOIL_POOL) ]
       call pack_pool_vector(pools, x)
-      rh_fun  = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools)
+      rh_fun  = heterotrophic_respiration(a_mat, k_diag, xi, pools)
       rh_hand = 0.0_wp
       do j = 1_ik, N_SOIL_POOL
          rh_hand = rh_hand + er(j)*xi(j)*k_diag(j)*x(j)
@@ -182,7 +182,7 @@ contains
       opts%decomp_scheme = DECOMP_SCHEME_ED2           ! default 3-active
       pools%struct_grnd_carbon=2.0_wp; pools%struct_soil_carbon=3.0_wp
       pools%fast_grnd_carbon=1.0_wp; pools%fast_soil_carbon=1.5_wp; pools%slow_carbon=5.0_wp
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       call pack_pool_vector(pools, x)
       ! DISTINCT per-pool xi (surface vs below), so ordering matters:
       xi = [0.9_wp, 0.3_wp, 0.9_wp, 0.3_wp, 0.3_wp, 0.3_wp, 0.3_wp]
@@ -194,7 +194,7 @@ contains
             dwrong(i)   = dwrong(i)   + a_mat(i,j)*(xi(i)*k_diag(j)*x(j))    ! receiver scalar (WRONG)
          end do
       end do
-      rh = heterotrophic_respiration_matrix(a_mat, k_diag, xi, pools)
+      rh = heterotrophic_respiration(a_mat, k_diag, xi, pools)
       loss_correct = -sum(dcorrect)      ! total carbon leaving the network
       loss_wrong   = -sum(dwrong)
       call check('correct form: total loss == Rh', loss_correct, rh, 1.0e-14_wp*max(rh,1.0_wp))
@@ -213,7 +213,7 @@ contains
       print '(a)', '-- test 4: decomp scheme topology --'
       ! ---- scheme 0 (default 3-active): only a(6,3),a(6,4) off-diagonal; micr/pass inert. ----
       opts = soil_carbon_params_t()                            ! defaults: scheme 0, er_struct=0.3, k_micr=k_pass=0
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       call check('scheme0 K_micr = 0', k_diag(IP_MICR),    0.0_wp, 0.0_wp)
       call check('scheme0 K_pass = 0', k_diag(IP_PASSIVE), 0.0_wp, 0.0_wp)
       call check('scheme0 a(slow,struct_grnd)=0.7', a_mat(IP_SLOW,IP_STRUCT_GRND), 0.7_wp, 1.0e-14_wp)
@@ -238,7 +238,7 @@ contains
       opts%er_fast=0.55_wp; opts%er_struct_nonlig=0.50_wp; opts%er_struct_lig=0.20_wp
       opts%er_slow=0.55_wp; opts%er_pass=0.55_wp; opts%er_micr_int=0.60_wp; opts%er_micr_slp=0.17_wp
       opts%xsand=0.35_wp; opts%xclay=0.25_wp
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       er_micr = 0.60_wp + 0.17_wp*0.35_wp
       ex_mp   = min(1.0_wp-er_micr, 0.003_wp+0.032_wp*0.25_wp)
       ex_sp   = min(1.0_wp-0.55_wp, 0.003_wp+0.009_wp*0.25_wp)
@@ -283,7 +283,7 @@ contains
       u  = 0.0_wp
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
       lignin_in = 0.0_wp
-      call assemble_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
       call pack_pool_vector(pss, xss)
       ! inert pools held at 0 (default scheme); finite everywhere:
@@ -349,7 +349,7 @@ contains
       u  = 0.0_wp
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
       lignin_in = 0.0_wp
-      call assemble_transfer_matrix(pss, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pss, opts, a_mat, k_diag, er)
       call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
       call pack_pool_vector(pss, xss)
       call soil_carbon_diagnostics(a_mat, k_diag, xi, u, pss, diag)
@@ -551,22 +551,22 @@ contains
       ! Q10 = 2 doubling per 10 K (scheme 5, uncapped):
       opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
       opts%rh_q10 = 2.0_wp ; opts%rh_t_ref = 288.15_wp
-      call assemble_env_scalar(298.15_wp, 298.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_a)  ! T
-      call assemble_env_scalar(308.15_wp, 308.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_b)  ! T+10
+      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_a)  ! T
+      call decomposition_env_scalar(308.15_wp, 308.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_b)  ! T+10
       call check('Q10=2 doubling per 10K', xi_b(IP_FAST_SOIL)/xi_a(IP_FAST_SOIL), 2.0_wp, 1.0e-12_wp)
       ! ED2 capped exp: saturates (min(1,.)) at/above 45 C (318.15 K):
       opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_ED2
-      call assemble_env_scalar(320.15_wp, 320.15_wp, opts%resp_opt_water*0.6_wp+0.1_wp, 0.1_wp, 0.6_wp, &
+      call decomposition_env_scalar(320.15_wp, 320.15_wp, opts%resp_opt_water*0.6_wp+0.1_wp, 0.1_wp, 0.6_wp, &
                                pools, opts, xi_hi)
       ! at rel = resp_opt_water the water factor = 1, so xi(fast) = min(1,exp(pos)) = 1
-      call assemble_env_scalar(320.15_wp, 320.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
+      call decomposition_env_scalar(320.15_wp, 320.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
                                pools, opts, xi_opt)
       call check('ED2 cap: f_temp<=1 at 47C, rel=opt => xi=1', xi_opt(IP_FAST_SOIL), 1.0_wp, 1.0e-12_wp)
       ! moisture: rel=opt gives f_water=1 (peak); a drier rel gives f_water<1 (lower xi):
       opts = soil_carbon_params_t()
-      call assemble_env_scalar(298.15_wp, 298.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
+      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
                                pools, opts, xi_opt)
-      call assemble_env_scalar(298.15_wp, 298.15_wp, 0.2_wp, 0.1_wp, 0.6_wp, pools, opts, xi_dry)   ! rel < opt
+      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.2_wp, 0.1_wp, 0.6_wp, pools, opts, xi_dry)   ! rel < opt
       call check_true('moisture peak at opt (dry side lower)', xi_dry(IP_FAST_SOIL) < xi_opt(IP_FAST_SOIL), &
                       xi_opt(IP_FAST_SOIL) - xi_dry(IP_FAST_SOIL))
       ! N off (default): structural xi has NO N brake -> with zero lignin, xi(struct)==xi(fast) same layer.

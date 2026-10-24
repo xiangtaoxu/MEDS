@@ -75,10 +75,11 @@ so every symbol has exactly one legal spelling.
   soil-top conductance. The two are mutually exclusive modes of one interface, blended by the cover
   fraction.
 
-**Heterotrophic respiration is not here.** It is a carbon-decomposition process and lives in
-`slow_dynamics/soil/meds_soil_biogeochem`. The fast loop calls its matrix form so that the sub-daily
-respiration debits the same CENTURY pool the daily step does — the one documented fast/slow kernel
-seam in the model.
+**Respiration** — **`meds_respiration`**: the plants' stem and fine-root maintenance
+respiration, and the soil's heterotrophic respiration — the decomposition scalar, the CENTURY
+transfer matrix and Rh. The daily step of the soil carbon pools (`slow_dynamics/soil/meds_soil_biogeochem`)
+integrates the same matrix, so the sub-daily respiration debits the same CENTURY pool the daily step
+does — the one documented fast/slow kernel seam in the model.
 
 ## Shared constitutive kernels (in `src/share/functions/`)
 

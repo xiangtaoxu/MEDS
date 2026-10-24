@@ -2,7 +2,7 @@
 
 Autotrophic respiration returns a large fraction of gross photosynthesis to the atmosphere, and MEDS charges
 it in **three separate places on two timescales**: leaf dark respiration inside the sub-daily gas-exchange
-solver, stem and fine-root **maintenance** respiration in `meds_plant_respiration` (also sub-daily), and
+solver, stem and fine-root **maintenance** respiration in `meds_respiration` (also sub-daily), and
 **growth (construction)** respiration once a day inside the carbon allocator. This page collects the three
 limbs, states the accounting rule that keeps them from being double-counted, and gives the equations for the
 two non-leaf maintenance terms — ED2 forms (Chambers et al. 2004 for stem), re-referenced to the 25 °C datum.
@@ -211,8 +211,8 @@ See `docs/ROADMAP.md` §7 for the open items.
 
 | Concept | Routine |
 |---|---|
-| stem maintenance respiration (eq. (3)) | `meds_plant_respiration`: `stem_maintenance_respiration` (`elemental pure`: scalar = one cohort, array = one patch) |
-| fine-root maintenance respiration (eq. (4)) | `meds_plant_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
+| stem maintenance respiration (eq. (3)) | `meds_respiration`: `stem_maintenance_respiration` (`elemental pure`: scalar = one cohort, array = one patch) |
+| fine-root maintenance respiration (eq. (4)) | `meds_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
 | shared temperature response (eq. (5)) | `meds_therm_lib`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
 | leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see `leaf_gas_exchange.md`) |
 | per-sub-step call site + patch totals | `meds_fast_integ_frozen`: `canopy_maintenance_respiration`, `build_frozen` (eq. (7)) |
