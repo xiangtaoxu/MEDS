@@ -20,7 +20,7 @@ Each process module owns its argument records, beside the kernel that reads them
 step, `*_out_t` what it returns. `rad_env_t`/`rad_out_t` are `meds_canopy_radiation`'s,
 `aero_env_t`/`aero_args_t`/`aero_out_t` `meds_canopy_aerodynamics`', `cas_env_t`
 `meds_canopy_air_space`'s, `leaf_env_t`/`leaf_out_t` `meds_leaf_gas_exchange`'s,
-`soil_heat_env_t`/`soil_heat_out_t` `meds_soil_heat`'s, `surface_env_t`/`snow_out_t`/`snow_stage_out_t` `meds_surface`'s,
+`soil_heat_env_t`/`soil_heat_out_t` `meds_soil_heat`'s, `surface_env_t`/`snow_out_t` `meds_surface`'s,
 `ground_evap_env_t` `meds_soil_water`'s. The
 `SOIL_*` / `ENERGY_*` selector codes live one layer down in
 `config/params/meds_soil_params`, and the prognostic per-store column state — the canopy-air state, the

@@ -107,8 +107,8 @@ contains
       !----- The pack takes its exchange over the march, the energy and vapour the canopy air and the  !
       !      soil received from it (docs/science/snow_biophysics.md §The snow store); and the warm start !
       !      of the next march. -------------------------------------------------------------------!
-      dynamic%snow = frozen%snow%pack
-      call snow_take_exchange(dynamic%snow, acc%snow_enth_in, acc%snow_vap_out, frozen%snow%params)
+      dynamic%snow = frozen%ground%pack
+      call snow_take_exchange(dynamic%snow, acc%snow_enth_in, acc%snow_vap_out, frozen%ground%params)
       moved%snow_swe1       = dynamic%snow%swe(1)
       moved%snow_enth1      = dynamic%snow%snow_energy(1)
       dynamic%adapt_dt_last = dt_warm

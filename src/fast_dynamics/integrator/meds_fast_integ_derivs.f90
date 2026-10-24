@@ -18,7 +18,7 @@ module meds_fast_integ_derivs
    use meds_constants, only : tiny_num, rho_h2o, grav_head
    use meds_therm_lib, only : cas_enthalpy_to_temp, sat_specific_humidity, sat_specific_humidity_temp_deriv
    use meds_soil_heat, only : soil_heat_env_t, soil_energy_time_deriv, set_soil_heat_env, soil_layer_temp
-   use meds_surface, only : surface_env_t, snow_stage_out_t, ground_surface_exchange
+   use meds_surface, only : surface_env_t, ground_surface_exchange
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv, cas_condensation
    use meds_canopy_aerodynamics, only : canopy_air_conductances
@@ -87,13 +87,12 @@ contains
    ! also the longwave emission base (docs/science/vegetation_energy_dynamics.md eqs. (1)-(2)); the  !
    ! twins' tendencies are docs/science/canopy_air_space_biophysics.md eq. (1).                      !
    !---------------------------------------------------------------------------------------!
-   pure subroutine surface_derivs(y, cas, tissue, film, ground, snow, t_ground, n, f)
+   pure subroutine surface_derivs(y, cas, tissue, film, ground, t_ground, n, f)
       type(surface_state_t),        intent(in)  :: y
       type(cas_boundary_t),         intent(in)  :: cas      !< CAS <-> atmosphere boundary (a stage may pass its own conductances)
       type(plant_energy_env_t),     intent(in)  :: tissue   !< per-cohort leaf/wood energy coefficients
       type(canopy_water_out_t),     intent(in)  :: film     !< interception film
-      type(surface_env_t),          intent(in)  :: ground   !< the ground surface's surroundings over the step
-      type(snow_stage_out_t),       intent(in)  :: snow     !< the snow stage's outcome
+      type(surface_env_t),          intent(in)  :: ground   !< what the ground surface reads, the snow pack among it
       real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at this evaluation (live, not frozen)
       integer(ik),            intent(in)  :: n
       !----- Filled in place; the per-cohort arrays are allocated only when missing or resized, so a  !
@@ -127,7 +126,7 @@ contains
       senv%rho_air    = cas%rho
       senv%press      = cas%press
       senv%t_soil_top = t_ground
-      call ground_surface_exchange(senv, snow, f%h_ground, f%le_ground, f%g_top, f%ground_rad, f%snow_enth_in,   &
+      call ground_surface_exchange(senv, f%h_ground, f%le_ground, f%g_top, f%ground_rad, f%snow_enth_in,         &
                                    f%snow_vap_out)
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
@@ -209,7 +208,7 @@ contains
       y_stage%cas_enthalpy = y%cas_enthalpy
       y_stage%cas_shv = y%cas_shv
       y_stage%cas_co2 = y%cas_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground,                 &
                           t_ground, n, surf_tend)
       f%d_cas_enthalpy = surf_tend%d_cas_enthalpy
       f%d_cas_shv = surf_tend%d_cas_shv

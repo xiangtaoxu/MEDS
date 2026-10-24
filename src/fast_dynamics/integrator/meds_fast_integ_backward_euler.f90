@@ -233,7 +233,7 @@ contains
       y_stage%cas_co2 = y%cas_co2
       y_stage%cas_enthalpy = Hk
       y_stage%cas_shv = qk
-      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground,                            &
          t_ground, n, surf_tend)
       nfeval = nfeval + 1_ik
       R_H = cas_mass_capacity*(Hk - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%box%atm_enthalpy - Hk)
@@ -268,7 +268,7 @@ contains
             !      RH = 1. Transient supersaturation is relaxed by surface_derivs' condensation sink. ----!
             y_stage%cas_enthalpy = Ht
             y_stage%cas_shv = qt
-            call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,         &
+            call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground,                      &
                t_ground, n, surf_tend)
             nfeval = nfeval + 1_ik
             RHt = cas_mass_capacity*(Ht - H0)/dt - surf_tend%src_enth - g_atm_heat*(cas%box%atm_enthalpy - Ht)
@@ -325,14 +325,14 @@ contains
       y_stage%cas_co2 = co2
       y_stage%cas_enthalpy = Hk + dH
       y_stage%cas_shv = qk
-      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground,                            &
          t_ground, n, sfp)
       nfeval = nfeval + 1_ik
       dse_dH = (sfp%src_enth - surf_tend%src_enth)/dH
       dsv_dH = (sfp%src_vap - surf_tend%src_vap)/dH
       y_stage%cas_enthalpy = Hk
       y_stage%cas_shv = qk + dq
-      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,               &
+      call surface_derivs(y_stage, cas, frozen%tissue, frozen%film, frozen%ground,                            &
          t_ground, n, sfp)
       nfeval = nfeval + 1_ik
       dse_dq = (sfp%src_enth - surf_tend%src_enth)/dq

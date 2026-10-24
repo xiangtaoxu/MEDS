@@ -40,7 +40,7 @@ module meds_fast_integ_frozen
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t
-   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t, cas_capacities
+   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, cas_capacities
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_energy, only : plant_energy_env_t, sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, &
@@ -89,7 +89,6 @@ contains
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
-      type(snow_state_t) :: pack   !< the snow pack the stage advances
       integer(ik) :: n, nsl
 
       n   = static%n
@@ -132,9 +131,11 @@ contains
       !      into the pack and the liquid it holds out to the pond, before the water network, which takes !
       !      that water this step. The pack's exchange with the canopy air and the soil is the march's.   !
       !      A no-op without a pack. -----------------------------------------------------------------!
-      pack = dynamic%snow
-      call prepare_snow_stage(pack, cfg%snow, cfg%aero%snow_rough, forcing%snowfall, forcing%rainfall,              &
-                              forcing%air_temp, dt_fast, frozen%snow)
+      frozen%ground%pack   = dynamic%snow
+      frozen%ground%params = cfg%snow
+      frozen%ground%dt     = dt_fast
+      call prepare_snow_stage(forcing%snowfall, forcing%rainfall, forcing%air_temp, cfg%aero%snow_rough,          &
+                              frozen%ground, frozen%snow)
       !----- The top soil node the ground surface conducts to, under the snow's base. -----------------!
       associate (prof => site%soil_profile)
          frozen%ground%dz_soil_top = max(-prof%z_node(1), tiny_num)
@@ -639,7 +640,7 @@ contains
       y_stage%cas_enthalpy = dynamic%cas%can_enthalpy
       y_stage%cas_shv = dynamic%cas%can_shv
       y_stage%cas_co2 = dynamic%cas%can_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
       if (canopy_water_on)                                                                                    &
          call limit_film_evaporation(n, dt_fast, dynamic%leaf_surf_water, dynamic%wood_surf_water,              &
                                      sf0%film_evap_leaf, sf0%film_evap_wood, frozen%film)
@@ -647,7 +648,7 @@ contains
          t_up_wl = merge(dynamic%wood_temp(i), dynamic%leaf_temp(i), sf0%transp_c(i) >= 0.0_wp)
          frozen%tissue%qwflux_wl(i) = sf0%transp_c(i) * internal_energy_liquid(t_up_wl)
       end do
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
       frozen%water_drive%e_demand(1:n) = sf0%transp_c(1:n)
    end subroutine transpiration_demand
 
@@ -672,7 +673,7 @@ contains
          call pond_inflow(snow%exists, snow%melt_rate, snow%t_melt, throughfall, forcing%rainfall, forcing%snowfall,  &
                           forcing%air_temp, tcas, static%shed_water_rate, static%shed_water_enth, drive%rain,         &
                           drive%t_rain, t_water_base, frozen%hydrology%ground_inflow_enth)
-         drive%ground%snow_free_frac  = 1.0_wp - snow%snowfac
+         drive%ground%snow_free_frac  = 1.0_wp - frozen%ground%snowfac
          drive%ground%t_ground        = t_ground
          drive%ground%q_air           = qcas
          drive%ground%rho_air         = rho

@@ -30,7 +30,7 @@ module meds_fast_integ_types
    use meds_canopy_air_space, only : cas_env_t
    use meds_plant_energy, only : plant_energy_env_t
    use meds_canopy_water, only : canopy_water_out_t
-   use meds_surface, only : surface_env_t, snow_stage_out_t
+   use meds_surface, only : surface_env_t, snow_out_t
    use meds_soil_heat, only : soil_layer_temp
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
@@ -518,8 +518,8 @@ module meds_fast_integ_types
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
       type(plant_energy_env_t)     :: tissue       !< per-cohort leaf/wood energy coefficients + heat store
       type(canopy_water_out_t)     :: film         !< canopy interception film
-      type(surface_env_t)          :: ground       !< the ground surface's surroundings over the step
-      type(snow_stage_out_t)       :: snow         !< the snow stage's outcome (all zero without a pack)
+      type(surface_env_t)          :: ground       !< what the ground surface reads, the snow pack among it
+      type(snow_out_t)             :: snow         !< the snow stage's hand-off (all zero without a pack)
       type(soil_hydrology_t)       :: hydrology    !< the water network's soil flows over the step
       type(root_zone_t)            :: roots        !< the network's root uptake and its placement by layer
       type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
