@@ -28,7 +28,7 @@ module meds_fast_state
    use meds_patch_state_vars,    only : decomp_xi_t
    use meds_polygon_state_vars,  only : polygon_t
    use meds_state_defaults,      only : DMAX_PSI_LEAF_ACCUM_RESET
-   use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
+   use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction, canopy_burial_fraction
    use meds_fast_integ_types,          only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t, fast_output_t,  &
                                         ensure_static_capacity
    implicit none
@@ -110,7 +110,8 @@ contains
 
       !----- Canopy geometry. The open fraction exp(-(LAI + WAI)) weighs bare ground in the ground  !
       !      conductance (docs/science/canopy_aerodynamics.md eq. (6)), so a patch without cohorts  !
-      !      couples as bare soil. The canopy is never buried in snow (snowfac = 0). -------------!
+      !      couples as bare soil; the pack at the window's start buries the canopy's roughness,    !
+      !      eq. (1). ------------------------------------------------------------------------------!
       sum_lai = 0.0_wp
       sum_wai = 0.0_wp
       do j = 1_ik, ncoh
@@ -122,7 +123,7 @@ contains
          static%geom%veg_height = max(static%geom%veg_height, static%height(j))
       end do
       static%geom%opencan_frac = open_canopy_fraction(sum_lai, sum_wai)
-      static%geom%snowfac      = 0.0_wp
+      static%geom%snowfac      = canopy_burial_fraction(poly%patch%snow(ip)%snow_depth(1), static%geom%veg_height)
       !----- The canopy-air top and roughness, fixed for the day. Each forcing sample is moved to   !
       !      that top along the patch's log profile (docs/science/forcing.md §8). ----------------!
       static%z_top = poly%patch%cas(ip)%can_depth

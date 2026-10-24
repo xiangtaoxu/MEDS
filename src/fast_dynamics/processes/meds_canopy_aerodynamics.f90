@@ -39,6 +39,9 @@ module meds_canopy_aerodynamics
    !----- The least ratio of the height above the displacement to the roughness length in the wind !
    !      profile, so its logarithm stays positive. -----------------------------------------------!
    real(wp), parameter :: WIND_HEIGHT_ROUGH_MIN = 1.001_wp  !< [-]
+   !----- ED2's cap on the canopy's snow burial fraction (canopy_struct_dynamics), so a buried     !
+   !      canopy keeps a trace of its own roughness. ----------------------------------------------!
+   real(wp), parameter :: BURIAL_MAX = 0.99_wp              !< [-]
 
    public :: canopy_aerodynamics             !< the per-patch entry point: winds, conductances, boundary layers
    public :: canopy_roughness                !< roughness length + displacement height of a patch
@@ -46,6 +49,7 @@ module meds_canopy_aerodynamics
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
    public :: canopy_air_conductances         !< the same, the surface layer re-solved at a canopy-air state
    public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
+   public :: canopy_burial_fraction          !< the share of a patch's canopy height a snow pack buries
    public :: aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: reduced_wind, boundary_layer_conductance, alloc_aero_out  ! used only by the tests
@@ -107,6 +111,14 @@ contains
       real(wp), intent(in) :: lai, wai   !< [m2/m2] the patch's total leaf and wood area indices
       w = safe_exp(-(lai + wai))
    end function open_canopy_fraction
+
+   !----- The canopy's snow burial fraction: the pack's depth over the canopy height, capped at    !
+   !      BURIAL_MAX (ED2's snowfac_can; docs/science/canopy_aerodynamics.md eq. (1)). ------------!
+   elemental real(wp) function canopy_burial_fraction(snow_depth, veg_height) result(f)
+      real(wp), intent(in) :: snow_depth   !< [m] the pack's depth
+      real(wp), intent(in) :: veg_height   !< [m] the canopy height, positive
+      f = min(BURIAL_MAX, snow_depth / veg_height)
+   end function canopy_burial_fraction
 
    !----- Roughness length and displacement height of a patch from its canopy height               !
    !      (docs/science/canopy_aerodynamics.md eq. (1)). ------------------------------------------!

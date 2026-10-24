@@ -31,9 +31,10 @@ d = c_d\,h\,(1-\mathrm{snowfac}) \qquad(1)
 ```
 
 with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`), $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`) and
-$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes an
-unburied canopy ($`\mathrm{snowfac}=0`$), so the snow blend is inactive in a run (see docs/ROADMAP.md);
-the open-canopy blend of §3 acts. The height above the displacement,
+$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The burial fraction is
+ED2's, the pack's depth over the canopy height, capped at 0.99 (`canopy_burial_fraction`), from the pack
+at the start of the forcing window, for which the roughness is fixed. It is distinct from the ground's
+snow-cover fraction ([snow_biophysics](snow_biophysics.md)). The height above the displacement,
 $`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$, is the surface-layer thickness the Monin-Obukhov solve integrates
 over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
 the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
