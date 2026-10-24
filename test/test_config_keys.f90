@@ -6,11 +6,13 @@
 ! check_config_keys reports an unknown key with the listed key it most likely meant: a     !
 ! misspelling, or a key that moved section. A key the reference lists only commented out,  !
 ! at its default, is a listed key. check_key_use reports a listed key the loaded settings  !
-! give nothing to do.                                                                      !
+! give nothing to do. A block is present by any of its keys, and its name matches a whole  !
+! segment, not a prefix: an optional block gated on one chosen key is skipped in silence    !
+! when it is written without that key.                                                     !
 !==========================================================================================!
 program test_config_keys
    use meds_kinds,          only : ik
-   use meds_toml,           only : toml_table_t, toml_parse_file
+   use meds_toml,           only : toml_table_t, toml_parse_file, toml_has_section
    use meds_config,         only : meds_config_t
    use meds_forcing_params, only : MET_BACKEND_ERA5LAND
    use meds_config_check,   only : key_report_t, check_config_keys, check_key_use, nearest_key,     &
@@ -83,6 +85,11 @@ program test_config_keys
               'a [region] block in a site run is named')
    call check(index(report%line(2), 'forcing.path') > 0 .and. index(report%line(2), 'ED_ERA5land') > 0, &
               'the file key under the archive is named')
+
+   !----- A block is present by any of its keys, on a whole segment of its name. -----!
+   call check(toml_has_section(t, 'region'), 'a block is present by any key it holds')
+   call check(.not. toml_has_section(t, 'reg'), 'a block name matches a whole segment, not a prefix')
+   call check(.not. toml_has_section(t, 'run'), 'an absent block is not present')
 
    open(newunit=u, file='test_config_keys.toml', status='old')
    close(u, status='delete')
