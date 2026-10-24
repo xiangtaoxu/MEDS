@@ -1213,6 +1213,7 @@ contains
             end do
          end do
          call patch_compact(poly, pkeep)
+         call sort_cohorts(poly)   ! tallest first again, which the cohort fusion after it scans by
       end if
 
       !----- Renormalize each site's areas to sum to 1; after the merges, round-off only. ---!

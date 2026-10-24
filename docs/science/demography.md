@@ -270,6 +270,8 @@ not deleted.
   only if the dropped patch held the survivors' mean, and a doomed patch is atypical by construction,
   usually a fresh gap.
 - Merging conserves exactly; the renormalization afterwards corrects round-off only.
+- The merges regroup the cohort block once, as a fusion pass does, and the cohorts are sorted
+  tallest first again, the order the cohort fusion after them scans in.
 - Every site keeps at least its largest patch.
 
 ## 5. What each operator conserves
