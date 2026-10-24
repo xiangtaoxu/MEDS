@@ -199,6 +199,7 @@ contains
       call fit(frozen%film%g_film_w, n)
       call fit(frozen%film%intercept_leaf, n)
       call fit(frozen%film%intercept_wood, n)
+      call fit(frozen%film%transfer_lw, n)
       call fit(frozen%roots%root_share, nsl)
       call fit(frozen%roots%qloss_frozen, n)
       call fit(frozen%roots%root_heat, nsl)
@@ -244,6 +245,7 @@ contains
       call move_alloc(from%film%g_film_w, to%film%g_film_w)
       call move_alloc(from%film%intercept_leaf, to%film%intercept_leaf)
       call move_alloc(from%film%intercept_wood, to%film%intercept_wood)
+      call move_alloc(from%film%transfer_lw, to%film%transfer_lw)
       call move_alloc(from%roots%root_share, to%roots%root_share)
       call move_alloc(from%roots%qloss_frozen, to%roots%qloss_frozen)
       call move_alloc(from%roots%root_heat, to%roots%root_heat)
@@ -520,6 +522,7 @@ contains
       n = static%n
       film%intercept_leaf = 0.0_wp
       film%intercept_wood = 0.0_wp
+      film%transfer_lw = 0.0_wp
       film%f_wet_c = 0.0_wp
       film%g_film_leaf = 0.0_wp
       film%g_film_w = 0.0_wp
@@ -530,7 +533,7 @@ contains
                                   cfg%pft%leaf_surf_water_max(static%pft(1:n)),                                 &
                                   cfg%pft%wood_surf_water_max(static%pft(1:n)), cfg%intercept_k,                &
                                   cfg%intercept_alpha, dt_fast, film%intercept_leaf, film%intercept_wood,       &
-                                  film%f_wet_c, throughfall)
+                                  film%transfer_lw, film%f_wet_c, throughfall)
    end subroutine intercept_rain
 
    !---------------------------------------------------------------------------------------!
