@@ -142,7 +142,7 @@ and passive are fed by transfers alone. Carbon arrives by two routes: turnover/s
 background mortality accumulate into `patch%litter_in` and enter through $u$, while **cull-termination
 and disturbance kills** add necromass *directly* onto `patch%soil_carbon`, through the same
 `necromass_to_litter` split, so the boundary's dead carbon reaches the pools at once rather than with the
-next day's step. Hence the audit field `litter_in_matrix` — it is $`\sum_i u_i`$ only.
+next day's step.
 
 ## 6. The daily step, and why it consumes an accumulated integral
 
@@ -253,7 +253,7 @@ $`A\,\xi K`$, making the trio a decomposition of *why* two runs store different 
 
 ## 9. Audits, and the difference between conservation and plausibility
 
-Every step fills a `soil_carbon_out_t`: `litter_in_matrix`, `dC_pool`, `rh_out`, `rh_seam_gap` (§7),
+Every step fills a `soil_carbon_out_t`: `rh_seam_gap` (§7),
 $\lambda$ with the pool that attained it, and the lignin passive-tracer residual
 $`\max_s|\Delta L_s-(\ell_s-(1-\sigma_s)L_s)|`$, zero by construction for either solver. The carbon
 check that can actually fail is the *independent* one, in the tests: recompute $`R_h`$ from

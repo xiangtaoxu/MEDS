@@ -11,8 +11,8 @@ module meds_init_census
    use meds_config,     only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground,   only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
-   use meds_slow_update, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts, split_cohorts,        &
-                                sort_patches, new_fuse_patches, terminate_patches
+   use meds_slow_update, only : sort_cohorts, fuse_cohorts, terminate_cohorts, split_cohorts,        &
+                                sort_patches, fuse_patches, terminate_patches
    implicit none
    private
 
@@ -233,16 +233,16 @@ contains
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
-         call new_fuse_cohorts(poly, cfg)
+         call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg)
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
       end if
       if (cfg%demography_on .and. cfg%do_patch_fissfuse) then
          call sort_patches(poly)
-         call new_fuse_patches(poly, cfg)
+         call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
-         call new_fuse_cohorts(poly, cfg)
+         call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg)
          call sort_cohorts(poly)
       end if

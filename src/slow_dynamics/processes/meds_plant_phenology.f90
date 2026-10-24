@@ -200,7 +200,7 @@ contains
          if (is_unset_positive(state%light_hours_mean)) then
             state%light_hours_mean = env%par_hours
          else
-            w = min(1.0_wp, dt / max(params%light_window, dt))
+            w = dt / max(params%light_window, dt)
             state%light_hours_mean = state%light_hours_mean + w * (env%par_hours - state%light_hours_mean)
          end if
       end if

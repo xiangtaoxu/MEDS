@@ -30,10 +30,10 @@ module meds_slow_dynamics
                                        accumulate_mortality_litter, shed_mortality_water,                &
                                        shed_excess_tissue_water, advance_soil_carbon
    use meds_slow_update,        only : accumulate_recruit_pool, commit_vegetation_step, sort_cohorts,    &
-                                       update_overtopping_lai, update_patch_states,                      &
-                                       refresh_canopy_depth, apply_recruitment, new_fuse_cohorts,        &
-                                       terminate_cohorts, split_cohorts, apply_patch_disturbance,        &
-                                       sort_patches, new_fuse_patches, terminate_patches
+                                       update_overtopping_lai, age_patches, refresh_canopy_depth,        &
+                                       apply_recruitment, fuse_cohorts, terminate_cohorts,               &
+                                       split_cohorts, apply_patch_disturbance, sort_patches,             &
+                                       fuse_patches, terminate_patches
    use meds_slow_diag,          only : open_slow_cohort_rows, write_slow_patch_rows
    implicit none
    private
@@ -70,7 +70,7 @@ contains
          call vegetation_dynamics(poly, cfg, ledger=ledger, latitude_deg=latitude_deg)
       end if
 
-      call update_patch_states(poly%patch, cfg%dt_years)
+      call age_patches(poly%patch, cfg%dt_years)
 
       !----- Resize each canopy-air volume to the stand growth and mortality left, so the  !
       !      fast loop sees one depth all day. --------------------------------------------!
@@ -223,7 +223,7 @@ contains
          !      the model, checkable only if no other operator shares its phase                     !
          !      (docs/science/conservation.md §3). -------------------------------------------------!
          if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_RECRUIT)
-         call new_fuse_cohorts(poly, cfg)
+         call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg, cull_water)
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
@@ -247,9 +247,9 @@ contains
       if (do_patch_fissfuse) then
          if (present(ledger)) th0 = slow_tissue_energy(poly)
          call sort_patches(poly)
-         call new_fuse_patches(poly, cfg)
+         call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
-         call new_fuse_cohorts(poly, cfg)
+         call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg, cull_water)
          call sort_cohorts(poly)
          if (present(ledger)) then

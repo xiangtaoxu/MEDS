@@ -282,7 +282,7 @@ contains
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
       lignin_in = 0.0_wp
       call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
+      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, pss)
       call pack_pool_vector(pss, xss)
       ! inert pools held at 0 (default scheme); finite everywhere:
       if (scheme == DECOMP_SCHEME_ED2) then
@@ -348,7 +348,7 @@ contains
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
       lignin_in = 0.0_wp
       call decomposition_transfer_matrix(pss, opts, a_mat, k_diag, er)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
+      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, pss)
       call pack_pool_vector(pss, xss)
       call soil_carbon_diagnostics(a_mat, k_diag, xi, u, pss, diag)
       call check_true('X_c == X_ss at equilibrium', maxval(abs(diag%x_c - xss)) < 1.0e-10_wp*max(maxval(xss),1.0_wp), &

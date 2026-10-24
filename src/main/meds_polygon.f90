@@ -431,7 +431,7 @@ contains
       lit%struct_grnd = cfg%soil_carbon%spinup_struct_grnd
       lit%struct_soil = cfg%soil_carbon%spinup_struct_soil
       call build_litter_input(lit, u_bar, lignin_bar)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, cfg%soil_carbon, pools_ss)
+      call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, pools_ss)
       do ipp = 1_ik, poly%patch%n
          poly%patch%soil_carbon(ipp) = pools_ss
       end do

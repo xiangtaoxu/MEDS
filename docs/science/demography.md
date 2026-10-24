@@ -327,8 +327,8 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 | the growth history, eq. (2) | `meds_slow_update`: `fill_cohort_deriv` |
 | applying growth and mortality, eq. (8) | `meds_slow_update`: `commit_vegetation_step`, `update_cohort_states`, `advance_pool`, `advance_density` |
 | mortality's litter and water, eq. (9); the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`; `meds_slow_update`: `accumulate_recruit_pool` |
-| sort, fusion, fission, the cull, recruitment | `meds_slow_update`: `sort_cohorts`, `new_fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
-| treefall gaps, patch fusion, termination, eq. (10) | `meds_slow_update`: `apply_patch_disturbance`, `new_fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
+| sort, fusion, fission, the cull, recruitment | `meds_slow_update`: `sort_cohorts`, `fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
+| treefall gaps, patch fusion, termination, eq. (10) | `meds_slow_update`: `apply_patch_disturbance`, `fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
 | the overtopping LAI, eq. (11) | `meds_slow_update`: `update_overtopping_lai`; `meds_numerics`: `equal_height_layers` |
 | the order of the operators | `meds_slow_dynamics`: `vegetation_dynamics`, `restructure_stand` |
 | tests | `test/test_fusion_cohort.f90`, `test/test_patch.f90`, `test/test_disturbance.f90`, `test/test_mortality_pathways.f90`, `test/test_carbon_growth.f90` |

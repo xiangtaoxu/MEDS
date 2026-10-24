@@ -21,8 +21,7 @@ program test_carbon_growth
 
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly
-   real(wp)    :: gl, gf, gw, gs, gr, gresp, def, wood0, dbh0
-   logical     :: starv
+   real(wp)    :: gl, gf, gw, gs, gr, gresp, def, ex, wood0, dbh0
    integer(ik) :: istep
 
    call banner('carbon-driven growth')
@@ -30,7 +29,7 @@ program test_carbon_growth
 
    !=== 1. Growth-only allocation closes: (growth pools + npp_store) - deficit = net - growth_resp.=!
    call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.05_wp, 0.05_wp, 0.02_wp, 0.3_wp, &
-        gl, gf, gw, gs, gr, gresp, def, starv)
+        gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
    call check_close((gl+gf+gw+gr+gs) - def, 1.0_wp - gresp, 1.0e-9_wp,                              &
                     'growth allocation carbon closure')
    call check(gr > 0.0_wp, 'mature cohort allocates to reproduction')

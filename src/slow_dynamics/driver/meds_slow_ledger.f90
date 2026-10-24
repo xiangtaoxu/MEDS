@@ -14,8 +14,8 @@ module meds_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, pack_pool_vector, &
-                                       litter_input_t
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store,              &
+                                       pack_pool_vector, litter_input_t
    use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name
@@ -26,7 +26,7 @@ module meds_slow_ledger
    public :: slow_store_t, slow_ledger_t, soilc_seam_t, slow_site_store, slow_fast_carbon_handover
    public :: slow_tissue_energy, slow_co2_handoff, litter_carbon_total
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
-   public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
+   public :: KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
              SLOW_PHASE_TISSUE_WATER
@@ -179,7 +179,9 @@ contains
 
       associate (s => ledger%resid_sum(phase), a => ledger%resid_abs(phase),                       &
                  w => ledger%resid_worst(phase), g => ledger%decl_gross(phase))
-         s%carbon = s%carbon + r%carbon ; s%water = s%water + r%water ; s%energy = s%energy + r%energy
+         s%carbon = s%carbon + r%carbon
+         s%water = s%water + r%water
+         s%energy = s%energy + r%energy
          a%carbon = a%carbon + abs(r%carbon)
          a%water  = a%water  + abs(r%water)
          a%energy = a%energy + abs(r%energy)
@@ -389,16 +391,26 @@ contains
       integer(ik), intent(in) :: phase
       character(len=16)       :: nm
       select case (phase)
-      case (SLOW_PHASE_ALLOCATE) ; nm = 'allocate'
-      case (SLOW_PHASE_GROW)     ; nm = 'grow+mortality'
-      case (SLOW_PHASE_RECRUIT)  ; nm = 'recruit'
-      case (SLOW_PHASE_COHORT)   ; nm = 'cohort fuse/fiss'
-      case (SLOW_PHASE_DISTURB)  ; nm = 'disturbance'
-      case (SLOW_PHASE_PATCH)    ; nm = 'patch fuse/term'
-      case (SLOW_PHASE_CANOPY)   ; nm = 'canopy depth'
-      case (SLOW_PHASE_SOILC)    ; nm = 'soil carbon'
-      case (SLOW_PHASE_TISSUE_WATER) ; nm = 'tissue water'
-      case default               ; nm = '?'
+      case (SLOW_PHASE_ALLOCATE)
+         nm = 'allocate'
+      case (SLOW_PHASE_GROW)
+         nm = 'grow+mortality'
+      case (SLOW_PHASE_RECRUIT)
+         nm = 'recruit'
+      case (SLOW_PHASE_COHORT)
+         nm = 'cohort fuse/fiss'
+      case (SLOW_PHASE_DISTURB)
+         nm = 'disturbance'
+      case (SLOW_PHASE_PATCH)
+         nm = 'patch fuse/term'
+      case (SLOW_PHASE_CANOPY)
+         nm = 'canopy depth'
+      case (SLOW_PHASE_SOILC)
+         nm = 'soil carbon'
+      case (SLOW_PHASE_TISSUE_WATER)
+         nm = 'tissue water'
+      case default
+         nm = '?'
       end select
    end function slow_phase_name
 

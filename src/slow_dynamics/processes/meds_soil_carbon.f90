@@ -35,15 +35,9 @@ module meds_soil_carbon
 
    !----- One daily step's carbon-mass checks (soil_carbon.md §7, §9). --------------------!
    type :: soil_carbon_out_t
-      !----- litter_in_matrix is sum(u) only: cull and disturbance kills add their         !
-      !      necromass straight onto patch%soil_carbon, outside u (§5). -------------------!
-      real(wp) :: litter_in_matrix = 0.0_wp !< [kgC/m2/day] sum(u) -- the matrix source term only
-      real(wp) :: rh_out       = 0.0_wp   !< [kgC/m2/day] Rh reported by soil_carbon_step (= litter_in_matrix - dC_pool)
-      real(wp) :: rh_fast_accum= 0.0_wp   !< [kgC/m2/day] fast loop's accumulated matrix Rh (the flux fed to the canopy air)
-      real(wp) :: dC_pool      = 0.0_wp   !< [kgC/m2/day] net pool change
       !----- rh_seam_gap: zero by construction on an ordinary day, nonzero as expected on a !
       !      day the patch structure changes; do not widen a tolerance to absorb it (§7). ---!
-      real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] rh_out - rh_fast_accum (see above)
+      real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] the step's Rh less the fast loop's (set by the caller)
       real(wp) :: lignin_resid = 0.0_wp   !< [kgC/m2/day] max_s |dL_s - (lignin_in_s - (1-surv_s)*L_s)|; tracer check
       !----- lambda, the largest fraction of any pool the step withdraws, says whether     !
       !      freezing the pool is sound; past 1 forward Euler goes negative (§6). ---------!
@@ -153,19 +147,19 @@ contains
    !  steps. rh_today = litter in - pool change for either solver; it is an audit value    !
    !  and is not fed back to the canopy air. u is one day's input [kgC/m2/day].            !
    !=======================================================================================!
-   subroutine soil_carbon_step(pools, u, lignin_in, xi_int, opts, rh_today, audit)
-      type(soil_carbon_state_t),        intent(inout) :: pools
+   subroutine soil_carbon_step(pools, u, lignin_in, xi_int, params, rh_today, audit)
+      type(soil_carbon_state_t),  intent(inout) :: pools
       real(wp),                   intent(in)    :: u(N_SOIL_POOL), lignin_in(2)
       real(wp),                   intent(in)    :: xi_int(N_SOIL_POOL)   !< [day] INT_day xi_j dt (fast accumulator)
-      type(soil_carbon_params_t), intent(in)    :: opts
+      type(soil_carbon_params_t), intent(in)    :: params
       real(wp),                   intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast loop's Rh
-      type(soil_carbon_out_t),        intent(out)   :: audit
+      type(soil_carbon_out_t),    intent(out)   :: audit
       real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: x0(N_SOIL_POOL), x1(N_SOIL_POOL), dvec(N_SOIL_POOL), loss(N_SOIL_POOL)
       real(wp) :: lig0(2), lig1(2), d_s(2), surv(2), litter_in, dc_pool, lig_resid
       integer(ik) :: i, j
 
-      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
+      call decomposition_transfer_matrix(pools, params, a_mat, k_diag, er)
       call pack_pool_vector(pools, x0)
       lig0(1) = pools%struct_grnd_lignin
       lig0(2) = pools%struct_soil_lignin
@@ -176,7 +170,7 @@ contains
       end do
 
       !----- Each donor decays at its own rate, and only then is its loss split, A*(xi*K*X) (§4). !
-      select case (opts%step_solver)
+      select case (params%step_solver)
       case (DECOMP_STEP_EXPM)
          call step_expm(a_mat, dvec, u, x0, x1)
       case default   ! DECOMP_STEP_EULER
@@ -196,9 +190,13 @@ contains
       !      the linear form under EXPM would drive lignin negative at large d_s (§6). ----!
       d_s(1) = dvec(IP_STRUCT_GRND)
       d_s(2) = dvec(IP_STRUCT_SOIL)
-      select case (opts%step_solver)
-      case (DECOMP_STEP_EXPM) ; surv(1) = exp(-d_s(1))   ; surv(2) = exp(-d_s(2))
-      case default            ; surv(1) = 1.0_wp - d_s(1) ; surv(2) = 1.0_wp - d_s(2)
+      select case (params%step_solver)
+      case (DECOMP_STEP_EXPM)
+         surv(1) = exp(-d_s(1))
+         surv(2) = exp(-d_s(2))
+      case default
+         surv(1) = 1.0_wp - d_s(1)
+         surv(2) = 1.0_wp - d_s(2)
       end select
       lig1(1) = lig0(1) * surv(1) + lignin_in(1)
       lig1(2) = lig0(2) * surv(2) + lignin_in(2)
@@ -212,9 +210,6 @@ contains
       litter_in = sum(u)
       dc_pool   = sum(x1) - sum(x0)
       rh_today  = litter_in - dc_pool
-      audit%litter_in_matrix = litter_in
-      audit%rh_out       = rh_today
-      audit%dC_pool      = dc_pool
       !----- No pool-mass residual: rh_today is defined from the pool change, so it is zero by !
       !      definition; the independent check is test_soil_biogeochem's (soil_carbon.md §9). !
       !----- lambda: the largest fraction of any pool this step withdraws (soil_carbon_out_t). ---!
@@ -226,8 +221,7 @@ contains
             audit%lambda_pool = i
          end if
       end do
-      audit%rh_fast_accum= rh_today                                  ! the driver overwrites it with the fast loop's Rh
-      audit%rh_seam_gap  = 0.0_wp                                    ! rh_out - rh_fast_accum (set by the driver)
+      audit%rh_seam_gap  = 0.0_wp                                    ! the caller sets it against the fast loop's Rh
       !----- Lignin balance dL_s == lignin_in_s - (1-surv_s)*L_s, zero for either solver. ---!
       lig_resid = 0.0_wp
       do i = 1_ik, 2_ik
@@ -242,14 +236,11 @@ contains
    !  active sub-block {j: K_j > 0} only, since inert pools (K = 0) make the full system   !
    !  singular. Inert pools are held at zero.                                              !
    !=======================================================================================!
-   pure subroutine solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, opts, pools_ss)
-      real(wp),                   intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
-      real(wp),                   intent(in)  :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL)
-      type(soil_carbon_params_t), intent(in)  :: opts
-      type(soil_carbon_state_t),        intent(out) :: pools_ss
+   pure subroutine solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, pools_ss)
+      real(wp),                  intent(in)  :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)
+      real(wp),                  intent(in)  :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL)
+      type(soil_carbon_state_t), intent(out) :: pools_ss
       real(wp)    :: x_ss(N_SOIL_POOL)
-      !----- opts is not read (the active set comes from K); it stays in the interface for an !
-      !      iterated scheme-5 steady state. ----------------------------------------------!
       call steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)
       pools_ss = soil_carbon_state_t()                       ! zero all (inert pools + lignin stay 0)
       call unpack_pool_vector(x_ss, pools_ss)
@@ -391,14 +382,22 @@ contains
       integer(ik), intent(in) :: k
       character(len=16)       :: nm
       select case (k)
-      case (IP_FAST_GRND)   ; nm = 'fast_grnd'
-      case (IP_FAST_SOIL)   ; nm = 'fast_soil'
-      case (IP_STRUCT_GRND) ; nm = 'struct_grnd'
-      case (IP_STRUCT_SOIL) ; nm = 'struct_soil'
-      case (IP_MICR)        ; nm = 'microbial'
-      case (IP_SLOW)        ; nm = 'slow'
-      case (IP_PASSIVE)     ; nm = 'passive'
-      case default          ; nm = '(none)'
+      case (IP_FAST_GRND)
+         nm = 'fast_grnd'
+      case (IP_FAST_SOIL)
+         nm = 'fast_soil'
+      case (IP_STRUCT_GRND)
+         nm = 'struct_grnd'
+      case (IP_STRUCT_SOIL)
+         nm = 'struct_soil'
+      case (IP_MICR)
+         nm = 'microbial'
+      case (IP_SLOW)
+         nm = 'slow'
+      case (IP_PASSIVE)
+         nm = 'passive'
+      case default
+         nm = '(none)'
       end select
    end function soil_carbon_pool_name
 

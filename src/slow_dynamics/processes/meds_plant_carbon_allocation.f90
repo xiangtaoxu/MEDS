@@ -156,8 +156,7 @@ contains
    elemental pure subroutine plant_carbon_allocation(gpp, resp_maint, growth_resp_frac, storage, &
                                     leaf_demand, fineroot_demand, storage_demand, repro_frac,     &
                                     growth_leaf, growth_fineroot, growth_wood, npp_store,         &
-                                    growth_repro, growth_resp, deficit, starving,                 &
-                                    wood_growth_max, exudate)
+                                    growth_repro, growth_resp, deficit, wood_growth_max, exudate)
       real(wp), intent(in)  :: gpp              !< [kgC/plant] gross primary production this step (>= 0)
       real(wp), intent(in)  :: resp_maint       !< [kgC/plant] maintenance respiration this step (>= 0)
       real(wp), intent(in)  :: growth_resp_frac !< [--] construction-cost fraction g (PFT trait)
@@ -173,11 +172,8 @@ contains
       real(wp), intent(out) :: growth_repro     !< [kgC/plant] carbon -> reproduction (>= 0; -> recruits)
       real(wp), intent(out) :: growth_resp      !< [kgC/plant] growth respiration on realized growth (>= 0)
       real(wp), intent(out) :: deficit          !< [kgC/plant] unpaid maintenance after storage exhausted (>= 0)
-      logical,  intent(out) :: starving         !< .true. => storage could not cover the maintenance debt
-      !----- The sink limit (growth_sink_limitation): pass both or neither; without them wood !
-      !      takes the whole residual.                                                     !
-      real(wp), intent(in),  optional :: wood_growth_max  !< [kgC/plant] sink-limited wood growth this step
-      real(wp), intent(out), optional :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
+      real(wp), intent(in)  :: wood_growth_max  !< [kgC/plant] sink-limited wood growth (growth_sink_limitation)
+      real(wp), intent(out) :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
       real(wp) :: net, g, cost, avail, store_left, draw, debt, storage_refill, c_repro, c_wood, c_exudate
 
       growth_leaf = 0.0_wp
@@ -188,7 +184,6 @@ contains
       draw = 0.0_wp
       growth_resp = 0.0_wp
       deficit = 0.0_wp
-      starving = .false.
       store_left = max(storage, 0.0_wp)
       net = gpp - resp_maint
       g   = max(growth_resp_frac, 0.0_wp)
@@ -201,10 +196,7 @@ contains
          debt = -net
          draw = min(debt, store_left)
          store_left = store_left - draw
-         if (draw < debt) then
-            starving = .true.
-            deficit  = debt - draw
-         end if
+         if (draw < debt) deficit = debt - draw
          avail = 0.0_wp
       end if
 
@@ -225,14 +217,12 @@ contains
       c_wood      = max(avail, 0.0_wp)
       growth_wood = c_wood / cost
       c_exudate   = 0.0_wp
-      if (present(wood_growth_max)) then
-         if (growth_wood > wood_growth_max) then
-            c_exudate   = growth_wood - max(wood_growth_max, 0.0_wp)
-            growth_wood = max(wood_growth_max, 0.0_wp)
-         end if
+      if (growth_wood > wood_growth_max) then
+         c_exudate   = growth_wood - max(wood_growth_max, 0.0_wp)
+         growth_wood = max(wood_growth_max, 0.0_wp)
       end if
       growth_resp = growth_resp + growth_respiration(growth_wood + c_exudate, g)
-      if (present(exudate)) exudate = c_exudate
+      exudate     = c_exudate
 
       npp_store = storage_refill - draw
    end subroutine plant_carbon_allocation

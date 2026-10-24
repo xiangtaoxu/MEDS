@@ -10,8 +10,8 @@ module meds_slow_diag
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
-   use meds_diag_vars,          only : expand_cohort_diag, reset_cohort_diag, PA_LITTER_LEAF,              &
-                                       PA_LITTER_FINEROOT, PA_LITTER_WOOD, PA_LITTER_REPRO,               &
+   use meds_diag_vars,          only : expand_cohort_diag, reset_cohort_diag, PA_LITTER_LEAF,            &
+                                       PA_LITTER_FINEROOT, PA_LITTER_WOOD, PA_LITTER_REPRO,              &
                                        PA_LITTER_STRUCT, PA_RECRUIT_NPLANT
    implicit none
    private

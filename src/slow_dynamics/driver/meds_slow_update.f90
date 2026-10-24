@@ -42,10 +42,10 @@ module meds_slow_update
    private
 
    public :: commit_vegetation_step, update_cohort_derivatives, fill_cohort_deriv, update_cohort_states
-   public :: advance_pool, accumulate_recruit_pool, update_patch_states, update_overtopping_lai
+   public :: advance_pool, accumulate_recruit_pool, age_patches, update_overtopping_lai
    public :: refresh_canopy_depth, apply_recruitment, apply_patch_disturbance
-   public :: sort_cohorts, max_cohort_count, new_fuse_cohorts, fuse_2_cohorts, split_cohorts, terminate_cohorts
-   public :: sort_patches, patch_light_profile, new_fuse_patches, fuse_2_patches, terminate_patches
+   public :: sort_cohorts, max_cohort_count, fuse_cohorts, fuse_2_cohorts, split_cohorts, terminate_cohorts
+   public :: sort_patches, patch_light_profile, fuse_patches, fuse_2_patches, terminate_patches
 
    !----- How far past its bound a quantity may land from round-off alone, in epsilons of the magnitudes !
    !      it touches (demography.md §2). An emptied pool, or a density decline aimed at the floor, gets  !
@@ -74,9 +74,7 @@ contains
       poly%growth_hist_pos = mod(poly%growth_hist_pos, n_window) + 1_ik
       call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
       call update_cohort_derivatives(poly, step, cfg%dt_years, n_window, poly%growth_hist_pos)
-      if (allocated(step%nplant_before)) deallocate(step%nplant_before)
-      allocate(step%nplant_before(max(poly%cohort%n, 1_ik)))
-      step%nplant_before(1:poly%cohort%n) = poly%cohort%nplant(1:poly%cohort%n)
+      step%nplant_before      = poly%cohort%nplant(1:poly%cohort%n)
       step%leaf_carbon_before = poly%cohort%leaf_carbon(1:poly%cohort%n)
       call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%negligible_nplant)
    end subroutine commit_vegetation_step
@@ -277,14 +275,14 @@ contains
    ! Age every patch by dt_yr. The soil-carbon pools, the other slow per-patch state,      !
    ! advance in meds_slow_state's advance_soil_carbon.                                     !
    !---------------------------------------------------------------------------------------!
-   subroutine update_patch_states(patch, dt_yr)
+   subroutine age_patches(patch, dt_yr)
       type(patch_block), intent(inout) :: patch
       real(wp),          intent(in)    :: dt_yr
       integer(ik) :: ip
       do ip = 1_ik, patch%n
          patch%age(ip) = patch%age(ip) + dt_yr
       end do
-   end subroutine update_patch_states
+   end subroutine age_patches
 
    !---------------------------------------------------------------------------------------!
    ! Each cohort's overtopping LAI, eq. (11) of demography.md §6: the LAI of the taller    !
@@ -340,7 +338,8 @@ contains
       logical     :: book
       if (.not. allocated(poly%patch%cas)) return
       !----- Without a ledger the resize is a plain geometry update. ----------------------!
-      book = .false. ; rho = 0.0_wp
+      book = .false.
+      rho = 0.0_wp
       if (present(ledger)) then
          book = ledger%active
          rho  = ledger%rho_air
@@ -390,7 +389,9 @@ contains
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
       real(wp)    :: recruit_dbh, c_min, endow, t_birth, psi_birth, c_tot, e_tot, w_tot
 
-      c_tot = 0.0_wp ; e_tot = 0.0_wp ; w_tot = 0.0_wp
+      c_tot = 0.0_wp
+      e_tot = 0.0_wp
+      w_tot = 0.0_wp
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
       if (present(heat_drawn))   heat_drawn   = 0.0_wp
       if (present(water_drawn))  water_drawn  = 0.0_wp
@@ -406,10 +407,7 @@ contains
       end do
       !----- No pool reached it: nothing is born, so nothing is drawn (the seed rain is declared !
       !      daily, as it arrives, by accumulate_recruit_pool). ---------------------------------!
-      if (nspawn == 0_ik) then
-         if (present(carbon_drawn)) carbon_drawn = c_tot
-         return
-      end if
+      if (nspawn == 0_ik) return
 
       call expand_cohort_block(poly%cohort, poly%cohort%n + nspawn)
       n_before = poly%cohort%n
@@ -581,7 +579,8 @@ contains
             !      on (soil_carbon.md §5). -----------------------------------------------------------------!
             m = cohort%n
             do d = p0, p1
-               i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
+               i0 = patch%cohort_offset(d)
+               i1 = i0 + patch%cohort_count(d) - 1_ik
                do i = i0, i1
                   if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
                      !----- The killed canopy's water goes to the gap's ground down the channel turnover !
@@ -591,10 +590,10 @@ contains
                      kill_frac = frac * patch%area(d)
                      w_kill = kill_frac * (cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i))
                      patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
-                                                 + w_kill / new_area / max(cfg%dt_slow, tiny_num)
+                                                 + w_kill / new_area / cfg%dt_slow
                      patch%shed_water_enth(newp) = patch%shed_water_enth(newp)                         &
                                                  + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
-                                                   / new_area / max(cfg%dt_slow, tiny_num)
+                                                   / new_area / cfg%dt_slow
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
                      if (cfg%soil_carbon%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
@@ -716,7 +715,7 @@ contains
    ! cohort_size_tol_min, until no patch holds more than max_cohort cohorts; a negative    !
    ! max_cohort fuses every same-PFT pair (demography.md §3).                              !
    !---------------------------------------------------------------------------------------!
-   subroutine new_fuse_cohorts(poly, cfg)
+   subroutine fuse_cohorts(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
@@ -735,7 +734,7 @@ contains
          end if
          tol = tol * cfg%cohort_size_tol_mult
       end do
-   end subroutine new_fuse_cohorts
+   end subroutine fuse_cohorts
 
    !----- One fusion sweep over all patches at a fixed tolerance. --------------------------!
    subroutine fuse_pass(poly, cfg, tol, force)
@@ -808,8 +807,11 @@ contains
          !      (each per-plant amount, the tissue energies among them, density-weighted). The leaf !
          !      traits are set before the geometry is re-derived, since sla maps leaf carbon to     !
          !      leaf area; each blends on the quantity it is per (plant_traits.md §5). -------------!
-         wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
-         cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
+         wr = nr * cohort%leaf_area(recc)
+         wd = nd * cohort%leaf_area(donc)
+         wtot = wr + wd
+         cr = nr * cohort%leaf_carbon(recc)
+         cd = nd * cohort%leaf_carbon(donc)
          !----- The tissue heat capacities before fuse_cohort_fast_state blends the water into   !
          !      them: the diagnostic temperatures fuse on the weights the prognostic ones do. ---!
          call cohort_tissue_heat_capacity(cohort, recc, hlr, hwr)
@@ -951,9 +953,9 @@ contains
             !      shedding uses (conservation.md §3). The heat of its tissues is a thermal-mass !
             !      change the caller declares with the phase's (conservation.md §4). ------------!
             w_cohort = cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i)
-            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / cfg%dt_slow
             patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + cohort%nplant(i) * cohort_water_enthalpy(cohort, i) / max(cfg%dt_slow, tiny_num)
+                                      + cohort%nplant(i) * cohort_water_enthalpy(cohort, i) / cfg%dt_slow
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The cull's mortality carbon, a rate [kgC/m2/yr] times the step's seconds, on    !
             !      the cohort's patch, which the cohort restructuring leaves in place              !
@@ -1073,7 +1075,7 @@ contains
    ! patches. Patches less alike than the last tolerance stay apart even then, unless      !
    ! max_patch < 0 forces fusion. Only patches of one site fuse.                           !
    !---------------------------------------------------------------------------------------!
-   subroutine new_fuse_patches(poly, cfg)
+   subroutine fuse_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp)    :: tol
@@ -1090,7 +1092,7 @@ contains
          if (.not. force .and. maxval(poly%site%patch_count(1:poly%site%n)) <= maxp) exit
          tol = tol * cfg%patch_light_tol_mult
       end do
-   end subroutine new_fuse_patches
+   end subroutine fuse_patches
 
    !----- One fusion pass at a fixed tolerance: a receptor only absorbs patches after it, and an !
    !      absorbed patch absorbs nothing, so the cohort block can stay as it is until the pass   !
@@ -1128,8 +1130,11 @@ contains
             if (both_empty) then
                similar = .true.
             else
-               lr = prof(:, recp) ; ld = prof(:, donp)
-               davg = 0.0_wp ; dmax = 0.0_wp ; npop = 0_ik
+               lr = prof(:, recp)
+               ld = prof(:, donp)
+               davg = 0.0_wp
+               dmax = 0.0_wp
+               npop = 0_ik
                do ihgt = 1_ik, nl
                   !----- Skip layers above both canopies (both at full light). -----------!
                   if (lr(ihgt) >= almost_one .and. ld(ihgt) >= almost_one) cycle
@@ -1175,15 +1180,19 @@ contains
       integer(ik) :: i, i0, i1
 
       associate (patch => poly%patch, cohort => poly%cohort)
-         ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
+         ar = patch%area(recp)
+         ad = patch%area(donp)
+         anew = ar + ad
          if (anew <= tiny_num) then                     ! degenerate: still hand donor cohorts to recp
-            i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
+            i0 = patch%cohort_offset(donp)
+            i1 = i0 + patch%cohort_count(donp) - 1_ik
             do i = i0, i1
                cohort%owner_patch(i) = recp
             end do
             return
          end if
-         rawgt = ar / anew ; dawgt = ad / anew
+         rawgt = ar / anew
+         dawgt = ad / anew
          !----- The fields in the patch file's section order; the area, the weight, is set last. ---!
          !----- 1. The age, area-weighted. ---------------------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
@@ -1216,7 +1225,8 @@ contains
             cohort%nplant(i) = cohort%nplant(i) * rawgt
          end do
          !----- Scale the donor's densities likewise and hand its cohorts to the receptor. ---!
-         i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
+         i0 = patch%cohort_offset(donp)
+         i1 = i0 + patch%cohort_count(donp) - 1_ik
          do i = i0, i1
             cohort%nplant(i)      = cohort%nplant(i) * dawgt
             cohort%owner_patch(i) = recp

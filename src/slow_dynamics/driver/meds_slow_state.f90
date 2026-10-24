@@ -94,9 +94,8 @@ contains
 
       if (all(poly%site%pheno_tair_n(1:poly%site%n) < 1_ik)) return   ! no fast sub-steps -> no drivers
       dt_days  = cfg%dt_slow / day_sec
-      !----- Each site's daily-mean air temperature: its own forcing after its terrain. -----------!
       do is = 1_ik, poly%site%n
-         temp_day(is) = poly%site%pheno_tair_sum(is) / real(max(poly%site%pheno_tair_n(is), 1_ik), wp)
+         temp_day(is) = site_air_temp_day(poly, is)
       end do
       lat = cfg%forcing%latitude
       if (present(latitude_deg)) lat = latitude_deg
@@ -239,7 +238,9 @@ contains
                         pft%kplastic_sla(pf), pft%kplastic_vcmax(pf), pft%kplastic_rd(pf),          &
                         pft%kplastic_leaf_turnover(pf), sla_t, vcmax_t, rd_t, turnover_t)
             else
-               sla_t = pft%sla(pf) ; vcmax_t = pft%vcmax25(pf) ; rd_t = pft%rd25(pf)
+               sla_t = pft%sla(pf)
+               vcmax_t = pft%vcmax25(pf)
+               rd_t = pft%rd25(pf)
                turnover_t = pft%leaf_turnover_rate_toc(pf)
             end if
             sla_old           = cohort%sla(j)
@@ -273,12 +274,12 @@ contains
       integer(ik) :: is
       do is = 1_ik, poly%site%n
          if (poly%site%pheno_tair_n(is) < 1_ik) cycle      ! no fast sub-steps ran: nothing to average
-         t_day = poly%site%pheno_tair_sum(is) / real(poly%site%pheno_tair_n(is), wp)
+         t_day = site_air_temp_day(poly, is)
          associate (t_growth => poly%site%t_growth_avg(is))
             if (is_unset_positive(t_growth)) then
                t_growth = t_day
             else
-               w = min(1.0_wp, real(step_days, wp) / max(lp%acclim_window_days, real(step_days, wp)))
+               w = real(step_days, wp) / max(lp%acclim_window_days, real(step_days, wp))
                t_growth = t_growth + w * (t_day - t_growth)
             end if
             call acclimate_leaf_photo_table(t_growth, lp%acclim_ds_vcmax_a, lp%acclim_ds_vcmax_b,            &
@@ -287,6 +288,14 @@ contains
          end associate
       end do
    end subroutine acclimate_site_leaf_tables
+
+   !----- A site's daily-mean air temperature [K] over the fast loop's sub-steps: its own forcing, !
+   !      after its terrain. Phenology and thermal acclimation both read it. -------------------!
+   pure real(wp) function site_air_temp_day(poly, is) result(t_day)
+      type(polygon_t), intent(in) :: poly
+      integer(ik),     intent(in) :: is
+      t_day = poly%site%pheno_tair_sum(is) / real(max(poly%site%pheno_tair_n(is), 1_ik), wp)
+   end function site_air_temp_day
 
    !---------------------------------------------------------------------------------------!
    ! Each cohort's carbon for the step: gather the day's GPP and maintenance respiration, apply  !
@@ -310,7 +319,6 @@ contains
       real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
       real(wp)    :: seed_lost, exudate, window_yr, grown_in_window
       real(wp), allocatable :: co2_owed(:), efficiency(:)
-      logical     :: starving
       integer(ik) :: n_window, next_pos
 
       !----- The litter accumulator is patch state: it arrives holding the last step's litter. !
@@ -320,7 +328,8 @@ contains
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(step%d_leaf(n), step%d_fineroot(n), step%d_wood(n), step%d_nonstructural(n),          &
                step%npp_repro(n), step%exhausted(n))
-      allocate(co2_owed(poly%patch%n)) ; co2_owed = 0.0_wp
+      allocate(co2_owed(poly%patch%n))
+      co2_owed = 0.0_wp
       efficiency = cohort_recruit_efficiency(poly, cfg)
       !----- The growth-history slot this step's sample will fill (commit_vegetation_step advances !
       !      growth_hist_pos the same way): the sink limit's window leaves out its old sample. ----!
@@ -378,7 +387,7 @@ contains
                      storage_demand=store_demand, repro_frac=repro_frac,                           &
                      growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
                      npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
-                     deficit=deficit, starving=starving,                                           &
+                     deficit=deficit,                                                              &
                      wood_growth_max=growth_sink_limitation(                                       &
                         allom=cohort%pft_table%allom(pf),                                            &
                         wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
@@ -436,7 +445,7 @@ contains
 
       !----- The CO2 owed as a molar rate [umol/m2/s] the next fast window emits. -------------!
       do ip = 1_ik, poly%patch%n
-         poly%patch%slow_co2_rate(ip) = co2_owed(ip) / max(cfg%dt_slow, tiny_num) / KGC_PER_UMOL_C
+         poly%patch%slow_co2_rate(ip) = co2_owed(ip) / cfg%dt_slow / KGC_PER_UMOL_C
       end do
    end subroutine compute_carbon_allocation
 
@@ -614,8 +623,8 @@ contains
       end associate
 
       do ip = 1_ik, poly%patch%n
-         poly%patch%shed_water_rate(ip) = patch_total(ip) / max(cfg%dt_slow, tiny_num)
-         poly%patch%shed_water_enth(ip) = patch_enth(ip)  / max(cfg%dt_slow, tiny_num)
+         poly%patch%shed_water_rate(ip) = patch_total(ip) / cfg%dt_slow
+         poly%patch%shed_water_enth(ip) = patch_enth(ip)  / cfg%dt_slow
       end do
 
       !----- The shed water and its enthalpy: a declared handoff (docs/science/conservation.md §3). !
@@ -683,9 +692,9 @@ contains
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
                                + max(cohort%wood_water_mass(j), 0.0_wp)                            &
                                + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
-            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / max(cfg%dt_slow, tiny_num)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / cfg%dt_slow
             patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + died_nplant * cohort_water_enthalpy(cohort, j) / max(cfg%dt_slow, tiny_num)
+                                      + died_nplant * cohort_water_enthalpy(cohort, j) / cfg%dt_slow
             water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do
       end associate
@@ -722,9 +731,9 @@ contains
             call hold_cohort_tissue_temps(cohort, i)          ! the excess leaves at the tissue's temperature
             ip = cohort%owner_patch(i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
-                                      + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
+                                      + cohort%nplant(i) * excess / cfg%dt_slow
             patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + cohort%nplant(i) * excess_enth / max(cfg%dt_slow, tiny_num)
+                                      + cohort%nplant(i) * excess_enth / cfg%dt_slow
             water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
          end do
       end associate
@@ -762,7 +771,6 @@ contains
                                   rh_today, audit)
             !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
             !      debit, should equal the fast loop's accumulated Rh. --------------------!
-            audit%rh_fast_accum = xa%rh_fast
             audit%rh_seam_gap   = rh_today - xa%rh_fast
             if (present(seam)) then
                seam%worst_rh_gap = max(seam%worst_rh_gap, abs(audit%rh_seam_gap))

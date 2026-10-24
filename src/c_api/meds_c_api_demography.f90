@@ -33,7 +33,7 @@ module meds_c_api_demography
    use meds_init_census, only : init_from_census, restructure_census_stand
    use meds_slow_dynamics, only : vegetation_dynamics, restructure_stand
    use meds_slow_update, only : accumulate_recruit_pool, update_cohort_states, fill_cohort_deriv,        &
-                                update_patch_states, update_overtopping_lai, sort_cohorts
+                                age_patches, update_overtopping_lai, sort_cohorts
    use meds_output_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
    use meds_allometry_lib,          only : dbh_to_height, size_to_leaf_carbon, size_to_wood_carbon,  &
                                            storage_carbon_target
@@ -135,7 +135,7 @@ contains
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
       !      wired here either.
       call vegetation_dynamics(g_poly(sh), g_cfg(ch))
-      call update_patch_states(g_poly(sh)%patch, g_cfg(ch)%dt_years)
+      call age_patches(g_poly(sh)%patch, g_cfg(ch)%dt_years)
       call restructure_stand(g_poly(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow
@@ -212,7 +212,7 @@ contains
          !      restructure_stand that meds_advance_slow calls, which ends by refreshing the         !
          !      overtopping LAI the caller's next rates read.  ---------------------------------------!
          call sort_cohorts(poly)
-         call update_patch_states(poly%patch, cfg%dt_years)
+         call age_patches(poly%patch, cfg%dt_years)
          call restructure_stand(poly, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
