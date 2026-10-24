@@ -92,6 +92,7 @@ contains
       bf%atm_heat_out  = gah*cp_air*(cas_enthalpy_to_temp(y_stage%cas_enthalpy, y_stage%cas_shv)          &
                                      - frozen%cas%env%theta_atm)
       bf%atm_vap_out   = gaw*(y_stage%cas_shv - frozen%cas%box%atm_specific_humidity)
+      bf%rad_net       = surf_tend%coh_rnet + surf_tend%ground_rad
    end subroutine explicit_stage_bflux
 
    !---------------------------------------------------------------------------------------!
@@ -259,6 +260,8 @@ contains
                             + B6*s(6)%atm_heat_out) * dt
       acc%atm_vap_out    = (B1*s(1)%atm_vap_out    + B3*s(3)%atm_vap_out    + B4*s(4)%atm_vap_out              &
                             + B6*s(6)%atm_vap_out) * dt
+      acc%rad_net        = (B1*s(1)%rad_net        + B3*s(3)%rad_net        + B4*s(4)%rad_net                  &
+                            + B6*s(6)%rad_net) * dt
    end subroutine bflux_cash_karp
 
    !----- Did the explicit march end on a railed state? Its 5th- and 4th-order solutions can rail  !

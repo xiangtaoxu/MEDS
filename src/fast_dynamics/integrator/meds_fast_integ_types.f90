@@ -318,6 +318,7 @@ module meds_fast_integ_types
       real(wp), allocatable :: psi_leaf_coh(:)    !< [MPa] the leaf potential at state^n (daily-max accumulator)
       real(wp)              :: le_flux = 0.0_wp   !< [W/m2] CAS -> atmosphere latent heat (ET), the step's mean
       real(wp)              :: h_flux  = 0.0_wp   !< [W/m2] CAS -> atmosphere sensible heat, the step's mean
+      real(wp)              :: rnet    = 0.0_wp   !< [W/m2] net radiation the canopy and ground booked, the step's mean
       logical               :: capture = .false.  !< fill cdiag; off, nothing extra is computed
       real(wp), allocatable :: cdiag(:,:)         !< (N_CO_FAST_ROWS, cohort) per-cohort diagnostics
    end type fast_output_t
@@ -585,6 +586,9 @@ module meds_fast_integ_types
       !      reported H and LE (meds_fast_integ_stepper%atm_fluxes; docs/science/numerical_scheme.md §5b). -----!
       real(wp) :: atm_heat_out = 0.0_wp                          !< [W/m2]    g_atm_heat*cp_air*(T_cas - theta_atm)
       real(wp) :: atm_vap_out  = 0.0_wp                          !< [kg/m2/s] g_atm_vapour*(q_cas - q_atm)
+      !----- The net radiation the canopy and the ground absorbed, as their balances booked it: the   !
+      !      reported net radiation (docs/science/vegetation_energy_dynamics.md, "The emission base"). -!
+      real(wp) :: rad_net = 0.0_wp                               !< [W/m2]
    end type stage_bflux_t
 
    type :: boundary_flux_t                                  !< accumulated AMOUNTS (J/m2, kg/m2, umol/m2)
@@ -606,6 +610,7 @@ module meds_fast_integ_types
       real(wp) :: snow_vap_out = 0.0_wp    !< [kg/m2] vapour from it to the CAS
       real(wp) :: atm_heat_out = 0.0_wp    !< [J/m2]  net CAS -> atmosphere sensible-heat export (reported H)
       real(wp) :: atm_vap_out  = 0.0_wp    !< [kg/m2] net CAS -> atmosphere vapour export (reported LE / L_v)
+      real(wp) :: rad_net      = 0.0_wp    !< [J/m2]  net radiation the canopy and the ground booked (reported)
       !----- Per-cohort tissue-temperature time integrals [K*s], b-weighted over the stages and summed !
       !      over the accepted sub-steps. A tissue's energy is committed from this time average, the   !
       !      complement of what the canopy air received (docs/science/numerical_scheme.md §5b). -------!
@@ -1014,6 +1019,7 @@ contains
       acc%snow_vap_out  = b2*s2%snow_vap_out  + b3*s3%snow_vap_out
       acc%atm_heat_out  = b2*s2%atm_heat_out  + b3*s3%atm_heat_out
       acc%atm_vap_out   = b2*s2%atm_vap_out   + b3*s3%atm_vap_out
+      acc%rad_net       = b2*s2%rad_net       + b3*s3%rad_net
    end subroutine bflux_bweight
 
    pure subroutine bflux_zero(acc, n)
@@ -1051,6 +1057,7 @@ contains
       acc%snow_vap_out  = acc%snow_vap_out  + s%snow_vap_out
       acc%atm_heat_out  = acc%atm_heat_out  + s%atm_heat_out
       acc%atm_vap_out   = acc%atm_vap_out   + s%atm_vap_out
+      acc%rad_net       = acc%rad_net       + s%rad_net
       !----- Only accepted sub-steps reach here, so the tissue integrals cover the same sub-steps as  !
       !      every other amount. -------------------------------------------------------------------!
       if (allocated(acc%tissue_leaf_int) .and. allocated(s%tissue_leaf_int)) then

@@ -78,15 +78,32 @@ its own heat capacity (next section), and reports its fluxes over the step avera
 **The emission base.** The two-stream emits each cohort at its effective radiative temperature
 $`T_{rad}=\big(f_l T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$, $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
 from the start-of-step tissue temperatures ([canopy_radiation_transfer](canopy_radiation_transfer.md)
-§3), so the absorbed longwave $`A_{lw}`$ already contains the tissue's own emission at $`T_{rad}`$.
-`tissue_energy_balance` linearizes the change in emission about $`T_{cas}`$, so the loss it books is
-$`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
-where the consistent one is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{rad})`$: a tissue warmer
-than the canopy air loses an extra $`4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$ and a
-cooler one gains it. Linearizing about the lagged tissue temperature $`T_{rad}`$ instead
-removes the residual but adds a lagged positive feedback (a warmer leaf raises the next step's $`T_{rad}`$), which drove a single-pass
-integrator to NaN when it was tried (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5) and has
-not been tried under `esdirk2`.
+§3), so the absorbed longwave $`A_{lw}`$ already contains the tissue's own emission at $`T_{rad}`$. The
+tissue's longwave is linearized about that same temperature, its slope taken there:
+
+```math
+R_{lw}(T) = A_{lw} - 4\varepsilon\sigma T_{rad}^3\,\mathrm{AI}\,(T - T_{rad})
+```
+
+`canopy_tissue_energy` passes it to the balance, which is linearized about $`T_{cas}`$, as
+$`A_{lw}+4\varepsilon\sigma T_{rad}^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$. Linearized about $`T_{cas}`$
+instead, a tissue warmer than the canopy air lost an extra $`4\varepsilon\sigma T^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$
+it never emitted, and a cooler one gained it. At BCI that put the booked canopy net radiation
+20–25 W/m² below the two-stream's at midday, 4.5–6 W/m² on the daily mean.
+
+$`T_{rad}`$ lags a step, so a warmer leaf raises the next step's base. The step map's gain is the
+slope over the balance's coupling, 0.05–0.3 for a leaf, a contraction. Under `esdirk2` the
+15-minute traces are smoother than with the $`T_{cas}`$ base, not oscillating: the sign of a leaf's
+step-to-step change flips less often, 0.127 of steps against 0.159. An earlier single-pass integrator
+had run to NaN with a lagged base (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5).
+
+**What the output reports.** The net radiation a run reports is what the tissues' and the ground's
+balances booked over the step: the step mean of the leaves', the wood's and the ground's, b-weighted
+as the ledger's fluxes are, so it is the radiation the column's energy budget closes on. The
+two-stream's own net, at the start-of-step temperatures, differs from it by the change in their
+emission within the step. That emission leaves to the sky: the reported upwelling longwave carries it
+(`meds_fast_diag`), so shortwave in − shortwave up + longwave down − longwave up is the reported net
+radiation.
 
 ## The canopy's interception film
 
