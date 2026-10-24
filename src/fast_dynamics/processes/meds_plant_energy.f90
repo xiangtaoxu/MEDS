@@ -225,12 +225,18 @@ contains
             leaf_dry = latent_pathway(h_evap, rho, env%g_transp_leaf(i), dqsat_dt, q_def)
          end if
          !----- Each film at its tissue's start-of-step temperature: it evaporates at the vapour's !
-         !      enthalpy less the liquid enthalpy its tissue holds for it, and its capture brings  !
-         !      the rain's liquid enthalpy less that. ---------------------------------------------!
+         !      enthalpy less the liquid enthalpy its tissue holds for it, and its share of the    !
+         !      cohort's net capture brings the rain's liquid enthalpy less that. Water one film   !
+         !      passes to the other within the cohort leaves the giver at its own enthalpy,        !
+         !      charging it nothing, and reaches the receiver at the giver's: a falling leaf's     !
+         !      film, passed to its wood, cannot charge the vanishing leaf for the rain's          !
+         !      valuation. ------------------------------------------------------------------------!
          u_leaf0     = internal_energy_liquid(env%t_leaf0(i))
          u_wood0     = internal_energy_liquid(env%t_wood0(i))
-         q_film_leaf = film%intercept_leaf(i) * (film%rain_liquid_enthalpy - u_leaf0)
-         q_film_wood = film%intercept_wood(i) * (film%rain_liquid_enthalpy - u_wood0)
+         q_film_leaf = (film%intercept_leaf(i) + film%transfer_lw(i)) * (film%rain_liquid_enthalpy - u_leaf0)     &
+                       + max(-film%transfer_lw(i), 0.0_wp) * (u_wood0 - u_leaf0)
+         q_film_wood = (film%intercept_wood(i) - film%transfer_lw(i)) * (film%rain_liquid_enthalpy - u_wood0)     &
+                       + max(film%transfer_lw(i), 0.0_wp) * (u_leaf0 - u_wood0)
          leaf_wet = latent_pathway(h_evap - u_leaf0, rho, film%g_film_leaf(i), dqsat_dt, q_def)
          wood_dry = latent_pathway_t(h_vap=h_evap)                ! wood does not transpire
          wood_wet = latent_pathway(h_evap - u_wood0, rho, film%g_film_w(i), dqsat_dt, q_def)

@@ -35,6 +35,10 @@ module meds_canopy_water
       !----- Interception rates (capture and capacity only): a constant rate over the step that    !
       !      reproduces the bucket's one-shot update exactly. -------------------------------------!
       real(wp), allocatable :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] per cohort
+      !----- Of each intercept, the water one film passes to the other within its cohort as the     !
+      !      cohort's film is re-shared by capacity (positive leaf to wood, as when leaves fall);   !
+      !      the rest is the film's share of the cohort's net capture. -----------------------------!
+      real(wp), allocatable :: transfer_lw(:)                         !< [kg/m2 ground/s] per cohort
    end type canopy_water_out_t
 
 contains
@@ -88,7 +92,8 @@ contains
    ! the ground.                                                                           !
    !---------------------------------------------------------------------------------------!
    pure subroutine canopy_interception(n, rain, leaf_water, wood_water, lai, wai, leaf_max, wood_max, k_int,     &
-                                       alpha_pi, dt, intercept_leaf, intercept_wood, f_wet, throughfall)
+                                       alpha_pi, dt, intercept_leaf, intercept_wood, transfer_lw, f_wet,       &
+                                       throughfall)
       integer(ik), intent(in)    :: n                                !< [-] number of cohorts, tallest first
       real(wp),    intent(in)    :: rain                             !< [kg/m2/s] rain and snow above the canopy
       real(wp),    intent(in)    :: leaf_water(:), wood_water(:)     !< [kg/m2 ground] the films at the start
@@ -97,6 +102,7 @@ contains
       real(wp),    intent(in)    :: k_int, alpha_pi                  !< [-] intercept_canopy_layer's
       real(wp),    intent(in)    :: dt                               !< [s]
       real(wp),    intent(inout) :: intercept_leaf(:), intercept_wood(:)   !< [kg/m2 ground/s] each film's change
+      real(wp),    intent(inout) :: transfer_lw(:)                   !< [kg/m2 ground/s] leaf to wood within a cohort
       real(wp),    intent(inout) :: f_wet(:)                         !< [-] combined wetted fraction
       real(wp),    intent(out)   :: throughfall                      !< [kg/m2/s] what reaches the ground
       real(wp)    :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i
@@ -111,9 +117,12 @@ contains
          if (leaf_cap_i + wood_cap_i > tiny_num) then
             intercept_leaf(i) = (combined_w*leaf_cap_i/(leaf_cap_i + wood_cap_i) - leaf_water(i)) / dt
             intercept_wood(i) = (combined_w*wood_cap_i/(leaf_cap_i + wood_cap_i) - wood_water(i)) / dt
+            !----- The leaf's film above its share of the start's, re-shared to the wood. ---------!
+            transfer_lw(i) = (leaf_water(i) - (leaf_water(i) + wood_water(i))*leaf_cap_i/(leaf_cap_i + wood_cap_i)) / dt
          else
             intercept_leaf(i) = -leaf_water(i) / dt
             intercept_wood(i) = -wood_water(i) / dt
+            transfer_lw(i)    = 0.0_wp
          end if
          rain_above = throughfall_i   ! cascades to the next (shorter) cohort
       end do
