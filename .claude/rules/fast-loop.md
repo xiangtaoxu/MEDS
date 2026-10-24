@@ -3,10 +3,15 @@ paths:
   - "src/fast_dynamics/**"
   - "test/test_column_*.f90"
   - "test/test_fast_loop.f90"
-  - "test/test_surface_energy.f90"
-  - "test/test_snow.f90"
-  - "test/test_aerodynamics.f90"
-  - "test/test_canopy_radiation.f90"
+  - "test/test_water_network.f90"
+  - "test/test_canopy_*.f90"
+  - "test/test_leaf_gas_exchange.f90"
+  - "test/test_plant_energy.f90"
+  - "test/test_plant_hydraulics.f90"
+  - "test/test_respiration.f90"
+  - "test/test_soil_heat.f90"
+  - "test/test_soil_water.f90"
+  - "test/test_surface.f90"
 ---
 
 # The fast loop

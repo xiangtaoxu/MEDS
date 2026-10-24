@@ -284,9 +284,9 @@ so the two sides of such a check can be compiled differently and part in the las
 | Test | Compiler | The check that fails | Production's value | Tolerance | Cause |
 |---|---|---|---|---|---|
 | `fast_loop` | ifx | the fast tier stages each sub-step's forcing sample exactly | the test's own recomputation of a sample does not equal the staged one; recomputed in a routine of its own, all eight fields match exactly, and printing the difference in place makes the check pass | exact | IPO |
-| `water_processes` | ifx | a leaf above its closing water content transpires its demand | 1.9999999999999998e-5 against 2e-5: one unit in the last place (3e-21, 2e-16 relative); dev gives 2e-5 exactly | exact | IPO |
-| `water_processes` | ifx | transpiration's derivative matches finite differences | where the derivative is 0, the finite difference is 2.6e-14, from round-off in the two transpirations it differences 2e-7 apart; dev's is 0 | 1e-15 | IPO |
-| `water_processes` | gfortran | transpiration's derivative matches finite differences | the same, 5.8e-15 | 1e-15 | FMA under LTO |
+| `plant_hydraulics` | ifx | a leaf above its closing water content transpires its demand | 1.9999999999999998e-5 against 2e-5: one unit in the last place (3e-21, 2e-16 relative); dev gives 2e-5 exactly | exact | IPO |
+| `plant_hydraulics` | ifx | transpiration's derivative matches finite differences | where the derivative is 0, the finite difference is 2.6e-14, from round-off in the two transpirations it differences 2e-7 apart; dev's is 0 | 1e-15 | IPO |
+| `plant_hydraulics` | gfortran | transpiration's derivative matches finite differences | the same, 5.8e-15 | 1e-15 | FMA under LTO |
 | `python_api` | ifx | `meds.model` writes `meds_main`'s output bit for bit | 101 of 301 variables differ, by up to 1.3e-12 of a variable's largest value (patch sensible heat), the near-zero conservation residuals aside | exact | IPO |
 | `python_api` | gfortran | `meds.model` writes `meds_main`'s output bit for bit | 104 of 301 variables differ, by up to 9.5e-14 (patch sensible heat), the residuals aside | exact | FMA under LTO |
 | `several_sites` | ifx | each of two identical sites holds the one-site stand's plant carbon | 9.696054 against 9.696198 kgC m⁻² after 60 days, 1.5e-5 relative; the two sites agree with each other to 2e-16 | 1e-12 relative | AVX-512 vectorisation |

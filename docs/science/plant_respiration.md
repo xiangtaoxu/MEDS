@@ -221,4 +221,4 @@ See `docs/ROADMAP.md` §7 for the open items.
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
 | growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_integ_frozen` |
 | per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required but `stem_resp_sapwood25`, §2) |
-| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |
+| tests | `test/test_respiration.f90` (the 25 °C identity, the layered root response, the sapwood term, the grass gate, `aboveground_frac` inverse scaling); growth respiration in `test/test_plant_carbon_allocation.f90` |
