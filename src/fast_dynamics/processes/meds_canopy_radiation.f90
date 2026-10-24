@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_canopy_radiation -- the canopy two-stream radiative transfer                        !
-! (docs/science/canopy_radiation_transfer.md), state-free on plain arrays, cohorts ordered !
-! bottom (1) to top (ncoh), fluxes in absolute W/m2. ground_optics closes the lower        !
-! boundary (§4); canopy_radiation blends each cohort's optics (eqs. (5)-(7)), solves each  !
-! band by the adding method (solve_band, layer_rt; eqs. (8)-(12)) and returns the          !
-! per-cohort absorbed radiation (eqs. (13)-(14)). The per-PFT optics table (eq. (4)) is    !
-! built at load (meds_pft_derive); the optical-property kernels are meds_optics_lib's.     !
+! (docs/science/canopy_radiation_transfer.md), on plain arrays with no state of its own:   !
+! cohorts run bottom (1) to top (ncoh) and every flux is absolute W/m2. ground_optics sets !
+! the ground's reflectance and emission, the lower boundary (§4). canopy_radiation blends  !
+! each cohort's leaf and wood optics (§2), solves each band by the adding method           !
+! (solve_band, layer_rt; §3) and splits each cohort's absorbed radiation into leaves and   !
+! wood (§4). radiative_temperature is the temperature a cohort emits at. The per-PFT       !
+! optics table is built at load (meds_pft_derive).                                         !
 !==========================================================================================!
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
@@ -20,35 +21,36 @@ module meds_canopy_radiation
    public :: canopy_radiation, radiative_temperature
    public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
 
-   !----- Per-band incident forcing and ground boundary [W/m2]. In the thermal band the diffuse is   !
-   !      the sky's longwave and grnd_emiss the ground's emission; in shortwave grnd_emiss = 0. -----!
+   !----- Per-band incident forcing and the ground boundary. In the thermal band the diffuse is    !
+   !      the sky's longwave and grnd_emiss the ground's emission; in a shortwave band grnd_emiss  !
+   !      is 0. -----------------------------------------------------------------------------------!
    type :: rad_env_t
-      integer(ik) :: n_band = 0_ik
-      real(wp)    :: cosz   = 1.0_wp               !< cosine of the solar zenith angle (the beam extinction guards cosz -> 0)
+      integer(ik) :: n_band = 0_ik                 !< number of bands
+      real(wp)    :: cosz   = 1.0_wp               !< [-] cosine of the solar zenith angle (the beam extinction guards cosz -> 0)
       real(wp), allocatable :: incid_beam(:)       !< (band) [W/m2] direct-beam incident at canopy top
       real(wp), allocatable :: incid_diff(:)       !< (band) [W/m2] diffuse incident at canopy top
-      real(wp), allocatable :: grnd_refl(:)        !< (band) ground reflectance (albedo, or 1-emiss)
+      real(wp), allocatable :: grnd_refl(:)        !< (band) [-] ground reflectance (albedo, or 1 - emissivity)
       real(wp), allocatable :: grnd_emiss(:)       !< (band) [W/m2] ground thermal emission (0 for SW)
    end type rad_env_t
 
-   !----- Returned fluxes: per cohort and band, absorbed by leaves and wood [W/m2 of ground]; per  !
-   !      band, the albedo and the fluxes below the canopy. ----------------------------------!
+   !----- Returned fluxes: per band and cohort, the radiation absorbed by leaves and by wood [W/m2 !
+   !      of ground]; per band, the albedo and the fluxes below the canopy. -----------------------!
    type :: rad_out_t
-      integer(ik) :: n_band = 0_ik, n_coh = 0_ik
-      real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
-      real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
-      real(wp), allocatable :: incid_top(:,:)      !< (band,col_cohort) [W/m2] beam + down diffuse at its layer's top
-      real(wp), allocatable :: albedo(:)           !< (band) upward over incident at the top; LW's includes emission (> 1)
+      integer(ik) :: n_band = 0_ik, n_coh = 0_ik   !< number of bands, number of cohorts
+      real(wp), allocatable :: abs_leaf(:,:)       !< (band,cohort) [W/m2] absorbed by leaves
+      real(wp), allocatable :: abs_wood(:,:)       !< (band,cohort) [W/m2] absorbed by wood
+      real(wp), allocatable :: incid_top(:,:)      !< (band,cohort) [W/m2] beam + downward diffuse at its layer's top
+      real(wp), allocatable :: albedo(:)           !< (band) [-] upward over incident at top; LW's includes emission (can be > 1)
       real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
    end type rad_out_t
 
-   !----- The ground's optical state, the two-stream's lower boundary                              !
-   !      (docs/science/canopy_radiation_transfer.md §4): bare soil, blended toward the snow. ------!
+   !----- The ground's optical state, the two-stream's lower boundary: bare soil, blended toward   !
+   !      the snowpack's optics (docs/science/canopy_radiation_transfer.md §4). -------------------!
    type :: ground_optics_env_t
-      integer(ik)           :: n_band = 0_ik
-      real(wp), allocatable :: soil_albedo(:)    !< (band) shortwave soil albedo; unused for emission bands
-      real(wp)              :: soil_emiss = 0.96_wp   !< thermal emissivity of the ground
+      integer(ik)           :: n_band = 0_ik     !< number of bands
+      real(wp), allocatable :: soil_albedo(:)    !< (band) [-] shortwave ground albedo; unused for emission bands
+      real(wp)              :: soil_emiss = 0.96_wp   !< [-] thermal emissivity of the ground
       real(wp)              :: soil_temp  = 298.0_wp  !< [K] ground (skin) temperature
    end type ground_optics_env_t
 
@@ -57,17 +59,19 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Blend leaf and wood optics for every cohort, for one band, and add the solar geometry !
    ! (docs/science/canopy_radiation_transfer.md eqs. (5)-(7)): omega, beta, beta0, k and   !
-   ! leaf_frac, from the clumping-corrected leaf and wood area indices elai, ewai.         !
+   ! leaf_frac, from the clumping-corrected leaf and wood area indices elai, ewai. A       !
+   ! cohort with no leaf or wood area takes the leaf optics, and one that absorbs nothing  !
+   ! has leaf_frac = 1.                                                                    !
    !---------------------------------------------------------------------------------------!
    subroutine blend_cohort_optics(optics, band, ncoh, pft, elai, ewai, kdir_in,              &
                                   omega, beta, beta0, kdir, leaf_frac)
-      type(rad_pft_optics_t), intent(in)  :: optics
-      integer(ik),            intent(in)  :: band, ncoh
-      integer(ik),            intent(in)  :: pft(ncoh)
-      real(wp),               intent(in)  :: elai(ncoh), ewai(ncoh)
-      real(wp),               intent(in)  :: kdir_in(ncoh)   ! band-independent beam extinction, precomputed
-      real(wp),               intent(out) :: omega(ncoh), beta(ncoh), beta0(ncoh)
-      real(wp),               intent(out) :: kdir(ncoh), leaf_frac(ncoh)
+      type(rad_pft_optics_t), intent(in)  :: optics     !< the per-PFT optics table
+      integer(ik),            intent(in)  :: band, ncoh !< band index, number of cohorts
+      integer(ik),            intent(in)  :: pft(ncoh)  !< each cohort's PFT
+      real(wp),               intent(in)  :: elai(ncoh), ewai(ncoh)   !< [m2/m2] clumping-corrected leaf, wood area index
+      real(wp),               intent(in)  :: kdir_in(ncoh)   !< [-] beam extinction per unit area index, the same in every band
+      real(wp),               intent(out) :: omega(ncoh), beta(ncoh), beta0(ncoh)   !< [-] the cohort's blended optics
+      real(wp),               intent(out) :: kdir(ncoh), leaf_frac(ncoh)   !< [-] beam extinction (0 with no beam), leaf share
       integer(ik) :: i, ip
       real(wp)    :: etai, wl, ww, gc, aleaf, awood
 
@@ -85,7 +89,7 @@ contains
          omega(i) = wl * optics%omega_leaf(band,ip) + ww * optics%omega_wood(band,ip)
          gc       = wl * optics%g_leaf(band,ip)     + ww * optics%g_wood(band,ip)
          beta(i)  = 0.5_wp * (1.0_wp + gc)
-         !----- Direct-beam upscatter (only meaningful for beam bands); kdir precomputed once. ----!
+         !----- Direct-beam extinction and upscatter, for beam bands only. -----------------!
          if (optics%has_beam(band)) then
             kdir(i)  = kdir_in(i)                              ! band-independent Ross-G extinction
             beta0(i) = 0.5_wp * (1.0_wp + gc / max(kdir(i), tiny_num))
@@ -105,18 +109,18 @@ contains
    end subroutine blend_cohort_optics
 
    !=======================================================================================!
-   !  Surface optics: the two-stream's lower boundary (docs/science/                       !
-   !  canopy_radiation_transfer.md §4), bare soil that the driver blends toward the snow.  !
+   ! Ground optics: the two-stream's lower boundary, bare soil blended toward the snowpack !
+   ! (docs/science/canopy_radiation_transfer.md §4).                                       !
    !=======================================================================================!
 
-   !----- Per-band ground reflectance and emission: the soil albedo and 0 for a shortwave band,      !
+   !----- Per-band ground reflectance and emission: the ground albedo and 0 for a shortwave band,  !
    !      1 - emissivity and emissivity * sigma * T_soil^4 for a thermal band. --------------------!
    subroutine ground_optics(surf, n_band, has_emission, grnd_refl, grnd_emiss)
-      type(ground_optics_env_t), intent(in)  :: surf
-      integer(ik),           intent(in)  :: n_band
-      logical,               intent(in)  :: has_emission(n_band)
-      real(wp),              intent(out) :: grnd_refl(n_band)
-      real(wp),              intent(out) :: grnd_emiss(n_band)
+      type(ground_optics_env_t), intent(in)  :: surf   !< the ground's albedo, emissivity and temperature
+      integer(ik),           intent(in)  :: n_band     !< number of bands
+      logical,               intent(in)  :: has_emission(n_band)   !< true for a thermal (emitting) band
+      real(wp),              intent(out) :: grnd_refl(n_band)      !< [-] ground reflectance
+      real(wp),              intent(out) :: grnd_emiss(n_band)     !< [W/m2] ground emission
       integer(ik) :: b
       do b = 1_ik, n_band
          if (has_emission(b)) then
@@ -134,21 +138,21 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Solve one band over the layers, bottom to top (docs/science/                          !
-   ! canopy_radiation_transfer.md §3, eqs. (10)-(12)). Returns each layer's absorbed flux  !
-   ! and the beam + downward diffuse at its top [W/m2], the ground's downward and upward   !
-   ! fluxes, and the albedo (upward over incident at the top).                             !
+   ! Solve one band over the layers, bottom to top, by the adding method                   !
+   ! (docs/science/canopy_radiation_transfer.md §3). Returns each layer's absorbed flux    !
+   ! and the beam + downward diffuse at its top, the ground's downward and upward fluxes,  !
+   ! and the albedo (upward over incident at the top; 0 when nothing is incident).         !
    !---------------------------------------------------------------------------------------!
    subroutine solve_band(ncoh, etai, omega, beta, beta0, kdir, emission, incid_beam,         &
                          incid_diff, grnd_refl, grnd_emiss, has_beam, has_emission,           &
                          absorbed, incident, dn_ground, up_ground, albedo)
-      integer(ik), intent(in)  :: ncoh
-      real(wp),    intent(in)  :: etai(ncoh), omega(ncoh), beta(ncoh), beta0(ncoh), kdir(ncoh)
-      real(wp),    intent(in)  :: emission(ncoh)
-      real(wp),    intent(in)  :: incid_beam, incid_diff, grnd_refl, grnd_emiss
-      logical,     intent(in)  :: has_beam, has_emission
-      real(wp),    intent(out) :: absorbed(ncoh), incident(ncoh)
-      real(wp),    intent(out) :: dn_ground, up_ground, albedo
+      integer(ik), intent(in)  :: ncoh   !< number of layers (one cohort, or a group of equally tall cohorts)
+      real(wp),    intent(in)  :: etai(ncoh), omega(ncoh), beta(ncoh), beta0(ncoh), kdir(ncoh) !< [m2/m2] etai; rest [-]
+      real(wp),    intent(in)  :: emission(ncoh)   !< [W/m2] blackbody emission sigma T^4 (thermal band)
+      real(wp),    intent(in)  :: incid_beam, incid_diff, grnd_refl, grnd_emiss   !< [W/m2], [W/m2], [-], [W/m2]
+      logical,     intent(in)  :: has_beam, has_emission   !< the band carries a direct beam; it carries emission
+      real(wp),    intent(out) :: absorbed(ncoh), incident(ncoh)   !< [W/m2] absorbed; beam + down diffuse at the top
+      real(wp),    intent(out) :: dn_ground, up_ground, albedo     !< [W/m2], [W/m2], [-]
 
       real(wp), dimension(ncoh)   :: rdd, tdd, sup, sdn          ! layer R/T + up/down sources
       real(wp), dimension(ncoh+1) :: down0                       ! direct-beam profile (interfaces)
@@ -178,8 +182,9 @@ contains
          sdn(i) = (1.0_wp - beta0(i)) * scat + emit_face          ! down-source (bottom of layer)
       end do
 
-      !----- Bottom-up sweep: reflectance and upward source of {ground + layers 1..i}. The ground's !
-      !      source is its emission plus its reflected direct beam; rbel(0) reflects the diffuse. -!
+      !----- Bottom-up sweep: reflectance and upward source of {ground + layers 1..i}. The         !
+      !      ground's source is its emission plus its reflected direct beam; rbel(0) reflects the  !
+      !      diffuse. -----------------------------------------------------------------------------!
       rbel(0) = grnd_refl
       sbel(0) = grnd_emiss + grnd_refl * down0(1)
       do i = 1_ik, ncoh
@@ -198,8 +203,8 @@ contains
          if (i > 1_ik) din(i-1) = dbot(i)
       end do
 
-      !----- Absorbed per layer = beam divergence + diffuse divergence (in - out); incident =   !
-      !      the beam and downward diffuse reaching the layer's top (the light a cohort sees).   !
+      !----- Absorbed per layer = beam divergence + diffuse divergence (in - out); incident = the  !
+      !      beam and downward diffuse reaching the layer's top (the light a cohort sees). --------!
       do i = 1_ik, ncoh
          absorbed(i) = (down0(i+1) - down0(i)) + (din(i) + uup(i)) - (utop(i) + dbot(i))
          incident(i) = down0(i+1) + din(i)
@@ -213,11 +218,11 @@ contains
       if (incid_tot > tiny_num) albedo = utop(ncoh) / incid_tot
    end subroutine solve_band
 
-   !----- Diffuse reflectance rdd and transmittance tdd of a homogeneous layer, the Stokes formulas !
-   !      (docs/science/canopy_radiation_transfer.md eqs. (8)-(9)). ------------------------------!
+   !----- Diffuse reflectance rdd and transmittance tdd of a homogeneous layer, the Stokes         !
+   !      formulas (docs/science/canopy_radiation_transfer.md eqs. (8)-(9)). ----------------------!
    pure subroutine layer_rt(omega, beta, etai, rdd, tdd)
-      real(wp), intent(in)  :: omega, beta, etai
-      real(wp), intent(out) :: rdd, tdd
+      real(wp), intent(in)  :: omega, beta, etai   !< [-] single-scatter albedo, [-] backscatter, [m2/m2] area index
+      real(wp), intent(out) :: rdd, tdd            !< [-] diffuse reflectance and transmittance
       real(wp) :: w, sigb, sigf, att, m, rinf, e, e2, denom
       w = min(omega, 1.0_wp - 1.0e-6_wp)          ! guard the conservative-scattering singularity
       sigb = w * beta                              ! backward diffuse scattering
@@ -238,29 +243,31 @@ contains
    end subroutine layer_rt
 
    !=======================================================================================!
-   !  The public seam: every band for one patch.                                           !
+   ! The patch's radiation: every band for one patch, the module's entry point.            !
    !=======================================================================================!
 
-   !----- Solve every band for one patch, cohorts bottom (1) to top (ncoh). lai and wai are         !
-   !      unclumped (clumping is applied here); canopy_temp [K] drives the thermal emission. -------!
+   !----- Solve every band for one patch (docs/science/canopy_radiation_transfer.md §4), cohorts   !
+   !      bottom (1) to top (ncoh), and split each cohort's absorbed radiation into leaves and     !
+   !      wood. lai and wai are unclumped (clumping is applied here); canopy_temp drives the       !
+   !      thermal emission. -----------------------------------------------------------------------!
    subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, canopy_temp, flux)
-      type(rad_pft_optics_t), intent(in)  :: optics
-      type(rad_env_t),    intent(in)  :: forcing
-      integer(ik),            intent(in)  :: ncoh
-      integer(ik),            intent(in)  :: pft(ncoh)
+      type(rad_pft_optics_t), intent(in)  :: optics     !< the per-PFT optics table
+      type(rad_env_t),    intent(in)  :: forcing        !< per-band incident radiation and ground boundary
+      integer(ik),            intent(in)  :: ncoh       !< number of cohorts
+      integer(ik),            intent(in)  :: pft(ncoh)  !< each cohort's PFT
       real(wp),               intent(in)  :: height(ncoh)   !< [m] ascending; exact ties are co-dominant
-      real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)
-      type(rad_out_t),       intent(out) :: flux
+      real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)   !< [m2/m2], [m2/m2], [K]
+      type(rad_out_t),       intent(out) :: flux        !< absorbed, incident and ground fluxes, and the albedo
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
-      !----- Layer arrays: one entry per RT layer, a group of exactly tied cohorts. -------------!
+      !----- Layer arrays: one entry per layer, a group of exactly tied cohorts. ------------------!
       real(wp), dimension(max(ncoh,1)) :: etai_l, omega_l, beta_l, beta0_l, kdir_l, emis_l, abs_l
       real(wp), dimension(max(ncoh,1)) :: inc_l
       real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
       integer(ik) :: lyr(max(ncoh,1)), nmemb(max(ncoh,1))
       integer(ik) :: nlayer, il
-      !----- Each PFT's beam extinction coefficient, computed once for the cohorts that share it. -------!
+      !----- Each PFT's beam extinction coefficient, computed once for its cohorts. ---------------!
       real(wp)    :: kdir_pft(size(optics%lidf, 2))
       logical     :: kdir_done(size(optics%lidf, 2))
       real(wp)    :: gc_l, dn_ground, up_ground, albedo, incid_tot
@@ -287,9 +294,9 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
-      !----- Cohorts of exactly equal height share one RT layer, as update_overtopping_lai treats    !
-      !      them (docs/science/canopy_radiation_transfer.md §4, eq. (13)). Heights arrive ascending, !
-      !      so ties are consecutive; a one-member layer is its cohort, bit for bit. ----------------!
+      !----- Cohorts of exactly equal height share one layer, as the demography's                  !
+      !      update_overtopping_lai treats them. Heights arrive ascending, so ties are             !
+      !      consecutive; a one-member layer is its cohort, bit for bit. --------------------------!
       nlayer = 0_ik
       do i = 1_ik, ncoh
          if (i == 1_ik) then
@@ -304,8 +311,8 @@ contains
          nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik
       end do
 
-      !----- Ross-G beam extinction depends only on the PFT's leaf angles and the sun, not the band:  !
-      !      once per PFT present, shared by its cohorts and every band. -----------------------------!
+      !----- Ross-G beam extinction depends only on the PFT's leaf angles and the sun, not the     !
+      !      band: once per PFT present, shared by its cohorts and every band. --------------------!
       kdir_coh(1:ncoh) = 0.0_wp
       if (any(optics%has_beam(1:forcing%n_band))) then
          kdir_done = .false.
@@ -319,9 +326,9 @@ contains
          end do
       end if
 
-      !----- Loop the configured bands. A band with no light and no emission (VIS and NIR at night)   !
-      !      absorbs, reflects and passes nothing: its fluxes keep the zeros alloc_rad_out set, which  !
-      !      are what the solve would return. -------------------------------------------------------!
+      !----- Loop the configured bands. A band with no light and no emission (VIS and NIR at       !
+      !      night) absorbs, reflects and passes nothing: its fluxes keep the zeros alloc_rad_out  !
+      !      set, which are what the solve would return. ------------------------------------------!
       do b = 1_ik, forcing%n_band
          if (.not. optics%has_emission(b) .and. forcing%incid_beam(b) == 0.0_wp .and.                    &
              forcing%incid_diff(b) == 0.0_wp .and. forcing%grnd_emiss(b) == 0.0_wp) cycle
@@ -335,9 +342,9 @@ contains
             emission(1:ncoh) = 0.0_wp
          end if
 
-         !----- Aggregate cohorts onto their layer by area index etai, the weight blend_cohort_optics  !
-         !      mixes leaf and wood by. gc is recovered from beta = 0.5*(1+gc) and averaged, which   !
-         !      keeps beta0 (gc over kdir) consistent with beta. ---------------------------------!
+         !----- Aggregate cohorts onto their layer by area index etai, the weight                  !
+         !      blend_cohort_optics mixes leaf and wood by. gc is recovered from beta = 0.5*(1+gc) !
+         !      and averaged, which keeps beta0 (gc over kdir) consistent with beta. --------------!
          etai_l(1:nlayer) = 0.0_wp
          omega_l(1:nlayer) = 0.0_wp
          beta_l(1:nlayer) = 0.0_wp
@@ -390,8 +397,9 @@ contains
                          forcing%grnd_emiss(b), optics%has_beam(b), optics%has_emission(b),      &
                          abs_l(1:nlayer), inc_l(1:nlayer), dn_ground, up_ground, albedo)
 
-         !----- Scatter the layer's absorbed flux to its members by absorptivity-weighted area         !
-         !      (eq. (13)), (1-omega)*etai, the weight leaf_frac is built from. ------------------!
+         !----- Scatter the layer's absorbed flux to its members by absorptivity-weighted area,    !
+         !      (1-omega)*etai, the weight leaf_frac is built from; members that absorb nothing    !
+         !      get nothing. ----------------------------------------------------------------------!
          wsum_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             wabs(i) = (1.0_wp - omega(i)) * etai(i)
@@ -408,8 +416,8 @@ contains
             end if
          end do
 
-         !----- Split absorbed radiation between leaves and wood by leaf_frac (eq. (14)); every      !
-         !      member of a layer sees the light reaching the layer's top. ----------------------!
+         !----- Split each cohort's absorbed radiation between leaves and wood by leaf_frac; every !
+         !      member of a layer sees the light reaching the layer's top. ------------------------!
          do i = 1_ik, ncoh
             flux%abs_leaf(b,i)  = absorbed(i) * leaf_frac(i)
             flux%abs_wood(b,i)  = absorbed(i) * (1.0_wp - leaf_frac(i))
@@ -421,9 +429,10 @@ contains
       end do
    end subroutine canopy_radiation
 
+   !----- Allocate the per-band forcing for n_band bands, all zero. -------------------------------!
    subroutine alloc_rad_env(f, n_band)
-      type(rad_env_t), intent(out) :: f
-      integer(ik),         intent(in)  :: n_band
+      type(rad_env_t), intent(out) :: f            !< the forcing record
+      integer(ik),         intent(in)  :: n_band   !< number of bands
       f%n_band = n_band
       allocate(f%incid_beam(n_band), f%incid_diff(n_band), f%grnd_refl(n_band), f%grnd_emiss(n_band))
       f%incid_beam = 0.0_wp
@@ -432,9 +441,10 @@ contains
       f%grnd_emiss = 0.0_wp
    end subroutine alloc_rad_env
 
+   !----- Allocate the returned fluxes for n_band bands and n_coh cohorts, all zero. --------------!
    subroutine alloc_rad_out(flux, n_band, n_coh)
-      type(rad_out_t), intent(out) :: flux
-      integer(ik),      intent(in)  :: n_band, n_coh
+      type(rad_out_t), intent(out) :: flux             !< the returned fluxes
+      integer(ik),      intent(in)  :: n_band, n_coh   !< number of bands, number of cohorts
       flux%n_band = n_band
       flux%n_coh  = n_coh
       allocate(flux%abs_leaf(n_band, n_coh), flux%abs_wood(n_band, n_coh), flux%incid_top(n_band, n_coh))
@@ -447,14 +457,14 @@ contains
       flux%up_ground = 0.0_wp
    end subroutine alloc_rad_out
 
-   !----- A cohort's longwave emission temperature [K], the fourth-power mean of its leaf and wood  !
-   !      temperatures over their areas: T_rad = (f_l T_leaf^4 + (1-f_l) T_wood^4)^(1/4),        !
-   !      f_l = LAI/(LAI+WAI) (docs/science/canopy_radiation_transfer.md §3). The absorbed        !
-   !      longwave is net of the emission at it (vegetation_energy_dynamics.md, "The emission    !
-   !      base"). ------------------------------------------------------------------------------!
+   !----- A cohort's longwave emission temperature t_rad [K], the area-weighted fourth-power mean  !
+   !      of its leaf and wood temperatures (docs/science/canopy_radiation_transfer.md §3); with   !
+   !      no leaf or wood area it is the wood temperature. The absorbed longwave canopy_radiation  !
+   !      returns is net of the cohort's emission at this temperature                              !
+   !      (vegetation_energy_dynamics.md, "The emission base"). -----------------------------------!
    elemental real(wp) function radiative_temperature(lai, wai, leaf_temp, wood_temp) result(t_rad)
       real(wp), intent(in) :: lai, wai             !< [m2/m2] the cohort's leaf and wood area indices
-      real(wp), intent(in) :: leaf_temp, wood_temp !< [K]
+      real(wp), intent(in) :: leaf_temp, wood_temp !< [K] the cohort's leaf and wood temperatures
       real(wp) :: lf
       lf    = lai / max(lai + wai, tiny_num)
       t_rad = (lf * leaf_temp ** 4 + (1.0_wp - lf) * wood_temp ** 4) ** 0.25_wp

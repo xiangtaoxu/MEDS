@@ -1,12 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_canopy_aerodynamics -- the stateless canopy aerodynamics kernel                     !
-! (docs/science/canopy_aerodynamics.md), recomputed each sub-step from the canopy-air and  !
-! vegetation state: the CLM5 Monin-Obukhov surface layer (§2), the atm<->CAS conductances  !
-! of the three CAS twins (eq. (5)), the ground<->CAS conductance (§3), and the in-canopy   !
-! wind and the Nusselt leaf and wood boundary layers (§4). Main routines:                  !
-! canopy_aerodynamics, mo_surface_layer, cas_atm_conductances, canopy_roughness. All pure; !
-! per-cohort outputs go into caller-owned arrays (CLAUDE.md, compiler traps).              !
+! meds_canopy_aerodynamics -- the canopy's turbulent exchange                              !
+! (docs/science/canopy_aerodynamics.md), a function of the canopy-air and vegetation state !
+! with no state of its own: the CLM5 Monin-Obukhov surface layer and the canopy-air <->    !
+! atmosphere conductances for the canopy air's enthalpy, humidity and CO2 (§2), the ground !
+! <-> canopy-air conductance (§3), and the in-canopy wind and the Nusselt leaf and wood    !
+! boundary layers (§4). Main routines: canopy_aerodynamics, mo_surface_layer,              !
+! cas_atm_conductances, canopy_air_conductances, canopy_roughness. All pure; per-cohort    !
+! outputs go into caller-owned arrays (CLAUDE.md, compiler traps).                         !
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
@@ -15,25 +16,26 @@ module meds_canopy_aerodynamics
    use meds_therm_lib,        only : cas_molar_density
    implicit none
 
-   !----- Bounds of the Monin-Obukhov initial guess (CLM5 MoninObukIni; Zeng et al. 1998, J. Climate  !
-   !      11, 2628-2644): |zeta| starts at least 0.01 from neutral, a stable guess uses Ri_b <= 0.19  !
-   !      (where 1 - 5 Ri_b stays positive), and an unstable guess is no lower than -100. ----------!
-   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp
-   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp
-   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp
-   !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the       !
-   !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own   !
-   !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). --------------------------!
+   !----- Bounds of the Monin-Obukhov initial guess, from CLM5's MoninObukIni (Zeng et al. 1998,   !
+   !      J. Climate 11, 2628-2644): |zeta| starts at least 0.01 from neutral, a stable guess uses !
+   !      Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and an unstable one is at least -100. ----!
+   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp      !< [-]
+   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp      !< [-]
+   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp    !< [-]
+   !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the      !
+   !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own  !
+   !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). ---------------------------!
    real(wp), parameter :: CONVECTIVE_BETA   = 1.0_wp      !< [-]
    real(wp), parameter :: MIXED_LAYER_DEPTH = 1000.0_wp   !< [m]
-   !----- The under-canopy stability parameter of the dense-canopy ground conductance (CLM4's, whose  !
-   !      cs_dense and gamma_g it uses) is capped at 10, where its factor 1/(1 + gamma_g stab) is 1/6. -!
-   real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp
+   !----- Cap on the under-canopy stability parameter stab of CLM4's dense-canopy ground           !
+   !      conductance (whose cs_dense and gamma_g it uses): at 10, its factor 1/(1+gamma_g*stab)   !
+   !      is 1/6. ---------------------------------------------------------------------------------!
+   real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp               !< [-]
    private
 
-   public :: canopy_aerodynamics             !< master per-patch seam
+   public :: canopy_aerodynamics             !< the per-patch entry point: winds, conductances, boundary layers
    public :: canopy_roughness                !< roughness length + displacement height of a patch
-   public :: mo_surface_layer                !< CLM Monin-Obukhov solve (the live CAS conductances re-solve it)
+   public :: mo_surface_layer                !< the Monin-Obukhov surface-layer solve (CLM5)
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
    public :: canopy_air_conductances         !< the same, the surface layer re-solved at a canopy-air state
    public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
@@ -41,7 +43,7 @@ module meds_canopy_aerodynamics
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: reduced_wind, boundary_layer_conductance, alloc_aero_out  ! used only by the tests
 
-   !----- Per-patch forcing + canopy-air-space state (read-only). ---------------------------!
+   !----- One patch's reference-level forcing and its canopy-air and ground state. ----------------!
    type :: aero_env_t
       real(wp) :: u_ref     = 2.0_wp                !< [m/s]      wind at reference height
       real(wp) :: zref      = 30.0_wp               !< [m]        reference height: the canopy-air top, where the forcing is sampled
@@ -61,11 +63,11 @@ module meds_canopy_aerodynamics
 
    !----- Outputs: per-patch scalars + per-cohort arrays (caller-owned; written in place). ---!
    type :: aero_out_t
-      integer(ik) :: n_coh = 0_ik
-      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp   !< [m/s],[K]
-      real(wp) :: heat_transfer_factor   = 0.0_wp   !< [-] scalar profile factor for heat: g_atm_heat = rho ustar this
+      integer(ik) :: n_coh = 0_ik                   !< number of cohorts
+      real(wp) :: ustar = 0.0_wp, tstar = 0.0_wp   !< [m/s],[K] friction velocity, temperature scale
+      real(wp) :: heat_transfer_factor   = 0.0_wp   !< [-] scalar profile factor for heat (CLM's temp1): g_atm_heat = rho ustar this
       real(wp) :: vapour_transfer_factor = 0.0_wp   !< [-] the same for vapour and CO2 (CLM's temp2)
-      real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< stability diagnostics
+      real(wp) :: zeta = 0.0_wp, rib = 0.0_wp, obu = 0.0_wp   !< [-],[-],[m] stability, bulk Richardson number, Obukhov length
       real(wp) :: ggbare = 0.0_wp, ggveg = 0.0_wp, ggnet = 0.0_wp   !< [m/s] ground conductances (r_aero = 1/ggnet)
       real(wp) :: rough = 0.0_wp, displace = 0.0_wp   !< [m]
       real(wp) :: uh = 0.0_wp                        !< [m/s] canopy-top wind (diagnostic)
@@ -78,8 +80,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The canopy-air <-> atmosphere bulk conductances (docs/science/canopy_aerodynamics.md  !
-   ! eq. (5)), for enthalpy and vapour [kg/m2/s] and for CO2 [mol/m2/s]: the one formula   !
-   ! for the frozen pre-pass and the per-stage refresh.                                    !
+   ! eq. (5)), for enthalpy and vapour [kg/m2/s] and for CO2 [mol/m2/s].                   !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho          !< [kg/m3]  canopy-air density
@@ -87,24 +88,24 @@ contains
       real(wp), intent(in)  :: ustar        !< [m/s]    friction velocity
       real(wp), intent(in)  :: temp_heat    !< [-]      scalar profile factor for heat (heat_transfer_factor)
       real(wp), intent(in)  :: temp_vapour  !< [-]      scalar profile factor for vapour / CO2 (vapour_transfer_factor)
-      real(wp), intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
+      real(wp), intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2   !< [kg/m2/s], [kg/m2/s], [mol/m2/s]
       g_atm_heat = rho      * ustar * temp_heat
       g_atm_vapour = rho      * ustar * temp_vapour
       g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
 
-   !----- A patch's open fraction W = exp(-(LAI + WAI)), the weight of bare ground in the ground      !
-   !      conductance (docs/science/canopy_aerodynamics.md eq. (6)); lai, wai are patch totals. -------!
+   !----- A patch's open fraction W = exp(-(LAI + WAI)) [-], the weight of bare ground in the      !
+   !      ground conductance (docs/science/canopy_aerodynamics.md eq. (6)). -----------------------!
    elemental real(wp) function open_canopy_fraction(lai, wai) result(w)
-      real(wp), intent(in) :: lai, wai
+      real(wp), intent(in) :: lai, wai   !< [m2/m2] the patch's total leaf and wood area indices
       w = safe_exp(-(lai + wai))
    end function open_canopy_fraction
 
-   !----- Roughness length and displacement of a patch (docs/science/canopy_aerodynamics.md eq. (1)): !
-   !      one definition, shared with the move of the forcing to the patch's canopy-air top. ------!
+   !----- Roughness length and displacement height of a patch from its canopy height               !
+   !      (docs/science/canopy_aerodynamics.md eq. (1)). ------------------------------------------!
    pure subroutine canopy_roughness(cfg, geom, rough, displace)
-      type(aero_params_t), intent(in)  :: cfg
-      type(aero_args_t),   intent(in)  :: geom
+      type(aero_params_t), intent(in)  :: cfg        !< aerodynamic parameters
+      type(aero_args_t),   intent(in)  :: geom       !< canopy height and snow burial
       real(wp),            intent(out) :: rough      !< [m] roughness length (z0m)
       real(wp),            intent(out) :: displace   !< [m] zero-plane displacement height
       rough    = (1.0_wp - geom%snowfac) * cfg%z0m_ratio * geom%veg_height                     &
@@ -113,27 +114,28 @@ contains
       displace = cfg%d_ratio * geom%veg_height * (1.0_wp - geom%snowfac)
    end subroutine canopy_roughness
 
-   !=======================================================================================!
-   !  Fill an aero_out_t for one patch. The cohort arrays are in any order; order(k) is the !
-   !  k-th cohort from the ground up (the gather's static%order). Only the wind cascade    !
-   !  and the boundary layers depend on the order, so the cohorts are put bottom to top,   !
-   !  solved, and their outputs put back. An identity for n <= 1.                          !
-   !=======================================================================================!
+   !---------------------------------------------------------------------------------------!
+   ! Fill an aero_out_t for one patch (docs/science/canopy_aerodynamics.md). The cohort    !
+   ! arrays are in any order; order(k) is the k-th cohort from the ground up. Only the     !
+   ! wind cascade and the boundary layers depend on the order, so the cohorts are put      !
+   ! bottom to top, solved, and their outputs put back. The reordering is an identity for  !
+   ! n <= 1.                                                                               !
+   !---------------------------------------------------------------------------------------!
    pure subroutine canopy_aerodynamics(cfg, env, geom, n, order, height, lai, leaf_temp, wood_temp, &
                                        leaf_width, branch_diam, out)
-      type(aero_params_t), intent(in)    :: cfg
-      type(aero_env_t),    intent(in)    :: env
-      type(aero_args_t),   intent(in)    :: geom
-      integer(ik),         intent(in)    :: n
+      type(aero_params_t), intent(in)    :: cfg               !< aerodynamic parameters
+      type(aero_env_t),    intent(in)    :: env               !< reference-level forcing, canopy-air and ground state
+      type(aero_args_t),   intent(in)    :: geom              !< canopy height, open fraction, snow burial
+      integer(ik),         intent(in)    :: n                 !< number of cohorts
       integer(ik),         intent(in)    :: order(:)          !< the cohorts from the ground up
       real(wp),            intent(in)    :: height(:)         !< [m]  cohort height
       real(wp),            intent(in)    :: lai(:)            !< [m2/m2] leaf area index
       real(wp),            intent(in)    :: leaf_temp(:)      !< [K]  leaf temperature
-      !----- The wood's own temperature drives its boundary layer's free convection; it lags the leaves. !
+      !----- Wood has its own temperature, which lags the leaves', for its free convection. -------!
       real(wp),            intent(in)    :: wood_temp(:)      !< [K]  wood temperature
       real(wp),            intent(in)    :: leaf_width(:)     !< [m]  leaf width (boundary layer)
       real(wp),            intent(in)    :: branch_diam(:)    !< [m]  branch diameter (wood boundary layer)
-      type(aero_out_t),    intent(inout) :: out
+      type(aero_out_t),    intent(inout) :: out               !< the patch's winds, conductances and boundary layers
       integer(ik) :: k, i
       real(wp)    :: h_bt(n), lai_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
       real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
@@ -150,7 +152,7 @@ contains
 
       call aerodynamics_bottom_to_top(cfg, env, geom, n, h_bt, lai_bt, lt_bt, wt_bt, lw_bt, bd_bt, out)
 
-      !----- out%*(k) is now bottom to top; copy out, then put back in the callers' order. ---!
+      !----- out%*(k) runs bottom to top; copy out, then put back in the callers' order. ----------!
       do k = 1_ik, n
          wind_bt(k) = out%wind(k)
          lgbh_bt(k) = out%leaf_gbh(k)
@@ -167,20 +169,20 @@ contains
       end do
    end subroutine canopy_aerodynamics
 
-   !=======================================================================================!
-   !  The patch's aerodynamics with its cohorts ordered bottom (1) to top (n). Steps 1-5   !
-   !  are docs/science/canopy_aerodynamics.md eq. (1), eqs. (2)-(4), eq. (6),              !
-   !  eqs. (7)-(8) and eqs. (9)-(10).                                                      !
-   !=======================================================================================!
+   !---------------------------------------------------------------------------------------!
+   ! The patch's aerodynamics with its cohorts ordered bottom (1) to top (n), in the order !
+   ! of docs/science/canopy_aerodynamics.md §1-§4: roughness, the surface layer, the       !
+   ! ground conductance, the in-canopy wind and the leaf and wood boundary layers.         !
+   !---------------------------------------------------------------------------------------!
    pure subroutine aerodynamics_bottom_to_top(cfg, env, geom, n, height, lai, leaf_temp, wood_temp,  &
                                               leaf_width, branch_diam, out)
-      type(aero_params_t), intent(in)    :: cfg
-      type(aero_env_t),    intent(in)    :: env
-      type(aero_args_t),   intent(in)    :: geom
-      integer(ik),         intent(in)    :: n
-      real(wp),            intent(in)    :: height(n), lai(n)
-      real(wp),            intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)
-      type(aero_out_t),    intent(inout) :: out
+      type(aero_params_t), intent(in)    :: cfg     !< aerodynamic parameters
+      type(aero_env_t),    intent(in)    :: env     !< reference-level forcing, canopy-air and ground state
+      type(aero_args_t),   intent(in)    :: geom    !< canopy height, open fraction, snow burial
+      integer(ik),         intent(in)    :: n       !< number of cohorts
+      real(wp),            intent(in)    :: height(n), lai(n)   !< [m], [m2/m2]
+      real(wp),            intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)   !< [K], [K], [m], [m]
+      type(aero_out_t),    intent(inout) :: out     !< the patch's winds, conductances and boundary layers
 
       real(wp)    :: rough, displace, zldis, uh, stab, denom, lai_layer
       integer(ik) :: ico, ico0
@@ -199,8 +201,10 @@ contains
       out%vapour_transfer_factor = out%heat_transfer_factor   ! z0q = z0h => scalar factors equal
       out%tstar = out%heat_transfer_factor * (env%theta_atm - env%can_temp)
 
-      !----- 3. Ground <-> CAS conductance: the bare-ground value and CLM4's dense-canopy one,       !
-      !      blended by the open fraction W (eq. (6)). ------------------------------------------!
+      !----- 3. Ground <-> canopy-air conductance: the bare-ground value and CLM4's dense-canopy   !
+      !      one, blended by the open fraction W. The under-canopy stability stab = g h (T_cas -   !
+      !      T_ground) / (T_mean ustar^2), kept in [0, GROUND_STAB_MAX], lowers the dense-canopy   !
+      !      value when the ground is colder than the canopy air. ---------------------------------!
       out%ggbare = out%ustar * out%heat_transfer_factor                           ! [m/s] bare-ground scalar conductance
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
@@ -211,8 +215,8 @@ contains
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
       out%ggnet = geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg
 
-      !----- 4. In-canopy wind, top -> bottom through each layer's closed crowns (eq. (8)). Cohorts  !
-      !      of one height are one layer, consecutive since heights arrive ascending. --------------!
+      !----- 4. In-canopy wind, top -> bottom through each layer's closed crowns. Cohorts of one   !
+      !      height are one layer, consecutive because heights arrive ascending. ------------------!
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
       ico = n
@@ -240,19 +244,20 @@ contains
       end do
    end subroutine aerodynamics_bottom_to_top
 
-   !=======================================================================================!
-   !  CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)): !
-   !  n_iter_mo sweeps of the four-range denominators from the bulk-Richardson guess.      !
-   !  Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's      !
-   !  temp1) and the stability diagnostics. zeta divides only in the very-unstable and     !
-   !  very-stable branches, so the solve is safe under -fpe0.                              !
-   !=======================================================================================!
+   !---------------------------------------------------------------------------------------!
+   ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)):  !
+   ! n_iter_mo sweeps of the four-range denominators from the bulk-Richardson guess.       !
+   ! Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's       !
+   ! temp1) and the stability diagnostics. Only the first guess of zeta is bounded, not    !
+   ! the sweeps. zeta divides only in the very-unstable and very-stable branches, so the   !
+   ! solve is safe under -fpe0.                                                            !
+   !---------------------------------------------------------------------------------------!
    pure subroutine mo_surface_layer(cfg, u_ref, zref, displace, rough, theta_atm, shv_atm,     &
                                     can_theta, can_shv, ustar, heat_transfer_factor, zeta, rib, obu)
-      type(aero_params_t), intent(in)  :: cfg
-      real(wp),            intent(in)  :: u_ref, zref, displace, rough, theta_atm, shv_atm
-      real(wp),            intent(in)  :: can_theta, can_shv
-      real(wp),            intent(out) :: ustar, heat_transfer_factor, zeta, rib, obu
+      type(aero_params_t), intent(in)  :: cfg   !< aerodynamic parameters
+      real(wp),            intent(in)  :: u_ref, zref, displace, rough, theta_atm, shv_atm   !< [m/s],[m],[m],[m],[K],[kg/kg]
+      real(wp),            intent(in)  :: can_theta, can_shv   !< [K], [kg/kg] canopy-air temperature and humidity
+      real(wp),            intent(out) :: ustar, heat_transfer_factor, zeta, rib, obu   !< [m/s], [-], [-], [-], [m]
       real(wp)    :: uref, zldis, z0m, thv_atm, thv_can, dthv, dth, dqh, um, thvstar, wc
       integer(ik) :: it
 
@@ -265,8 +270,8 @@ contains
       dth     = theta_atm - can_theta
       dqh     = shv_atm   - can_shv
 
-      !----- MoninObukIni: a first convective velocity if unstable, then analytic Rib -> zeta  !
-      !      guess. ----------------------------------------------------------------------------!
+      !----- MoninObukIni: a first convective velocity if unstable, then the analytic Rib -> zeta  !
+      !      guess, bounded. ----------------------------------------------------------------------!
       if (dthv >= 0.0_wp) then
          um = uref                                    ! already at least cfg%ubmin
       else
@@ -281,7 +286,8 @@ contains
          zeta = max(ZETA_GUESS_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
-      !----- Fixed-iteration solve (no data-dependent exit -> warp-uniform on GPU). --------!
+      !----- n_iter_mo sweeps, no convergence test: every patch does the same work, and the result !
+      !      is the last sweep's, not a converged root, with whatever error the sweeps leave. -----!
       ustar = cfg%ustmin
       heat_transfer_factor = von_karman / log(zldis / z0m)
       do it = 1_ik, cfg%n_iter_mo
@@ -290,8 +296,8 @@ contains
          thvstar = (heat_transfer_factor * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
                  + virtual_temp_factor * theta_atm * (heat_transfer_factor * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
-         !----- The convective velocity follows this sweep's buoyancy flux, so it fades to zero as   !
-         !      the air turns neutral and the wind has no jump there. --------------------------------!
+         !----- The convective velocity follows this sweep's buoyancy flux, so it fades to zero as !
+         !      the air turns neutral and the wind has no jump there. -----------------------------!
          if (zeta >= 0.0_wp) then
             um = uref
          else
@@ -299,17 +305,17 @@ contains
             um = sqrt(uref * uref + wc * wc)
          end if
       end do
-      !----- Final ustar/heat_transfer_factor at the last sweep's zeta (a fixed count of sweeps, not a converged root). -!
+      !----- Final ustar and heat_transfer_factor at the last sweep's zeta. -----------------------!
       ustar = max(cfg%ustmin, von_karman * um / d_mom(zeta, zldis, z0m, cfg))
       heat_transfer_factor = von_karman / d_heat(zeta, zldis, z0m, cfg)
       obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral
    end subroutine mo_surface_layer
 
-   !----- Momentum profile denominator D_m (ustar = vonk*um/D_m), four CLM5 ranges. ----------!
+   !----- Momentum profile denominator D_m (ustar = vonk*um/D_m), four CLM5 ranges. ---------------!
    pure function d_mom(zeta, zldis, z0m, cfg) result(dm)
-      real(wp),            intent(in) :: zeta, zldis, z0m
-      type(aero_params_t), intent(in) :: cfg
-      real(wp) :: dm, zeta0m
+      real(wp),            intent(in) :: zeta, zldis, z0m   !< [-], [m], [m] stability, height above displacement, roughness
+      type(aero_params_t), intent(in) :: cfg                !< aerodynamic parameters
+      real(wp) :: dm, zeta0m                                !< [-] D_m (the result), z0m / L
       zeta0m = z0m * zeta / zldis                                  ! = z0m / L  (no division by zeta)
       if (zeta < -cfg%zeta_m) then                                 ! very unstable
          dm = log(-cfg%zeta_m * zldis / (zeta * z0m)) - stabfunc1(-cfg%zeta_m) + stabfunc1(zeta0m) &
@@ -323,11 +329,11 @@ contains
       end if
    end function d_mom
 
-   !----- Heat/vapour profile denominator D_h (heat_transfer_factor = vonk/D_h), four CLM5 ranges. ----------!
+   !----- Scalar profile denominator D_h (heat_transfer_factor = vonk/D_h), four CLM5 ranges. -----!
    pure function d_heat(zeta, zldis, z0h, cfg) result(dh)
-      real(wp),            intent(in) :: zeta, zldis, z0h
-      type(aero_params_t), intent(in) :: cfg
-      real(wp) :: dh, zeta0h
+      real(wp),            intent(in) :: zeta, zldis, z0h   !< [-], [m], [m] stability, height above displacement, roughness
+      type(aero_params_t), intent(in) :: cfg                !< aerodynamic parameters
+      real(wp) :: dh, zeta0h                                !< [-] D_h (the result), z0h / L
       zeta0h = z0h * zeta / zldis
       if (zeta < -cfg%zeta_t) then                                 ! very unstable
          dh = log(-cfg%zeta_t * zldis / (zeta * z0h)) - stabfunc2(-cfg%zeta_t) + stabfunc2(zeta0h) &
@@ -343,8 +349,8 @@ contains
 
    !----- CLM StabilityFunc1 (psi_m of eq. (4), unstable branch: call only with zeta < 0) ---!
    pure function stabfunc1(zeta) result(psi)
-      real(wp), intent(in) :: zeta
-      real(wp) :: psi, x
+      real(wp), intent(in) :: zeta     !< [-] stability, negative
+      real(wp) :: psi, x               !< [-] psi_m (the result), (1 - 16 zeta)^(1/4)
       x   = (1.0_wp - 16.0_wp * zeta) ** 0.25_wp
       psi = 2.0_wp * log((1.0_wp + x) * 0.5_wp) + log((1.0_wp + x * x) * 0.5_wp)                &
             - 2.0_wp * atan(x) + pi * 0.5_wp
@@ -352,16 +358,16 @@ contains
 
    !----- CLM StabilityFunc2 (psi_h of eq. (4), unstable branch: call only with zeta < 0) ---!
    pure function stabfunc2(zeta) result(psi)
-      real(wp), intent(in) :: zeta
-      real(wp) :: psi, x2
+      real(wp), intent(in) :: zeta     !< [-] stability, negative
+      real(wp) :: psi, x2              !< [-] psi_h (the result), (1 - 16 zeta)^(1/2)
       x2  = sqrt(1.0_wp - 16.0_wp * zeta)
       psi = 2.0_wp * log((1.0_wp + x2) * 0.5_wp)
    end function stabfunc2
 
    !----- Integrated momentum stability function for the wind profile (both signs). ----------!
    pure function psim(zeta) result(p)
-      real(wp), intent(in) :: zeta
-      real(wp) :: p
+      real(wp), intent(in) :: zeta     !< [-] stability
+      real(wp) :: p                    !< [-] psi_m
       if (zeta < 0.0_wp) then
          p = stabfunc1(zeta)
       else
@@ -369,12 +375,13 @@ contains
       end if
    end function psim
 
-   !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind              !
-   !      (docs/science/canopy_aerodynamics.md eq. (7)). ------------------------------------!
+   !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind                 !
+   !      (docs/science/canopy_aerodynamics.md eq. (7)). height - displace is held just above the  !
+   !      roughness length, so the log stays positive. --------------------------------------------!
    pure function reduced_wind(cfg, ustar, zeta, height, displace, rough, zldis) result(u)
-      type(aero_params_t), intent(in) :: cfg
-      real(wp),            intent(in) :: ustar, zeta, height, displace, rough, zldis
-      real(wp) :: u, hd, zeta_h, zeta_0
+      type(aero_params_t), intent(in) :: cfg   !< aerodynamic parameters
+      real(wp),            intent(in) :: ustar, zeta, height, displace, rough, zldis   !< [m/s], [-], [m], [m], [m], [m]
+      real(wp) :: u, hd, zeta_h, zeta_0        !< [m/s] the wind (the result); [m] height - displace
       hd     = max(height - displace, rough * 1.001_wp)
       zeta_h = zeta * hd    / zldis
       zeta_0 = zeta * rough / zldis
@@ -382,16 +389,16 @@ contains
       u      = max(u, cfg%ugbmin)
    end function reduced_wind
 
-   !=======================================================================================!
-   !  Leaf (flat-plate) or wood (cylinder) boundary-layer heat conductance [m/s], the sum  !
-   !  of forced (Reynolds) and free (Grashof) convection Nusselt numbers                   !
-   !  (docs/science/canopy_aerodynamics.md eqs. (9)-(10)).                                 !
-   !=======================================================================================!
+   !---------------------------------------------------------------------------------------!
+   ! Leaf (flat-plate) or wood (cylinder) boundary-layer heat conductance gbh_mos [m/s],   !
+   ! the sum of forced (Reynolds) and free (Grashof) convection Nusselt numbers            !
+   ! (docs/science/canopy_aerodynamics.md eqs. (9)-(10)).                                  !
+   !---------------------------------------------------------------------------------------!
    pure function boundary_layer_conductance(cfg, wind, elem_temp, can_temp, lchar, is_leaf) result(gbh_mos)
-      type(aero_params_t), intent(in) :: cfg
-      real(wp),            intent(in) :: wind, elem_temp, can_temp, lchar
-      logical,             intent(in) :: is_leaf
-      real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free
+      type(aero_params_t), intent(in) :: cfg     !< aerodynamic parameters
+      real(wp),            intent(in) :: wind, elem_temp, can_temp, lchar   !< [m/s], [K], [K], [m]
+      logical,             intent(in) :: is_leaf !< true: a leaf (flat plate); false: wood (cylinder)
+      real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free   !< [m/s] the result; [m2/s] nu_v, al_th
       nu_v  = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (can_temp - cfg%t_ref_air))
       al_th = cfg%th_diff0  * (1.0_wp + cfg%dth_diff  * (can_temp - cfg%t_ref_air))
       re    = max(wind * lchar / al_th, tiny_num)
@@ -409,8 +416,8 @@ contains
 
    !----- Allocate the per-cohort output arrays of an aero_out_t (the kernel writes in place). !
    subroutine alloc_aero_out(out, n_coh)
-      type(aero_out_t), intent(out) :: out
-      integer(ik),      intent(in)  :: n_coh
+      type(aero_out_t), intent(out) :: out     !< the record to allocate
+      integer(ik),      intent(in)  :: n_coh   !< number of cohorts
       out%n_coh = n_coh
       allocate(out%wind(n_coh), out%leaf_gbh(n_coh), out%leaf_gbw(n_coh),                      &
                out%wood_gbh(n_coh), out%wood_gbw(n_coh))
@@ -423,8 +430,8 @@ contains
 
    !----- Grow-only capacity of aero_out_t: canopy_aerodynamics overwrites every active element. --!
    subroutine ensure_aero_out_capacity(out, n_coh)
-      type(aero_out_t), intent(inout) :: out
-      integer(ik),       intent(in)    :: n_coh
+      type(aero_out_t), intent(inout) :: out     !< the record to grow
+      integer(ik),       intent(in)    :: n_coh  !< number of cohorts
       if (.not. allocated(out%wind)) then
          call alloc_aero_out(out, n_coh)
       else if (size(out%wind) < n_coh) then
@@ -437,12 +444,12 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Fill aero_env_t's reference level from the forcing at zref, the canopy-air top, where !
    ! potential temperature equals the actual air temperature                               !
-   ! (docs/science/canopy_aerodynamics.md §2, The reference level). The frozen build and    !
-   ! the tests fill it here: a theta_atm left at its 298.15 K default gives the            !
-   ! Monin-Obukhov solve a false stratification.                                           !
+   ! (docs/science/canopy_aerodynamics.md §2, "The reference level"). Set all four fields  !
+   ! here: a theta_atm left at its 298.15 K default gives the Monin-Obukhov solve a false  !
+   ! stratification.                                                                       !
    !---------------------------------------------------------------------------------------!
    pure subroutine set_aero_env_atm(aenv, u_ref, zref, air_temp, shv_atm)
-      type(aero_env_t), intent(inout) :: aenv
+      type(aero_env_t), intent(inout) :: aenv       !< the environment to fill
       real(wp),         intent(in)    :: u_ref      !< [m/s]   wind at zref
       real(wp),         intent(in)    :: zref       !< [m]     the reference height, the canopy-air top
       real(wp),         intent(in)    :: air_temp   !< [K]     actual air temperature at zref
@@ -453,30 +460,30 @@ contains
       aenv%shv_atm   = shv_atm
    end subroutine set_aero_env_atm
 
-   !----- The canopy-air and ground half, from the model's own state each step; a stale             !
-   !      canopy-air temperature mis-prices the stability solve as a stale theta_atm does. -------!
+   !----- Fill aero_env_t's canopy-air and ground fields from the model state; a stale canopy-air  !
+   !      temperature biases the stability solve as a stale theta_atm does. -----------------------!
    pure subroutine set_aero_env_canopy(aenv, can_temp, can_shv, t_ground)
-      type(aero_env_t), intent(inout) :: aenv
-      real(wp),         intent(in)    :: can_temp, can_shv, t_ground
+      type(aero_env_t), intent(inout) :: aenv   !< the environment to fill
+      real(wp),         intent(in)    :: can_temp, can_shv, t_ground   !< [K], [kg/kg], [K]
       aenv%can_temp  = can_temp
       aenv%can_shv   = can_shv
       aenv%t_ground  = t_ground
    end subroutine set_aero_env_canopy
 
-   !----- The canopy-air <-> atmosphere conductances at a canopy-air state (eq. (5); §2, "These    !
-   !      three are re-solved at every integrator stage"): the surface layer solved again against !
-   !      that state, with the reference level and the canopy geometry the step holds, and the   !
-   !      roughness from that geometry. Vapour and CO2 take the heat factor (z0q = z0h), CO2 on   !
-   !      the dry-air molar density at the state's humidity. -----------------------------------!
+   !----- The canopy-air <-> atmosphere conductances at a given canopy-air temperature and         !
+   !      humidity (docs/science/canopy_aerodynamics.md eq. (5)): the surface layer solved again   !
+   !      against that state, with the reference level in env and the canopy geometry in geom, so  !
+   !      the conductances follow the canopy air's own stability. Vapour and CO2 take the heat     !
+   !      factor (z0q = z0h); CO2 uses the dry-air molar density at that humidity. ----------------!
    pure subroutine canopy_air_conductances(cfg, env, geom, rho, can_temp, can_shv, g_atm_heat,       &
                                            g_atm_vapour, g_atm_co2)
-      type(aero_params_t), intent(in)  :: cfg
+      type(aero_params_t), intent(in)  :: cfg        !< aerodynamic parameters
       type(aero_env_t),    intent(in)  :: env        !< the reference level (its canopy-air fields are not read)
-      type(aero_args_t),   intent(in)  :: geom
+      type(aero_args_t),   intent(in)  :: geom       !< canopy height and snow burial
       real(wp),            intent(in)  :: rho        !< [kg/m3]  canopy-air density
       real(wp),            intent(in)  :: can_temp   !< [K]      canopy-air temperature
       real(wp),            intent(in)  :: can_shv    !< [kg/kg]  canopy-air specific humidity
-      real(wp),            intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
+      real(wp),            intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2   !< [kg/m2/s], [kg/m2/s], [mol/m2/s]
       real(wp) :: rough, displace, ustar, heat_factor, zeta, rib, obu, can_dmol
       call canopy_roughness(cfg, geom, rough, displace)
       call mo_surface_layer(cfg, env%u_ref, env%zref, displace, rough, env%theta_atm, env%shv_atm,      &

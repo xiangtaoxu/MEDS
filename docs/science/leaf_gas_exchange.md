@@ -83,7 +83,8 @@ midday tropical leaf, halving O₂ raises $`A_\mathrm{net}`$ by 22 % and 35 % O�
 
 **C4 (Collatz et al. 1992):** $A_c = V_{cmax}$, $A_j$ = a light-limited slope, $A_p = k_p C_i$
 (PEP-case CO₂ limitation), with $`\Gamma^* \approx 0`$ (the CO₂-concentrating mechanism suppresses
-photorespiration).
+photorespiration). `kp25` is a slope on the CO₂ partial pressure stated at standard pressure, so the
+code scales $`k_p`$ by $`p/p_{std}`$ and $`k_p C_i`$ follows the partial pressure at any altitude.
 
 The three rates are combined into $A_g$ either as a sharp $\min(A_c,A_j,A_p)$ (`COLIM_MIN`) or as
 two nested smoothing quadratics (`COLIM_QUADRATIC`, the same `quadratic_smaller_root` used for $J$).
@@ -388,6 +389,11 @@ and stops when the bracket is within the tolerance:
 - **Cuticular fallback** (`GS_CUTICULAR`) — if the model yields no sign change (e.g. Katul under
   strong stress wanting $g_s < g_0$), the solver retries g0-pinned, which always brackets when
   $A(C_a) > 0$.
+
+- **Guards** — $`g_s = g_0`$ where $`A \le 0`$; Leuning floors $`C_s-\Gamma^*`$ and Medlyn $`C_s`$ just
+  above zero, and Medlyn's VPD at `medlyn_vpd_min`; Katul's $\lambda$ takes $`\beta_s`$ no lower than
+  `BETA_FLOOR` (10⁻⁴), so it stays finite; the lower bracket sits `LO_EPS_PPM` (10⁻³ µmol mol⁻¹) above
+  $`\Gamma^*`$; Katul's derivative in $C_i$ is a finite difference of 10⁻³ $C_i$, at least 10⁻² µmol mol⁻¹.
 
 Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 

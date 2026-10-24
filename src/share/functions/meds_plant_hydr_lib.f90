@@ -208,10 +208,9 @@ contains
 
    !----- Retained fraction of xylem conductance, 1 - PLC = 1 / (1 + r^kexp), r =          !
    !      psi/psi50, and one at or above zero potential (docs/science/plant_hydraulics.md  !
-   !      eq. (7)). r = 0 is kept off the general power: under floating-point trapping a   !
-   !      compiler may take 0**kexp through log(0). Exponent 2 squares r by a product: the !
-   !      general power is a library call, and this fraction is the sapflow's slope at     !
-   !      every evaluation of the water network. ------------------------------------------!
+   !      eq. (7)). r = 0 is kept off the general power, which a compiler may take through !
+   !      log(0) under floating-point trapping; exponent 2 uses a product, cheaper than    !
+   !      the general power. --------------------------------------------------------------!
    elemental real(wp) function conductance_retained_fraction(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
