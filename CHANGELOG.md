@@ -133,7 +133,10 @@ pages, `demography.md` and `conservation.md`, and its code keeps short comments 
 is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
 change to any result (#516). Its routines take one required ledger, which keeps the soil-carbon seam's
 worst values; the demographic laws make the founding and treefall decisions the operators apply; and
-`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520).
+`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). The
+cull's and the treefall's dead carbon reach the soil through the litter and the slow ledger declares
+them; the slow loop converts CO2 with the fast loop's constant; and patch termination merges and
+re-sorts as patch fusion does (#523).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -784,6 +787,12 @@ worst values; the demographic laws make the founding and treefall decisions the 
   `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
   `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
   and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
+- **Fortran: the cull and the treefall report their dead** (#523). `terminate_cohorts` and
+  `apply_patch_disturbance` take a required `kill_report_t` (`meds_slow_state`), and
+  `kill_litter(poly, kills, carbon)` turns it into patch litter; `clear_litter` empties the
+  accumulator after the soil step, which no longer happens at the start of the allocation.
+  `KGC_PER_UMOL_C` is gone: use `meds_constants`' `umol_2_kgc`. `check_kernel_state.py` takes the
+  source tree and stops on any other directory.
 
 ### Changed
 
@@ -1726,6 +1735,17 @@ worst values; the demographic laws make the founding and treefall decisions the 
 
 ### Fixed
 
+- **The slow ledger missed the carbon of culled and treefall-killed plants with soil carbon off**
+  (#523). The cull and the treefall added their dead carbon straight to the soil pools, and only
+  with soil carbon on, so with it off the carbon left undeclared and the ledger warned (−0.143
+  kgC/m² on a census case). Their carbon now goes into the patch litter, as background mortality's
+  does, and is declared where they run; the next soil step takes it up. With soil carbon on, a
+  boundary's dead carbon reaches the pools one step later; the litter outputs now include it.
+- **The canopy air got 1.00089 times the carbon of the slow loop's CO2** (#523). The slow loop
+  converted with 1.2e-8 kgC/µmol, the fast loop with 1.20107e-8; both now use the latter, and annual
+  NEE moves by 0.03–0.09 %.
+- **The cohort fusion after a patch termination scanned the merged cohorts out of height order**
+  (#523). Termination now re-sorts them tallest first, as patch fusion does.
 - **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
   targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
   `-j 16`). The shims now compile in one target.
