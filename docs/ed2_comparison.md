@@ -487,6 +487,11 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   about 0 °C. ED2 forms the Reynolds number with the thermal diffusivity, $`u\ell/\alpha`$; MEDS
   uses the kinematic viscosity, $`u\ell/\nu`$, so its Re is 1.42 times ED2's and a laminar leaf's
   forced conductance 1.19 times.
+- **The ground's coupling to the canopy air** (`meds_canopy_aerodynamics`). ED2's bare-ground conductance
+  is $`u_*\,\mathrm{temp1}`$, the canopy air's own factor to the atmosphere, so bare ground crosses the
+  surface layer twice. MEDS takes CLM5's soil coefficient, $`\kappa u_*/(0.13\,(z_{0g}u_*/\nu)^{0.45})`$,
+  which spans only the layer between the soil and its roughness height, so bare ground's resistance to
+  the reference height is CLM5's. A patch without cohorts has ED2's bare roughness, `soil_rough` 0.01 m.
 - **Tissue and soil energy** (`meds_fast_integ_derivs`, `meds_fast_integ_frozen`, `meds_soil_heat`). The leaf
   pays the full vapour enthalpy of what it transpires and the soil the liquid internal energy of what
   the roots draw, each once, as ED2's `rk4_derivs` charges `tq2enthalpy(T_leaf)` and `uint_water`. The

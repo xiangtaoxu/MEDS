@@ -163,18 +163,28 @@ is `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §1g–1h.
 
 ## 3. Ground ↔ CAS conductance
 
-The ground-to-CAS scalar conductance blends a bare-ground similarity term with CLM4's dense-canopy
-form (`ggbare`/`ggveg`/`ggnet`), weighted by the patch's open fraction $W$ as CLM weighs them
+The ground-to-CAS scalar conductance blends CLM5's bare-soil term with CLM4's dense-canopy form
+(`ggbare`/`ggveg`/`ggnet`), weighted by the patch's open fraction $W$ as CLM weighs them
 (Zeng et al. 2005; the stability factor is Sakaguchi and Zeng 2009's):
 
 ```math
-g_{g,bare} = u_*\,\mathrm{temp1}, \qquad
+g_{g,bare} = \frac{\kappa\,u_*}{a\,(z_{0g}\,u_*/\nu)^{b}}, \qquad
 g_{g,veg} = \frac{c_s\,u_*}{1+\gamma_g\,\mathrm{stab}}, \qquad
 g_{g,net} = W\,g_{g,bare} + (1-W)\,g_{g,veg}, \qquad
 W = e^{-(\mathrm{LAI}+\mathrm{WAI})} \qquad(6)
 ```
 
-where `stab` is a bounded buoyancy factor in the CAS↔ground temperature difference, $`c_s=`$
+The bare term is CLM5's soil coefficient (`soil_conductance`; Zeng & Dickinson 1998, $a = 0.13$,
+$b = 0.45$), with $`z_{0g}=`$ `soil_rough` (0.01 m) and $\nu$ the air's kinematic viscosity at the
+canopy air's temperature. It spans only the thin layer between the soil and its roughness height: the
+turbulent layer above it is the canopy air's own exchange with the atmosphere, eq. (5), so on bare
+ground the two in series are CLM5's bare-soil resistance from the soil to $`z_{ref}`$. A patch with no
+cohorts, or only shorter ones, takes the canopy height whose roughness is the soil's,
+`soil_rough`/`z0m_ratio` (7.7 cm), so its $`z_{0m}`$ is $`z_{0g}`$. ED2 takes $`u_*\,\mathrm{temp1}`$
+here, the canopy air's own factor, which counts the surface layer twice
+([ED2 comparison](../ed2_comparison.md) §4.9).
+
+In the dense term, `stab` is a bounded buoyancy factor in the CAS↔ground temperature difference, $`c_s=`$
 `cs_dense`, $`\gamma_g=`$ `gamma_g`, and LAI and WAI are the patch's leaf and wood area indices
 (`open_canopy_fraction`; the kernel takes $W$ as `opencan_frac`). A patch with no cohorts ($W=1$)
 couples its ground as bare soil; under a closed canopy the dense form sets the conductance ($W=0.0025$
@@ -261,6 +271,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | — | `gbh_2_gbw` | boundary-layer heat:vapour ratio (1.075) |
 | $`g_{bh,min}`$ | `gbhmos_min` | boundary-layer conductance floor [m s⁻¹] |
 | — | `kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air` | linear-in-T air viscosity and diffusivity |
+| $`z_{0g}`$ | `soil_rough` | bare soil's roughness length (0.01 m, CLM's `zlnd`): the soil coefficient of eq. (6) and a bare patch's $`z_{0m}`$ |
 | — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients (`aero_params_t` only, no TOML key) |
 | — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients (`aero_params_t` only, no TOML key) |
 | — | `min_canopy_depth` | CAS-depth floor [m] |

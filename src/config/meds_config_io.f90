@@ -390,6 +390,7 @@ contains
       a%z0m_ratio        = toml_real(tm, 'aerodynamics.z0m_ratio',        a%z0m_ratio)
       a%d_ratio          = toml_real(tm, 'aerodynamics.d_ratio',          a%d_ratio)
       a%snow_rough       = toml_real(tm, 'aerodynamics.snow_rough',       a%snow_rough)
+      a%soil_rough       = toml_real(tm, 'aerodynamics.soil_rough',       a%soil_rough)
       a%zeta_m           = toml_real(tm, 'aerodynamics.zeta_m',           a%zeta_m)
       a%zeta_t           = toml_real(tm, 'aerodynamics.zeta_t',           a%zeta_t)
       a%zeta_max_stable  = toml_real(tm, 'aerodynamics.zeta_max_stable',  a%zeta_max_stable)

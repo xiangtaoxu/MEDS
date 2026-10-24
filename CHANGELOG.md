@@ -116,7 +116,8 @@ brackets behind a boundary layer and at the dew point, the configuration refuses
 NaN soil layers, and the reported net radiation includes the wood (#503). The two-stream solves each
 layer's scattered beam through its depth, so a canopy's light no longer depends on how it is cut into
 cohorts (#504). The Monin-Obukhov surface layer sweeps until the canopy air's coupling settles, and
-the transpiration demand stops re-solving it at the state the pre-pass already solved (#505).
+the transpiration demand stops re-solving it at the state the pre-pass already solved (#505). Bare
+ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -718,9 +719,17 @@ the transpiration demand stops re-solving it at the state the pre-pass already s
   the pressure, and `meds_canopy_aerodynamics` drops `psim` and adds `canopy_burial_fraction`.
 - **`[aerodynamics].n_iter_mo` is the most Monin-Obukhov sweeps** (#505), 20; the sweeps stop when the
   coupling settles. A configuration copied from the old main config, which set 4, keeps a cap of 4.
+- **`[aerodynamics].soil_rough`** (#506), 0.01 m, is new: the bare soil's roughness length. A patch
+  without cohorts, or with only shorter ones, takes it as its z0m; the 1 m bare-canopy height goes.
 
 ### Changed
 
+- **Bare ground couples through CLM5's soil coefficient** (#506). The bare-ground conductance was the
+  canopy air's own factor u*·temp1, so bare ground crossed the surface layer twice, and a patch without
+  cohorts was a 1 m canopy (z0 0.13 m): bare ground was coupled at 1.8–2.1 times CLM5's rate. It is now
+  κu*/(0.13 (z0g u*/ν)^0.45) with z0g = `soil_rough`, and a bare patch has the soil's roughness, so its
+  resistance to zref is CLM5's bare-soil one. Niwot (near bare): u* −37 %, LE +19 %, H −20 %; Ithaca in
+  January: LE −31 %, SWE +6.6 %; closed canopies: under 0.3 %.
 - **The surface layer sweeps to a tolerance** (#505). Four fixed Monin-Obukhov sweeps missed the
   canopy air's coupling by up to 21 % in free convection (a 30 m forest at 0.5 m/s, the canopy air 5 K
   warmer: −18.7 %); the sweeps now stop when u*·temp1 moves by less than 1e-4 of itself, at most
