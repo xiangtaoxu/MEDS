@@ -642,25 +642,19 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch disturbance init_census init_soil_state carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
+   foreach(t containers fusion_cohort patch disturbance carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Census files the reader must refuse: each passes on the reason it returns. ------#
-   add_executable(test_init_census_refuses test/test_init_census_refuses.f90)
-   target_link_libraries(test_init_census_refuses PRIVATE meds_testsupport meds_model)
-   meds_fortran_flags(test_init_census_refuses)
-   add_test(NAME init_census_refuses_area COMMAND test_init_census_refuses area)
-   set_tests_properties(init_census_refuses_area PROPERTIES
-                        PASS_REGULAR_EXPRESSION "two different patch_area values"
-                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
-   add_test(NAME init_census_refuses_column COMMAND test_init_census_refuses column)
-   set_tests_properties(init_census_refuses_column PROPERTIES
-                        PASS_REGULAR_EXPRESSION "unknown column \"basal\""
-                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
+   #----- How a run's polygon starts: the census reader and every reason it refuses a file, and  #
+   #      the initial soil state. ----------------------------------------------------------------#
+   add_executable(test_init test/test_init.f90)
+   target_link_libraries(test_init PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_init)
+   add_test(NAME init COMMAND test_init)
 
    #----- Leaf-physiology test links meds_fast + test support (assertions). ---------------#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
