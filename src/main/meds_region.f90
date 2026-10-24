@@ -219,13 +219,12 @@ contains
       end if
       if (.not. region) call site_cell(reg%met_src, cfg, cells)
 
-      !----- Each polygon at its location, from its initial community, with its own configuration: !
-      !      the run's, with a region cell's own soil and site index. --------------------------------!
+      !----- Each polygon at its location, from its start, on its own configuration: the run's,    !
+      !      with a region cell's soil and site index. --------------------------------------------!
       allocate(reg%poly(n), reg%run(n), reg%out_bufs(n))
       reg%now = cfg%start_time
       do p = 1_ik, n
          associate (poly => reg%poly(p), run => reg%run(p))
-            run%cell = p
             pcfg = cfg
             if (region) then
                write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', cells%lat(p), ', ',   &
@@ -246,9 +245,9 @@ contains
             poly%elevation_m   = cells%elevation(p)
             call set_site_terrain(poly, pcfg)
 
-            !----- The fast context, the forcing cursor, the soil-carbon spin-up. One                   !
-            !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(cfg, reg%met_src, poly, run,                                          &
+            !----- The forcing cursor, the canopy-air depth, the spin-up. One polygon gives its    !
+            !      patch loop the run's threads; a region gives them to its polygons. -------------!
+            call polygon_prepare(cfg, reg%met_src, p, poly, run,                                       &
                                  keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
@@ -285,15 +284,14 @@ contains
          call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, cells%lat, cells%lon, &
                                 cells%row, cells%col)
          do p = 1_ik, n
-            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p)%cell)
+            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), p)
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
-      !----- The PARAMETER RECORD: every setting the loader read, from which file, whether it was set  !
-      !      there or defaulted, and the value used -- beside the output and beside the state,         !
-      !      whichever the run writes. A caller that set a key finds it here or learns that the key was !
-      !      never read. ---------------------------------------------------------------------------------!
+      !----- The parameter record, beside the output and the state: every setting the loader read, !
+      !      from which file, set or defaulted, and its value, so a caller can tell whether a key  !
+      !      was read. ----------------------------------------------------------------------------!
       if (cfg%output%enabled)                                                                      &
          call toml_write_record(trim(cfg%output%dir)//'/'//trim(cfg%output%prefix)//'_parameters.csv')
       if (cfg%output%state_write)                                                                  &
