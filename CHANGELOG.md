@@ -121,7 +121,8 @@ ground couples to the canopy air through CLM5's soil coefficient, at its own rou
 snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507). The aquifer
 face takes the column's own rule, the geometric mean of the bottom layer's and the table's
 conductivity (#508). The plant hydraulics page says how far the Kirchhoff sapflow law is from the
-exact steady flux under gravity, and a test pins it (#509).
+exact steady flux under gravity, and a test pins it (#509). A canopy film is part of its tissue's
+energy, at the tissue's temperature, so the canopy-water runs close their energy (#510).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -728,6 +729,19 @@ exact steady flux under gravity, and a test pins it (#509).
 
 ### Changed
 
+- **A state file whose tissue energies leave out the films it holds is refused** (#510) at the first
+  fast step, where its cohorts' energies and temperatures disagree; a file with no water on the canopy
+  reads as before. **Fortran:** `canopy_water_out_t`'s `film_liquid_enthalpy` is `rain_liquid_enthalpy`,
+  `soil_hydrology_t` drops `t_film_valuation`, and `commit_tissue_energy` and `clamp_canopy_film` take
+  the films' start and end and the tissues' start-of-step temperatures.
+- **A canopy film is part of its tissue's energy** (#510), ED2's form. The films had no energy of their
+  own: each step valued them at the rain's temperature, or at `tsupercool_liq` under a pack, where rain
+  held on the canopy was worth 0 J/kg and cost the leaf about 0.95 MJ/kg extra to evaporate, and their
+  sensible heat went uncounted. Each film now joins its tissue's heat capacity and energy at the
+  tissue's temperature, in the fast loop and at the cohort level; capture brings the rain's liquid
+  enthalpy and evaporation takes the vapour's, so the canopy-water column runs close their energy to
+  round-off (they were bounded at 5e6 J). The region's LE −0.18 %, H +0.4 %. `t_film_valuation` and
+  `film_liquid_enthalpy` go.
 - **The Kirchhoff sapflow law under gravity, documented** (#509). The law is the exact steady flux
   without gravity; with it the exact flux solves an implicit equation, and the law overstates it by
   3.4 % at a = 2 and 15.5 % at a = 4 in an embolised case, under 1 % on the shipped PFTs' realistic
@@ -745,8 +759,10 @@ exact steady flux under gravity, and a test pins it (#509).
   canopy air's own factor u*·temp1, so bare ground crossed the surface layer twice, and a patch without
   cohorts was a 1 m canopy (z0 0.13 m): bare ground was coupled at 1.8–2.1 times CLM5's rate. It is now
   κu*/(0.13 (z0g u*/ν)^0.45) with z0g = `soil_rough`, and a bare patch has the soil's roughness, so its
-  resistance to zref is CLM5's bare-soil one. Niwot (near bare): u* −37 %, LE +19 %, H −20 %; Ithaca in
-  January: LE −31 %, SWE +6.6 %; closed canopies: under 0.3 %.
+  resistance to zref is CLM5's bare-soil one. The ground couples to the canopy air about three times
+  more strongly under a sparse canopy, and a bare patch's u* falls with its roughness: the region's LE
+  +7 % and H −8.8 % (GPP +1.2 %), BCI's regrowth (ex05) LE +10 % and H −8 %, Niwot (near bare) u* −37 %
+  and LE +19 %, Ithaca in January LE −31 % and SWE +6.6 %; closed canopies under 0.3 %.
 - **The surface layer sweeps to a tolerance** (#505). Four fixed Monin-Obukhov sweeps missed the
   canopy air's coupling by up to 21 % in free convection (a 30 m forest at 0.5 m/s, the canopy air 5 K
   warmer: −18.7 %); the sweeps now stop when u*·temp1 moves by less than 1e-4 of itself, at most
