@@ -76,6 +76,9 @@ compiler-generated static mold that every thread writes.
 
 ## The one fast/slow seam
 
-`heterotrophic_respiration_matrix`, called from `build_frozen` so the sub-daily respiration debits the
-same CENTURY pool the daily step does. The residual is asserted and closes to machine precision.
-Do not add a second cross-tier kernel call without the same treatment.
+The soil's respiration chemistry in `processes/meds_respiration` (`decomposition_env_scalar`,
+`decomposition_transfer_matrix`, `heterotrophic_respiration`). `build_frozen` respires the frozen
+CENTURY pool with it at every step, and the daily soil-carbon step (`meds_soil_biogeochem`) integrates
+the same matrix, so the day's respiration equals the pools' debit. The residual is asserted and closes
+to machine precision (`docs/science/soil_carbon.md` §7). Do not add a second cross-tier kernel call
+without the same treatment.

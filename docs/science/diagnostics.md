@@ -330,6 +330,35 @@ entries are formed there for a reason:
   whole-column imbalance over the sub-step: a leak rate in W m⁻² or kg m⁻² s⁻¹, positive when a store
   appears from nowhere.
 
+### The slow rows
+
+The slow operators write their own rows into the same blocks: litterfall by tissue, recruitment,
+mortality carbon by pathway and disturbed area on the patch rows; the allocation's split, growth
+respiration, storage upkeep, exudate, diameter and biomass growth and mortality on the cohort rows.
+
+- **A patch row's weight is time.** The block's weight is the summed sub-step length in seconds, and
+  the reader returns value over weight. So a slow row adds its rate, in the units the registry
+  declares, times the slow step's length in seconds.
+  - An amount over the step is turned into a rate first. A litter amount is divided by the step's
+    length in years, because its declared unit is per year.
+  - The disturbed fraction $f$ of a one-year interval enters as $`f\cdot`$ the year's seconds: the
+    rate $`f/\Delta t`$ times the weight $\Delta t$ in seconds.
+- **A run without the fast loop** adds the slow step's length to the weight itself, since no sub-step
+  adds it. Otherwise every slow row would read back as 0.
+- **The cohort rows of the slow block hold one sample per slow step**, so their weight is a presence
+  flag, not a time.
+- **An event at a calendar boundary is written before the patch axis changes.**
+  - The cull writes on its cohort's patch, which the cohort restructuring leaves in place.
+  - The treefall writes on its donors before the gaps are added, and each gap inherits its donors'
+    rows, blended on area.
+  - So $`\sum\mathrm{area}\cdot\mathrm{value}`$ counts each event once, on the ground it happened on.
+  - At a calendar boundary the donors' rows hold only that boundary's events, since the step's sums
+    were read and reset; the gap keeps its share of them. Inside a step (the C API) they hold the
+    step so far. Every donor lost the same fraction, so their current areas give the same blend as
+    their original ones.
+- **The litterfall rows and the soil's litter input are one number.** Both read the same per-patch
+  litter accumulator.
+
 ---
 
 ## 5. Choosing what to write

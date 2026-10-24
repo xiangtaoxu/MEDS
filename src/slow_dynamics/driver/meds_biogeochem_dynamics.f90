@@ -1,20 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_biogeochem_dynamics -- the slow-loop BIOGEOCHEMISTRY driver, the peer of                     !
-! meds_vegetation_dynamics under meds_slow_dynamics (docs/science/order_of_processes.md §4).        !
-! Per patch, it advances the CENTURY soil-carbon matrix ONE daily step: the litter accumulated      !
-! by the vegetation driver this step (`poly%patch%litter_in`, routed through build_litter_input)    !
-! plus the fast loop's day-integrated environmental scalar (`poly%patch%decomp_xi`, accumulated     !
-! once per (patch, sub-step) by the fast loop over the SAME frozen pool the fast loop's             !
-! heterotrophic_respiration respired against) drive soil_carbon_step, which commits the             !
-! pool change once, at day-end (docs/science/soil_carbon.md §6).                                    !
-!                                                                                          !
-! THE DOUBLE-COUNTING CONTRACT (docs/science/soil_carbon.md §7): the fast loop respires the FROZEN  !
-! daily pool (biophys%soil_carbon, seeded once per patch per day in meds_fast_dynamics, never       !
-! mutated there); this module is the SOLE writer of the real poly%patch%soil_carbon. So the day's   !
-! total fast Rh equals the pool debit BY CONSTRUCTION: rh_seam_gap, soil_carbon_step's rh_today     !
-! minus the fast loop's accumulated rh_fast_accum, is an ASSERTION GUARD (should be ~0), not a      !
-! live correction.                                                                                  !
+! meds_biogeochem_dynamics -- the slow loop's soil biogeochemistry, run after the          !
+! vegetation driver (docs/science/order_of_processes.md §4). advance_biogeochem_dynamics   !
+! advances each patch's CENTURY pools one daily step: the step's litter                    !
+! (poly%patch%litter_in) and the fast loop's decomposition integral (poly%patch%decomp_xi) !
+! drive soil_carbon_step (docs/science/soil_carbon.md §5-§6). The fast loop respires a     !
+! frozen daily copy and never writes the pools, so the fast/slow seam gap is an assertion  !
+! guard (§7).                                                                              !
 !==========================================================================================!
 module meds_biogeochem_dynamics
    use meds_kinds,            only : wp, ik
@@ -32,29 +24,17 @@ module meds_biogeochem_dynamics
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance the slow soil-carbon matrix one daily step, per patch. `lit` is vegetation_       !
-   ! dynamics's per-patch litter accumulator (turnover + continuous-mortality carbon; cull-     !
-   ! termination and disturbance-kill litter were already added directly onto poly%patch%        !
-   ! soil_carbon by the demography operators -- see meds_demography_cohort_fusefiss and           !
-   ! meds_demography_patch_fusefiss).                                                              !
-   ! `seam` (optional) accumulates the per-RUN worst of the three soil-carbon seam diagnostics --   !
-   ! the fast/slow Rh reconciliation gap, the lignin passive-tracer residual, and lambda, the        !
-   ! largest fraction of any pool a single slow step withdraws (mirrors fast_dynamics's              !
-   ! worst_energy/worst_water pattern).                                                              !
+   ! Advance each patch's soil-carbon pools one daily step on the step's litter,           !
+   ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
+   ! on the pools directly). `seam` keeps the run's worst Rh gap, lignin residual and      !
+   ! lambda (soil_carbon.md §6-§7, §9).                                                    !
    !---------------------------------------------------------------------------------------!
    subroutine advance_biogeochem_dynamics(poly, cfg, seam, ledger)
       type(polygon_t),       intent(inout) :: poly
       type(meds_config_t),   intent(in)    :: cfg
-      !----- The litter arriving today is poly%patch%litter_in -- patch state, in lockstep with the
-      !      patch array, so it always has the post-disturbance patch count the loops below run over.
-      !----- The seam diagnostics, accumulated as per-RUN worsts (intent(inout), reset by the driver !
-      !      at open): one record rather than an optional real per number. --------------------------!
-      type(soilc_seam_t), optional, intent(inout) :: seam
-      !----- The slow ledger (meds_slow_ledger). The litter the vegetation driver declared          !
-      !      LEAVING the live pools arrives here; declaring the same quantity at both ends turns    !
-      !      the litter seam into something the ledger TESTS rather than something it has to be     !
-      !      told to ignore. Rh is not declared: it leaves the CENTURY pools into the canopy air,   !
-      !      and BOTH are stores this ledger carries, so it is an internal transfer. ---------------!
+      type(soilc_seam_t), optional, intent(inout) :: seam   !< the run's worst fast/slow seam checks (soil_carbon.md §7)
+      !----- The slow ledger: the litter declared leaving the live pools is declared       !
+      !      arriving here, and the day's Rh is declared leaving (conservation.md §3). ----!
       type(slow_ledger_t), optional, intent(inout) :: ledger
       real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
       type(soilc_audit_t)  :: audit
@@ -73,9 +53,8 @@ contains
          associate (xa => poly%patch%decomp_xi(ip))
             call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xa%xi_days, cfg%soil_carbon, &
                                   rh_today, audit)
-            !----- The assertion guard (docs/science/soil_carbon.md §7): with the frozen-pool          !
-            !      identity, rh_today (the matrix's own pool debit) should equal the fast loop's       !
-            !      independently accumulated Rh to within floating-point/adaptive-substep error. ------!
+            !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
+            !      debit, should equal the fast loop's accumulated Rh. --------------------!
             audit%rh_fast_accum = xa%rh_fast
             audit%rh_seam_gap   = rh_today - xa%rh_fast
             if (present(seam)) then
@@ -86,15 +65,8 @@ contains
                   seam%lambda_pool  = audit%lambda_pool
                end if
             end if
-            !----- LEDGER: heterotrophic respiration is the MIRROR of the GPP handover. The matrix  !
-            !      debits the real pools HERE, inside the slow step; the fast loop already credited !
-            !      that carbon to the canopy air in this step's fast loop, against the FROZEN pools !
-            !      (the double-counting contract in this module's header). One end of the transfer  !
-            !      is inside this ledger's window and the other is outside it, so the debit must be !
-            !      declared or it reads as the soil losing carbon to nowhere. Declaring rh_today --  !
-            !      the matrix's own debit rather than the fast loop's accumulation -- is deliberate: !
-            !      what is left in the residual is then rh_seam_gap, which is the quantity the       !
-            !      contract actually asserts on.  ------------------------------------------------!
+            !----- Declare the matrix's own Rh debit (conservation.md §3): what is left in !
+            !      the residual is the fast/slow seam gap. --------------------------------!
             if (present(ledger)) call slow_ledger_declare(ledger,                                  &
                                           carbon_out = patch_polygon_area(poly, ip) * rh_today)
          end associate

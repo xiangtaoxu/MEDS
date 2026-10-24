@@ -1,10 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_slow_dynamics -- the THIN slow-tier coordinator (docs/science/order_of_processes.md       !
-! §4). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then              !
-! biogeochemistry -- and owns the shared per-patch slow-state application                        !
-! (update_patch_states) between them. It stays a coordinator, not a numerical stepper: every     !
-! actual computation lives in the domain drivers it calls.                                       !
+! meds_slow_dynamics -- the slow-tier coordinator (docs/science/order_of_processes.md      !
+! §4-§5). advance_slow_dynamics runs vegetation dynamics, the patch ageing, the canopy-air !
+! depth and the soil biogeochemistry in order; advance_boundary_dynamics restructures the  !
+! stand at a calendar boundary; settle_tissue_water and acclimate_site_leaf_tables run     !
+! once per step. It sequences the drivers and marks the slow ledger's phases               !
+! (docs/science/conservation.md §3); every computation lives in the drivers it calls.      !
 !==========================================================================================!
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
@@ -32,21 +33,17 @@ module meds_slow_dynamics
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one slow step: vegetation dynamics (demographic rates + apply-primitives; returns  !
-   ! this step's litter accumulator), the shared patch-ageing applier, then -- when soil_carbon_  !
-   ! on -- the daily soil-carbon matrix step consuming that litter + the fast loop's day-          !
-   ! integrated environmental scalar. `step_start` gives leaf phenology its day of year; without  !
-   ! it (a bare test call) the phenology is not advanced.                                         !
+   ! Advance one slow step (order_of_processes.md §4): vegetation dynamics, patch ageing,  !
+   ! the canopy-air depth, then the daily soil-carbon step. Without `step_start` (a bare   !
+   ! test call) phenology is not advanced.                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine advance_slow_dynamics(poly, cfg, step_start, seam, ledger, rho_air, latitude_deg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
-      type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
-      !----- The site conservation ledger (meds_slow_ledger). Optional so a test, a probe or the   !
-      !      C-API can advance a slow step without one; every entry point is a no-op when it is    !
-      !      absent or inactive. `rho_air` values the canopy-air store and comes from the fast     !
-      !      context.                                                                              !
+      type(soilc_seam_t),  intent(inout), optional :: seam   !< run-worst fast/slow seam checks (soil_carbon.md §7)
+      !----- The slow ledger (optional: a test may step without one) and its air density;  !
+      !      the stepper passes the constant rho_air_ref (conservation.md §2). ------------!
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp),            intent(in),    optional :: rho_air
       real(wp),            intent(in),    optional :: latitude_deg   !< the polygon's (default [site])
@@ -61,29 +58,20 @@ contains
 
       call update_patch_states(poly%patch, cfg%dt_years)
 
-      !----- Resize each patch's canopy-air control volume to the stand that now exists. Done HERE, !
-      !      after growth and mortality have settled, so the fast loop sees a can_depth that is     !
-      !      constant across every sub-step of the coming day (advance_boundary_dynamics resizes    !
-      !      again after a restructuring).                                                          !
+      !----- Resize each canopy-air volume to the stand growth and mortality left, so the  !
+      !      fast loop sees one depth all day. --------------------------------------------!
       call refresh_canopy_depth(poly, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_CANOPY)
 
-      !----- `seam` is intent(inout) and accumulates over the run, so when soil carbon is off it     !
-      !      simply stays as it was. ----------------------------------------------------------------!
+      !----- `seam` accumulates over the run; with soil carbon off it stays as it was. ----!
       if (cfg%soil_carbon%soil_carbon_on) call advance_biogeochem_dynamics(poly, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 
    !---------------------------------------------------------------------------------------!
-   ! advance_boundary_dynamics -- the calendar boundary between two slow steps: restructure the !
-   ! stand (restructure_stand), then resize each canopy-air volume to the stand it left, so the !
-   ! next fast loop sees a constant can_depth. Called after the output has read the step that   !
-   ! ended on the boundary, and before the next one's fast loop; a no-op off a month boundary.  !
-   !                                                                                            !
-   ! The ledger is NOT reopened: nothing moves the site between the last step's final mark and  !
-   ! this call, so the marks below continue that step's window and each operator's residual is  !
-   ! still attributed to its own phase. A resumed run's first call precedes any step, so there  !
-   ! it only takes the reference store (slow_ledger_rebase).                                    !
+   ! advance_boundary_dynamics -- the calendar boundary (order_of_processes.md §5):        !
+   ! restructure the stand, then resize the canopy-air volumes; a no-op off a month        !
+   ! boundary. Its marks continue the last step's ledger window.                           !
    !---------------------------------------------------------------------------------------!
    subroutine advance_boundary_dynamics(poly, cfg, is_new_month, is_new_year, ledger)
       type(polygon_t),     intent(inout) :: poly
@@ -100,12 +88,9 @@ contains
    end subroutine advance_boundary_dynamics
 
    !---------------------------------------------------------------------------------------!
-   ! settle_tissue_water -- before the fast loop reads the plants' water, shed what lies above  !
-   ! the capacity their biomass now allows (shed_excess_tissue_water) and book it: the water as !
-   ! a handoff to the ground, the heat it takes as a change in the tissue's thermal mass. It    !
-   ! runs once per step, after the slow step and any calendar boundary have changed the stand,  !
-   ! so it continues their ledger window in a phase of its own. Before a run's first step       !
-   ! there is no window yet, and it takes the reference store, as a resumed run's boundary does. !
+   ! settle_tissue_water -- before the fast loop, shed the tissue water above what the     !
+   ! biomass holds and declare it: the water as a handoff to the ground, the heat as a     !
+   ! thermal-mass change (conservation.md §3-§4), in a phase of its own.                   !
    !---------------------------------------------------------------------------------------!
    subroutine settle_tissue_water(poly, cfg, ledger)
       type(polygon_t),     intent(inout) :: poly
@@ -125,15 +110,10 @@ contains
    end subroutine settle_tissue_water
 
    !---------------------------------------------------------------------------------------!
-   ! refresh_canopy_depth -- per-patch CAS depth = tallest cohort height + freeboard, floored.  !
-   !                                                                                          !
-   ! The ONLY writer of cas%can_depth, called by the slow step, at a calendar boundary and once   !
-   ! when a polygon is prepared. The depth sets the canopy air's mass and heat capacity,          !
-   ! so it sets how fast the canopy air responds and the freeze-cadence stability limit on         !
-   ! dt_fast, and the forcing is moved to its top. A fixed depth would be 4x too much canopy air   !
-   ! over a 1 m regenerating gap and ~1.8x too little under a 35 m tropical canopy.                !
-   !                                                                                          !
-   ! An empty patch falls back to the floor alone (no cohorts, no canopy to sit under).            !
+   ! refresh_canopy_depth -- each patch's canopy-air depth, the tallest cohort plus the    !
+   ! freeboard, floored. The only writer of can_depth, which sets the canopy air's         !
+   ! capacity and the height the forcing is moved to (canopy_air_space_biophysics.md;      !
+   ! forcing.md Step 2).                                                                   !
    !---------------------------------------------------------------------------------------!
    subroutine refresh_canopy_depth(poly, cfg, ledger)
       type(polygon_t),     intent(inout) :: poly
@@ -143,8 +123,7 @@ contains
       integer(ik) :: ip, i0, i1, i
       logical     :: book
       if (.not. allocated(poly%patch%cas)) return
-      !----- Booking the open-volume exchange needs the air density the CAS is valued at; without  !
-      !      a ledger there is nothing to book it into and the resize is a plain geometry update.  !
+      !----- Without a ledger the resize is a plain geometry update. ----------------------!
       book = .false. ; rho = 0.0_wp
       if (present(ledger)) then
          book = ledger%active
@@ -159,9 +138,7 @@ contains
          end do
          depth_new = max(cfg%aero%min_canopy_depth, h_top + cfg%aero%canopy_freeboard)
          if (book) then
-            !----- Growing the canopy ENTRAINS air from just above; shrinking DETRAINS it. The     !
-            !      intensive state is the invariant, so the extensive content moves, and that is   !
-            !      a genuine exchange with the atmosphere -- a DECLARED boundary term, not a leak. ----!
+            !----- Air entrained or detrained is declared (conservation.md §3). -----------!
             call cas_set_depth(poly%patch%cas(ip), depth_new, rho_air=rho,                         &
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &
@@ -174,12 +151,10 @@ contains
    end subroutine refresh_canopy_depth
 
    !---------------------------------------------------------------------------------------!
-   ! acclimate_site_leaf_tables -- advance each site's growth-temperature running mean and   !
-   ! acclimate its leaf table to it (docs/science/leaf_gas_exchange.md §2 Thermal             !
-   ! acclimation, eq. (4)). Exponential mean with weight dt/window, from the daily mean the   !
-   ! last fast loop accumulated; UNSEEDED (negative) adopts the first day's mean outright, so !
-   ! the acclimated optimum starts from the site's own climate rather than relaxing toward it !
-   ! from an arbitrary origin over the first month.                                           !
+   ! acclimate_site_leaf_tables -- advance each site's growth-temperature running mean     !
+   ! (weight dt/window, on the last fast loop's daily mean) and acclimate its leaf table   !
+   ! (leaf_gas_exchange.md §2 "Thermal acclimation", eq. (4)). An unset mean takes the     !
+   ! first day's value, so the optimum starts from the site's own climate.                 !
    !---------------------------------------------------------------------------------------!
    subroutine acclimate_site_leaf_tables(poly, lp, step_days)
       type(polygon_t),                intent(inout) :: poly
