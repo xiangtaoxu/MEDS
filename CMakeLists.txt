@@ -563,7 +563,7 @@ if(MEDS_BUILD_TESTS)
    #----- The share/functions libraries, one test each, named after its module. Each links meds_share #
    #      alone; test_optics_lib also the config layer, whose meds_pft_derive turns a PFT's leaf-angle #
    #      moments into the LIDF's Beta parameters.                                                    #
-   foreach(t therm_lib optics_lib)
+   foreach(t therm_lib plant_hydr_lib optics_lib)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_share meds_testassert)
       meds_fortran_flags(test_${t})
@@ -721,11 +721,9 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/region)
 
-   #----- Hydraulics / phenology / carbon tests link the kernel libraries (state-free).              #
-   #     The list spans both tiers -- hydraulics is sub-daily, phenology, allocation and trait
-   #     dynamics are daily -- so it links both kernel libraries: there is no edge between them to
-   #     ride on.
-   foreach(t plant_hydraulics plant_phenology plant_carbon_allocation plant_trait_dynamics)
+   #----- The daily plant kernels' tests (phenology, allocation, traits) link the kernel libraries   #
+   #      (state-free).                                                                              #
+   foreach(t plant_phenology plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
@@ -735,8 +733,8 @@ if(MEDS_BUILD_TESTS)
    #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
    #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
    #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
-   foreach(t canopy_aerodynamics canopy_air_space canopy_radiation leaf_gas_exchange plant_energy respiration
-             soil_heat surface)
+   foreach(t canopy_aerodynamics canopy_air_space canopy_radiation leaf_gas_exchange plant_energy
+             plant_hydraulics respiration soil_heat surface)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
