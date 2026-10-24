@@ -96,7 +96,7 @@ program test_c_api_run
    nsteps = 0_c_int
    do while (meds_run_is_done(h) == 0_c_int)
       status = meds_run_step(h)
-      call check(status == 0_c_int, 'each step reports DRIVER_OK')
+      call check(status == 0_c_int, 'each step reports RUN_OK')
       nsteps = nsteps + 1_c_int
       if (nsteps > 10_c_int) exit                     ! the derived config is a 3-day window
    end do
@@ -106,7 +106,7 @@ program test_c_api_run
    call check(meds_run_istep(h) == nsteps, 'the driver istep counter matches the steps taken')
 
    !----- Stepping past the end is a STATUS, not a crash: the Python loop relies on it. -------!
-   call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns DRIVER_FINISHED')
+   call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns RUN_FINISHED')
 
    !=== 3b. A REUSED registry slot must not inherit the previous run's counters. =============!
    !      The registry is module-`save`, so a freed handle is handed out again. `meds_region_t`'s   !

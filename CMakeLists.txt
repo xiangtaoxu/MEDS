@@ -443,27 +443,27 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 #      src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It sits above   #
 #      meds_model + the IO layer -- the one place that owns configuration, the calendar, the output #
 #      files and the closing conservation reports together.                                         #
-add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
+add_library(meds_run STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
-target_link_libraries(meds_driver PUBLIC meds_model meds_maps meds_output_stream)
-meds_fortran_flags(meds_driver)
+target_link_libraries(meds_run PUBLIC meds_model meds_maps meds_output_stream)
+meds_fortran_flags(meds_run)
 
 #----- The main entry point: parse the command line, drive the model, exit. ----------------#
 add_executable(meds_main ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_main.f90)
-target_link_libraries(meds_main PRIVATE meds_driver)
+target_link_libraries(meds_main PRIVATE meds_run)
 
 #----- The C-API shims (src/c_api): the bind(c) procedures Python calls, compiled ONCE, into an #
 #      object library that both of their users link: libmeds.so (below) and the C-API tests.    #
 #      Every source is compiled by exactly one target because a Fortran compile also writes the  #
 #      source's .mod files into the one shared module directory: two targets compiling the same  #
 #      source would write the same .mod at once, and a parallel build would fail at random. It   #
-#      links meds_driver, the whole model, because the run shim holds a whole run.               #
+#      links meds_run, the whole model, because the run shim holds a whole run.               #
 #                                                                                                #
 #      Plain GLOB, no exclusions: every src/c_api/*.f90 belongs in the one library.              #
 if(MEDS_BUILD_PYLIB OR MEDS_BUILD_TESTS)
    file(GLOB C_API_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/*.f90)
    add_library(meds_c_api OBJECT ${C_API_SOURCES})
-   target_link_libraries(meds_c_api PUBLIC meds_driver)
+   target_link_libraries(meds_c_api PUBLIC meds_run)
    meds_fortran_flags(meds_c_api)
 endif()
 
@@ -482,7 +482,7 @@ endif()
 if(MEDS_BUILD_PYLIB)
    add_library(meds_py SHARED $<TARGET_OBJECTS:meds_c_api>)
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds LINKER_LANGUAGE Fortran)
-   target_link_libraries(meds_py PRIVATE meds_driver)
+   target_link_libraries(meds_py PRIVATE meds_run)
    meds_fortran_flags(meds_py)
    #----- The same numbers as meds_main, in any process. An Intel build calls `exp`, `sin`, `pow`  #
    #      and the rest by their C names, and meds_main finds them in Intel's math library. A       #
@@ -731,7 +731,7 @@ if(MEDS_BUILD_TESTS)
    #      A run's sites from [[sites]]: derived from example 04's config, it runs from that example's
    #      directory and writes under the build tree; meds_main checks what a config may not hold.
    add_executable(test_site_definitions test/test_site_definitions.f90)
-   target_link_libraries(test_site_definitions PRIVATE meds_testsupport meds_driver)
+   target_link_libraries(test_site_definitions PRIVATE meds_testsupport meds_run)
    meds_fortran_flags(test_site_definitions)
    add_test(NAME site_definitions
             COMMAND test_site_definitions ${CMAKE_CURRENT_BINARY_DIR}/site_definitions $<TARGET_FILE:meds_main>
@@ -741,7 +741,7 @@ if(MEDS_BUILD_TESTS)
    #      Runs from test/region, whose site config it derives its configs from; it writes
    #      everything under the work directory in the build tree.
    add_executable(test_region test/test_region.f90)
-   target_link_libraries(test_region PRIVATE meds_driver meds_testassert meds_testarchive)
+   target_link_libraries(test_region PRIVATE meds_run meds_testassert meds_testarchive)
    meds_fortran_flags(test_region)
    add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/region)

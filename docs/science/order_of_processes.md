@@ -311,6 +311,6 @@ file's instant, so none carries `mean_`.
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_polygon_state_vars` |
 | writing records | `output_serialize` | `meds_output_stream` |
-| checkpoints | `region_write_state` → `restart_file_open` / `restart_file_write`; `read_restart_file` | `meds_region`, `meds_init_restart` |
+| checkpoints | `write_state_file` → `restart_file_open` / `restart_file_write`; `read_restart_file` | `meds_region`, `meds_init_restart` |
 | the start of a polygon | `init_polygon` | `meds_init` |
 | the output file set | `open_output_files`, `attach_output` | `meds_output_setup` |

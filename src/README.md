@@ -167,7 +167,7 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
                                                                      (INTERFACE)
   met, config ──→ maps ──────────────────────────┐
   output_stream ─────────────────────────────────┤
-  model ─────────────────────────────────────────┴──→ driver ──→ meds_main
+  model ─────────────────────────────────────────┴──→ run ─────→ meds_main
                                                                └→ c_api ──→ meds_py (libmeds.so)
                                                                         └→ the C-API tests
 ```

@@ -42,15 +42,15 @@ module meds_polygon
 
    public :: polygon_run_t, polygon_prepare, polygon_step, polygon_report
    public :: ensure_output_dir
-   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
+   public :: RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
 
    !----- A step's or a run's status. A failure is a status, not an `error stop`, so a library     !
    !      caller (Python) survives it. ------------------------------------------------------------!
-   integer(ik), parameter :: DRIVER_OK         = 0_ik   !< a slow step was taken
-   integer(ik), parameter :: DRIVER_FINISHED   = 1_ik   !< the calendar had reached end_time; nothing done
-   integer(ik), parameter :: DRIVER_ERR_NAN    = 2_ik   !< NaN in the state or the energy/water ledger
-   integer(ik), parameter :: DRIVER_ERR_AREA   = 3_ik   !< patch areas do not sum to 1 (finalize only)
-   integer(ik), parameter :: DRIVER_ERR_BOUNDS = 4_ik   !< a cohort or soil-carbon state outside its bounds
+   integer(ik), parameter :: RUN_OK         = 0_ik   !< a slow step was taken
+   integer(ik), parameter :: RUN_FINISHED   = 1_ik   !< the calendar had reached end_time; nothing done
+   integer(ik), parameter :: RUN_ERR_NAN    = 2_ik   !< NaN in the state or the energy/water ledger
+   integer(ik), parameter :: RUN_ERR_AREA   = 3_ik   !< patch areas do not sum to 1 (finalize only)
+   integer(ik), parameter :: RUN_ERR_BOUNDS = 4_ik   !< a cohort or soil-carbon state outside its bounds
 
    !----- What the run keeps to step and check one polygon; its state is the polygon_t beside      !
    !      it. -------------------------------------------------------------------------------------!
@@ -72,7 +72,7 @@ module meds_polygon
       character(len=19)   :: most_patches_when = '', most_cohorts_when = ''
       integer(ik)         :: fast_step_total = 0_ik       !< fast sub-steps replayed into the output
       real(wp)            :: area_start = 0.0_wp          !< the patch areas' sum at the start
-      integer(ik)         :: status = DRIVER_OK           !< the last step's status
+      integer(ik)         :: status = RUN_OK           !< the last step's status
    end type polygon_run_t
 
 contains
@@ -219,7 +219,7 @@ contains
    ! check_polygon_state -- the guard every step ends with: the run's energy and water     !
    ! ledgers, each cohort's state, each patch's canopy air and, with soil carbon on, each  !
    ! soil-carbon pool (docs/science/order_of_processes.md §2). The first value found that  !
-   ! is not finite is DRIVER_ERR_NAN, the first outside its bounds DRIVER_ERR_BOUNDS,      !
+   ! is not finite is RUN_ERR_NAN, the first outside its bounds RUN_ERR_BOUNDS,      !
    ! reported with what and where. An operator keeps these in bounds by construction, so   !
    ! either is a bug, and stopping on the step it happens is what makes it findable.       !
    !---------------------------------------------------------------------------------------!
@@ -230,14 +230,14 @@ contains
       type(meds_time_t),   intent(in) :: now
       character(len=160) :: where
       integer(ik)        :: i, k
-      status = DRIVER_OK
+      status = RUN_OK
       !----- One NaN flux or store turns a ledger's running residual NaN for good. ----------------!
       if (cfg%fast_biophysics_on) then
          if (.not. (ieee_is_finite(run%energy_budget%resid_sum) .and.                              &
                     ieee_is_finite(run%water_budget%resid_sum))) then
             call report_failure(run, 'a NaN reached the energy/water ledger.', '',                   &
                                 'in the step ending '//time_to_string(now))
-            status = DRIVER_ERR_NAN
+            status = RUN_ERR_NAN
             return
          end if
       end if
@@ -251,10 +251,10 @@ contains
                                 'date '//time_to_string(now),                                          &
                                 [character(len=64) :: 'Density, carbon and water are amounts: never negative, never', &
                                                       'infinite. Every operator keeps them so by construction.'])
-            status = DRIVER_ERR_BOUNDS
+            status = RUN_ERR_BOUNDS
          else
             call report_failure(run, 'a cohort''s state is not finite.', where, 'date '//time_to_string(now))
-            status = DRIVER_ERR_NAN
+            status = RUN_ERR_NAN
          end if
          return
       end do
@@ -265,7 +265,7 @@ contains
             write(where,'(3a,i0,a,i0)') 'field ', trim(canopy_air_field_name(k)), ', patch ', i, ' of ',  &
                   poly%patch%n
             call report_failure(run, 'a patch''s canopy air is not finite.', where, 'date '//time_to_string(now))
-            status = DRIVER_ERR_NAN
+            status = RUN_ERR_NAN
             return
          end do
       end if
@@ -280,7 +280,7 @@ contains
                                 [character(len=64) :: 'A carbon pool is a mass: it cannot be negative, and the',      &
                                                       'ceiling is ~500x the richest real soil. Conservation can',     &
                                                       'hold perfectly while this is true -- see the slow ledger.'])
-            status = DRIVER_ERR_BOUNDS
+            status = RUN_ERR_BOUNDS
             return
          end do
       end if

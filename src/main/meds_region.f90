@@ -42,9 +42,8 @@ module meds_region
    use meds_met_era5land,           only : era5land_grid
    use meds_output_reduce,          only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
-                                           ensure_output_dir,                                     &
-                                           DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
-                                           DRIVER_ERR_BOUNDS
+                                           ensure_output_dir, RUN_OK, RUN_FINISHED, RUN_ERR_NAN,         &
+                                           RUN_ERR_AREA, RUN_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : output_params_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_output_stream,          only : output_serialize, output_close
@@ -57,10 +56,10 @@ module meds_region
    public :: region_free
    !----- The status codes live with the step (meds_polygon); re-exported for the run's            !
    !      callers. --------------------------------------------------------------------------------!
-   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
+   public :: RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
 
    !----- How far a polygon's patch areas may sum from one at the end of a run                     !
-   !      (DRIVER_ERR_AREA). ----------------------------------------------------------------------!
+   !      (RUN_ERR_AREA). ----------------------------------------------------------------------!
    real(wp), parameter :: AREA_TOL = 1.0e-5_wp
 
    !----- Everything a run needs between steps. No state hides in module scope, so two runs can be !
@@ -446,9 +445,9 @@ contains
       integer(ik),         intent(out)   :: status
       type(meds_time_t) :: step_start(1), step_end(1)
       logical           :: new_month(1), new_year(1)
-      status = DRIVER_OK
+      status = RUN_OK
       if (region_done(reg)) then
-         status = DRIVER_FINISHED
+         status = RUN_FINISHED
          return
       end if
       step_start(1) = reg%now
@@ -470,9 +469,9 @@ contains
       type(meds_time_t) :: clk
       integer(ik)       :: nstep, s
 
-      status = DRIVER_OK
+      status = RUN_OK
       if (region_done(reg)) then
-         status = DRIVER_FINISHED
+         status = RUN_FINISHED
          return
       end if
       !----- The month's steps, listed once. A step's forcing lies in the month its start date     !
@@ -485,7 +484,7 @@ contains
          nstep = nstep + 1_ik
          if (clk%year /= reg%now%year .or. clk%month /= reg%now%month) exit
          if (.not. time_lt(clk, reg%cfg%end_time)) exit
-         if (state_due(reg%cfg%output, reg%istep + nstep, reg%step_days, .false., .false.,          &
+         if (state_file_due(reg%cfg%output, reg%istep + nstep, reg%step_days, .false., .false.,          &
                        reg%imonth, reg%iyear)) exit
       end do
       allocate(step_start(nstep), step_end(nstep), new_month(nstep), new_year(nstep))
@@ -517,7 +516,7 @@ contains
       integer(ik) :: nstep, s, p, k, st, npoly
       integer(ik) :: tick0, tick1, tick_rate
 
-      status = DRIVER_OK
+      status = RUN_OK
       associate (cfg => reg%cfg)
       npoly = size(reg%poly, kind=ik)
       nstep = size(step_start, kind=ik)
@@ -532,7 +531,7 @@ contains
       !      and buffers. -------------------------------------------------------------------------!
       allocate(order(npoly), failed_step(npoly), was_running(npoly))
       call ascending_order(-reg%cost, npoly, order)
-      was_running = reg%run(:)%status == DRIVER_OK
+      was_running = reg%run(:)%status == RUN_OK
       failed_step = 0_ik
       !$omp parallel do schedule(dynamic, 1) num_threads(cfg%n_threads) default(shared) if(npoly > 1)   &
       !$omp    private(k, p, s, st, tick0, tick1, tick_rate)
@@ -544,7 +543,7 @@ contains
             call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
                               reg%run(p),                                                              &
                               step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
-            if (st /= DRIVER_OK) then
+            if (st /= RUN_OK) then
                failed_step(p) = s
                exit
             end if
@@ -558,7 +557,7 @@ contains
          if (failed_step(p) == 0_ik) cycle
          if (npoly > 1_ik) write(*,'(4a)') ' region: ', trim(reg%run(p)%label), ' failed on ',       &
                                            time_to_string(step_end(failed_step(p)))
-         if (status == DRIVER_OK) status = reg%run(p)%status
+         if (status == RUN_OK) status = reg%run(p)%status
       end do
       reg%now   = step_end(nstep)
       reg%istep = reg%istep + nstep
@@ -577,17 +576,17 @@ contains
 
       !----- The I/O phase: the records the steps closed, after a month's last step, a failure or  !
       !      the run's last step, and the state file when one is due. -----------------------------!
-      if (cfg%output%enabled .and. (new_month(nstep) .or. status /= DRIVER_OK .or. region_done(reg)))  &
+      if (cfg%output%enabled .and. (new_month(nstep) .or. status /= RUN_OK .or. region_done(reg)))  &
          call output_serialize(reg%out_files, reg%out_bufs)
-      if (state_due(cfg%output, reg%istep, reg%step_days, new_month(nstep), new_year(nstep), reg%imonth, &
-                    reg%iyear)) call region_write_state(reg)
+      if (state_file_due(cfg%output, reg%istep, reg%step_days, new_month(nstep), new_year(nstep), reg%imonth, &
+                    reg%iyear)) call write_state_file(reg)
       end associate
    end subroutine step_polygons
 
    !----- Is a state file due after the step that brings the run to `istep` steps? Every           !
    !      state_every days from the start, or at every state_every-th month or year boundary       !
    !      ([output].state_interval). --------------------------------------------------------------!
-   pure logical function state_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
+   pure logical function state_file_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
       type(output_params_t), intent(in) :: out
       integer(ik),           intent(in) :: istep, step_days, imonth, iyear
       logical,               intent(in) :: new_month, new_year
@@ -601,12 +600,12 @@ contains
       case (STATE_YEARS)
          due = new_year .and. mod(iyear, out%state_every) == 0_ik
       end select
-   end function state_due
+   end function state_file_due
 
    !----- The state file: every polygon's row, at the current date (meds_init_restart). The        !
    !      cohort, patch and site axes are the largest polygon's. The restructuring it owes is the  !
    !      calendar's (the run's), which a polygon that has failed no longer tracks. ---------------!
-   subroutine region_write_state(reg)
+   subroutine write_state_file(reg)
       type(meds_region_t), intent(in) :: reg
       type(restart_file_t)       :: sf
       integer(ik), allocatable :: ids(:)
@@ -633,7 +632,7 @@ contains
          call restart_file_write(sf, reg%poly(p), reg%now, p)
       end do
       call restart_file_close(sf)
-   end subroutine region_write_state
+   end subroutine write_state_file
 
    !----- A year's summary: one polygon's stand every 5 years, or a line for the polygons' mean    !
    !      and range of AGB and LAI every year, with what the forcing reads cost. ------------------!
@@ -660,7 +659,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! region_finalize -- the terminal state file, the end-of-run report, and every file and !
-   ! the forcing closed; DRIVER_ERR_AREA if a polygon's patch areas do not sum to 1. After !
+   ! the forcing closed; RUN_ERR_AREA if a polygon's patch areas do not sum to 1. After !
    ! a failure the run writes nothing more, so a closed chunk file is never made again     !
    ! from scratch.                                                                         !
    !---------------------------------------------------------------------------------------!
@@ -671,11 +670,11 @@ contains
       real(wp)    :: a1
       logical     :: failed
 
-      st = DRIVER_OK
+      st = RUN_OK
       n_bad = 0_ik
-      failed = any(reg%run(:)%status /= DRIVER_OK)
+      failed = any(reg%run(:)%status /= RUN_OK)
       !----- The true terminal state, so a restart resumes exactly here. --------------------------!
-      if (reg%cfg%output%state_write .and. .not. failed) call region_write_state(reg)
+      if (reg%cfg%output%state_write .and. .not. failed) call write_state_file(reg)
       if (size(reg%poly) == 1) then
          associate (poly => reg%poly(1), run => reg%run(1))
             if (reg%verbose) call print_summary(poly, 'final')
@@ -684,7 +683,7 @@ contains
                write(*,'(a)') '-----------------------------------------------------------------------------'
                write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
             end if
-            if (abs(a1 - 1.0_wp) > AREA_TOL) st = DRIVER_ERR_AREA
+            if (abs(a1 - 1.0_wp) > AREA_TOL) st = RUN_ERR_AREA
             if (reg%verbose) call polygon_report(reg%cfg, run)
          end associate
       else
@@ -696,7 +695,7 @@ contains
             associate (poly => reg%poly(p), run => reg%run(p))
                a1 = total_area(poly)
                if (abs(a1 - 1.0_wp) > AREA_TOL) then
-                  st = DRIVER_ERR_AREA
+                  st = RUN_ERR_AREA
                   n_bad = n_bad + 1_ik
                end if
                if (reg%verbose)                                                                    &
