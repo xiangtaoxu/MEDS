@@ -740,8 +740,12 @@ energy, at the tissue's temperature, so the canopy-water runs close their energy
   sensible heat went uncounted. Each film now joins its tissue's heat capacity and energy at the
   tissue's temperature, in the fast loop and at the cohort level; capture brings the rain's liquid
   enthalpy and evaporation takes the vapour's, so the canopy-water column runs close their energy to
-  round-off (they were bounded at 5e6 J). The region's LE −0.18 %, H +0.4 %. `t_film_valuation` and
-  `film_liquid_enthalpy` go.
+  round-off (they were bounded at 5e6 J). Within a step a tissue's balance runs on its own heat
+  capacity, and the commit reads the temperature back with the end-of-step film: with the film in the
+  step's capacity, a film far heavier than its tissue that evaporated within the step left its heat to
+  the tissue, and at Palo Verde a nearly leafless cohort's leaf read back at 107 K and the inventory run
+  stopped. The region's LE −0.23 %, H +0.47 %, GPP −0.21 %; Palo Verde's inventory (2008–2011) LE
+  −0.48 %, H +0.53 %. `t_film_valuation` and `film_liquid_enthalpy` go.
 - **The Kirchhoff sapflow law under gravity, documented** (#509). The law is the exact steady flux
   without gravity; with it the exact flux solves an implicit equation, and the law overstates it by
   3.4 % at a = 2 and 15.5 % at a = 4 in an embolised case, under 1 % on the shipped PFTs' realistic
