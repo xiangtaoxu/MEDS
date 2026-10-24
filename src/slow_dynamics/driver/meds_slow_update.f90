@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_slow_update
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : tiny_num, lnexp_min, lnexp_max, almost_one, yr_sec, rho_air_ref
+   use meds_constants,          only : tiny_num, lnexp_min, lnexp_max, almost_one, yr_sec, rho_air_ref, umol_2_kgc
    use meds_numerics,           only : equal_height_layers, conserved, pair_mean
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon,    &
                                        hold_cohort_tissue_temps, reorder_cohort_block,                   &
@@ -33,7 +33,7 @@ module meds_slow_update
    use meds_diag_vars,          only : fuse_cohort_diag, PA_MORT_C_CULL, blend_patch_diag,               &
                                        inherit_patch_diag, PA_DISTURB_AREA, PA_MORT_C_DISTURB,           &
                                        CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE
-   use meds_slow_ledger,        only : slow_ledger_t, slow_ledger_declare, KGC_PER_UMOL_C
+   use meds_slow_ledger,        only : slow_ledger_t, slow_ledger_declare
    use meds_soil_carbon,        only : necromass_to_litter
    use meds_slow_state,         only : slow_step_data_t
    implicit none
@@ -345,7 +345,7 @@ contains
                                de_open=de, dw_open=dw, dc_open=dc)
             call slow_ledger_declare(ledger,                                                       &
                      energy_in=patch_polygon_area(poly, ip) * de, water_in=patch_polygon_area(poly, ip) * dw, &
-                     carbon_in=patch_polygon_area(poly, ip) * dc * KGC_PER_UMOL_C)
+                     carbon_in=patch_polygon_area(poly, ip) * dc * umol_2_kgc)
          else
             call cas_set_depth(poly%patch%cas(ip), depth_new)
          end if

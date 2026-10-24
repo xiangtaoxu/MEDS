@@ -13,7 +13,7 @@
 !==========================================================================================!
 module meds_slow_state
    use meds_kinds,                   only : wp, ik
-   use meds_constants,               only : day_sec, tiny_num, grav_head
+   use meds_constants,               only : day_sec, tiny_num, grav_head, kgc_2_umol
    use meds_config,                  only : meds_config_t, growth_window_steps
    use meds_plant_hydr_lib,          only : water_curve_t, tissue_psi_to_water, tissue_water_to_psi,     &
                                             tissue_capped_water
@@ -22,8 +22,7 @@ module meds_slow_state
    use meds_cohort_state_vars,       only : cohort_carbon_supply, cohort_wood_store_carbon,              &
                                             hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars,      only : polygon_t, patch_polygon_area
-   use meds_slow_ledger,             only : slow_ledger_t, slow_ledger_declare, slow_ledger_soil_check,  &
-                                            KGC_PER_UMOL_C
+   use meds_slow_ledger,             only : slow_ledger_t, slow_ledger_declare, slow_ledger_soil_check
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, cohort_carbon_demand,               &
                                             growth_window_so_far, growth_sink_limitation
    use meds_diag_vars,               only : CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE,   &
@@ -410,7 +409,7 @@ contains
 
       !----- The CO2 owed as a molar rate [umol/m2/s] the next fast window emits. -------------!
       do ip = 1_ik, poly%patch%n
-         poly%patch%slow_co2_rate(ip) = co2_owed(ip) / cfg%dt_slow / KGC_PER_UMOL_C
+         poly%patch%slow_co2_rate(ip) = co2_owed(ip) / cfg%dt_slow * kgc_2_umol
       end do
    end subroutine compute_carbon_allocation
 

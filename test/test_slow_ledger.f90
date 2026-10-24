@@ -38,7 +38,7 @@ program test_slow_ledger
                                        slow_fast_carbon_handover, slow_tissue_energy, SLOW_PHASE_GROW, &
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
    use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
-   use meds_constants,          only : grav_head, n_soil_layer_max
+   use meds_constants,          only : grav_head, n_soil_layer_max, umol_2_kgc
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_constants,          only : rho_air_ref
    implicit none
@@ -134,7 +134,7 @@ program test_slow_ledger
    s1 = slow_site_store(poly, cfg)
    call check_close(s1%energy - s0%energy, de,             1.0e-6_wp, 'de_open explains the canopy energy change')
    call check_close(s1%water  - s0%water,  dw,             1.0e-12_wp, 'dw_open explains the canopy vapour change')
-   call check_close(s1%carbon - s0%carbon, dc * 1.2e-8_wp, 1.0e-14_wp, 'dc_open explains the canopy CO2 change')
+   call check_close(s1%carbon - s0%carbon, dc * umol_2_kgc, 1.0e-14_wp, 'dc_open explains the canopy CO2 change')
    call check(de < 0.0_wp, 'shrinking the canopy DETRAINS (negative)')
 
    !=== 4. The fast->slow handover is nplant- and area-weighted. ==============================!
