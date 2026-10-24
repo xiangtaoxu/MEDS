@@ -449,7 +449,7 @@ contains
       if (cfg%o2_mol_frac <= 0.0_wp)      error stop TAG//'o2_mol_frac <= 0'
       if (cfg%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
       if (cfg%phi_psii <= 0.0_wp)         error stop TAG//'phi_psii <= 0'
-      if (cfg%medlyn_vpd_min <= 0.0_wp)   error stop TAG//'medlyn_vpd_min <= 0 [kPa]'
+      if (cfg%vpd_min <= 0.0_wp)   error stop TAG//'vpd_min <= 0 [kPa]'
       if (cfg%thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
          error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//        &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'

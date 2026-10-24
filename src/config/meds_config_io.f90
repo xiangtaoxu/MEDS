@@ -1089,7 +1089,7 @@ contains
       call req_r(tm, 'leaf_physiology.o2_mol_frac',      cfg%o2_mol_frac,      miss)
       call req_r(tm, 'leaf_physiology.leaf_absorptance', cfg%leaf_absorptance, miss)
       call req_r(tm, 'leaf_physiology.phi_psii',         cfg%phi_psii,         miss)
-      cfg%medlyn_vpd_min = toml_real(tm, 'leaf_physiology.medlyn_vpd_min', cfg%medlyn_vpd_min)
+      cfg%vpd_min = toml_real(tm, 'leaf_physiology.vpd_min', cfg%vpd_min)
 
       !----- PFT file (named in the main file). -------------------------------------------!
       call toml_parse_file(trim(cfg%init%pft_config), tp, found)

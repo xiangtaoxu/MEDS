@@ -195,7 +195,7 @@ $`(C_s-\Gamma^*)`$ and by a hyperbolic humidity response $(1 + D/D_0)$. Paramete
 g_s = g_0 + 1.6\left(1 + \frac{g_1}{\sqrt{D}}\right)\frac{A}{C_s}, \qquad D \text{ in kPa} \qquad(6)
 ```
 
-with $D$ floored at `medlyn_vpd_min` (`[leaf_physiology]`), since $g_1/\sqrt{D}$ is undefined at 0.
+with $D$ floored at `vpd_min` (`[leaf_physiology]`), since $g_1/\sqrt{D}$ is undefined at 0.
 Derived from the same $\max(A-\lambda E)$ optimization as Katul but solved analytically under a
 linearized $A(C_i)$, giving a closed form. Here $g_1 \propto \lambda^{-1/2}$ — a key relation used
 by the water-stress limbs (§4). Parameters: `stomatal_g0`, `stomatal_g1`. Code: `stomata_gs_medlyn`.
@@ -376,7 +376,7 @@ drought response (see `docs/ROADMAP.md`).
 
 ## 5. The coupled solver
 
-`solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_a]`$ and finds the residual's root to a
+`solve_leaf_gas_exchange` brackets $`C_i \in (\Gamma^*, C_{i,open}]`$ and finds the residual's root to a
 tolerance `CI_TOL_PPM` (the module's private `root_ci`, on the Illinois steps of `meds_numerics`) by
 the Illinois method: regula falsi on the bracket, which halves the kept end's residual whenever the
 same end is kept twice, so both ends close in. It takes far fewer residuals than bisection's ~21,
@@ -384,6 +384,11 @@ and stops when the bracket is within the tolerance:
 
 - **Night / closed branch** — if the best-case net rate $A(C_a) \le 0$, stomata sit at $g_0$ and
   the solve returns immediately.
+- **The bracket's top** — $`C_{i,open}`$ is $C_i$ with the stomata fully open, where $`C_i = C_s`$:
+  $C_a$ without a boundary layer, and with one the root of $`C_i = C_a - 1.37\,A(C_i)/g_b`$, found by
+  the same root finder (`GS_OPEN`). Katul's residual, eq. (8), is $`-1.6\,D\lambda A < 0`$ there, so it
+  brackets; at $C_a$ the boundary layer can leave it positive, which would send a well-lit leaf to the
+  cuticular fallback. The explicit models bracket to $C_a$, which holds their root as well.
 - **Two residual providers**, chosen by `ci_residual` — `residual_explicit_gs` (Leuning/Medlyn
   diffusion identity, eq. (1), and the g0-pinned fallback with $g_s := g_0$) and
   `residual_optimality` (Katul, eq. (8)). Both are `pure`.
@@ -392,7 +397,8 @@ and stops when the bracket is within the tolerance:
   $A(C_a) > 0$.
 
 - **Guards** — $`g_s = g_0`$ where $`A \le 0`$; Leuning floors $`C_s-\Gamma^*`$ and Medlyn $`C_s`$ just
-  above zero, and Medlyn's VPD at `medlyn_vpd_min`; Katul's $\lambda$ takes $`\beta_s`$ no lower than
+  above zero, and Medlyn's and Katul's VPD at `vpd_min` (at $D = 0$ water costs nothing, so Katul's
+  optimum would open the stomata without bound); Katul's $\lambda$ takes $`\beta_s`$ no lower than
   `BETA_FLOOR` (10⁻⁴), so it stays finite; the lower bracket sits `LO_EPS_PPM` (10⁻³ µmol mol⁻¹) above
   $`\Gamma^*`$; Katul's derivative in $C_i$ is a finite difference of 10⁻³ $C_i$, at least 10⁻² µmol mol⁻¹.
 

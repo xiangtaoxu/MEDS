@@ -40,7 +40,7 @@ module meds_c_api_leaf
    end type leaf_flux_c
 
    !----- C-interoperable mirror of leaf_photo_pft_t (1 int + 37 doubles, same order), less    !
-   !      psi_onset and medlyn_vpd_min (see to_params). ---------------------------------------!
+   !      psi_onset and vpd_min (see to_params). ---------------------------------------------!
    type, bind(c) :: leaf_args_c
       integer(c_int) :: pathway
       real(c_double) :: vcmax25, jmax25, tpu25, rd25, kp25
@@ -193,9 +193,9 @@ contains
       type(leaf_photo_pft_t)          :: p
       !----- KEYWORD form (see to_env). A positional constructor here would shift every trailing value !
       !      by one each time leaf_photo_pft_t gains a component mid-type, and could not omit         !
-      !      psi_onset and medlyn_vpd_min, which carry defaults.                                       !
+      !      psi_onset and vpd_min, which carry defaults.                                              !
       !                                                                                          !
-      !      psi_onset and medlyn_vpd_min are absent from leaf_args_c and take their type defaults     !
+      !      psi_onset and vpd_min are absent from leaf_args_c and take their type defaults            !
       !      (0 MPa, 0.05 kPa; meds.canopy builds its parameters from the run's config instead).       !
       !      Adding a field to a bind(c) struct breaks the ABI for every existing caller, so they stay !
       !      out. psi_open/psi_close do cross: the caller sets the ramp of the fast capacity limb      !
