@@ -126,9 +126,13 @@ air close exactly. Within a step the tissue's balance runs on the tissue's own h
 commit reads the temperature back with the end-of-step film, so the film's share of the step's heat is
 a step behind. With the film in the step's capacity, a film far heavier than its tissue that evaporates
 within the step (a falling leaf's, or a stem's at the first rains) would leave its sensible heat to the
-tissue alone: at Palo Verde a nearly leafless cohort's leaf read back at 107 K. Drip, and water a film passes from leaf to wood within a cohort, leave at the rain's
-liquid enthalpy, the throughfall's temperature the pond values them at; the update's cut at capacity
-leaves at the tissue's. The film stays liquid below 0 °C, as tissue water does. A state file whose
+tissue alone: at Palo Verde a nearly leafless cohort's leaf read back at 107 K. A cohort's drip
+leaves at the rain's liquid enthalpy, the throughfall's temperature the pond values it at; the
+update's cut at capacity leaves at the tissue's. Water one film passes to the other within a cohort,
+as the cohort's film is re-shared by capacity, leaves the giver at the giver's enthalpy and reaches
+the receiver at it, so the giver is charged nothing: a falling leaf hands its film to its wood. Charged
+the rain's valuation instead, a leaf that had all but fallen (LAI 5e-20) was charged 1.4e-9 W/m²
+against couplings near 1e-17 W/m²/K, and Palo Verde's regrowth stopped. The film stays liquid below 0 °C, as tissue water does. A state file whose
 tissue energies leave out the films it holds is refused at the first fast step, where its cohorts'
 energies and temperatures disagree.
 

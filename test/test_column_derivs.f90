@@ -51,6 +51,7 @@ program test_column_derivs
 
    call test_leaf_closure()
    call test_leaf_analytic()
+   call test_falling_leaf_film()
    call test_cas_be_consistency()
    call test_conservation_march()
    call test_soil_energy_tendency()
@@ -101,7 +102,8 @@ contains
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
-      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
+      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n), frozen%film%transfer_lw(n))
+      frozen%film%transfer_lw = 0.0_wp
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp
       frozen%tissue%h_coeff_w = 0.0_wp ; frozen%tissue%abs_sw_wood = 0.0_wp
       frozen%tissue%abs_lw_wood = 0.0_wp ; frozen%tissue%wai = 0.0_wp
@@ -195,6 +197,37 @@ contains
       expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
+
+   !----- 2b. A falling leaf's film passed to its wood (Palo Verde's dry season): the leaf, nearly    !
+   !      gone, hands its whole film to the wood as the cohort's film is re-shared by capacity. The   !
+   !      giver is charged nothing for the water it passes, so with no other forcing the leaf sits    !
+   !      at the canopy air's temperature; charged the rain's valuation, it sat 4e10 K off. ----------!
+   subroutine test_falling_leaf_film()
+      type(frozen_t)        :: frozen
+      type(surface_state_t) :: y
+      type(surface_tend_t)  :: f
+      real(wp) :: tcas
+      print '(a)', 'test_falling_leaf_film:'
+      call make_frozen(frozen, 1_ik)
+      frozen%tissue%lai(1) = 1.0e-20_wp
+      frozen%tissue%abs_sw(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp
+      frozen%tissue%h_coeff_leaf(1)  = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
+      frozen%tissue%g_transp_leaf(1) = 0.004_wp * frozen%tissue%lai(1)
+      frozen%tissue%wai(1) = 0.5_wp ; frozen%tissue%h_coeff_w(1) = 10.0_wp
+      frozen%tissue%wood_hcap_per_dt(1) = 1.0e4_wp / 900.0_wp
+      frozen%tissue%t_leaf0(1) = 303.9_wp ; frozen%tissue%t_wood0(1) = 304.5_wp
+      frozen%film%f_wet_c(1) = 1.0_wp
+      frozen%film%intercept_leaf(1) = -1.07e-12_wp            ! the leaf's whole film, passed on
+      frozen%film%transfer_lw(1)    =  1.07e-12_wp
+      frozen%film%intercept_wood(1) =  1.07e-12_wp
+      frozen%film%rain_liquid_enthalpy = internal_energy_liquid(297.0_wp)
+      y%cas_enthalpy = cas_temp_to_enthalpy(299.0_wp, 0.010_wp)
+      y%cas_shv      = 0.010_wp
+      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, 1_ik, f)
+      tcas = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
+      call check_true('a falling leaf passing its film to its wood stays at the canopy air''s temperature',     &
+                      abs(f%leaf_temp(1) - tcas) < 1.0e-6_wp, f%leaf_temp(1) - tcas)
+   end subroutine test_falling_leaf_film
 
    !----- 3. The CAS box commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
    subroutine test_cas_be_consistency()
@@ -932,7 +965,8 @@ contains
       frozen%hydrology%q_top = 1.0e-6_wp
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
-      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
+      allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n), frozen%film%transfer_lw(n))
+      frozen%film%transfer_lw = 0.0_wp
       frozen%roots%root_share(1:nsl) = exp_root_profile(site%soil_profile, nsl)   ! per-layer sink placement
       frozen%plant%nplant = 0.3_wp
       !----- FROZEN sapflow/uptake (docs/science/numerical_scheme.md §2): a representative,             !
