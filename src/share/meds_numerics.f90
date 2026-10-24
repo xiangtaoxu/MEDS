@@ -3,8 +3,8 @@
 ! meds_numerics -- small numerical helpers every layer shares: clamps, a smooth step, the  !
 ! smooth minimum of two limits, a rounded max(x, 0), the step-size factor, the Newton      !
 ! solvers' step safeguards, the Illinois steps of a bracketed root, linear interpolation,  !
-! weighted means, an ordering, and the test that an operator kept what it only moves. The  !
-! linear solvers are in meds_linear_algebra.                                               !
+! weighted means, an ordering and the canopy layers it gives, and the test that an         !
+! operator kept what it only moves. The linear solvers are in meds_linear_algebra.          !
 !==========================================================================================!
 module meds_numerics
    use meds_kinds,     only : wp, ik
@@ -17,7 +17,7 @@ module meds_numerics
    public :: sufficient_decrease, fraction_to_boundary
    public :: root_bracket_t, regula_falsi_point, illinois_narrow
    public :: logistic, clamp01, clamp, linear_interpolate, weighted_mean
-   public :: ascending_order
+   public :: ascending_order, equal_height_layers
    public :: conserved, pair_mean
 
    !----- A line-search step is accepted when the merit falls by at least this share of    !
@@ -68,6 +68,29 @@ contains
          used(imin) = .true.
       end do
    end subroutine ascending_order
+
+   !----- The canopy layers of cohorts in height order, either way up. Cohorts of exactly    !
+   !      equal height are co-dominant and share one layer: layer(k) numbers the run of      !
+   !      equal heights that height(k) is in, from 1 at height(1), and n_layer counts the    !
+   !      runs. The radiation, the wind and the overtopping LAI all group cohorts by it.     !
+   !      Exact equality is the right test: every PFT recruits at one shared size, so        !
+   !      recruits tie bit for bit. ---------------------------------------------------------!
+   pure subroutine equal_height_layers(height, n, layer, n_layer)
+      integer(ik), intent(in)  :: n            !< number of cohorts
+      real(wp),    intent(in)  :: height(n)    !< [m] ascending or descending
+      integer(ik), intent(out) :: layer(n)     !< each cohort's layer, 1 at height(1)
+      integer(ik), intent(out) :: n_layer      !< number of layers, 0 when n = 0
+      integer(ik) :: k
+      n_layer = 0_ik
+      do k = 1_ik, n
+         if (k == 1_ik) then
+            n_layer = 1_ik
+         else if (height(k) /= height(k-1_ik)) then
+            n_layer = n_layer + 1_ik
+         end if
+         layer(k) = n_layer
+      end do
+   end subroutine equal_height_layers
 
    !----- The smaller root of theta x^2 - (a + b) x + a b = 0: a smooth min(a, b), equal   !
    !      to it at theta = 1 (docs/science/leaf_gas_exchange.md §2). ----------------------!

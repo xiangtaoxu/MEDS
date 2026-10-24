@@ -189,7 +189,7 @@ contains
       !      PREVIOUS step's fast loop accumulated, then acclimate its leaf table. Taking last step's !
       !      mean is not a lag to apologise for: the quantity being tracked IS the preceding weeks'  !
       !      temperature, and one slow step is a thirtieth of the window. -------------------------!
-      if (cfg%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg, step_days)
+      if (cfg%leaf_physiology%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, step_days)
 
       !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
       call stepper(out_bufs)

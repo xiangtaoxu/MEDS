@@ -6,19 +6,20 @@
 ! the ground's reflectance and emission, the lower boundary (§4). canopy_radiation blends  !
 ! each cohort's leaf and wood optics (§2), solves each band by the adding method           !
 ! (solve_band, layer_rt; §3) and splits each cohort's absorbed radiation into leaves and   !
-! wood (§4). radiative_temperature is the temperature a cohort emits at. The per-PFT       !
-! optics table is built at load (meds_pft_derive).                                         !
+! wood, each tissue emitting at its own temperature (§4). The per-PFT optics table is      !
+! built at load (meds_pft_derive).                                                         !
 !==========================================================================================!
 module meds_canopy_radiation
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
    use meds_pft_params,   only : rad_pft_optics_t
    use meds_optics_lib,   only : gfun_direct
+   use meds_numerics,     only : equal_height_layers
    implicit none
    private
 
    public :: ground_optics
-   public :: canopy_radiation, radiative_temperature
+   public :: canopy_radiation
    public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
    public :: layer_beam_sources   ! used only by the tests
 
@@ -294,22 +295,25 @@ contains
 
    !----- Solve every band for one patch (docs/science/canopy_radiation_transfer.md §4), cohorts   !
    !      bottom (1) to top (ncoh), and split each cohort's absorbed radiation into leaves and     !
-   !      wood. lai and wai are unclumped (clumping is applied here); canopy_temp drives the       !
-   !      thermal emission. -----------------------------------------------------------------------!
-   subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, canopy_temp, flux)
+   !      wood. lai and wai are unclumped (clumping is applied here); leaf_temp and wood_temp      !
+   !      drive the thermal emission. -------------------------------------------------------------!
+   subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, leaf_temp, wood_temp, flux)
       type(rad_pft_optics_t), intent(in)  :: optics     !< the per-PFT optics table
       type(rad_env_t),    intent(in)  :: forcing        !< per-band incident radiation and ground boundary
       integer(ik),            intent(in)  :: ncoh       !< number of cohorts
       integer(ik),            intent(in)  :: pft(ncoh)  !< each cohort's PFT
       real(wp),               intent(in)  :: height(ncoh)   !< [m] ascending; exact ties are co-dominant
-      real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)   !< [m2/m2], [m2/m2], [K]
+      real(wp),               intent(in)  :: lai(ncoh), wai(ncoh)               !< [m2/m2]
+      real(wp),               intent(in)  :: leaf_temp(ncoh), wood_temp(ncoh)   !< [K]
       type(rad_out_t),       intent(out) :: flux        !< absorbed, incident and ground fluxes, and the albedo
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
+      !----- Each tissue's thermal emission from both faces, and their sum. -----------------------!
+      real(wp), dimension(max(ncoh,1)) :: emit_leaf, emit_wood, emit_coh
       !----- Layer arrays: one entry per layer, a group of exactly tied cohorts. ------------------!
       real(wp), dimension(max(ncoh,1)) :: etai_l, omega_l, beta_l, beta0_l, kdir_l, emis_l, abs_l
-      real(wp), dimension(max(ncoh,1)) :: inc_l
+      real(wp), dimension(max(ncoh,1)) :: inc_l, emit_l
       real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
       integer(ik) :: lyr(max(ncoh,1)), nmemb(max(ncoh,1))
       integer(ik) :: nlayer, il
@@ -340,18 +344,10 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
-      !----- Cohorts of exactly equal height share one layer, as the demography's                  !
-      !      update_overtopping_lai treats them. Heights arrive ascending, so ties are             !
-      !      consecutive; a one-member layer is its cohort, bit for bit. --------------------------!
-      nlayer = 0_ik
-      do i = 1_ik, ncoh
-         if (i == 1_ik) then
-            nlayer = 1_ik
-         else if (height(i) /= height(i-1_ik)) then
-            nlayer = nlayer + 1_ik
-         end if
-         lyr(i) = nlayer
-      end do
+      !----- Cohorts of exactly equal height share one layer (equal_height_layers), as the        !
+      !      demography's update_overtopping_lai treats them; a one-member layer is its cohort,   !
+      !      bit for bit. ------------------------------------------------------------------------!
+      call equal_height_layers(height, ncoh, lyr(1:ncoh), nlayer)
       nmemb(1:nlayer) = 0_ik
       do i = 1_ik, ncoh
          nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik
@@ -382,28 +378,54 @@ contains
                                   omega(1:ncoh), beta(1:ncoh), beta0(1:ncoh), kdir(1:ncoh),         &
                                   leaf_frac(1:ncoh))
 
+         !----- A cohort's absorptivity-weighted area (1-omega)*etai, the weight leaf_frac is     !
+         !      built from and the layer's members share its absorption by (eq. (13)). -----------!
+         wsum_l(1:nlayer) = 0.0_wp
+         do i = 1_ik, ncoh
+            wabs(i) = (1.0_wp - omega(i)) * etai(i)
+            wsum_l(lyr(i)) = wsum_l(lyr(i)) + wabs(i)
+         end do
+
+         !----- Thermal emission (§3): each tissue emits from both faces of its area at its       !
+         !      absorptivity (Kirchhoff), 2*(1-omega)*AI*sigma*T^4, and the cohort emits as one   !
+         !      blackbody at the mean of its tissues' sigma*T^4, weighted as their emission is    !
+         !      (leaf_frac). ---------------------------------------------------------------------!
          if (optics%has_emission(b)) then
-            emission(1:ncoh) = stefan_boltzmann * canopy_temp(1:ncoh) ** 4     ! blackbody source sigma*T^4
+            do i = 1_ik, ncoh
+               ip = pft(i)
+               emit_leaf(i) = 2.0_wp * (1.0_wp - optics%omega_leaf(b,ip)) * elai(i)                     &
+                              * stefan_boltzmann * leaf_temp(i) ** 4
+               emit_wood(i) = 2.0_wp * (1.0_wp - optics%omega_wood(b,ip)) * ewai(i)                     &
+                              * stefan_boltzmann * wood_temp(i) ** 4
+               emission(i)  = stefan_boltzmann * (leaf_frac(i) * leaf_temp(i) ** 4                         &
+                                                  + (1.0_wp - leaf_frac(i)) * wood_temp(i) ** 4)
+            end do
          else
-            emission(1:ncoh) = 0.0_wp
+            emit_leaf(1:ncoh) = 0.0_wp
+            emit_wood(1:ncoh) = 0.0_wp
+            emission(1:ncoh)  = 0.0_wp
          end if
+         emit_coh(1:ncoh) = emit_leaf(1:ncoh) + emit_wood(1:ncoh)
 
          !----- Aggregate cohorts onto their layer by area index etai, the weight                  !
-         !      blend_cohort_optics mixes leaf and wood by. gc is recovered from beta = 0.5*(1+gc) !
-         !      and averaged, which keeps beta0 (gc over kdir) consistent with beta. --------------!
+         !      blend_cohort_optics mixes leaf and wood by; the emission, like a cohort's, by      !
+         !      absorptivity-weighted area. gc is recovered from beta = 0.5*(1+gc) and averaged,   !
+         !      which keeps beta0 (gc over kdir) consistent with beta. ----------------------------!
          etai_l(1:nlayer) = 0.0_wp
          omega_l(1:nlayer) = 0.0_wp
          beta_l(1:nlayer) = 0.0_wp
          beta0_l(1:nlayer) = 0.0_wp
          kdir_l(1:nlayer) = 0.0_wp
          emis_l(1:nlayer) = 0.0_wp
+         emit_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             il = lyr(i)
             etai_l(il)  = etai_l(il)  + etai(i)
             omega_l(il) = omega_l(il) + omega(i) * etai(i)
             beta_l(il)  = beta_l(il)  + (2.0_wp*beta(i) - 1.0_wp) * etai(i)    ! accumulate gc*etai
             kdir_l(il)  = kdir_l(il)  + kdir(i)  * etai(i)
-            emis_l(il)  = emis_l(il)  + emission(i) * etai(i)
+            emis_l(il)  = emis_l(il)  + emission(i) * wabs(i)
+            emit_l(il)  = emit_l(il)  + emit_coh(i)
          end do
          do il = 1_ik, nlayer
             if (nmemb(il) == 1_ik) cycle       ! single member: filled verbatim below, bit-identical
@@ -411,11 +433,14 @@ contains
                omega_l(il) = omega_l(il) / etai_l(il)
                gc_l        = beta_l(il)  / etai_l(il)
                kdir_l(il)  = kdir_l(il)  / etai_l(il)
-               emis_l(il)  = emis_l(il)  / etai_l(il)
             else
                omega_l(il) = 0.0_wp
                gc_l = 0.0_wp
                kdir_l(il) = 0.0_wp
+            end if
+            if (wsum_l(il) > tiny_num) then
+               emis_l(il) = emis_l(il) / wsum_l(il)
+            else
                emis_l(il) = 0.0_wp
             end if
             beta_l(il) = 0.5_wp * (1.0_wp + gc_l)
@@ -443,30 +468,27 @@ contains
                          forcing%grnd_emiss(b), optics%has_beam(b), optics%has_emission(b),      &
                          abs_l(1:nlayer), inc_l(1:nlayer), dn_ground, up_ground, albedo)
 
-         !----- Scatter the layer's absorbed flux to its members by absorptivity-weighted area,    !
-         !      (1-omega)*etai, the weight leaf_frac is built from; members that absorb nothing    !
-         !      get nothing. ----------------------------------------------------------------------!
-         wsum_l(1:nlayer) = 0.0_wp
-         do i = 1_ik, ncoh
-            wabs(i) = (1.0_wp - omega(i)) * etai(i)
-            wsum_l(lyr(i)) = wsum_l(lyr(i)) + wabs(i)
-         end do
+         !----- The solve's absorbed flux is net of the layer's emission. Every element of a layer  !
+         !      sees the same radiation, so what the layer takes in, that net plus all its members  !
+         !      emit, goes to its members by absorptivity-weighted area (eq. (13)), and each is     !
+         !      charged its own emission; members that absorb nothing get nothing. -----------------!
          do i = 1_ik, ncoh
             il = lyr(i)
             if (nmemb(il) == 1_ik) then
                absorbed(i) = abs_l(il)
             else if (wsum_l(il) > tiny_num) then
-               absorbed(i) = abs_l(il) * wabs(i) / wsum_l(il)
+               absorbed(i) = (abs_l(il) + emit_l(il)) * wabs(i) / wsum_l(il) - emit_coh(i)
             else
                absorbed(i) = 0.0_wp
             end if
          end do
 
-         !----- Split each cohort's absorbed radiation between leaves and wood by leaf_frac; every !
-         !      member of a layer sees the light reaching the layer's top. ------------------------!
+         !----- The same within a cohort (eq. (14)): leaves and wood share what it takes in by      !
+         !      leaf_frac, and each is charged its own emission. Every member of a layer sees the   !
+         !      light reaching the layer's top. ----------------------------------------------------!
          do i = 1_ik, ncoh
-            flux%abs_leaf(b,i)  = absorbed(i) * leaf_frac(i)
-            flux%abs_wood(b,i)  = absorbed(i) * (1.0_wp - leaf_frac(i))
+            flux%abs_leaf(b,i)  = (absorbed(i) + emit_coh(i)) * leaf_frac(i) - emit_leaf(i)
+            flux%abs_wood(b,i)  = (absorbed(i) + emit_coh(i)) * (1.0_wp - leaf_frac(i)) - emit_wood(i)
             flux%incid_top(b,i) = inc_l(lyr(i))
          end do
          flux%albedo(b)    = albedo
@@ -502,18 +524,5 @@ contains
       flux%dn_ground = 0.0_wp
       flux%up_ground = 0.0_wp
    end subroutine alloc_rad_out
-
-   !----- A cohort's longwave emission temperature t_rad [K], the area-weighted fourth-power mean  !
-   !      of its leaf and wood temperatures (docs/science/canopy_radiation_transfer.md §3); with   !
-   !      no leaf or wood area it is the wood temperature. The absorbed longwave canopy_radiation  !
-   !      returns is net of the cohort's emission at this temperature                              !
-   !      (vegetation_energy_dynamics.md, "The emission base"). -----------------------------------!
-   elemental real(wp) function radiative_temperature(lai, wai, leaf_temp, wood_temp) result(t_rad)
-      real(wp), intent(in) :: lai, wai             !< [m2/m2] the cohort's leaf and wood area indices
-      real(wp), intent(in) :: leaf_temp, wood_temp !< [K] the cohort's leaf and wood temperatures
-      real(wp) :: lf
-      lf    = lai / max(lai + wai, tiny_num)
-      t_rad = (lf * leaf_temp ** 4 + (1.0_wp - lf) * wood_temp ** 4) ** 0.25_wp
-   end function radiative_temperature
 
 end module meds_canopy_radiation

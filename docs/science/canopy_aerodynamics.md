@@ -305,3 +305,4 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | types (params / env / args / out) | `meds_biophysics_params`: `aero_params_t`; `meds_canopy_aerodynamics`: `aero_env_t`, `aero_args_t`, `aero_out_t` |
 | filling the environment | `set_aero_env_atm` (the reference level), `set_aero_env_canopy` (the canopy air and ground) |
 | bottom→top cohort order | `canopy_aerodynamics` (takes `static%order`); the ascending solve `aerodynamics_bottom_to_top` |
+| cohorts of one height are one layer | `meds_numerics`: `equal_height_layers` |

@@ -91,7 +91,7 @@ loop, and moves the sample to each site (`met_at_site`) and then to each patch's
 (`met_to_cas_top`) — so the diurnal cycle lives inside the sub-step loop.
 
 How the sampled radiation enters the canopy two-stream (its bottom-to-top layer order, the
-incident-equivalent PAR and the longwave emission temperature, in `apply_rt_forcing`) is described in
+incident-equivalent PAR and the tissues' longwave emission temperatures, in `apply_rt_forcing`) is described in
 [`docs/science/canopy_radiation_transfer.md`](../../../../docs/science/canopy_radiation_transfer.md)
 §3–§4.
 

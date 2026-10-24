@@ -9,6 +9,7 @@
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
+   use meds_leaf_params,           only : leaf_physiology_params_t
    use meds_time,                  only : meds_time_t, day_of_year
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
    use meds_demography_update, only : update_patch_states
@@ -180,10 +181,10 @@ contains
    ! the acclimated optimum starts from the site's own climate rather than relaxing toward it !
    ! from an arbitrary origin over the first month.                                           !
    !---------------------------------------------------------------------------------------!
-   subroutine acclimate_site_leaf_tables(poly, cfg, step_days)
-      type(polygon_t),     intent(inout) :: poly
-      type(meds_config_t), intent(in)    :: cfg
-      integer(ik),         intent(in)    :: step_days
+   subroutine acclimate_site_leaf_tables(poly, lp, step_days)
+      type(polygon_t),                intent(inout) :: poly
+      type(leaf_physiology_params_t), intent(in)    :: lp          !< [leaf_physiology]
+      integer(ik),                    intent(in)    :: step_days
       real(wp)    :: t_day, w
       integer(ik) :: is
       do is = 1_ik, poly%site%n
@@ -193,12 +194,12 @@ contains
             if (is_unset_positive(t_growth)) then
                t_growth = t_day
             else
-               w = min(1.0_wp, real(step_days, wp) / max(cfg%acclim_window_days, real(step_days, wp)))
+               w = min(1.0_wp, real(step_days, wp) / max(lp%acclim_window_days, real(step_days, wp)))
                t_growth = t_growth + w * (t_day - t_growth)
             end if
-            call acclimate_leaf_photo_table(t_growth, cfg%acclim_ds_vcmax_a, cfg%acclim_ds_vcmax_b,          &
-                                            cfg%acclim_ds_jmax_a, cfg%acclim_ds_jmax_b, cfg%acclim_jv_a,     &
-                                            cfg%acclim_jv_b, poly%site%leaf_photo(is))
+            call acclimate_leaf_photo_table(t_growth, lp%acclim_ds_vcmax_a, lp%acclim_ds_vcmax_b,            &
+                                            lp%acclim_ds_jmax_a, lp%acclim_ds_jmax_b, lp%acclim_jv_a,        &
+                                            lp%acclim_jv_b, poly%site%leaf_photo(is))
          end associate
       end do
    end subroutine acclimate_site_leaf_tables

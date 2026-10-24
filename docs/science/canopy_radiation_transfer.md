@@ -162,10 +162,11 @@ light scattered deep in the layer is absorbed on its way out. Injecting the sing
 faces would make the light depend on the cut: with the default optics, LAI 5, μ 0.87 and 70 % beam, the
 VIS albedo would be 0.075 for one cohort, 0.053 for five and 0.043 in the limit, which the exact source
 gives for any cut. For the thermal band each layer adds a blackbody source
-$`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. The
-emission temperature is the cohort's effective radiative temperature,
-$`T=\big(f_l\,T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$ with $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
-from the start-of-step tissue temperatures (`radiative_temperature`), so the longwave field sees both tissues.
+$`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. Each tissue emits at its absorptivity (Kirchhoff), so
+a cohort's $`\sigma T^4`$ is its tissues' at their start-of-step temperatures, weighted as their
+absorption is, by the thermal band's `leaf_frac` (eq. (7)):
+$`\sigma T^4 = \mathrm{leaf\_frac}\,\sigma T_{leaf}^4 + (1-\mathrm{leaf\_frac})\,\sigma T_{wood}^4`$. The
+longwave field thus sees both tissues.
 
 **The recursion.** A bottom-up sweep builds the reflectance $`r_{bel}`$ and upward source $`s_{bel}`$
 of the growing stack {ground + layers $1..i$}, seeded by the ground reflectance and its upward source
@@ -208,29 +209,45 @@ standing water and soil moisture do not change the ground optics (see docs/ROADM
 blends optics per cohort, and dispatches each band to `solve_band`.
 
 **Co-dominant cohorts share a layer.** Cohorts of exactly equal height form one RT layer: its ETAI is
-the members' sum, and its $\omega$, $g$ (hence $\beta$, $\beta_0$), $k$ and emission are ETAI-weighted
-means of theirs. The layer's absorbed flux $`A_\ell`$ goes back to its members by absorptivity-weighted
-area, the same weight `leaf_frac` is built from:
+the members' sum, its $\omega$, $g$ (hence $\beta$, $\beta_0$) and $k$ are ETAI-weighted means of
+theirs, and its $`\sigma T^4`$ is weighted, as within a cohort, by absorptivity-weighted area
+$`(1-\omega_i)\,\mathrm{ETAI}_i`$. The solve's absorbed flux $`A_\ell`$ is net of the layer's emission.
+Every element of the layer meets the same radiation, so what the layer takes in, $`A_\ell`$ plus the
+emission $`E_\ell=\sum_{j\in\ell}E_j`$ of its members, goes back to them by absorptivity-weighted
+area, the weight `leaf_frac` is built from, and each is charged its own emission:
 
 ```math
-A_{b,i} = A_{b,\ell}\,\frac{(1-\omega_i)\,\mathrm{ETAI}_i}{\sum_{j\in\ell}(1-\omega_j)\,\mathrm{ETAI}_j}
+A_{b,i} = \big(A_{b,\ell}+E_{b,\ell}\big)\,\frac{(1-\omega_i)\,\mathrm{ETAI}_i}{\sum_{j\in\ell}(1-\omega_j)\,\mathrm{ETAI}_j}
+          - E_{b,i}
 \qquad(13)
 ```
 
-and every member sees the light reaching the layer's top. A one-member layer is exactly the per-cohort
+A cohort's emission is its tissues', each from both faces of its area at its absorptivity,
+$`E^{leaf}_{b,i} = 2\,(1-\omega_{leaf})\,\mathrm{ELAI}_i\,\sigma T_{leaf}^4`$ and
+$`E^{wood}_{b,i} = 2\,(1-\omega_{wood})\,\mathrm{EWAI}_i\,\sigma T_{wood}^4`$, zero in a shortwave
+band. Every member sees the light reaching the layer's top. A one-member layer is exactly the per-cohort
 solve. Stacking tied cohorts instead would put whichever sorts first on top, so the light split between
 PFTs would follow the PFT index rather than the ecology. The canopy total barely moves when they are
 stacked, so no whole-canopy albedo or GPP check would show the error; only the split between the tied
 cohorts changes. Ties arise at recruitment: every PFT recruits at the one smallest tracked height,
 `min_cohort_height`.
 
-`canopy_radiation` then splits each cohort's absorbed radiation into leaves and wood by the same
-`leaf_frac` weight the optics blend produced:
+`canopy_radiation` then splits each cohort's absorbed radiation into leaves and wood the same way:
+they share what the cohort takes in by the `leaf_frac` weight the optics blend produced, and each is
+charged its own emission:
 
 ```math
-A^{leaf}_{b,i} = A_{b,i}\,\mathrm{leaf\_frac}_i, \qquad
-A^{wood}_{b,i} = A_{b,i}\,(1-\mathrm{leaf\_frac}_i) \qquad(14)
+A^{leaf}_{b,i} = \big(A_{b,i}+E_{b,i}\big)\,\mathrm{leaf\_frac}_i - E^{leaf}_{b,i}, \qquad
+A^{wood}_{b,i} = \big(A_{b,i}+E_{b,i}\big)\,(1-\mathrm{leaf\_frac}_i) - E^{wood}_{b,i} \qquad(14)
 ```
+
+In a shortwave band this is the split by `leaf_frac`. In the thermal band it is exact for the
+two-stream's well-mixed layer: leaves and wood meet the same radiation through its depth and absorb
+it in the proportion `leaf_frac`, and the solve's net is what the layer absorbs less what it emits.
+Wood warmer than its leaves warms them. With the sky, the ground and the leaves at 295 K and the wood
+at 305 K, a cohort of LAI 3 and WAI 0.6 gives its leaves +19.4 W/m² and its wood −30.8 W/m², just
+what leaves at 305 K give wood at 295 K. Split by `leaf_frac` alone, the cohort's net of −11.4 W/m²
+would charge the cool leaves −10 W/m², a share of the warm wood's emission.
 
 A patch with **no resolvable cohorts** short-circuits: all radiation reaches the ground, and the
 albedo is the ground's alone.
@@ -306,7 +323,8 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_env_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | the per-patch entry point (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
+| cohorts of one height are one layer (with the wind and the overtopping LAI) | `meds_numerics`: `equal_height_layers` |
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
-| LW emission temperature | `meds_canopy_radiation`: `radiative_temperature` |
+| each tissue's emission and the leaf/wood split, eqs. (13)–(14) | `meds_canopy_radiation`: `canopy_radiation` |
 | the ground's optics under snow, and each tile's radiation | `meds_surface`: `snow_blend_ground_optics`, `ground_tile_radiation` |

@@ -18,6 +18,8 @@
 !   9. TIED COHORTS          : equal-height cohorts share one layer, whatever their order.          !
 !  10. CUTTING              : one LAI-5 cohort and five LAI-1 cohorts of a PFT give the same light; !
 !                             a thin layer's scattered beam is the single-scatter split.            !
+!  11. TISSUE LONGWAVE      : leaves and wood, or two tied cohorts, exchange longwave reciprocally,  !
+!                             each charged its own emission.                                        !
 !==========================================================================================!
 program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
@@ -42,6 +44,7 @@ program test_canopy_radiation
    call test_cohort_order()
    call test_tied_cohorts_codominant()
    call test_cutting_invariance()
+   call test_tissue_longwave()
 
    call test_report('test_canopy_radiation')
 
@@ -160,7 +163,7 @@ contains
       wai  = 0.1_wp * lai
       tcan = 298.0_wp
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       do b = RAD_VIS, RAD_NIR
          absorbed   = sum(flux%abs_leaf(b,:)) + sum(flux%abs_wood(b,:))
          net_ground = flux%dn_ground(b) - flux%up_ground(b)
@@ -192,7 +195,7 @@ contains
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik, 1_ik] ; lai = [2.0_wp, 2.0_wp] ; wai = [0.0_wp, 0.0_wp] ; tcan = 298.0_wp  ! idx1=bottom, idx2=top
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       call check_true('VIS: top cohort (idx2) absorbs more than bottom (idx1)',                 &
                       flux%abs_leaf(RAD_VIS,2) > flux%abs_leaf(RAD_VIS,1),                       &
                       flux%abs_leaf(RAD_VIS,2) - flux%abs_leaf(RAD_VIS,1))
@@ -239,7 +242,7 @@ contains
       !----- (a) two OPTICALLY IDENTICAL tied cohorts must absorb equally. Same PFT, so any         !
       !      difference is positional and nothing else. -----------------------------------------!
       pft = [1_ik, 1_ik, 1_ik]
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       call check('tied twins absorb equally (VIS)', flux%abs_leaf(RAD_VIS,1),                    &
                  flux%abs_leaf(RAD_VIS,2), 1.0e-12_wp * max(flux%abs_leaf(RAD_VIS,2), 1.0e-12_wp))
       call check('tied twins absorb equally (NIR)', flux%abs_leaf(RAD_NIR,1),                    &
@@ -251,11 +254,11 @@ contains
       !      This is the defect it guards: creation order is `do pf = 1, n_pft`, so a stacking sort  !
       !      hands PFT 1 the upper slot at every recruitment event. -------------------------------!
       pft = [1_ik, 2_ik, 1_ik]
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       a_pft1 = flux%abs_leaf(RAD_NIR,1) ; a_pft2 = flux%abs_leaf(RAD_NIR,2)
       total_a = a_pft1 + a_pft2
       pft = [2_ik, 1_ik, 1_ik]
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       b_pft2 = flux%abs_leaf(RAD_NIR,1) ; b_pft1 = flux%abs_leaf(RAD_NIR,2)
       total_b = b_pft2 + b_pft1
       call check('permuting tied PFTs leaves PFT 1 unchanged', a_pft1, b_pft1,                   &
@@ -285,8 +288,8 @@ contains
       pft1 = 1_ik ; hgt1 = 20.0_wp ; lai1 = 5.0_wp ; wai1 = 0.5_wp ; t1 = 298.0_wp
       pft5 = 1_ik ; lai5 = 1.0_wp  ; wai5 = 0.1_wp ; t5 = 298.0_wp
       hgt5 = [(10.0_wp + 2.0_wp * real(ih, wp), ih = 1, 5)]     ! distinct heights: five layers
-      call canopy_radiation(opt, f, 1_ik, pft1, hgt1, lai1, wai1, t1, one)
-      call canopy_radiation(opt, f, 5_ik, pft5, hgt5, lai5, wai5, t5, five)
+      call canopy_radiation(opt, f, 1_ik, pft1, hgt1, lai1, wai1, t1, t1, one)
+      call canopy_radiation(opt, f, 5_ik, pft5, hgt5, lai5, wai5, t5, t5, five)
       do b = RAD_VIS, RAD_LW
          call check('albedo, one cohort or five', five%albedo(b), one%albedo(b), TOL)
          call check('light reaching the ground, one cohort or five', five%dn_ground(b), one%dn_ground(b),  &
@@ -322,7 +325,7 @@ contains
       f%grnd_refl(RAD_VIS)  = 0.0_wp                       ! black soil: no reflection to re-absorb
       pft = [1_ik] ; lai = [3.0_wp] ; wai = [0.0_wp] ; tcan = 298.0_wp
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       elai         = opt%clumping_leaf(1) * lai(1)
       gee          = gfun_direct(opt%lidf(:,1), 1.0_wp)
       kdir         = gee / 1.0_wp
@@ -347,7 +350,7 @@ contains
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik] ; lai = [0.0_wp] ; wai = [0.0_wp] ; tcan = 298.0_wp
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       call check('albedo(VIS) = soil albedo', flux%albedo(RAD_VIS), f%grnd_refl(RAD_VIS), 1.0e-9_wp)
       call check('albedo(NIR) = soil albedo', flux%albedo(RAD_NIR), f%grnd_refl(RAD_NIR), 1.0e-9_wp)
    end subroutine test_zero_lai_albedo
@@ -372,7 +375,7 @@ contains
          print '(a)', '  ok   : PFTs differ in VIS omega (per-cohort optics exercised)'
       end if
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       incid      = f%incid_beam(RAD_VIS) + f%incid_diff(RAD_VIS)
       absorbed   = sum(flux%abs_leaf(RAD_VIS,:)) + sum(flux%abs_wood(RAD_VIS,:))
       net_ground = flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS)
@@ -388,7 +391,7 @@ contains
       type(rad_out_t)       :: flux
       integer(ik), parameter :: NC = 3_ik
       integer(ik) :: pft(NC), i
-      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet, max_tissue
       integer :: ih
       real(wp), parameter :: TEQ = 300.0_wp
       print '(a)', '[6] longwave radiative equilibrium (isothermal -> zero net absorption)'
@@ -397,13 +400,63 @@ contains
       pft  = [1_ik, 2_ik, 1_ik] ; lai = [2.0_wp, 1.0_wp, 0.5_wp] ; wai = 0.1_wp * lai
       tcan = TEQ                                        ! canopy also at Teq
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
-      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       maxnet = 0.0_wp
+      max_tissue = 0.0_wp
       do i = 1_ik, NC
          net_lw = flux%abs_leaf(RAD_LW,i) + flux%abs_wood(RAD_LW,i)
          maxnet = max(maxnet, abs(net_lw))
+         max_tissue = max(max_tissue, abs(flux%abs_leaf(RAD_LW,i)), abs(flux%abs_wood(RAD_LW,i)))
       end do
       call check('max |net LW| at equilibrium', maxnet, 0.0_wp, 1.0e-7_wp * stefan_boltzmann * TEQ ** 4)
+      call check('max |net LW| of a tissue at equilibrium', max_tissue, 0.0_wp, 1.0e-7_wp * stefan_boltzmann * TEQ ** 4)
    end subroutine test_longwave_equilibrium
+
+   !=======================================================================================!
+   !  TISSUE LONGWAVE: a cohort's leaves and wood meet the same radiation, share what it takes  !
+   !  in by leaf_frac and are each charged their own emission, as tied cohorts share their    !
+   !  layer's (docs/science/canopy_radiation_transfer.md §4, eqs. (13)-(14)). With sky and     !
+   !  ground at the leaves' temperature, wood 10 K warmer warms the leaves, and by reciprocity !
+   !  it gives them exactly what leaves 10 K warmer give the wood; likewise between two tied   !
+   !  cohorts. Charged a share of the cohort's net instead, the cool leaves lost to the warm   !
+   !  wood.                                                                                    !
+   !=======================================================================================!
+   subroutine test_tissue_longwave()
+      type(rad_pft_optics_t) :: opt
+      type(rad_env_t)        :: f
+      type(rad_out_t)        :: hot_wood, hot_leaf, hot_a, hot_b
+      integer(ik) :: pft1(1), pft2(2)
+      real(wp)    :: hgt1(1), lai1(1), wai1(1), hgt2(2), lai2(2), wai2(2)
+      real(wp)    :: net, gain_a, gain_b
+      real(wp), parameter :: T_COOL = 295.0_wp, T_WARM = 305.0_wp
+      print '(a)', '[11] tissue longwave: each tissue charged its own emission'
+      call build_optics(45.0_wp, opt)
+      call build_forcing(0.5_wp, T_COOL, T_COOL, f)          ! sky and soil at the cool temperature
+      pft1 = 1_ik ; hgt1 = 10.0_wp ; lai1 = 3.0_wp ; wai1 = 0.6_wp
+      call canopy_radiation(opt, f, 1_ik, pft1, hgt1, lai1, wai1, [T_COOL], [T_WARM], hot_wood)
+      call canopy_radiation(opt, f, 1_ik, pft1, hgt1, lai1, wai1, [T_WARM], [T_COOL], hot_leaf)
+      call check_true('warm wood warms its cool leaves', hot_wood%abs_leaf(RAD_LW,1) > 0.0_wp,            &
+                      hot_wood%abs_leaf(RAD_LW,1))
+      call check_true('warm wood loses longwave', hot_wood%abs_wood(RAD_LW,1) < 0.0_wp,                   &
+                      hot_wood%abs_wood(RAD_LW,1))
+      call check('leaves gain from warm wood what wood gains from warm leaves', hot_wood%abs_leaf(RAD_LW,1), &
+                 hot_leaf%abs_wood(RAD_LW,1), 1.0e-9_wp * abs(hot_leaf%abs_wood(RAD_LW,1)))
+      !----- The tissues' nets add up to the band's: in at the top less out, less what the ground   !
+      !      takes. --------------------------------------------------------------------------------!
+      net = f%incid_diff(RAD_LW) * (1.0_wp - hot_wood%albedo(RAD_LW))                                 &
+            - (hot_wood%dn_ground(RAD_LW) - hot_wood%up_ground(RAD_LW))
+      call check('leaf + wood longwave = the band''s in - out', hot_wood%abs_leaf(RAD_LW,1)                &
+                 + hot_wood%abs_wood(RAD_LW,1), net, 1.0e-9_wp * stefan_boltzmann * T_WARM ** 4)
+
+      !----- Two tied cohorts of different PFT and area: the cool one gains from the warm one   !
+      !      exactly what it would give were the temperatures swapped. -------------------------!
+      pft2 = [1_ik, 2_ik] ; hgt2 = 4.0_wp ; lai2 = [1.0_wp, 2.5_wp] ; wai2 = [0.3_wp, 0.2_wp]
+      call canopy_radiation(opt, f, 2_ik, pft2, hgt2, lai2, wai2, [T_WARM, T_COOL], [T_WARM, T_COOL], hot_a)
+      call canopy_radiation(opt, f, 2_ik, pft2, hgt2, lai2, wai2, [T_COOL, T_WARM], [T_COOL, T_WARM], hot_b)
+      gain_b = hot_a%abs_leaf(RAD_LW,2) + hot_a%abs_wood(RAD_LW,2)
+      gain_a = hot_b%abs_leaf(RAD_LW,1) + hot_b%abs_wood(RAD_LW,1)
+      call check_true('a cool tied cohort gains from a warm one', gain_b > 0.0_wp, gain_b)
+      call check('tied cohorts exchange reciprocally', gain_b, gain_a, 1.0e-9_wp * abs(gain_a))
+   end subroutine test_tissue_longwave
 
 end program test_canopy_radiation

@@ -17,7 +17,7 @@ module meds_fast_forcing
    use meds_polygon_state_vars, only : polygon_t
    use meds_pft_params,         only : N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
-   use meds_canopy_radiation,   only : canopy_radiation, ground_optics, radiative_temperature
+   use meds_canopy_radiation,   only : canopy_radiation, ground_optics
    use meds_surface,            only : snow_blend_ground_optics, ground_tile_radiation
    use meds_fast_integ_types,         only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t
    implicit none
@@ -131,7 +131,8 @@ contains
       type(met_forcing_t),        intent(in)    :: met
       integer(ik) :: j, i, ig, ncoh
       integer(ik) :: pft_bt(static%n)
-      real(wp)    :: lai_bt(static%n), wai_bt(static%n), tcan_bt(static%n), hgt_bt(static%n)
+      real(wp)    :: lai_bt(static%n), wai_bt(static%n), hgt_bt(static%n)
+      real(wp)    :: tleaf_bt(static%n), twood_bt(static%n)
       real(wp)    :: soil_albedo(N_RAD_BAND_DEFAULT), soil_temp_top
       type(rad_env_t)   :: rf
       type(rad_out_t)      :: flux
@@ -152,8 +153,9 @@ contains
          lai_bt(j) = static%lai(i)
          hgt_bt(j) = static%height(i)
          wai_bt(j) = static%wai(i)
-         !----- The emission temperature at the start of the sub-step. ----------------------------!
-         tcan_bt(j) = radiative_temperature(static%lai(i), static%wai(i), dynamic%leaf_temp(i), dynamic%wood_temp(i))
+         !----- The tissues emit at their start-of-sub-step temperatures. ---------------------------!
+         tleaf_bt(j) = dynamic%leaf_temp(i)
+         twood_bt(j) = dynamic%wood_temp(i)
       end do
 
       !----- rad_env_t from met (all W/m2, direct assignment). --------------------------------!
@@ -178,16 +180,17 @@ contains
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 
-      call canopy_radiation(cfg%pft%optics, rf, ncoh, pft_bt, hgt_bt, lai_bt, wai_bt, tcan_bt, flux)
+      call canopy_radiation(cfg%pft%optics, rf, ncoh, pft_bt, hgt_bt, lai_bt, wai_bt, tleaf_bt, twood_bt, flux)
 
       !----- inverse-scatter: RT index j (bottom->top) maps to gather index static%order(j). ------!
       do j = 1_ik, ncoh
          ig = static%order(j)
          forcing%abs_sw(ig)      = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! absorbed leaf SW
-         forcing%abs_par(ig)     = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! incident PAR
-         forcing%abs_lw(ig)      = flux%abs_leaf(RAD_LW, j)                  ! net leaf LW, emission at T_rad included
+         forcing%abs_par(ig)     = flux%abs_leaf(RAD_VIS, j)                                          &
+                                   / max(cfg%leaf_physiology%leaf_absorptance, tiny_num)   ! incident PAR
+         forcing%abs_lw(ig)      = flux%abs_leaf(RAD_LW, j)                  ! net leaf LW, its own emission included
          forcing%abs_sw_wood(ig) = flux%abs_wood(RAD_VIS, j) + flux%abs_wood(RAD_NIR, j)   ! absorbed wood SW
-         forcing%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                  ! net wood LW
+         forcing%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                  ! net wood LW, its own emission included
          forcing%par_top(ig)     = flux%incid_top(RAD_VIS, j)                ! PAR at the cohort's top
       end do
       forcing%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &

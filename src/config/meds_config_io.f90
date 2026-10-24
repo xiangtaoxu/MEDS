@@ -18,7 +18,8 @@ module meds_config_io
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_leaf_params,   only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
+   use meds_leaf_params,   only : leaf_physiology_params_t, SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN,        &
+                                  COLIM_QUADRATIC
    use meds_therm_lib,     only : TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED
    use meds_radiation_lib,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_PASSTHROUGH, SWPART_CLEARIDX,        &
                                    SWPART_WEISS_NORMAN
@@ -411,6 +412,51 @@ contains
       a%dth_diff         = toml_real(tm, 'aerodynamics.dth_diff',         a%dth_diff)
       a%t_ref_air        = toml_real(tm, 'aerodynamics.t_ref_air',        a%t_ref_air)
    end subroutine load_aero_params
+
+   !----- [leaf_physiology]: the model selectors and the biochemistry every PFT shares. An absent     !
+   !      optional key keeps the type's default. -----------------------------------------------------!
+   subroutine load_leaf_physiology_params(tm, lp, m)
+      type(toml_table_t),             intent(in)    :: tm
+      type(leaf_physiology_params_t), intent(inout) :: lp
+      type(keymiss_t),                intent(inout) :: m
+      call req_choice(tm, 'leaf_physiology.stomatal_model', [character(len=NAME_LEN) :: 'leuning', 'medlyn', 'katul'], &
+                      [SM_LEUNING, SM_MEDLYN, SM_KATUL], lp%stomatal_model, m)
+      call req_choice(tm, 'leaf_physiology.temp_response_form', [character(len=NAME_LEN) :: 'arrhenius', 'peaked'],   &
+                      [TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED], lp%temp_response_form, m)
+      call req_choice(tm, 'leaf_physiology.colimitation', [character(len=NAME_LEN) :: 'min', 'quadratic'],            &
+                      [COLIM_MIN, COLIM_QUADRATIC], lp%colimitation, m)
+      call req_l(tm, 'leaf_physiology.use_boundary_layer', lp%use_boundary_layer, m)
+      call req_r(tm, 'leaf_physiology.kc25',     lp%kc25,     m)
+      call req_r(tm, 'leaf_physiology.ko25',     lp%ko25,     m)
+      call req_r(tm, 'leaf_physiology.gstar25',  lp%gstar25,  m)
+      call req_r(tm, 'leaf_physiology.ea_kc',    lp%ea_kc,    m)
+      call req_r(tm, 'leaf_physiology.ea_ko',    lp%ea_ko,    m)
+      call req_r(tm, 'leaf_physiology.ea_gstar', lp%ea_gstar, m)
+      call req_r(tm, 'leaf_physiology.ea_vcmax', lp%ea_vcmax, m)
+      call req_r(tm, 'leaf_physiology.ea_jmax',  lp%ea_jmax,  m)
+      call req_r(tm, 'leaf_physiology.ea_rd',    lp%ea_rd,    m)
+      call req_r(tm, 'leaf_physiology.hd_vcmax', lp%hd_vcmax, m)
+      call req_r(tm, 'leaf_physiology.hd_jmax',  lp%hd_jmax,  m)
+      call req_r(tm, 'leaf_physiology.hd_rd',    lp%hd_rd,    m)
+      !----- Thermal acclimation (docs/science/leaf_gas_exchange.md eq. (4)): off by default,     !
+      !      every key optional, the six Kattge & Knorr coefficients at their published           !
+      !      values. -----------------------------------------------------------------------------!
+      lp%thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation', lp%thermal_acclimation)
+      lp%acclim_ds_vcmax_a  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_a',  lp%acclim_ds_vcmax_a)
+      lp%acclim_ds_vcmax_b  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_b',  lp%acclim_ds_vcmax_b)
+      lp%acclim_ds_jmax_a   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_a',   lp%acclim_ds_jmax_a)
+      lp%acclim_ds_jmax_b   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_b',   lp%acclim_ds_jmax_b)
+      lp%acclim_jv_a        = toml_real(tm, 'leaf_physiology.acclim_jv_a',        lp%acclim_jv_a)
+      lp%acclim_jv_b        = toml_real(tm, 'leaf_physiology.acclim_jv_b',        lp%acclim_jv_b)
+      lp%acclim_window_days = toml_real(tm, 'leaf_physiology.acclim_window_days', lp%acclim_window_days)
+      call req_r(tm, 'leaf_physiology.ds_vcmax', lp%ds_vcmax, m)
+      call req_r(tm, 'leaf_physiology.ds_jmax',  lp%ds_jmax,  m)
+      call req_r(tm, 'leaf_physiology.ds_rd',    lp%ds_rd,    m)
+      call req_r(tm, 'leaf_physiology.o2_mol_frac',      lp%o2_mol_frac,      m)
+      call req_r(tm, 'leaf_physiology.leaf_absorptance', lp%leaf_absorptance, m)
+      call req_r(tm, 'leaf_physiology.phi_psii',         lp%phi_psii,         m)
+      lp%vpd_min = toml_real(tm, 'leaf_physiology.vpd_min', lp%vpd_min)
+   end subroutine load_leaf_physiology_params
 
    !----- [soil_carbon]: the switch, the decomposition selectors and rates, and the cold start.        !
    !      Each absent key keeps the type's default, so the type, not the reader, decides it. ----------!
@@ -1053,44 +1099,7 @@ contains
       call load_output_params(tm, cfg, miss)
 
       !----- Leaf physiology: model selectors + shared biochemistry (non-PFT). ------------!
-      call req_choice(tm, 'leaf_physiology.stomatal_model', [character(len=NAME_LEN) :: 'leuning', 'medlyn', 'katul'], &
-                      [SM_LEUNING, SM_MEDLYN, SM_KATUL], cfg%stomatal_model, miss)
-      call req_choice(tm, 'leaf_physiology.temp_response_form', [character(len=NAME_LEN) :: 'arrhenius', 'peaked'],   &
-                      [TEMP_RESPONSE_ARRHENIUS, TEMP_RESPONSE_PEAKED], cfg%temp_response_form, miss)
-      call req_choice(tm, 'leaf_physiology.colimitation', [character(len=NAME_LEN) :: 'min', 'quadratic'],            &
-                      [COLIM_MIN, COLIM_QUADRATIC], cfg%colimitation, miss)
-      call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%use_boundary_layer, miss)
-      call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
-      call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
-      call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)
-      call req_r(tm, 'leaf_physiology.ea_kc',    cfg%ea_kc,    miss)
-      call req_r(tm, 'leaf_physiology.ea_ko',    cfg%ea_ko,    miss)
-      call req_r(tm, 'leaf_physiology.ea_gstar', cfg%ea_gstar, miss)
-      call req_r(tm, 'leaf_physiology.ea_vcmax', cfg%ea_vcmax, miss)
-      call req_r(tm, 'leaf_physiology.ea_jmax',  cfg%ea_jmax,  miss)
-      call req_r(tm, 'leaf_physiology.ea_rd',    cfg%ea_rd,    miss)
-      call req_r(tm, 'leaf_physiology.hd_vcmax', cfg%hd_vcmax, miss)
-      call req_r(tm, 'leaf_physiology.hd_jmax',  cfg%hd_jmax,  miss)
-      call req_r(tm, 'leaf_physiology.hd_rd',    cfg%hd_rd,    miss)
-      !----- Thermal acclimation (docs/science/leaf_gas_exchange.md eq. (4)): off by default,     !
-      !      every key optional, the six Kattge & Knorr coefficients at their published           !
-      !      values. -----------------------------------------------------------------------------!
-      cfg%thermal_acclimation = toml_logical(tm, 'leaf_physiology.thermal_acclimation',      &
-                                                  cfg%thermal_acclimation)
-      cfg%acclim_ds_vcmax_a  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_a',  cfg%acclim_ds_vcmax_a)
-      cfg%acclim_ds_vcmax_b  = toml_real(tm, 'leaf_physiology.acclim_ds_vcmax_b',  cfg%acclim_ds_vcmax_b)
-      cfg%acclim_ds_jmax_a   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_a',   cfg%acclim_ds_jmax_a)
-      cfg%acclim_ds_jmax_b   = toml_real(tm, 'leaf_physiology.acclim_ds_jmax_b',   cfg%acclim_ds_jmax_b)
-      cfg%acclim_jv_a        = toml_real(tm, 'leaf_physiology.acclim_jv_a',        cfg%acclim_jv_a)
-      cfg%acclim_jv_b        = toml_real(tm, 'leaf_physiology.acclim_jv_b',        cfg%acclim_jv_b)
-      cfg%acclim_window_days = toml_real(tm, 'leaf_physiology.acclim_window_days', cfg%acclim_window_days)
-      call req_r(tm, 'leaf_physiology.ds_vcmax', cfg%ds_vcmax, miss)
-      call req_r(tm, 'leaf_physiology.ds_jmax',  cfg%ds_jmax,  miss)
-      call req_r(tm, 'leaf_physiology.ds_rd',    cfg%ds_rd,    miss)
-      call req_r(tm, 'leaf_physiology.o2_mol_frac',      cfg%o2_mol_frac,      miss)
-      call req_r(tm, 'leaf_physiology.leaf_absorptance', cfg%leaf_absorptance, miss)
-      call req_r(tm, 'leaf_physiology.phi_psii',         cfg%phi_psii,         miss)
-      cfg%vpd_min = toml_real(tm, 'leaf_physiology.vpd_min', cfg%vpd_min)
+      call load_leaf_physiology_params(tm, cfg%leaf_physiology, miss)
 
       !----- PFT file (named in the main file). -------------------------------------------!
       call toml_parse_file(trim(cfg%init%pft_config), tp, found)

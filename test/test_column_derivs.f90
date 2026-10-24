@@ -28,7 +28,6 @@ program test_column_derivs
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_soil_heat,      only : soil_energy_step_implicit, soil_energy_time_deriv, soil_layer_temp
-   use meds_canopy_radiation, only : radiative_temperature
    use meds_pft_params,  only : hydraulics_pft_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_integ_derivs, only : surface_derivs, march_derivs
@@ -100,7 +99,7 @@ contains
       allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
                frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
-      frozen%tissue%t_leaf0 = 298.5_wp ; frozen%tissue%t_wood0 = 298.5_wp   ! the emission base, t_rad
+      frozen%tissue%t_leaf0 = 298.5_wp ; frozen%tissue%t_wood0 = 298.5_wp   ! each tissue's emission base
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n), frozen%film%transfer_lw(n))
@@ -143,7 +142,7 @@ contains
       type(frozen_t)  :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
-      real(wp)    :: tcas, qcas, qsat_c, dqdt, esat, dtl, lw_slope, le_slope, le_ref, resid, worst, t_rad
+      real(wp)    :: tcas, qcas, qsat_c, dqdt, esat, dtl, lw_slope, le_slope, le_ref, resid, worst, t_leaf0
       integer(ik) :: i, n
       n = 3_ik
       print '(a)', 'test_leaf_closure:'
@@ -163,17 +162,17 @@ contains
       worst = 0.0_wp
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
-         !----- The longwave about the emission the two-stream's abs_lw is net of, at t_rad. ---------!
-         t_rad    = radiative_temperature(frozen%tissue%lai(i), frozen%tissue%wai(i), frozen%tissue%t_leaf0(i),     &
-                                          frozen%tissue%t_wood0(i))
-         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan_boltzmann * t_rad ** 3 * frozen%tissue%lai(i)
+         !----- The longwave about the emission the two-stream's abs_lw is net of, the leaf's own at  !
+         !      its start-of-step temperature. -------------------------------------------------------!
+         t_leaf0  = frozen%tissue%t_leaf0(i)
+         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan_boltzmann * t_leaf0 ** 3 * frozen%tissue%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature             !
          !      (docs/science/vegetation_energy_dynamics.md eq. (2)). ------------------------------!
          le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
          le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * (qsat_c - qcas)
          !----- Rnet - sensible - latent - LW-emission, all at the diagnosed leaf temperature. ---!
          resid = frozen%tissue%abs_sw(i) + frozen%tissue%abs_lw(i) - frozen%tissue%h_coeff_leaf(i) * dtl                          &
-                 - (le_ref + le_slope * dtl) - lw_slope * (f%leaf_temp(i) - t_rad)
+                 - (le_ref + le_slope * dtl) - lw_slope * (f%leaf_temp(i) - t_leaf0)
          worst = max(worst, abs(resid))
       end do
       call check_true('diagnosed leaf T zeroes the linearized balance', worst < 1.0e-9_wp, worst)
@@ -183,13 +182,13 @@ contains
    end subroutine test_leaf_closure
 
    !----- 2. No latent (g_transp_leaf = 0) and no LW forcing (abs_lw = 0): the leaf balances its       !
-   !      shortwave against sensible heat and its emission about t_rad, dtl = (abs_sw +                !
-   !      lw_slope*(t_rad - tcas)) / (h + lw_slope). --------------------------------------------------!
+   !      shortwave against sensible heat and its emission about its start temperature t_leaf0,        !
+   !      dtl = (abs_sw + lw_slope*(t_leaf0 - tcas)) / (h + lw_slope). --------------------------------!
    subroutine test_leaf_analytic()
       type(frozen_t)  :: frozen
       type(surface_state_t)  :: y
       type(surface_tend_t)   :: f
-      real(wp) :: tcas, lw_slope, expect, t_rad
+      real(wp) :: tcas, lw_slope, expect, t_leaf0
       print '(a)', 'test_leaf_analytic:'
       call make_frozen(frozen, 1_ik)
       frozen%tissue%g_transp_leaf(1) = 0.0_wp ; frozen%tissue%abs_lw(1) = 0.0_wp ; frozen%tissue%abs_sw(1) = 200.0_wp
@@ -199,23 +198,22 @@ contains
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, 1_ik, f)
       tcas     = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
-      t_rad    = radiative_temperature(frozen%tissue%lai(1), frozen%tissue%wai(1), frozen%tissue%t_leaf0(1),       &
-                                       frozen%tissue%t_wood0(1))
-      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * t_rad ** 3 * frozen%tissue%lai(1)
-      expect   = tcas + (frozen%tissue%abs_sw(1) + lw_slope * (t_rad - tcas)) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
-      call check('leaf T = tcas + (Rn + lw_slope (t_rad - tcas))/(h + lw_slope) (no latent, no LW)', f%leaf_temp(1), &
+      t_leaf0  = frozen%tissue%t_leaf0(1)
+      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * t_leaf0 ** 3 * frozen%tissue%lai(1)
+      expect   = tcas + (frozen%tissue%abs_sw(1) + lw_slope * (t_leaf0 - tcas)) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
+      call check('leaf T = tcas + (Rn + lw_slope (t_leaf0 - tcas))/(h + lw_slope) (no latent, no LW)', f%leaf_temp(1), &
                  expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
 
    !----- 2b. A falling leaf's film passed to its wood (Palo Verde's dry season): the leaf, nearly    !
    !      gone, hands its whole film to the wood as the cohort's film is re-shared by capacity. The   !
    !      giver is charged nothing for the water it passes, so the leaf balances its sensible heat    !
-   !      against its emission about t_rad alone; charged the rain's valuation, it sat 4e10 K off. ---!
+   !      against its emission about t_leaf0 alone; charged the rain's valuation, it sat 4e10 K off. -!
    subroutine test_falling_leaf_film()
       type(frozen_t)        :: frozen
       type(surface_state_t) :: y
       type(surface_tend_t)  :: f
-      real(wp) :: tcas, t_rad, lw_slope, expect
+      real(wp) :: tcas, t_leaf0, lw_slope, expect
       print '(a)', 'test_falling_leaf_film:'
       call make_frozen(frozen, 1_ik)
       frozen%tissue%lai(1) = 1.0e-20_wp
@@ -234,10 +232,9 @@ contains
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, 1_ik, f)
       tcas     = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
-      t_rad    = radiative_temperature(frozen%tissue%lai(1), frozen%tissue%wai(1), frozen%tissue%t_leaf0(1),       &
-                                       frozen%tissue%t_wood0(1))
-      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * t_rad ** 3 * frozen%tissue%lai(1)
-      expect   = tcas + lw_slope * (t_rad - tcas) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
+      t_leaf0  = frozen%tissue%t_leaf0(1)
+      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * t_leaf0 ** 3 * frozen%tissue%lai(1)
+      expect   = tcas + lw_slope * (t_leaf0 - tcas) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check_true('a falling leaf passing its film to its wood is charged nothing for it',                   &
                       abs(f%leaf_temp(1) - expect) < 1.0e-8_wp, f%leaf_temp(1) - expect)
    end subroutine test_falling_leaf_film
@@ -1020,7 +1017,7 @@ contains
       allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
                frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
-      frozen%tissue%t_leaf0 = 298.5_wp ; frozen%tissue%t_wood0 = 298.5_wp   ! the emission base, t_rad
+      frozen%tissue%t_leaf0 = 298.5_wp ; frozen%tissue%t_wood0 = 298.5_wp   ! each tissue's emission base
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
       frozen%tissue%leaf_emiss = 0.95_wp ; frozen%tissue%wood_emiss = 0.95_wp
