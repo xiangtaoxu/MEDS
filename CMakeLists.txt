@@ -735,7 +735,7 @@ if(MEDS_BUILD_TESTS)
    #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
    #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
    #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
-   foreach(t canopy_aerodynamics canopy_radiation leaf_gas_exchange respiration)
+   foreach(t canopy_aerodynamics canopy_radiation leaf_gas_exchange respiration soil_heat)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
@@ -762,7 +762,7 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME water_network COMMAND test_water_network)
 
    #----- Energy-balance + snow tests link meds_fast_kernels (state-free). ----------------#
-   foreach(t column_energy surface_energy snow)
+   foreach(t surface_energy snow)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
