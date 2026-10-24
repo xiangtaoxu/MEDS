@@ -185,18 +185,18 @@ step performs it first, before its fast loop (`advance_boundary` → `restructur
 two steps sit the output tick, the I/O phase and any checkpoint. The restructuring runs only with
 `[run].slow_on` (the master freeze of the slow tier), and each operator has its own switch besides.
 
-**At every month boundary** (`demography_on` and `do_cohort_fissfuse`), in order:
-1. recruitment from the recruit pools;
-2. cohort fusion;
+**At every month boundary** (`demography_on`), in order:
+1. recruitment from the recruit pools (`recruitment_on`);
+2. cohort fusion (`cohort_fusion_on`);
 3. culling of cohorts below the tracking floor: under its density times AGB floor, or at its density floor
    (`negligible_nplant`), where mortality stops a cohort that has died out;
-4. splitting;
+4. splitting (`cohort_fission_on`);
 5. a re-sort.
 
 **At a year boundary**, after the month's operators:
-1. patch disturbance (`do_patch_disturbance`);
-2. patch fusion and termination (`do_patch_fissfuse`), followed by the cohort fusion, culling and
-   re-sort they call for.
+1. patch disturbance (`patch_disturbance_on`);
+2. patch fusion (`patch_fusion_on`) and termination, followed by the cohort fusion
+   (`cohort_fusion_on`), culling and re-sort they call for.
 
 Each patch operator works within one site: a disturbance cuts one gap per site from that site's
 patches, fusion pairs patches of one site, and termination merges a sliver into its own site's

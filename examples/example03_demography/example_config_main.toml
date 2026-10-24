@@ -4,7 +4,7 @@
 # The driver is examples/example03_demography/run_demography.py, not meds_main: the laws live in the
 # example, and meds_main has only the carbon path. This is still a full MEDS config because
 # `meds_config_load` requires one; the driver reads the PFT table, the demographic settings, the
-# treefall disturbance and the census file from it. The [run], [fast], [carbon] and output keys are
+# treefall disturbance and the census file from it. The [run], [fast] and output keys are
 # required by the loader and unused on this path. Paths are relative to the repository root.
 
 [run]
