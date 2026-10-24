@@ -127,6 +127,8 @@ freezes on its freezing curve, holding supercooled liquid; its ice impedes the w
 pores, and the soil heat step solves the latent heat with the heat (#511). A tissue's longwave is
 linearized about the emission the two-stream gave it, and the output reports the net radiation the
 balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
+Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
+one helper groups the cohorts of one height into a layer (#514).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -741,9 +743,26 @@ balances booked (#512). Examples 04 and 05 are rerun on that physics, and exampl
   `soil_water_relations` and `soil_theta_to_unknown` take the layers' ice (`soil_ice_t`), and
   `bottom_flux` the bottom layer's impedance; `ground_evap_env_t` drops `ground_fliq`;
   `soil_heat_be_solve` goes, and `soil_heat_out_t` gains `iterations`.
+- **Fortran: each tissue's longwave, the `[leaf_physiology]` record** (#514). `canopy_radiation` takes
+  `leaf_temp` and `wood_temp` in place of `canopy_temp`, and `radiative_temperature` goes. The
+  `[leaf_physiology]` keys are `cfg%leaf_physiology%<key>` (`leaf_physiology_params_t`, in
+  `meds_leaf_params`), and `acclimate_site_leaf_tables` takes that record. `meds_numerics` adds
+  `equal_height_layers`.
 
 ### Changed
 
+- **Each tissue pays its own longwave emission** (#514). A cohort's net longwave was split between
+  leaves and wood by their share of the absorption, so the leaves paid a share of the wood's emission
+  whatever their temperatures. Leaves and wood now share what the cohort takes in, the two-stream's net
+  plus all it emits, by that share, and each pays its own emission at its own temperature; tied cohorts
+  share their layer the same way. The cohort emits at its tissues' σT⁴ weighted by absorptivity (was the
+  unclumped LAI/(LAI+WAI)), and the tissue balance linearizes each tissue's longwave about its own
+  start-of-step temperature. With the sky, the ground and the leaves at 295 K and the wood at 305 K,
+  the leaves gain 19.4 W/m² where they lost 10. Means move under 0.05 % in every harness case (ex04 H
+  −0.03 %, GPP +0.004 %; Palo Verde's inventory H −0.03 %, GPP +0.003 %).
+- **`[leaf_physiology]` is one record, and one helper groups the cohorts of one height** (#514), with no
+  change to any result. The radiation, the in-canopy wind and the overtopping LAI take their layers from
+  `equal_height_layers`.
 - **Examples 04 and 05 rerun, example 04 refitted** (#513). Example 04's calibration is redone on the
   fast-kernel physics (vcmax25 33.6, stomatal_g1 2.88, leaf_angle_mean 51.6, z0m_ratio 0.049, κ 0.714);
   its validation fails on H alone (RMSE +11 %, the limit 10 %), and it ships with H flagged. Against
