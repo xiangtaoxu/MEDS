@@ -7,7 +7,8 @@
 !                       capacitance C matches a finite-difference dW/dpsi.                        !
 !   2. KIRCHHOFF EDGE : the integrated conductance uses <plc> in (plc(leaf), plc(wood)); the      !
 !                       |dpsi|->0 limit reduces to the pointwise value; the table and a Simpson    !
-!                       reference.                                                                 !
+!                       reference; with gravity it overstates the exact steady flux by the       !
+!                       margin the page states (a = 2, closed form).                               !
 !   3. SAPWOOD        : the intact xylem conductance is the sapwood's.                             !
 !   4. ROOTS          : ED2's root profile and rooting depth; Gardner's root conductance.        !
 !   5. SEAM           : growth at conserved water lowers psi; the capacity clamp on a shrink.    !
@@ -109,7 +110,41 @@ contains
       pmid  = -0.9_wp
       call xylem_sapflow(KCOND, pmid, pmid - 1.0e-9_wp, 0.0_wp, PSI50, KEXP, tab, s0, dum1, dum2)
       call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * KCOND), conductance_retained_fraction(pmid,PSI50,KEXP), 1.0e-6_wp)
+      !----- With gravity the law is not the steady flux. For a = 2 the exact one solves             !
+      !      psi50 / sqrt(c Q) [atan(r_w lam) - atan(r_l lam)] = 1, c = Q + G, lam = sqrt(Q/c),        !
+      !      r = psi/psi50 (Q = flux/k_cond). At psi_w -1, psi_l -3, G 0.5 and psi50 -1.5 MPa the law   !
+      !      overstates it by 3.4 % (docs/science/plant_hydraulics.md §3). -------------------------!
+      block
+         real(wp), parameter :: P50G = -1.5_wp, PW = -1.0_wp, PL = -3.0_wp, G = 0.5_wp
+         type(kirchhoff_table_t) :: tab_g
+         real(wp) :: q_law, q_lo, q_hi, q_mid
+         integer(ik) :: it
+         call build_kirchhoff_table(tab_g, 2.0_wp)
+         call xylem_sapflow(1.0_wp, PW, PL, G, P50G, 2.0_wp, tab_g, q_law, dum1, dum2)
+         q_lo = 1.0e-9_wp ; q_hi = 2.0_wp * q_law
+         do it = 1_ik, 200_ik
+            q_mid = 0.5_wp * (q_lo + q_hi)
+            if (steady_residual(q_mid) > 0.0_wp) then
+               q_lo = q_mid
+            else
+               q_hi = q_mid
+            end if
+         end do
+         call check('with gravity the law overstates the steady flux by 3.4 %', q_law / q_lo - 1.0_wp,    &
+                    0.0336_wp, 5.0e-4_wp)
+      end block
    end subroutine test_xylem_kirchhoff_mean
+
+   !----- The exact a = 2 steady-flux condition with gravity at psi_w -1, psi_l -3, G 0.5 and psi50 -1.5 !
+   !      MPa: positive below the root Q, negative above it. ------------------------------------------!
+   pure real(wp) function steady_residual(q) result(f)
+      real(wp), intent(in) :: q   !< [MPa] the flux per k_cond
+      real(wp), parameter :: P50 = -1.5_wp, PW = -1.0_wp, PL = -3.0_wp, G = 0.5_wp
+      real(wp) :: c, lam
+      c   = q + G
+      lam = sqrt(q / c)
+      f   = P50 / sqrt(c * q) * (atan(lam * PW / P50) - atan(lam * PL / P50)) - 1.0_wp
+   end function steady_residual
 
    !----- integral_0^r du/(1+u^kexp) by composite Simpson on 2000 intervals: the reference. ---!
    pure real(wp) function simpson_reference(r, kexp) result(g)
