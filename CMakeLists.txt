@@ -605,34 +605,16 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
    meds_fortran_flags(test_config_keys)
    add_test(NAME config_keys COMMAND test_config_keys)
-   add_test(NAME config_unknown_keys_refused
-            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
-                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
-   add_test(NAME config_rk45_loose_rtol_refused
-            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
-                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_rk45_loose_rtol.toml
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rk45_rtol_refused.cmake)
-   set_tests_properties(config_rk45_loose_rtol_refused PROPERTIES TIMEOUT 120)
-   #----- A census or state file that cannot start the run stops it, naming the mode and the     #
-   #      file: one that is not there, and a census with no row. The script explains the rule.    #
-   foreach(case "census_missing;1;no_such_census.csv;OFF;cannot be opened"
-                "census_empty;1;empty_census.csv;ON;holds no cohort for the site"
-                "restart_missing;2;no_such_state.nc;OFF;cannot be opened")
-      list(GET case 0 name)
-      list(GET case 1 mode)
-      list(GET case 2 file)
-      list(GET case 3 empty)
-      list(GET case 4 reason)
-      add_test(NAME init_${name}_refused
+   #----- meds_main refuses a run it cannot start and names the cause: unknown, moved or misplaced  #
+   #      keys; RK45 at a loose tolerance; a census or state file that is missing or empty. Each    #
+   #      case is a one-day run in its own build-tree directory; the script explains the cases.    #
+   foreach(case config_unknown_keys config_rk45_loose_rtol init_census_missing init_census_empty
+                init_restart_missing)
+      add_test(NAME ${case}_refused
                COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
                        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                       -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/init_${name}.toml
-                       -DINIT_MODE=${mode} -DINIT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${file}
-                       -DEMPTY_CENSUS=${empty} "-DREASON=${reason}"
-                       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_init_refused.cmake)
+                       -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/refused/${case} -DCASE=${case}
+                       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_main_refuses.cmake)
    endforeach()
 
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
