@@ -641,7 +641,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch allometry disturbance init_census init_soil_state carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
+   foreach(t containers fusion_cohort patch disturbance init_census init_soil_state carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
@@ -917,14 +917,13 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- The shipped [allometry] block must equal the meds_allometry_lib initializers (the     #
-   #      Python library's config-free values); biomass must be Chave 2014 in carbon, leaf      #
-   #      ED2's over C2B.                                                                       #
-   add_executable(test_allometry_defaults test/test_allometry_defaults.f90)
-   target_link_libraries(test_allometry_defaults PRIVATE meds_testsupport meds_model)
-   meds_fortran_flags(test_allometry_defaults)
-   add_test(NAME allometry_defaults COMMAND test_allometry_defaults
-            ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
+   #----- meds_allometry_lib: the size laws, and the shipped [allometry] block equal to the     #
+   #      library's initializers (the Python library's config-free values), which are Chave 2014 #
+   #      in carbon and ED2's leaf fit over C2B. meds_config only for the TOML reader.            #
+   add_executable(test_allometry_lib test/test_allometry_lib.f90)
+   target_link_libraries(test_allometry_lib PRIVATE meds_config meds_testassert)
+   meds_fortran_flags(test_allometry_lib)
+   add_test(NAME allometry_lib COMMAND test_allometry_lib ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
 
    #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so #
    #      it can drift silently from the registry. The source tree path is passed in because     #
