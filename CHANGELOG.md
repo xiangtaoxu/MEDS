@@ -105,7 +105,8 @@ result (#497). The canopy's process modules hold their own formulas, and the ref
 canopy geometry are stored once (#498). The plants' process modules hold their own formulas, and a
 tissue's energy balance takes its two latent pathways as records (#499). The ground's process modules hold
 their own formulas, the ground surface's surroundings are one record, and the soil water routines take the
-soil's potential in MPa (#500).
+soil's potential in MPa (#500). One module holds the plants' maintenance respiration and the soil's
+heterotrophic respiration, and the fast half no longer links the slow kernels (#501).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -693,9 +694,21 @@ soil's potential in MPa (#500).
   `snow_surface_balance(env, flux)` reads them from it, and `surface_derivs` has no `snow` argument.
   `prepare_snow_stage(snowfall, rainfall, t_air, snow_rough, env, st)` is `meds_surface`'s; it advances
   `env`'s pack and returns its hand-off in `snow_out_t`.
+- **Fortran: `meds_plant_respiration` is `meds_respiration`** (#501), which also holds the soil's
+  respiration chemistry: `assemble_env_scalar`, `assemble_transfer_matrix` and
+  `heterotrophic_respiration_matrix` are its `decomposition_env_scalar`, `decomposition_transfer_matrix`
+  and `heterotrophic_respiration`, their parameter argument `params`. `pack_pool_vector` and
+  `unpack_pool_vector` are `meds_patch_state_vars`'.
 
 ### Changed
 
+- **One respiration module, plant and soil** (#501). `meds_plant_respiration` is `meds_respiration`, and
+  the soil's respiration chemistry moves into it from `meds_soil_biogeochem`: the decomposition scalar,
+  the CENTURY transfer matrix and Rh. `meds_soil_biogeochem` keeps the pools' daily dynamics and takes the
+  matrix from there, so the fast loop and the daily step still debit the same CENTURY matrix. The fast
+  half imports nothing from `slow_dynamics/` any more, so `meds_fast` drops its link to the slow kernels,
+  and `meds_slow_kernels` links `meds_fast_kernels` instead. Every variable of the 10 harness cases is
+  identical on gfortran, and on ifx to #500's.
 - **The ground's process modules hold their own formulas** (#500). `set_soil_heat_env` is the soil
   column's forcing from the ground heat flux and the water network's flows, which the ESDIRK2 stage and
   `march_derivs` each assembled (it replaces `assemble_soil_energy_forcing`); `soil_layer_temp` is one
