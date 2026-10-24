@@ -43,9 +43,12 @@ sets the CAS air mass per ground area, hence the storage capacity of each of its
 ## 2. The CLM5 Monin-Obukhov surface layer
 
 `mo_surface_layer` returns $`u_*`$ and the scalar profile factor from the atmosphere-to-CAS gradients.
-It is seeded by the analytic **MoninObukIni** bulk-Richardson guess and then does a **fixed** number of
-sweeps (`n_iter_mo`, default 4) — no convergence test, so every patch does the same work, and the result is the last sweep's, not a
-converged root. Using virtual potential temperatures
+It is seeded by the analytic **MoninObukIni** bulk-Richardson guess and then sweeps until the coupling
+$`u_*\cdot\mathrm{temp1}`$ moves by less than $`10^{-4}`$ of itself from one sweep to the next, at most
+`n_iter_mo` (20) sweeps. Near neutral two sweeps suffice; under hot canopy air and a weak wind the sweeps
+swing about the root (ζ and the convective wind feed each other), and four fixed sweeps missed it by up
+to 21 % (a 30 m forest at 0.5 m s⁻¹ with the canopy air 5 K warmer), where the stage's re-solve matters
+most. Using virtual potential temperatures
 $`\theta_v=\theta\,(1+0.60783\,q)`$ (the factor is $`M_{dry}/M_{h2o}-1`$, `virtual_temp_factor`) and the
 CAS↔atmosphere differences $`\Delta\theta_v`$:
 
@@ -247,7 +250,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`c_{z0}`$ | `z0m_ratio` | roughness / canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement / canopy height (0.63) |
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
-| — | `n_iter_mo` | fixed Monin-Obukhov iterations (4; no convergence test) |
+| — | `n_iter_mo` | the most Monin-Obukhov sweeps (20); they stop when $`u_*\cdot\mathrm{temp1}`$ settles to 10⁻⁴ |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
 | — | `zeta_max_stable` | cap on the stable $\zeta$, of the first guess and of each sweep (CLM5) |
 | $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |

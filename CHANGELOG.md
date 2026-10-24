@@ -115,7 +115,8 @@ optics, a snow pack buries the canopy's roughness, the drought limb reaches C4 l
 brackets behind a boundary layer and at the dew point, the configuration refuses impossible traits and
 NaN soil layers, and the reported net radiation includes the wood (#503). The two-stream solves each
 layer's scattered beam through its depth, so a canopy's light no longer depends on how it is cut into
-cohorts (#504).
+cohorts (#504). The Monin-Obukhov surface layer sweeps until the canopy air's coupling settles, and
+the transpiration demand stops re-solving it at the state the pre-pass already solved (#505).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -715,9 +716,17 @@ cohorts (#504).
   `abs_lw` are `rnet_soil`, `sw_snow` and `lw_down`; `fast_forcing_t` adds `rnet_soil`, `sw_snow` and
   `lw_down_ground` beside its ground totals. `ground_evap_env_t` adds `press`, `patch_diag_row` takes
   the pressure, and `meds_canopy_aerodynamics` drops `psim` and adds `canopy_burial_fraction`.
+- **`[aerodynamics].n_iter_mo` is the most Monin-Obukhov sweeps** (#505), 20; the sweeps stop when the
+  coupling settles. A configuration copied from the old main config, which set 4, keeps a cap of 4.
 
 ### Changed
 
+- **The surface layer sweeps to a tolerance** (#505). Four fixed Monin-Obukhov sweeps missed the
+  canopy air's coupling by up to 21 % in free convection (a 30 m forest at 0.5 m/s, the canopy air 5 K
+  warmer: −18.7 %); the sweeps now stop when u*·temp1 moves by less than 1e-4 of itself, at most
+  `n_iter_mo` (20) of them, with 0.6 % the largest error on a 784-case grid. u* +0.1 to +0.3 %, Niwot's
+  LE −1.1 %; the cost is within run-to-run noise, since the transpiration demand's two start-of-step
+  solves now take the pre-pass's conductances (bit-identical) instead of solving again.
 - **The two-stream solves each layer's scattered beam through its depth** (#504). The beam a layer
   scattered entered at its two faces, unattenuated inside it, so the light depended on the cohort cut
   (default optics, LAI 5: VIS albedo 0.075 for one cohort, 0.053 for five, 0.043 converged).
