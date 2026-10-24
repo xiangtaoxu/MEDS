@@ -34,8 +34,7 @@ module meds_polygon
    use meds_met_types,                  only : met_source_t, met_cursor_t
    use meds_met,                        only : met_cursor_init
    use meds_output_types,               only : output_files_t, output_buffers_t
-   use meds_output_params,              only : TIER_FAST
-   use meds_output_integrate,           only : output_integrate, output_integrate_fast, close_tier
+   use meds_output_integrate,           only : output_tick
    use meds_output_reduce,              only : total_area
    implicit none
    private
@@ -70,7 +69,6 @@ module meds_polygon
       !      apart. -------------------------------------------------------------------------------!
       integer(ik)         :: most_patches = 0_ik, most_cohorts = 0_ik
       character(len=19)   :: most_patches_when = '', most_cohorts_when = ''
-      integer(ik)         :: fast_step_total = 0_ik       !< fast sub-steps replayed into the output
       real(wp)            :: area_start = 0.0_wp          !< the patch areas' sum at the start
       integer(ik)         :: status = RUN_OK           !< the last step's status
    end type polygon_run_t
@@ -173,7 +171,7 @@ contains
       !----- Output: replay the staged FAST samples, then fold this step -- its fluxes over the    !
       !      step and its state at its end -- into the slower tiers' windows that hold its start,  !
       !      closing each period its end has left and queueing it for the I/O phase. --------------!
-      if (out_files%enabled) call tick_output(out_files, out_bufs)
+      if (out_files%enabled) call output_tick(out_files, out_bufs, poly, step, cfg%dt_slow, cfg%dt_fast)
 
       !----- The output has read the step: zero its diagnostics. A step that ends on a month       !
       !      boundary leaves the restructuring owed to the next step, so the ending period's       !
@@ -185,28 +183,6 @@ contains
 
       status = check_polygon_state(cfg, poly, run, step%end)
       run%status = status
-
-   contains
-
-      !----- The FAST tier: fold each staged sub-step, closing the tier every fast_interval_steps  !
-      !      of them. Then the slower tiers' tick, whose snapshots of fast-loop values read the    !
-      !      last staged sub-step. ----------------------------------------------------------------!
-      subroutine tick_output(files, bufs)
-         type(output_files_t),   intent(in)    :: files
-         type(output_buffers_t), intent(inout) :: bufs
-         integer(ik) :: isub
-         if (bufs%fast_ready .and. files%reg%nidx(TIER_FAST) > 0_ik) then
-            do isub = 1_ik, bufs%n_fast_sub
-               call output_integrate_fast(files, bufs, isub, cfg%dt_fast)
-               run%fast_step_total = run%fast_step_total + 1_ik
-               if (mod(run%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)          &
-                  call close_tier(files, bufs, TIER_FAST)
-            end do
-         end if
-         call output_integrate(files, bufs, poly, step%start, cfg%dt_slow, step%new_day, step%new_month,  &
-                               step%new_year)
-         bufs%fast_ready = .false.
-      end subroutine tick_output
 
    end subroutine polygon_step
 

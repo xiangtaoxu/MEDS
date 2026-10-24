@@ -10,7 +10,7 @@
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
-   use meds_time,           only : meds_time_t
+   use meds_time,           only : meds_time_t, calendar_step_t
    use meds_output_params,      only : N_FREQ, FREQ_FAST, TIER_FAST, TIER_DAILY, TIER_MONTHLY, TIER_ANNUAL
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,                  &
                                    pending_record_t, record_queue_t, AGG_MEAN, AGG_RATE, AGG_LAST, AGG_TMEAN,     &
@@ -25,9 +25,35 @@ module meds_output_integrate
 
    public :: alloc_integ_buffer, reset_buffer, integrate_scalar, integrate_slab
    public :: normalize_scalar, normalize_slab
-   public :: output_integrate, output_integrate_fast, close_tier
+   public :: output_tick, output_integrate, output_integrate_fast, close_tier
 
 contains
+
+   !=======================================================================================!
+   !  A polygon's output tick after a slow step: replay the FAST samples its fast loop      !
+   !  staged, closing that tier every fast_interval_steps of them over the run, then fold   !
+   !  the step into the slower tiers (output_integrate), whose snapshots of fast-loop values !
+   !  read the last staged sub-step. Closed records are queued for the I/O phase.          !
+   !=======================================================================================!
+   subroutine output_tick(files, bufs, poly, step, dt_slow, dt_fast)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
+      type(polygon_t),        intent(in)    :: poly
+      type(calendar_step_t),  intent(in)    :: step
+      real(wp),               intent(in)    :: dt_slow, dt_fast   !< [s] the slow step, a fast sub-step
+      integer(ik) :: isub
+      if (bufs%fast_ready .and. files%reg%nidx(TIER_FAST) > 0_ik) then
+         do isub = 1_ik, bufs%n_fast_sub
+            call output_integrate_fast(files, bufs, isub, dt_fast)
+            bufs%fast_step_total = bufs%fast_step_total + 1_ik
+            if (mod(bufs%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)          &
+               call close_tier(files, bufs, TIER_FAST)
+         end do
+      end if
+      call output_integrate(files, bufs, poly, step%start, dt_slow, step%new_day, step%new_month,     &
+                            step%new_year)
+      bufs%fast_ready = .false.
+   end subroutine output_tick
 
    !=======================================================================================!
    !  Buffer lifecycle                                                                      !
@@ -357,9 +383,10 @@ contains
    end subroutine enqueue_record
 
    !=======================================================================================!
-   !  Fold one staged sub-step (isub) into the FAST tier's buffers. Main calls it once per   !
-   !  staged sub-step and closes the tier every fast_interval_steps folds. It reads only the !
-   !  buffers' staging, never the polygon's live state (the end of the slow step by now).   !
+   !  Fold one staged sub-step (isub) into the FAST tier's buffers. output_tick calls it   !
+   !  once per staged sub-step and closes the tier every fast_interval_steps folds. It     !
+   !  reads only the buffers' staging, never the polygon's live state (the end of the slow !
+   !  step by now).                                                                        !
    !=======================================================================================!
    subroutine output_integrate_fast(files, bufs, isub, dt)
       type(output_files_t),   intent(in)    :: files
