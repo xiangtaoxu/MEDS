@@ -129,7 +129,9 @@ linearized about the emission the two-stream gave it, and the output reports the
 balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
 Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
 one helper groups the cohorts of one height into a layer (#514). The slow loop's science is on two new
-pages, `demography.md` and `conservation.md`, and its code keeps short comments (#515).
+pages, `demography.md` and `conservation.md`, and its code keeps short comments (#515). The slow loop
+is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
+change to any result (#516).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -749,9 +751,31 @@ pages, `demography.md` and `conservation.md`, and its code keeps short comments 
   `[leaf_physiology]` keys are `cfg%leaf_physiology%<key>` (`leaf_physiology_params_t`, in
   `meds_leaf_params`), and `acclimate_site_leaf_tables` takes that record. `meds_numerics` adds
   `equal_height_layers`.
+- **Fortran: the slow loop's modules** (#516). The laws are in `slow_dynamics/processes/`:
+  `meds_plant_phenology` (was `meds_phenology` and `meds_phenology_types`; the `CUE_*` bits are
+  `meds_pft_params`'), `meds_plant_carbon_allocation` (now also `growth_sink_limitation`,
+  `cohort_carbon_demand`, `growth_window_so_far`), `meds_plant_traits` (was
+  `meds_plant_trait_dynamics`), `meds_soil_carbon` (was `meds_soil_biogeochem`,
+  `meds_biogeochem_types` and `meds_litter_partition`; `soilc_audit_t` is `soil_carbon_out_t`) and
+  `meds_demography` (was `meds_demography_rates`). The drivers are in `slow_dynamics/driver/`:
+  `vegetation_dynamics` and `restructure_stand` are `meds_slow_dynamics`'; the per-process routines
+  (`advance_leaf_phenology`, `advance_plant_traits`, `reacclimate_plant_traits`,
+  `acclimate_site_leaf_tables`, the tissue-water routines) are `meds_slow_state`'s, and they take the
+  step record `slow_step_data_t` in place of `pool_change_block`; the operators (the old
+  `meds_demography_update` and both `*_fusefiss`, `accumulate_recruit_pool`,
+  `update_cohort_derivatives`, `refresh_canopy_depth`) are `meds_slow_update`'s; `soilc_seam_t` is
+  `meds_slow_ledger`'s. `soil_carbon_t` is `soil_carbon_state_t`. The `meds_demography` library is
+  part of `meds_slow`, and the `MEDS_GPU` build option is gone.
 
 ### Changed
 
+- **The slow loop is a `driver/` and a flat `processes/`** (#516), with no change to any result on
+  gfortran. Each slow process is one module named after its science page, and the drivers have one
+  job each: `meds_slow_dynamics` orders a step and marks the ledger, `meds_slow_state` reads the
+  stand and calls the processes, `meds_slow_update` is the one place a step writes the stand's
+  carbon and structure, and `meds_slow_diag` writes the slow rows. A step's working values travel in
+  one record, `slow_step_data_t`. GPU offload, measured slower than the CPU, has no build option any
+  more.
 - **The slow loop's science moves to the science pages** (#515), with no change to any result.
   `docs/science/demography.md` (new) gives the vital rates, how they are applied, the cohort and patch
   operators and what each conserves; `docs/science/conservation.md` (new) the slow site ledger, its
