@@ -15,7 +15,6 @@ module meds_slow_state
    use meds_kinds,                   only : wp, ik
    use meds_constants,               only : day_sec, tiny_num, grav_head
    use meds_config,                  only : meds_config_t, growth_window_steps
-   use meds_pft_derive,              only : pft_leaf_psi_tlp
    use meds_plant_hydr_lib,          only : water_curve_t, tissue_psi_to_water, tissue_water_to_psi,     &
                                             tissue_capped_water
    use meds_therm_lib,               only : internal_energy_liquid
@@ -35,8 +34,7 @@ module meds_slow_state
    use meds_patch_state_vars,        only : litter_input_t
    use meds_state_defaults,          only : is_unset_positive
    use meds_biogeochem_params,       only : N_SOIL_POOL
-   use meds_plant_phenology,         only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,       &
-                                            phenology_kernel
+   use meds_plant_phenology,         only : pheno_env_t, pheno_state_t, pheno_out_t, phenology_kernel
    use meds_plant_traits,            only : light_plastic_traits, update_plastic_trait,                  &
                                             acclimate_leaf_photo_table
    use meds_soil_carbon,             only : add_necromass, build_litter_input, soil_carbon_step,         &
@@ -85,7 +83,6 @@ contains
       integer(ik),         intent(in)    :: doy
       real(wp),            intent(in), optional :: latitude_deg   !< the polygon's [deg] (default: the [site] latitude)
       type(pheno_env_t)    :: env
-      type(pheno_args_t)   :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf, is
@@ -103,7 +100,6 @@ contains
 
       do i = 1_ik, poly%cohort%n
          pf = poly%cohort%pft(i)
-         call flatten_pheno_params(cfg, pf, params)
 
          !----- The daily drivers. dmax_psi_leaf is the last completed predawn value; a cohort born !
          !      today reads 0, well watered, for one day, as in the leaf kernel. ---------------!
@@ -122,7 +118,7 @@ contains
          state%wet_psi_sum         = poly%cohort%wet_psi_sum(i)
          state%dry_psi_sum         = poly%cohort%dry_psi_sum(i)
          state%light_hours_mean    = poly%cohort%light_hours_mean(i)
-         call phenology_kernel(env, params, dt_days, state, out)
+         call phenology_kernel(env, poly%cohort%pft_table%pheno(pf), dt_days, state, out)
          poly%cohort%leaf_flush_tendency(i) = state%leaf_flush_tendency
          poly%cohort%leaf_shed_tendency(i)  = state%leaf_shed_tendency
          poly%cohort%growing_degree_days(i) = state%growing_degree_days
@@ -132,44 +128,6 @@ contains
          poly%cohort%light_hours_mean(i)    = state%light_hours_mean
       end do
    end subroutine advance_leaf_phenology
-
-   !---------------------------------------------------------------------------------------!
-   ! Copy one PFT's phenology traits (cfg%pft%pheno) into the kernel's self-contained parameter  !
-   ! set, as meds_pft_derive does for the leaf traits.                                          !
-   !---------------------------------------------------------------------------------------!
-   subroutine flatten_pheno_params(cfg, ipft, p)
-      type(meds_config_t),  intent(in)  :: cfg
-      integer(ik),          intent(in)  :: ipft
-      type(pheno_args_t),   intent(out) :: p
-      associate (t => cfg%pft)
-         p%flush_cue_mask        = t%pheno(ipft)%flush_cue_mask
-         p%shed_cue_mask         = t%pheno(ipft)%shed_cue_mask
-         p%flush_cue_timescale   = t%pheno(ipft)%flush_cue_timescale
-         p%shed_cue_timescale    = t%pheno(ipft)%shed_cue_timescale
-         p%flush_rate_max        = t%pheno(ipft)%flush_rate_max
-         p%shed_rate_max         = t%pheno(ipft)%shed_rate_max
-         p%flush_base_temp       = t%pheno(ipft)%flush_base_temp
-         p%flush_degree_days     = t%pheno(ipft)%flush_degree_days
-         p%flush_temp_sharpness  = t%pheno(ipft)%flush_temp_sharpness
-         p%shed_base_temp        = t%pheno(ipft)%shed_base_temp
-         p%shed_degree_days      = t%pheno(ipft)%shed_degree_days
-         p%shed_temp_sharpness   = t%pheno(ipft)%shed_temp_sharpness
-         p%par_min               = t%pheno(ipft)%par_min
-         p%flush_light_hours     = t%pheno(ipft)%flush_light_hours
-         p%flush_light_sharpness = t%pheno(ipft)%flush_light_sharpness
-         p%shed_light_hours      = t%pheno(ipft)%shed_light_hours
-         p%shed_light_sharpness  = t%pheno(ipft)%shed_light_sharpness
-         p%light_window          = t%pheno(ipft)%light_window
-         p%flush_water_sum       = t%pheno(ipft)%flush_water_sum
-         p%flush_water_sharpness = t%pheno(ipft)%flush_water_sharpness
-         p%shed_water_sum        = t%pheno(ipft)%shed_water_sum
-         p%shed_water_sharpness  = t%pheno(ipft)%shed_water_sharpness
-      end associate
-      !----- The turgor-loss point is derived from the leaf's pressure-volume curve, the threshold  !
-      !      the leaf's water-stress controls use too (docs/science/plant_phenology.md §2;          !
-      !      leaf_gas_exchange.md §4.1-§4.2). --------------------------------------------------!
-      p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg%pft, ipft)
-   end subroutine flatten_pheno_params
 
    !---------------------------------------------------------------------------------------!
    ! Light trait plasticity over one slow step: each cohort's sla, vcmax25, rd25 and leaf        !

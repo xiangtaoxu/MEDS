@@ -36,7 +36,8 @@ contains
       pft%rd25   = pft%rd_vcmax_ratio   * pft%vcmax25
    end subroutine derive_leaf_params
 
-   !----- The three tables the fast loop reads, onto the PFT table. The leaf table takes          !
+   !----- The three tables the fast loop reads, and the phenology's turgor-loss point, onto the  !
+   !      PFT table. The leaf table takes                                                         !
    !      [leaf_physiology]: its constants (`shared`, the part every PFT's parameters share) and    !
    !      its solver selectors. Call after derive_leaf_params. ------------------------------------!
    subroutine derive_pft_tables(pft, shared, stomatal_model, temp_response_form, colimitation,          &
@@ -48,6 +49,7 @@ contains
       type(leaf_photo_table_t) :: leaf_photo
       type(hydraulics_table_t) :: hydraulics
       type(rad_pft_optics_t)   :: optics
+      integer(ik)              :: ipft
       call build_leaf_photo_table(pft, shared, leaf_photo)
       leaf_photo%stomatal_model     = stomatal_model
       leaf_photo%temp_response_form = temp_response_form
@@ -58,6 +60,10 @@ contains
       pft%leaf_photo = leaf_photo
       pft%hydraulics = hydraulics
       pft%optics     = optics
+      !----- The turgor-loss point the phenology's drought counter reads. -----------------!
+      do ipft = 1_ik, pft%n
+         pft%pheno(ipft)%leaf_psi_tlp = pft_leaf_psi_tlp(pft, ipft)
+      end do
    end subroutine derive_pft_tables
 
    !=======================================================================================!

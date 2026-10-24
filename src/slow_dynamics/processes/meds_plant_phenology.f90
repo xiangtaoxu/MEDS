@@ -8,9 +8,9 @@
 !   * leaf_turnover_step -- one step of leaf loss and the flush cap (§5, eq. (9)), also    !
 !                           exposed through the C API; turnover_gate gives the share of    !
 !                           its background turnover that acts.                             !
-! Its records: pheno_env_t (the day's cues), pheno_args_t (the PFT's traits),              !
-! pheno_state_t (the cohort's memory, read and written back) and pheno_out_t (the          !
-! potential rates). The cue bits (CUE_*) are meds_pft_params', beside the masks they code. !
+! It reads the PFT's own record, phenology_traits_t (meds_pft_params, with the cue bits    !
+! CUE_*), and its own: pheno_env_t (the day's cues), pheno_state_t (the cohort's memory,   !
+! read and written back) and pheno_out_t (the potential rates).                            !
 !==========================================================================================!
 module meds_plant_phenology
    use meds_kinds,          only : wp, ik
@@ -18,11 +18,11 @@ module meds_plant_phenology
    use meds_numerics,       only : logistic, clamp01
    use meds_time,           only : doy_effective
    use meds_state_defaults, only : is_unset_positive
-   use meds_pft_params,     only : CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER
+   use meds_pft_params,     only : phenology_traits_t, CUE_TEMP, CUE_LIGHT, CUE_WATER
    implicit none
    private
 
-   public :: pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t
+   public :: pheno_env_t, pheno_state_t, pheno_out_t
    public :: phenology_kernel, leaf_turnover_step, turnover_gate
 
    !----- Daily environmental drivers (read-only). ------------------------------------------!
@@ -45,39 +45,6 @@ module meds_plant_phenology
       real(wp) :: light_hours_mean    = -1.0_wp  !< [h/day] running-mean par_hours (LIGHT); < 0: unset, the first day sets it
    end type pheno_state_t
 
-   !----- Per-PFT traits, filled by the driver from cfg%pft. Each switch is sigma(s (x - x*)), !
-   !      with a centre x* and a signed sharpness s (plant_phenology.md eq. (2)). The defaults !
-   !      are a PFT with no [phenology] section: no cues, so only the rates and timescales act. !
-   type :: pheno_args_t
-      integer(ik) :: flush_cue_mask      = CUE_NONE         !< cues of the flush side
-      integer(ik) :: shed_cue_mask       = CUE_NONE         !< cues of the shed side
-      real(wp)    :: flush_cue_timescale = 5.0_wp           !< [day]  smoothing of the flush tendency
-      real(wp)    :: shed_cue_timescale  = 5.0_wp           !< [day]  smoothing of the shed tendency
-      real(wp)    :: flush_rate_max      = 0.06667_wp       !< [1/day] leaf growth at full tendency
-      real(wp)    :: shed_rate_max       = 0.05_wp          !< [1/day] senescence at full tendency
-      !----- Temperature: warmth above flush_base_temp from midwinter, cold below          !
-      !      shed_base_temp from midsummer.                                                !
-      real(wp)    :: flush_base_temp       = 278.15_wp      !< [K]
-      real(wp)    :: flush_degree_days     = 100.0_wp       !< [K day] warmth requirement
-      real(wp)    :: flush_temp_sharpness  = 0.04_wp        !< [1/(K day)]
-      real(wp)    :: shed_base_temp        = 290.15_wp      !< [K]
-      real(wp)    :: shed_degree_days      = 50.0_wp        !< [K day] cold requirement
-      real(wp)    :: shed_temp_sharpness   = 0.1_wp         !< [1/(K day)]
-      !----- Light: the hours a day PAR at the cohort's top exceeds par_min, as a running mean. !
-      real(wp)    :: par_min               = 5.0_wp         !< [umol/m2/s] light that counts as an hour of light
-      real(wp)    :: flush_light_hours     = 12.0_wp        !< [h/day]
-      real(wp)    :: flush_light_sharpness = 1.0_wp         !< [1/h] > 0: long or bright days permit flushing
-      real(wp)    :: shed_light_hours      = 11.0_wp        !< [h/day]
-      real(wp)    :: shed_light_sharpness  = -1.0_wp        !< [1/h] < 0: short or dim days trigger senescence; > 0: bright days
-      real(wp)    :: light_window          = 10.0_wp        !< [day] running-mean window
-      !----- Water: predawn leaf psi summed against the turgor-loss point. -----------------!
-      real(wp)    :: leaf_psi_tlp          = -2.0_wp        !< [MPa] turgor-loss point
-      real(wp)    :: flush_water_sum       = 10.0_wp        !< [MPa day] wet sum that permits flushing
-      real(wp)    :: flush_water_sharpness = 0.5_wp         !< [1/(MPa day)]
-      real(wp)    :: shed_water_sum        = 10.0_wp        !< [MPa day] dry sum that triggers shedding
-      real(wp)    :: shed_water_sharpness  = 0.5_wp         !< [1/(MPa day)]
-   end type pheno_args_t
-
    !----- Outputs: the potential relative rates the tendencies allow. ----------------------!
    type :: pheno_out_t
       real(wp) :: leaf_flush_potential = 0.0_wp   !< [1/day] flush_rate_max * leaf_flush_tendency
@@ -99,7 +66,7 @@ contains
    !=======================================================================================!
    pure subroutine phenology_kernel(env, params, dt, state, out)
       type(pheno_env_t),    intent(in)    :: env
-      type(pheno_args_t),   intent(in)    :: params
+      type(phenology_traits_t), intent(in) :: params
       real(wp),             intent(in)    :: dt
       type(pheno_state_t),  intent(inout) :: state
       type(pheno_out_t),    intent(out)   :: out
@@ -152,13 +119,13 @@ contains
 
    !----- The two water switches, from the sums of predawn leaf psi above and below the TLP. -!
    pure real(wp) function wet_water_switch(params, state) result(sw)
-      type(pheno_args_t),   intent(in) :: params
+      type(phenology_traits_t), intent(in) :: params
       type(pheno_state_t),  intent(in) :: state
       sw = logistic(params%flush_water_sharpness * (state%wet_psi_sum - params%flush_water_sum))
    end function wet_water_switch
 
    pure real(wp) function dry_water_switch(params, state) result(sw)
-      type(pheno_args_t),   intent(in) :: params
+      type(phenology_traits_t), intent(in) :: params
       type(pheno_state_t),  intent(in) :: state
       sw = logistic(params%shed_water_sharpness * (state%dry_psi_sum - params%shed_water_sum))
    end function dry_water_switch
@@ -168,7 +135,7 @@ contains
    !=======================================================================================!
    pure subroutine accumulate(env, params, dt, both, state)
       type(pheno_env_t),    intent(in)    :: env
-      type(pheno_args_t),   intent(in)    :: params
+      type(phenology_traits_t), intent(in) :: params
       real(wp),             intent(in)    :: dt
       integer(ik),          intent(in)    :: both
       type(pheno_state_t),  intent(inout) :: state

@@ -10,8 +10,9 @@
 module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
    use meds_kinds,           only : wp, ik
-   use meds_plant_phenology, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,               &
-                                    phenology_kernel, leaf_turnover_step
+   use meds_plant_phenology, only : pheno_env_t, pheno_state_t, pheno_out_t, phenology_kernel,  &
+                                    leaf_turnover_step
+   use meds_pft_params,      only : phenology_traits_t
    use meds_time,            only : daylength
    implicit none
    private
@@ -25,7 +26,7 @@ module meds_c_api_phenology
       integer(c_int) :: doy, hemis_north
    end type pheno_env_c
 
-   !----- C mirror of pheno_args_t. -----------------------------------------------------------!
+   !----- C mirror of the kernel's PFT record, phenology_traits_t, less its leaf-cover pair. ---!
    type, bind(c) :: pheno_args_c
       integer(c_int) :: flush_cue_mask, shed_cue_mask
       real(c_double) :: flush_cue_timescale, shed_cue_timescale, flush_rate_max, shed_rate_max
@@ -63,7 +64,7 @@ contains
       type(pheno_state_c),  intent(inout) :: state_c
       type(pheno_out_c),    intent(out)   :: out_c
       type(pheno_env_t)    :: env
-      type(pheno_args_t)   :: p
+      type(phenology_traits_t) :: p
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
 

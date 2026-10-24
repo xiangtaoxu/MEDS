@@ -39,7 +39,7 @@ The fast half is `src/fast_dynamics/`; the split between them is by **timescale*
 [`../README.md`](../README.md) for the tree-wide rules.
 
 Each process module owns its argument records, beside the kernel that reads them (`src/README.md`,
-rule 3): `pheno_env_t`, `pheno_args_t`, `pheno_state_t` and `pheno_out_t` are
+rule 3): `pheno_env_t`, `pheno_state_t` and `pheno_out_t` are
 `meds_plant_phenology`'s, and `soil_carbon_out_t` and `soilc_diag_t` are `meds_soil_carbon`'s. The
 patch stores a slow step advances — the soil carbon pools (`soil_carbon_state_t`), the litter
 (`litter_input_t`) and the decomposition integral (`decomp_xi_t`) — live in
