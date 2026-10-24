@@ -726,7 +726,7 @@ if(MEDS_BUILD_TESTS)
    #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
    #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
    #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
-   foreach(t canopy_aerodynamics canopy_air_space canopy_radiation leaf_gas_exchange plant_energy
+   foreach(t canopy_aerodynamics canopy_air_space canopy_radiation canopy_water leaf_gas_exchange plant_energy
              plant_hydraulics respiration soil_heat soil_water surface)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
@@ -735,13 +735,7 @@ if(MEDS_BUILD_TESTS)
    endforeach()
    target_link_libraries(test_leaf_gas_exchange PRIVATE meds_testsupport)
 
-   #----- Vertical soil-hydrology test links meds_fast (it runs the soil-plant water solve). #
-   add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_fast meds_testassert)
-   meds_fortran_flags(test_column_hydrology)
-   add_test(NAME column_hydrology COMMAND test_column_hydrology)
-
-   #----- The soil-plant water network on synthetic stands and soils. ------------------------#
+   #----- The soil-plant water network on synthetic stands and soils, and the soil column alone. -#
    add_executable(test_water_network test/test_water_network.f90)
    target_link_libraries(test_water_network PRIVATE meds_fast meds_testassert)
    meds_fortran_flags(test_water_network)

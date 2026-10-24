@@ -6,19 +6,33 @@
 !      central differences; the pond face at zero head is the infiltration capacity.       !
 !   2. EVAPORATION (ground_evaporation_rate, ground_evaporation_setup): its derivatives     !
 !      against central differences, and the closed form where no dry surface layer forms. !
+!   3. SNOW-FREE SHARE (ground_evaporation_rate): evaporation is a tile flux, linear in     !
+!      the snow-free share and zero under full cover.                                      !
+!   4. MOISTURE (ground_evaporation_rate): a wetter soil evaporates more, approaching the  !
+!      limit with no dry surface layer continuously.                                       !
+!   5. BOTTOM FACE (bottom_flux; soil_biophysics.md §Boundary conditions): a leaky base     !
+!      drains f K(theta_N), free drainage and sealed bedrock at its ends exactly; the       !
+!      aquifer's face is smooth through zero gradient, with derivatives that match finite  !
+!      differences, and carries the rise of a dry column across the geometric-mean face.  !
 !==========================================================================================!
 program test_soil_water
    use meds_test_assert,   only : check_true, check_close, test_report
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : grav, grav_head, rho_h2o, r_wv, p_std
-   use meds_soil_hydr_lib, only : SOIL_RETENTION_VG
-   use meds_soil_water,    only : ground_evaporation_rate, ground_evaporation_setup, soil_water_flux, ground_evap_env_t
+   use meds_constants,     only : grav, grav_head, rho_h2o, r_wv, p_std, n_soil_layer_max
+   use meds_soil_hydr_lib, only : SOIL_RETENTION_VG, soil_theta_to_head
+   use meds_soil_water,    only : ground_evaporation_rate, ground_evaporation_setup, soil_water_flux, ground_evap_env_t, &
+                                  bottom_flux
    use meds_therm_lib,     only : sat_specific_humidity
-   use meds_soil_params,   only : soil_profile_t, soil_params_t
+   use meds_soil_params,   only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
+   use meds_soil_derive,   only : build_profile_hydraulics
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    implicit none
 
    call test_soil_water_flux()
    call test_evaporation()
+   call test_snow_free_evap()
+   call test_evap_moisture_response()
+   call test_bottom_face()
 
    call test_report('test_soil_water')
 
@@ -117,5 +131,138 @@ contains
       call check_true('evaporation: derivatives match finite differences', ok_d)
       call check_true('evaporation: the closed form where no dry surface layer forms', ok_v)
    end subroutine test_evaporation
+
+   !----- A 10-layer loam column, 2 m deep. ------------------------------------------------------!
+   subroutine loam_params(params)
+      type(soil_profile_t), intent(out) :: params
+      real(wp) :: bottoms(n_soil_layer_max)
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,               &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
+   end subroutine loam_params
+
+   !=======================================================================================!
+   !----- 3. Ground evaporation is an AREA-weighted tile flux, E = snow_free_frac rho dq / (r_aero +   !
+   !      r_soil): linear in the snow-free share and exactly 0 under full cover, with a dry surface    !
+   !      layer present (theta_1 = 0.30 is below dsl_theta_init * theta_sat = 0.344), where dividing    !
+   !      r_aero by (1 - snowfac) instead would not be linear. ---------------------------------------!
+   subroutine test_snow_free_evap()
+      type(soil_profile_t)    :: params
+      type(soil_params_t)     :: opts
+      type(ground_evap_env_t) :: f
+      real(wp) :: e_full, e_half, e_none, de1, de2, psi
+      print '(a)', 'test_snow_free_evap:'
+      call loam_params(params)
+      f%t_ground = 305.0_wp
+      f%q_air    = 0.001_wp
+      f%rho_air  = 1.2_wp
+      f%r_aero   = 50.0_wp
+      call ground_evaporation_setup(params, opts, f)
+      psi = grav_head * soil_theta_to_head(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      f%snow_free_frac = 1.0_wp
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_full, de1, de2)
+      f%snow_free_frac = 0.5_wp
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_half, de1, de2)
+      f%snow_free_frac = 0.0_wp
+      call ground_evaporation_rate(0.30_wp, psi, f, opts, e_none, de1, de2)
+      call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
+      call check_close('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,         &
+                       1.0e-14_wp * max(e_full, 1.0e-12_wp))
+      call check_close('full snow cover gives exactly zero soil evaporation', e_none, 0.0_wp, 1.0e-30_wp)
+   end subroutine test_snow_free_evap
+
+   !=======================================================================================!
+   !----- 4. A wetter soil evaporates MORE. The dry-surface-layer resistance d_sl/(D_v tau) is built on  !
+   !      the air-dry water content's tortuosity, so it falls as the layer wets and the response is   !
+   !      monotone, approaching the no-DSL limit continuously at theta_init. Built from the bulk       !
+   !      layer's air-filled porosity instead, the tortuosity would fall faster than the layer thins  !
+   !      and a wetter soil would evaporate less. ------------------------------------------------!
+   subroutine test_evap_moisture_response()
+      type(soil_profile_t)    :: params
+      type(soil_params_t)     :: opts
+      type(ground_evap_env_t) :: f
+      real(wp) :: theta, e_prev, e_now, e_sat, e_below, theta_init
+      integer  :: i
+      logical  :: monotone
+      print '(a)', 'test_evap_moisture_response:'
+      call loam_params(params)
+      f%t_ground = 300.0_wp
+      f%q_air    = 0.005_wp
+      f%rho_air  = 1.2_wp
+      f%r_aero   = 100.0_wp
+      call ground_evaporation_setup(params, opts, f)
+      theta_init = opts%dsl_theta_init * params%theta_sat(1)
+      monotone = .true.
+      e_prev   = -1.0_wp
+      do i = 1, 40
+         theta = params%theta_res(1) + real(i, wp) / 40.0_wp * (theta_init - params%theta_res(1))
+         e_now = loam_evap(theta, f, opts)
+         if (e_now < e_prev - 1.0e-14_wp) monotone = .false.
+         e_prev = e_now
+      end do
+      call check_true('ground evaporation increases monotonically with soil moisture', monotone, 0.0_wp)
+      e_sat   = loam_evap(theta_init, f, opts)
+      e_below = loam_evap(theta_init - 1.0e-3_wp * (theta_init - params%theta_res(1)), f, opts)
+      call check_true('approaches the DSL-free limit continuously at theta_init',                       &
+                      e_below > 0.8_wp * e_sat, e_below / max(e_sat, 1.0e-30_wp))
+   end subroutine test_evap_moisture_response
+
+   !----- Ground evaporation of the loam's top layer at water content th, under f set up for it. --!
+   real(wp) function loam_evap(th, f, opts) result(e)
+      real(wp),                intent(in) :: th
+      type(ground_evap_env_t), intent(in) :: f
+      type(soil_params_t),     intent(in) :: opts
+      real(wp) :: de1, de2
+      call ground_evaporation_rate(th, grav_head * soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, &
+                                   3.6_wp, 1.56_wp), f, opts, e, de1, de2)
+   end function loam_evap
+
+   !=======================================================================================!
+   !----- 5. The bottom face of the loam's deepest layer. A leaky base drains f K(theta_N), the     !
+   !      factor's ends being free drainage and sealed bedrock bit for bit. The aquifer's face is   !
+   !      head-driven against a saturated table at the column's base: smooth through zero gradient  !
+   !      (hydrostatic equilibrium, the bottom node's head minus half its thickness), with both     !
+   !      derivatives against finite differences, and a dry column's rise at -2 m of head crossing  !
+   !      the geometric-mean face. ----------------------------------------------------------------!
+   subroutine test_bottom_face()
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
+      real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp * grav_head   ! [m/s], [MPa] a deepest layer's state
+      real(wp) :: q, dq_dpsi, dq_dk, delta, psi_eq, q_m, q_p, dqp_m, dqp_p, dqk, h_psi, q_k
+      integer(ik) :: n
+      print '(a)', 'test_bottom_face:'
+      call loam_params(params)
+      n = 10_ik
+      opts%water_bottom_bc = SOIL_BC_DRAIN
+      opts%drain_factor = 1.0_wp
+      call bottom_flux(params, opts, n, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
+      call check_close('f = 1 is free drainage: q = K(theta_N), bit for bit', q, K_N, 0.0_wp)
+      call check_close('f = 1: dq/dK = 1 and dq/dpsi = 0', abs(dq_dk - 1.0_wp) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
+      opts%drain_factor = 0.0_wp
+      call bottom_flux(params, opts, n, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
+      call check_close('f = 0 is sealed bedrock: q = 0 and no derivative, bit for bit',                 &
+                       abs(q) + abs(dq_dk) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
+      opts%drain_factor = F_LEAK
+      call bottom_flux(params, opts, n, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
+      call check_close('a leaky base drains f K(theta_N)', q, F_LEAK * K_N, 0.0_wp)
+      call check_close('and its flux moves with K(theta_N) by f', dq_dk, F_LEAK, 0.0_wp)
+      !----- The aquifer's face. -------------------------------------------------------------------!
+      opts%water_bottom_bc = SOIL_BC_AQUIFER
+      delta  = 0.5_wp * params%dz(n)
+      psi_eq = -delta * grav_head
+      h_psi  = 1.0e-6_wp
+      call bottom_flux(params, opts, n, psi_eq - h_psi, 1.0e-7_wp, 1.0_wp, q_m, dqp_m, dqk)
+      call bottom_flux(params, opts, n, psi_eq + h_psi, 1.0e-7_wp, 1.0_wp, q_p, dqp_p, dqk)
+      call check_close('AQUIFER: dq/dpsi is continuous through zero gradient', dqp_m, dqp_p, 1.0e-12_wp * dqp_p)
+      call check_close('AQUIFER: dq/dpsi matches its finite difference', (q_p - q_m) / (2.0_wp * h_psi), dqp_p,  &
+                       1.0e-6_wp * dqp_p)
+      call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp, 1.0_wp, q_m, dqp_m, dqk)
+      call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp * (1.0_wp + 1.0e-6_wp), 1.0_wp, q_k)
+      call check_close('AQUIFER: dq/dK matches its finite difference', (q_k - q_m) / 1.0e-13_wp, dqk,          &
+                       1.0e-4_wp * abs(dqk))
+      call check_close('AQUIFER: rise at -2 m head crosses the geometric-mean face',                          &
+                       q_m, sqrt(1.0e-7_wp * params%ksat(n)) * (-2.0_wp / delta + 1.0_wp), 1.0e-12_wp * abs(q_m))
+   end subroutine test_bottom_face
 
 end program test_soil_water
