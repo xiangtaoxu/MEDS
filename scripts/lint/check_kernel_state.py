@@ -123,6 +123,9 @@ def violations(src):
 
 if __name__ == "__main__":
     src = Path(sys.argv[1] if len(sys.argv) > 1 else "src")
+    if not all((src / d).is_dir() for d in KERNEL_DIRS):
+        print(f"check_kernel_state: {src} is not the source tree (no {KERNEL_DIRS[0]}); pass SRC_DIR")
+        sys.exit(2)
     bad = violations(src)
     for line in bad:
         print(line)
