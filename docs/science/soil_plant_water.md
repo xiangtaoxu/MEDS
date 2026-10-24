@@ -39,7 +39,9 @@ The paths:
 - **Xylem** — sapflow from wood to leaves, $`s = K_{eff}\,(\psi_W - \psi_L - \rho g H)`$, with the
   Kirchhoff mean conductance $`K_{eff} = k_{cond}\,[\Phi(\psi_W)-\Phi(\psi_L)]/(\psi_W-\psi_L)`$ (its
   midpoint expansion as the two potentials meet), plus a $10^{-12}$ share of $`k_{cond}`$ so a fully
-  embolised cohort's leaves stay joined to its wood.
+  embolised cohort's leaves stay joined to its wood. It is the exact steady flux without gravity; with
+  it, it overstates that flux by a few percent at most where the xylem is embolised
+  ([plant_hydraulics](plant_hydraulics.md) §3).
 - **Boundaries** — rain into the pond; ground evaporation from layer 1 (Philip's pore humidity with
   the Swenson–Lawrence dry-surface-layer resistance); drainage out of the bottom layer
   (`[soil].water_bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven

@@ -102,7 +102,14 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}} \qquad(7)
 The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction. Without gravity
 it gives the exact steady flux through the path. With gravity the flow is this conductance times the
 gravity-inclusive drive, which overstates the steady flux where the xylem is embolised and the head
-is a large share of the drop:
+is a large share of the drop. The exact flux $Q$ (per $`k_{cond}`$) solves
+$`\int_{\psi_L}^{\psi_W} d\psi/(Q + \rho gH + Q\,(\psi/\psi_{50})^{a}) = 1`$, an implicit equation, not a
+function of $\Phi$ at the two ends; near equilibrium its conductance is the harmonic mean of $k$ along
+the path, where the law takes the arithmetic mean. At $`\psi_W=-1`$, $`\psi_L=-3`$, $`\rho gH = 0.5`$ and
+$`\psi_{50}=-1.5`$ MPa the law overstates it by 3.4 % at $a = 2$ and 15.5 % at $a = 4$; on realistic
+ranges far less: at BCI ($a = 2$) under 0.6 % for drops up to 0.5 MPa and trees up to 36 m, and in the
+archived Palo Verde dry seasons 0.2–1.0 % weighted by sapflow (2.7 % at most). The exact flux would
+need a root solve inside every evaluation of the water network's Newton, so the law stays:
 
 ```math
 K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_{down}}
