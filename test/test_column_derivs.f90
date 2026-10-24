@@ -209,13 +209,13 @@ contains
 
    !----- 2b. A falling leaf's film passed to its wood (Palo Verde's dry season): the leaf, nearly    !
    !      gone, hands its whole film to the wood as the cohort's film is re-shared by capacity. The   !
-   !      giver is charged nothing for the water it passes, so with no other forcing the leaf sits    !
-   !      at the canopy air's temperature; charged the rain's valuation, it sat 4e10 K off. ----------!
+   !      giver is charged nothing for the water it passes, so the leaf balances its sensible heat    !
+   !      against its emission about t_rad alone; charged the rain's valuation, it sat 4e10 K off. ---!
    subroutine test_falling_leaf_film()
       type(frozen_t)        :: frozen
       type(surface_state_t) :: y
       type(surface_tend_t)  :: f
-      real(wp) :: tcas
+      real(wp) :: tcas, t_rad, lw_slope, expect
       print '(a)', 'test_falling_leaf_film:'
       call make_frozen(frozen, 1_ik)
       frozen%tissue%lai(1) = 1.0e-20_wp
@@ -233,9 +233,13 @@ contains
       y%cas_enthalpy = cas_temp_to_enthalpy(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, 1_ik, f)
-      tcas = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
-      call check_true('a falling leaf passing its film to its wood stays at the canopy air''s temperature',     &
-                      abs(f%leaf_temp(1) - tcas) < 1.0e-6_wp, f%leaf_temp(1) - tcas)
+      tcas     = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
+      t_rad    = radiative_temperature(frozen%tissue%lai(1), frozen%tissue%wai(1), frozen%tissue%t_leaf0(1),       &
+                                       frozen%tissue%t_wood0(1))
+      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * t_rad ** 3 * frozen%tissue%lai(1)
+      expect   = tcas + lw_slope * (t_rad - tcas) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
+      call check_true('a falling leaf passing its film to its wood is charged nothing for it',                   &
+                      abs(f%leaf_temp(1) - expect) < 1.0e-8_wp, f%leaf_temp(1) - expect)
    end subroutine test_falling_leaf_film
 
    !----- 3. The CAS box commits the BE-in-atm solution of the tendencies; verify (y1-y0)/dt = f(y1). !
