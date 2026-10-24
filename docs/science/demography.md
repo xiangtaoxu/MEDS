@@ -322,8 +322,8 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 
 | Concept | Routine |
 |---|---|
-| the vital-rate laws, eqs. (1), (3), (4), (6) | `meds_demography`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `npp_to_recruitment` |
-| recruit efficiency, eq. (5); the rates per cohort and patch | `meds_slow_state`: `cohort_recruit_efficiency`, `compute_vital_rates` |
+| the demographic laws, eqs. (1), (3)-(7); the founding test and treefall survival | `meds_demography`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `recruit_efficiency`, `npp_to_recruitment`, `founds_cohort`, `disturbed_fraction`, `survives_treefall` |
+| the rates per cohort and patch; the month's founding and the year's treefall decisions | `meds_slow_state`: `cohort_recruit_efficiency`, `compute_vital_rates`, `decide_recruitment`, `decide_disturbance` |
 | the growth history, eq. (2) | `meds_slow_update`: `fill_cohort_deriv` |
 | applying growth and mortality, eq. (8) | `meds_slow_update`: `commit_vegetation_step`, `update_cohort_states`, `advance_pool`, `advance_density` |
 | mortality's litter and water, eq. (9); the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`; `meds_slow_update`: `accumulate_recruit_pool` |

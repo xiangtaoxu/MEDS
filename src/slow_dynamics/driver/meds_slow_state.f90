@@ -39,7 +39,8 @@ module meds_slow_state
                                             acclimate_leaf_photo_table
    use meds_soil_carbon,             only : add_necromass, build_litter_input, soil_carbon_step,         &
                                             soil_carbon_out_t
-   use meds_demography,              only : recruit_efficiency, npp_to_growth, camac_mortality,          &
+   use meds_demography,              only : founds_cohort, disturbed_fraction, survives_treefall,        &
+                                            recruit_efficiency, npp_to_growth, camac_mortality,          &
                                             decline_to_floor_mortality, npp_to_recruitment
    implicit none
    private
@@ -48,7 +49,7 @@ module meds_slow_state
    public :: advance_leaf_phenology, advance_plant_traits, reacclimate_plant_traits, acclimate_site_leaf_tables
    public :: compute_carbon_allocation, compute_vital_rates, accumulate_mortality_litter
    public :: shed_turnover_water, fill_new_leaf_water, shed_mortality_water, shed_excess_tissue_water
-   public :: advance_soil_carbon
+   public :: advance_soil_carbon, decide_recruitment, decide_disturbance
 
    !----- One slow step's working record: what the processes decided, per cohort unless noted, !
    !      for meds_slow_update to commit (docs/science/order_of_processes.md §4). --------------!
@@ -723,5 +724,36 @@ contains
          end associate
       end do
    end subroutine advance_soil_carbon
+
+   !----- The month's founding decision for each (PFT, patch) recruit pool, by the law of     !
+   !      meds_demography (docs/science/demography.md §3). ---------------------------------!
+   subroutine decide_recruitment(poly, cfg, found)
+      type(polygon_t),      intent(in)  :: poly
+      type(meds_config_t),  intent(in)  :: cfg
+      logical, allocatable, intent(out) :: found(:,:)   !< (pft, patch)
+      integer(ik) :: np
+      np = poly%patch%n
+      allocate(found(poly%n_pft, max(np, 1_ik)))
+      found = .false.
+      found(:, 1:np) = founds_cohort(poly%patch%recruit_pool(1:poly%n_pft, 1:np), cfg%min_recruit_size)
+   end subroutine decide_recruitment
+
+   !----- The year's treefall decision, by the laws of meds_demography: the share of every   !
+   !      patch's area the gaps take, and which cohorts survive into them                   !
+   !      (docs/science/demography.md §4, eq. (7)). ----------------------------------------!
+   subroutine decide_disturbance(poly, cfg, dt_yr, frac, survives)
+      type(polygon_t),      intent(in)  :: poly
+      type(meds_config_t),  intent(in)  :: cfg
+      real(wp),             intent(in)  :: dt_yr      !< [yr] the interval the yearly rate covers
+      real(wp),             intent(out) :: frac       !< [-] the disturbed share
+      logical, allocatable, intent(out) :: survives(:)   !< (cohort)
+      integer(ik) :: n
+      frac = 0.0_wp
+      if (cfg%patch_disturbance_rate > 0.0_wp) frac = disturbed_fraction(cfg%patch_disturbance_rate, dt_yr)
+      n = poly%cohort%n
+      allocate(survives(max(n, 1_ik)))
+      survives = .true.
+      survives(1:n) = survives_treefall(poly%cohort%height(1:n), cfg%disturbance_survive_height)
+   end subroutine decide_disturbance
 
 end module meds_slow_state

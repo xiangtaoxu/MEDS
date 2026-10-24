@@ -25,7 +25,8 @@ module meds_slow_dynamics
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT,         &
                                        SLOW_PHASE_COHORT, SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH,          &
                                        slow_co2_handoff, litter_carbon_total
-   use meds_slow_state,         only : slow_step_data_t, advance_leaf_phenology, advance_plant_traits,   &
+   use meds_slow_state,         only : slow_step_data_t, decide_recruitment, decide_disturbance,         &
+                                       advance_leaf_phenology, advance_plant_traits,                     &
                                        compute_carbon_allocation, shed_turnover_water,                   &
                                        compute_vital_rates, fill_new_leaf_water,                         &
                                        accumulate_mortality_litter, shed_mortality_water,                &
@@ -194,8 +195,9 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year   !< which boundary this is
       type(slow_ledger_t), intent(inout) :: ledger   !< the slow ledger; an inactive one books nothing
-      real(wp) :: cull_water, rec_carbon, rec_heat, rec_water, dist_water
+      real(wp) :: cull_water, rec_carbon, rec_heat, rec_water, dist_water, frac
       logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
+      logical, allocatable :: found(:,:), survives(:)
 
       !----- The calendar cadence, and the demography and fusion/fission switches. ----------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -207,7 +209,8 @@ contains
       !      outside the model, checkable only if no other operator shares its phase          !
       !      (docs/science/conservation.md §3). -----------------------------------------------!
       if (do_cohort_fissfuse) then
-         call apply_recruitment(poly, cfg, rec_carbon, rec_heat, rec_water)
+         call decide_recruitment(poly, cfg, found)
+         call apply_recruitment(poly, cfg, found, rec_carbon, rec_heat, rec_water)
          call slow_ledger_declare(ledger, carbon_in = rec_carbon, energy_in = rec_heat, water_in = rec_water)
          call slow_ledger_heat_open(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_RECRUIT)
@@ -222,8 +225,9 @@ contains
 
       !----- Patch disturbance, then patch fusion and termination (yearly, each switchable). -!
       if (do_patch_disturbance) then
+         call decide_disturbance(poly, cfg, PATCH_DYNAMICS_INTERVAL, frac, survives)
          call slow_ledger_heat_open(ledger, poly)
-         call apply_patch_disturbance(poly, cfg, PATCH_DYNAMICS_INTERVAL, dist_water)
+         call apply_patch_disturbance(poly, cfg, frac, survives, dist_water)
          call slow_ledger_declare(ledger, water_out = dist_water)
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_DISTURB)

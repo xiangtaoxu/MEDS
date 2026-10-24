@@ -328,14 +328,15 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Recruitment: a recruit pool that reaches min_recruit_size founds one cohort at the    !
+   ! Recruitment: a recruit pool the founding law releases founds one cohort at the       !
    ! smallest tracked height and is reset; a smaller pool carries over. The driver credits !
    ! the pool daily (accumulate_recruit_pool) and this consumes it monthly (demography.md  !
    ! §2-§3). It changes the cohort count, so it lives with the cohort operators.           !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_recruitment(poly, cfg, carbon_drawn, heat_drawn, water_drawn)
+   subroutine apply_recruitment(poly, cfg, found, carbon_drawn, heat_drawn, water_drawn)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
+      logical,             intent(in)    :: found(:,:)   !< (pft, patch) the pools that found a cohort
       !----- What the recruits drew from outside the model, for the caller to declare to the   !
       !      slow ledger: their carbon beyond the carbon_min per plant the pool paid for, and  !
       !      their tissues' heat and water. Recruitment stands in for the sizes below          !
@@ -356,11 +357,11 @@ contains
       np = poly%patch%n
       if (np < 1_ik) return
 
-      !----- Count the pools that have reached min_recruit_size. --------------------------!
+      !----- Count the pools that found a cohort. -------------------------------------------!
       nspawn = 0_ik
       do ip = 1_ik, np
          do pf = 1_ik, poly%n_pft
-            if (poly%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
+            if (found(pf, ip)) nspawn = nspawn + 1_ik
          end do
       end do
       !----- No pool reached it: nothing is born, so nothing is drawn (the seed rain is declared !
@@ -373,7 +374,7 @@ contains
       associate (cohort => poly%cohort, patch => poly%patch, pft => poly%cohort%pft_table)
          do ip = 1_ik, np
             do pf = 1_ik, poly%n_pft
-               if (patch%recruit_pool(pf, ip) < cfg%min_recruit_size) cycle
+               if (.not. found(pf, ip)) cycle
                m = m + 1_ik
                !----- Every PFT recruits at the smallest tracked height, on its own curve. -------!
                recruit_dbh = height_to_dbh(cohort%pft_table%allom(pf), pft%min_cohort_height)
@@ -416,19 +417,20 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Treefall gaps (demography.md §4): a share f = 1 - exp(-rate x dt) of every patch's    !
-   ! area becomes one age-0 gap per site. Cohorts at least disturbance_survive_height tall !
-   ! die in it, shorter ones survive into it, and each donor keeps (1-f) of its area. Site !
+   ! Treefall gaps (demography.md §4): the share `frac` of every patch's area the law      !
+   ! decided becomes one age-0 gap per site. The cohorts it says survive move into it, the !
+   ! rest die in it, and each donor keeps (1-frac) of its area. Site                       !
    ! area is conserved; plant number is not, since the killed canopy is the disturbance.   !
    !---------------------------------------------------------------------------------------!
-   subroutine apply_patch_disturbance(poly, cfg, dt_yr, water_shed)
+   subroutine apply_patch_disturbance(poly, cfg, frac, survives, water_shed)
       type(polygon_t),       intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: dt_yr
+      real(wp),            intent(in)    :: frac          !< [-] the disturbed share (decide_disturbance)
+      logical,             intent(in)    :: survives(:)   !< (cohort) survives into the gap
       !----- What the killed canopy handed on, for the caller to declare to the slow ledger. ---!
       real(wp),            intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
-      real(wp)    :: frac, new_area, atot
+      real(wp)    :: new_area, atot
       real(wp), allocatable :: donor_area(:)
       real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
       real(wp)    :: kill_frac, w_kill, w_tot
@@ -437,11 +439,9 @@ contains
       water_shed = 0.0_wp
 
       np0 = poly%patch%n
-      if (np0 < 1_ik .or. cfg%patch_disturbance_rate <= 0.0_wp) return
+      if (np0 < 1_ik .or. frac <= tiny_num) return
 
       !----- Disturbed area fraction this step, and the aggregate new-patch area. ----------!
-      frac = 1.0_wp - exp(-cfg%patch_disturbance_rate * dt_yr)
-      if (frac <= tiny_num) return
       new_area = frac * sum(poly%patch%area(1:np0))
       if (new_area <= tiny_num) return
 
@@ -460,7 +460,7 @@ contains
       !      their rows weigh it by that area, so the site total is exact (dt_yr cancels as above). ---!
       nsurv = 0_ik
       do i = 1_ik, poly%cohort%n
-         if (poly%cohort%height(i) < cfg%disturbance_survive_height) then
+         if (survives(i)) then
             nsurv = nsurv + 1_ik
          else if (poly%patch%diag%active) then
             d = poly%cohort%owner_patch(i)
@@ -519,7 +519,7 @@ contains
                i0 = patch%cohort_offset(d)
                i1 = i0 + patch%cohort_count(d) - 1_ik
                do i = i0, i1
-                  if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
+                  if (.not. survives(i)) then                                     ! canopy dies in gap
                      !----- The killed canopy's water goes to the gap's ground down the channel turnover !
                      !      shedding uses (conservation.md §3); its tissue heat is a thermal-mass change !
                      !      the caller declares (conservation.md §4). kill_frac is the share of the      !
