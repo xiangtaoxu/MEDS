@@ -164,7 +164,7 @@ contains
          rf%incid_beam(RAD_NIR) = nir_beam(h) ; rf%incid_diff(RAD_NIR) = nir_diff(h)
          rf%incid_beam(RAD_LW)  = 0.0_wp      ; rf%incid_diff(RAD_LW)  = 0.0_wp
          call canopy_radiation(g_cfg%pft%optics, rf, nc, pft_bt(1:nc), hgt_bt(1:nc), lai_bt(1:nc),       &
-                               wai_bt(1:nc), tcan_bt(1:nc), flux)
+                               wai_bt(1:nc), tcan_bt(1:nc), tcan_bt(1:nc), flux)
          up_vis(h)     = flux%albedo(RAD_VIS) * (vis_beam(h) + vis_diff(h))
          up_nir(h)     = flux%albedo(RAD_NIR) * (nir_beam(h) + nir_diff(h))
          leaf_vis(h)   = sum(flux%abs_leaf(RAD_VIS, 1:nc))
