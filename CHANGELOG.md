@@ -130,7 +130,8 @@ balances booked (#512). Examples 04 and 05 are rerun on that physics, and exampl
 Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
 one helper groups the cohorts of one height into a layer (#514). A step that fails no longer leaves `meds_main`'s output files open, a run
 that cannot open no longer leaves its C-API slot half built, and a state file written in a month a
-polygon failed in owes the calendar's restructuring (#521).
+polygon failed in owes the calendar's restructuring (#521). `src/main` checks a step's state in one guard, keeps no
+dead resets and states its own rationale briefly, with no change to any result (#522).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -753,6 +754,10 @@ polygon failed in owes the calendar's restructuring (#521).
 
 ### Changed
 
+- **`src/main` cleaned up** (#522), with no change to any result. `check_polygon_state` is the step's
+  one guard, its messages word for word the same; `polygon_prepare` no longer resets a freshly
+  allocated run record and takes the polygon's cell (`polygon_run_t%cell` goes); no `;` joins.
+  Comment lines 339 → 271; ED2's run loop is `docs/ed2_comparison.md` §4.11.
 - **Each tissue pays its own longwave emission** (#514). A cohort's net longwave was split between
   leaves and wood by their share of the absorption, so the leaves paid a share of the wood's emission
   whatever their temperatures. Leaves and wood now share what the cohort takes in, the two-stream's net
