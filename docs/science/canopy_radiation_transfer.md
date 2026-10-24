@@ -113,9 +113,9 @@ Shortwave bands carry a direct beam and no emission; the thermal band carries em
 the diffuse multiple-scattering operator is identical across bands — only the source terms and boundary
 conditions differ. It uses the **adding / layer-recursion** method: two $O(N)$ sweeps, bottom-up for
 the reflectance and upward source of the stack below each layer, then top-down for the fluxes; each
-layer covers the ground (crown area index 1). A layer's diffuse operator is the exact solution for a
-homogeneous layer, and the beam a layer scatters enters as a source at its two faces, split by
-$\beta_0$, rather than through the layer's depth.
+layer covers the ground (crown area index 1). A layer's diffuse operator, the beam it scatters and its
+emission are each the exact solution for a homogeneous layer, so the adding method is exact for the
+stack, and a uniform canopy's light does not depend on how it is cut into cohorts.
 
 **Per-layer diffuse reflectance/transmittance.** For a homogeneous layer of effective area index
 ETAI, `layer_rt` gives the classical Stokes two-stream coefficients with backward/forward diffuse
@@ -136,16 +136,33 @@ r_{dd}=\frac{r_\infty(1-e^2)}{1-r_\infty^2 e^2} \qquad(9)
 (The conservative-scattering singularity $\omega\to1$ is guarded; $`\sigma_b\to0`$ collapses to pure
 Beer attenuation, $r_{dd}=0$.)
 
-**Direct beam.** The collimated beam attenuates by Beer's law from the top down, and the fraction
-intercepted by layer $i$ is single-scattered into the diffuse field:
+**Direct beam.** The collimated beam attenuates by Beer's law from the top down,
 
 ```math
-I^\downarrow_0(i) = I^\downarrow_0(i{+}1)\,e^{-k_i\,\mathrm{ETAI}_i}, \qquad
-S_i = \omega_i\,\big(I^\downarrow_0(i{+}1)-I^\downarrow_0(i)\big) \qquad(10)
+I^\downarrow_0(i) = I^\downarrow_0(i{+}1)\,e^{-k_i\,\mathrm{ETAI}_i} \qquad(10)
 ```
 
-split into the layer's up-source $`\beta_{0,i}S_i`$ and down-source $`(1-\beta_{0,i})S_i`$. For the
-thermal band each layer adds a blackbody source $`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. The
+and inside a layer, at depth $x$ in area index, it scatters $`\omega k S_0 e^{-kx}`$ into the diffuse
+field, $\beta_0$ of it upward ($`S_0 = I^\downarrow_0(i{+}1)`$, the beam at the layer's top). The
+layer's up- and down-sources are what of this leaves its top and its bottom, from the two-stream
+equations solved through its depth with no diffuse entering either face (`layer_beam_sources`): with
+the attenuation att and backscatter $`\sigma_b`$ of eq. (8), the particular solution is
+
+```math
+u_p = a\,e^{-kx},\quad d_p = b\,e^{-kx},\qquad
+a = \frac{\omega k S_0\,[\beta_0(\mathrm{att}-k) + \sigma_b(1-\beta_0)]}{m^2-k^2},\quad
+b = \frac{\omega k S_0\,[(1-\beta_0)(\mathrm{att}+k) + \sigma_b\beta_0]}{m^2-k^2} \qquad(10b)
+```
+
+and the diffuse modes $`e^{-mx}`$ and $`e^{m(x-\mathrm{ETAI})}`$, in the ratio $`r_\infty`$ of up to
+down, take the boundary conditions. $k = m$ is a removable singularity, moved off by a relative
+$`10^{-6}`$. A thin layer's sources tend to the single-scatter split, $`\beta_0\,\omega\,\Delta I`$
+up and $`(1-\beta_0)\,\omega\,\Delta I`$ down of what it intercepts; a thick one's do not, because
+light scattered deep in the layer is absorbed on its way out. Injecting the single-scatter split at the
+faces would make the light depend on the cut: with the default optics, LAI 5, μ 0.87 and 70 % beam, the
+VIS albedo would be 0.075 for one cohort, 0.053 for five and 0.043 in the limit, which the exact source
+gives for any cut. For the thermal band each layer adds a blackbody source
+$`(1-r_{dd}-t_{dd})\,\sigma T^4`$ to both faces. The
 emission temperature is the cohort's effective radiative temperature,
 $`T=\big(f_l\,T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$ with $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
 from the start-of-step tissue temperatures (`radiative_temperature`), so the longwave field sees both tissues.

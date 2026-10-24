@@ -16,6 +16,8 @@
 !   7. DELTA LIDF            : a zero-spread leaf-angle distribution gives finite Beta (p, q).      !
 !   8. COHORT ORDER          : the upper of two equal cohorts absorbs more and sees the top light.  !
 !   9. TIED COHORTS          : equal-height cohorts share one layer, whatever their order.          !
+!  10. CUTTING              : one LAI-5 cohort and five LAI-1 cohorts of a PFT give the same light; !
+!                             a thin layer's scattered beam is the single-scatter split.            !
 !==========================================================================================!
 program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
@@ -25,7 +27,7 @@ program test_canopy_radiation
    use meds_pft_params,   only : rad_pft_optics_t, RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
    use meds_optics_lib,     only : beta_lidf, leaf_bf, gfun_direct, N_LEAF_CLASS
    use meds_pft_derive,     only : derive_rad_optics, moments_to_beta_params
-   use meds_canopy_radiation, only : canopy_radiation, ground_optics
+   use meds_canopy_radiation, only : canopy_radiation, ground_optics, layer_beam_sources
    implicit none
 
    real(wp), parameter :: TOL = 1.0e-9_wp
@@ -39,6 +41,7 @@ program test_canopy_radiation
    call test_lidf_delta()
    call test_cohort_order()
    call test_tied_cohorts_codominant()
+   call test_cutting_invariance()
 
    call test_report('test_canopy_radiation')
 
@@ -262,6 +265,42 @@ contains
       call check('permuting tied PFTs conserves the pair total', total_a, total_b,               &
                  1.0e-12_wp * max(total_a, 1.0e-12_wp))
    end subroutine test_tied_cohorts_codominant
+
+   !=======================================================================================!
+   !  CUTTING: a uniform canopy's light does not depend on how it is cut into cohorts, since     !
+   !  each layer's scattered beam is solved through its depth. And a thin layer's scattered beam !
+   !  is the single-scatter split of what it intercepts.                                        !
+   !=======================================================================================!
+   subroutine test_cutting_invariance()
+      type(rad_pft_optics_t) :: opt
+      type(rad_env_t)        :: f
+      type(rad_out_t)        :: one, five
+      integer(ik) :: b, ih
+      integer(ik) :: pft1(1), pft5(5)
+      real(wp)    :: hgt1(1), hgt5(5), lai1(1), lai5(5), wai1(1), wai5(5), t1(1), t5(5)
+      real(wp)    :: up, dn, intercept
+      print '(a)', '[10] cutting invariance (one LAI-5 cohort against five LAI-1 cohorts)'
+      call build_optics(45.0_wp, opt)
+      call build_forcing(0.87_wp, 290.0_wp, 298.0_wp, f)
+      pft1 = 1_ik ; hgt1 = 20.0_wp ; lai1 = 5.0_wp ; wai1 = 0.5_wp ; t1 = 298.0_wp
+      pft5 = 1_ik ; lai5 = 1.0_wp  ; wai5 = 0.1_wp ; t5 = 298.0_wp
+      hgt5 = [(10.0_wp + 2.0_wp * real(ih, wp), ih = 1, 5)]     ! distinct heights: five layers
+      call canopy_radiation(opt, f, 1_ik, pft1, hgt1, lai1, wai1, t1, one)
+      call canopy_radiation(opt, f, 5_ik, pft5, hgt5, lai5, wai5, t5, five)
+      do b = RAD_VIS, RAD_LW
+         call check('albedo, one cohort or five', five%albedo(b), one%albedo(b), TOL)
+         call check('light reaching the ground, one cohort or five', five%dn_ground(b), one%dn_ground(b),  &
+                    TOL * 1.0e3_wp)
+         call check('absorbed, one cohort or five', sum(five%abs_leaf(b,:)) + sum(five%abs_wood(b,:)),     &
+                    one%abs_leaf(b,1) + one%abs_wood(b,1), TOL * 1.0e3_wp)
+      end do
+      call layer_beam_sources(0.15_wp, 0.5_wp, 0.4_wp, 0.6_wp, 1.0e-6_wp, 100.0_wp, up, dn)
+      intercept = 100.0_wp * (1.0_wp - exp(-0.6_wp * 1.0e-6_wp))
+      call check('thin layer: up = omega beta0 x intercepted', up, 0.15_wp * 0.4_wp * intercept,           &
+                 1.0e-4_wp * up)
+      call check('thin layer: down = omega (1 - beta0) x intercepted', dn, 0.15_wp * 0.6_wp * intercept,  &
+                 1.0e-4_wp * dn)
+   end subroutine test_cutting_invariance
 
    !=======================================================================================!
    subroutine test_beers_law()
