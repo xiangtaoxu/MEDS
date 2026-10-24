@@ -272,7 +272,7 @@ contains
       logical :: railed
       real(wp) :: t_cas, t_soil(nsl), f_liq(nsl)
       t_cas = cas_enthalpy_to_temp(y_out%cas_enthalpy, y_out%cas_shv)
-      call diagnose_soil_temps(y_out, site%soil_profile%dry_heat_capacity, nsl, t_soil, f_liq)
+      call diagnose_soil_temps(y_out, site%soil_profile, nsl, t_soil, f_liq)
       railed = at_temp_bound(t_cas) .or. any(at_temp_bound(t_soil))
    end function rk45_state_railed
 

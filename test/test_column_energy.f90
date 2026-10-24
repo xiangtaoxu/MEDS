@@ -11,10 +11,13 @@
 !   4. STEADY STATE: a sealed isothermal column does not drift.                            !
 !   5. ICE-AWARE conductivity: frozen saturated soil conducts more than liquid             !
 !      (k_ice>k_water).                                                                    !
-!   6. FREEZE plateau (the zero curtain): cooling a wet layer pins soil_temp at t_3ple     !
-!      while soil_fliq falls 1->0, absorbing exactly wmass*L_f; energy conserved through   !
-!      the plateau.                                                                        !
-!   7. THAW plateau: warming a frozen layer pins at t_3ple while soil_fliq rises 0->1.     !
+!   6. FREEZE on the freezing curve: cooling a wet layer, its liquid stays on the curve,  !
+!      it cools without a step and slowly just below t_3ple (the zero curtain), its        !
+!      energy changes by exactly the heat drawn out, and liquid remains at -5 C.           !
+!   7. THAW on the curve: the liquid rises to all of the water below t_3ple, then warms   !
+!      past it. 7b. STEP INDEPENDENCE: a column frozen from the top for two days gives     !
+!      the same profile with 30-minute and 1-minute steps. 7c. ABOVE SATURATION: a layer    !
+!      stored beyond theta_sat is liquid above t_3ple, and its excess freezes at t_3ple.     !
 !   8. ANNUAL DAMPING: the amplitude of an annual surface wave must decay with depth as    !
 !      exp(-z/d), d = sqrt(2*alpha/omega), the semi-infinite analytic solution. This is a  !
 !      REGIME test, not a budget test -- the adiabatic bottom BC conserves energy to       !
@@ -36,11 +39,12 @@ program test_column_energy
    use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
    use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, soil_liquid_capacity
    use meds_therm_lib,           only : soil_thermal_conductivity, soil_volumetric_heat_capacity,              &
                                         temp_to_internal_energy, internal_energy_to_temp, sat_vapor_pressure,  &
                                         sat_vapor_pressure_temp_deriv, internal_energy_liquid
-   use meds_soil_heat,      only : soil_energy_step_implicit
+   use meds_soil_heat,      only : soil_energy_step_implicit, soil_layer_energy, soil_layer_energy_slope,   &
+                                   soil_layer_temp
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
@@ -50,8 +54,10 @@ program test_column_energy
    call test_soil_conserve()
    call test_soil_steady()
    call test_ice_conductivity()
-   call test_freeze_plateau()
-   call test_thaw_plateau()
+   call test_freeze_curve()
+   call test_thaw_curve()
+   call test_freeze_step_independence()
+   call test_oversaturated_layer()
    call test_mass_change_neutrality()
    call test_soil_annual_damping()
 
@@ -364,67 +370,158 @@ contains
       forcing%g_top = 0.0_wp ; forcing%geothermal = 0.0_wp
    end subroutine setup_1layer
 
-   subroutine test_freeze_plateau()
+   !----- Cooling a wet layer through freezing on its freezing curve (docs/science/soil_biophysics.md, !
+   !      "Frozen soil"): it cools without a step, its liquid fraction on the curve all the way, slowly  !
+   !      just below t_3ple (the zero curtain) as the latent heat comes out; its temperature is what its !
+   !      energy gives, which changes by exactly the heat drawn out; Newton takes a few iterations; and  !
+   !      at -5 C the curve still holds some liquid. ---------------------------------------------------!
+   subroutine test_freeze_curve()
       type(soil_profile_t)        :: soil
       type(soil_heat_env_t)      :: forcing
       type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(soil_heat_out_t)         :: flux
-      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
-      real(wp) :: latent_expect, e_enter, e_exit, worst_pin, worst_res, fl_prev, fl, tp, e_col
-      integer(ik) :: step
-      logical :: got_enter, got_exit
-      print '(a)', 'test_freeze_plateau:'
+      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp, DT = 1800.0_wp, G = -100.0_wp
+      real(wp) :: e0, t_prev, worst_res, worst_curve, worst_e, theta_liq, dtheta, t_curtain, e_back, de, fl_back
+      integer(ik) :: step, iters_max, n_curtain
+      logical :: monotone
+      print '(a)', 'test_freeze_curve:'
       call setup_1layer(soil, forcing, THETA, DEPTH)
-      col%soil_energy(1) = temp_to_internal_energy(soil%dry_heat_capacity(1), THETA * rho_h2o,       &
-                                        t_3ple + 0.2_wp, 1.0_wp)               ! all-liquid, just above 0 C
-      forcing%g_top = -100.0_wp                                               ! steady surface cooling
-      latent_expect = THETA * rho_h2o * latent_heat_fusion * soil%dz(1)       ! [J/m2] to freeze the layer
-      worst_pin = 0.0_wp ; worst_res = 0.0_wp ; fl_prev = 1.0_wp
-      e_enter = 0.0_wp ; e_exit = 0.0_wp ; got_enter = .false. ; got_exit = .false.
-      do step = 1_ik, 100_ik
-         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
+      col%soil_energy(1) = soil_layer_energy(t_3ple + 0.2_wp, THETA, soil%dry_heat_capacity(1), soil%layer_curve(1))
+      e0 = col%soil_energy(1)
+      forcing%g_top = G
+      t_prev = t_3ple + 0.2_wp ; worst_res = 0.0_wp ; worst_curve = 0.0_wp ; worst_e = 0.0_wp
+      iters_max = 0_ik ; n_curtain = 0_ik ; monotone = .true.
+      do step = 1_ik, 200_ik
+         call soil_energy_step_implicit(col, forcing, soil, opts, DT, flux)
          worst_res = max(worst_res, abs(flux%energy_resid))
-         fl = col%soil_fliq(1) ; tp = col%soil_temp(1) ; e_col = col%soil_energy(1) * soil%dz(1)
-         if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
-         if (.not. got_enter .and. fl < 1.0_wp - 1.0e-3_wp) then ; e_enter = e_col ; got_enter = .true. ; end if
-         if (.not. got_exit  .and. fl < 1.0e-3_wp)          then ; e_exit  = e_col ; got_exit  = .true. ; end if
-         fl_prev = fl
+         iters_max = max(iters_max, flux%iterations)
+         if (col%soil_temp(1) > t_prev + 1.0e-12_wp) monotone = .false.
+         t_prev = col%soil_temp(1)
+         if (col%soil_temp(1) > t_3ple - 1.0_wp .and. col%soil_fliq(1) < 1.0_wp) n_curtain = n_curtain + 1_ik
+         if (col%soil_fliq(1) < 1.0_wp) then
+            call soil_liquid_capacity(soil%layer_curve(1), col%soil_temp(1), theta_liq, dtheta)
+            worst_curve = max(worst_curve, abs(col%soil_fliq(1) * THETA - theta_liq))
+         end if
+         call soil_layer_energy_slope(col%soil_temp(1), THETA, soil%dry_heat_capacity(1), soil%layer_curve(1),   &
+                                      e_back, de, fl_back)
+         worst_e = max(worst_e, abs(e_back - col%soil_energy(1)) / de)
+         if (col%soil_temp(1) < t_3ple - 5.0_wp) exit
       end do
-      call check_true('freeze: soil_temp pinned at t_3ple on plateau', worst_pin < 1.0e-6_wp, worst_pin)
-      call check_true('freeze: energy residual ~ 0 through plateau',   worst_res < 1.0e-4_wp, worst_res)
-      call check_true('freeze: layer fully frozen (fliq -> 0)',        got_exit,              col%soil_fliq(1))
-      call check_true('freeze: all-ice layer cools below t_3ple',      col%soil_temp(1) < t_3ple, col%soil_temp(1))
-      call check('freeze: latent heat absorbed = wmass*L_f', e_enter - e_exit, latent_expect,  &
-                 0.08_wp * latent_expect)                                     ! within ~1 step granularity
-   end subroutine test_freeze_plateau
+      t_curtain = n_curtain * DT / 3600.0_wp
+      call check_true('freeze: energy residual ~ 0',                      worst_res < 1.0e-4_wp, worst_res)
+      call check('freeze: energy drawn out = heat flux x time', (col%soil_energy(1) - e0) * soil%dz(1),        &
+                 G * DT * real(step, wp), 1.0e-9_wp * abs(e0 * soil%dz(1)))
+      call check_true('freeze: cools monotonically, no step',             monotone, t_prev)
+      call check_true('freeze: liquid on the freezing curve',             worst_curve < 1.0e-9_wp, worst_curve)
+      call check_true('freeze: temperature is what the energy gives [K]', worst_e < 1.0e-9_wp, worst_e)
+      call check_true('freeze: zero curtain, over 10 h within 1 K of t_3ple', t_curtain > 10.0_wp, t_curtain)
+      call check_true('freeze: Newton converges in 4 iterations or fewer', iters_max <= 4_ik, real(iters_max, wp))
+      call check_true('freeze: the curve still holds liquid at -5 C',     col%soil_fliq(1) > 0.05_wp .and.       &
+                      col%soil_fliq(1) < 0.5_wp, col%soil_fliq(1))
+   end subroutine test_freeze_curve
 
-   subroutine test_thaw_plateau()
+   !----- Warming a frozen layer: its liquid fraction rises on the curve to 1 and the layer warms    !
+   !      past t_3ple, all liquid; the energy closes. ------------------------------------------------!
+   subroutine test_thaw_curve()
       type(soil_profile_t)        :: soil
       type(soil_heat_env_t)      :: forcing
       type(soil_energy_state_t)   :: col
       type(soil_params_t)         :: opts
       type(soil_heat_out_t)         :: flux
-      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp
-      real(wp) :: worst_pin, fl, tp
+      real(wp), parameter :: THETA = 0.40_wp, DEPTH = 0.05_wp, DT = 1800.0_wp, G = 100.0_wp
+      real(wp) :: e0, t_prev, worst_curve, theta_liq, dtheta
       integer(ik) :: step
-      logical :: melted
-      print '(a)', 'test_thaw_plateau:'
+      logical :: monotone
+      print '(a)', 'test_thaw_curve:'
       call setup_1layer(soil, forcing, THETA, DEPTH)
-      col%soil_energy(1) = temp_to_internal_energy(soil%dry_heat_capacity(1), THETA * rho_h2o,       &
-                                        t_3ple - 0.2_wp, 0.0_wp)              ! all-ice, just below 0 C
-      forcing%g_top = 100.0_wp                                               ! steady surface warming
-      worst_pin = 0.0_wp ; melted = .false.
-      do step = 1_ik, 100_ik
-         call soil_energy_step_implicit(col, forcing, soil, opts, 1800.0_wp, flux)
-         fl = col%soil_fliq(1) ; tp = col%soil_temp(1)
-         if (fl > 1.0e-3_wp .and. fl < 1.0_wp - 1.0e-3_wp) worst_pin = max(worst_pin, abs(tp - t_3ple))
-         if (fl > 1.0_wp - 1.0e-3_wp) melted = .true.
+      col%soil_energy(1) = soil_layer_energy(t_3ple - 5.0_wp, THETA, soil%dry_heat_capacity(1), soil%layer_curve(1))
+      e0 = col%soil_energy(1)
+      forcing%g_top = G
+      t_prev = t_3ple - 5.0_wp ; worst_curve = 0.0_wp ; monotone = .true.
+      do step = 1_ik, 200_ik
+         call soil_energy_step_implicit(col, forcing, soil, opts, DT, flux)
+         if (col%soil_temp(1) < t_prev - 1.0e-12_wp) monotone = .false.
+         t_prev = col%soil_temp(1)
+         if (col%soil_fliq(1) < 1.0_wp) then
+            call soil_liquid_capacity(soil%layer_curve(1), col%soil_temp(1), theta_liq, dtheta)
+            worst_curve = max(worst_curve, abs(col%soil_fliq(1) * THETA - theta_liq))
+         end if
+         if (col%soil_temp(1) > t_3ple + 1.0_wp) exit
       end do
-      call check_true('thaw: soil_temp pinned at t_3ple on plateau', worst_pin < 1.0e-6_wp, worst_pin)
-      call check_true('thaw: layer fully melted (fliq -> 1)',        melted,                col%soil_fliq(1))
-      call check_true('thaw: all-liquid layer warms above t_3ple',   col%soil_temp(1) > t_3ple, col%soil_temp(1))
-   end subroutine test_thaw_plateau
+      call check('thaw: energy added = heat flux x time', (col%soil_energy(1) - e0) * soil%dz(1),             &
+                 G * DT * real(step, wp), 1.0e-9_wp * abs(e0 * soil%dz(1)))
+      call check_true('thaw: warms monotonically, no step',          monotone, t_prev)
+      call check_true('thaw: liquid on the freezing curve',          worst_curve < 1.0e-9_wp, worst_curve)
+      call check_true('thaw: the layer warms past t_3ple, all liquid', col%soil_temp(1) > t_3ple + 1.0_wp .and.  &
+                      col%soil_fliq(1) == 1.0_wp, t_prev)
+   end subroutine test_thaw_curve
+
+   !----- A layer stored beyond saturation (theta > theta_sat, through the specific storage): liquid  !
+   !      at its temperature above t_3ple; below it on the curve; and between the curve's energy at    !
+   !      t_3ple and the all-liquid one, at t_3ple with the excess partly frozen. -----------------!
+   subroutine test_oversaturated_layer()
+      type(soil_profile_t)   :: soil
+      type(soil_heat_env_t) :: forcing
+      real(wp) :: theta, e, t, fl, e_lo, e_hi
+      print '(a)', 'test_oversaturated_layer:'
+      call setup_1layer(soil, forcing, 0.40_wp, 0.05_wp)
+      theta = soil%theta_sat(1) + 5.0e-4_wp
+      e = soil_layer_energy(300.0_wp, theta, soil%dry_heat_capacity(1), soil%layer_curve(1))
+      call soil_layer_temp(e, theta, soil%dry_heat_capacity(1), soil%layer_curve(1), t, fl)
+      call check('above saturation, warm: its temperature', t, 300.0_wp, 1.0e-9_wp)
+      call check('above saturation, warm: all liquid', fl, 1.0_wp, 0.0_wp)
+      e = soil_layer_energy(272.0_wp, theta, soil%dry_heat_capacity(1), soil%layer_curve(1))
+      call soil_layer_temp(e, theta, soil%dry_heat_capacity(1), soil%layer_curve(1), t, fl)
+      call check('above saturation, frozen: its temperature', t, 272.0_wp, 1.0e-9_wp)
+      e_lo = soil_layer_energy(t_3ple, theta, soil%dry_heat_capacity(1), soil%layer_curve(1))
+      e_hi = temp_to_internal_energy(soil%dry_heat_capacity(1), theta * rho_h2o, t_3ple, 1.0_wp)
+      call soil_layer_temp(0.5_wp * (e_lo + e_hi), theta, soil%dry_heat_capacity(1), soil%layer_curve(1), t, fl)
+      call check_true('the excess freezes at t_3ple', t == t_3ple .and. fl > soil%theta_sat(1) / theta .and.      &
+                      fl < 1.0_wp, fl)
+   end subroutine test_oversaturated_layer
+
+   !----- A five-layer wet column frozen from the top for two days: the profile does not depend on    !
+   !      the step, as Newton in the energies takes the latent heat into each step's balance (with     !
+   !      only the sensible heat capacity in the step, a 30-minute step overshoots the freezing      !
+   !      front). The column's budget closes at every step. ---------------------------------------!
+   subroutine test_freeze_step_independence()
+      type(soil_profile_t)        :: soil
+      type(soil_heat_env_t)      :: forcing
+      type(soil_energy_state_t)   :: col
+      type(soil_params_t)         :: opts
+      type(soil_heat_out_t)         :: flux
+      real(wp) :: t_end(5, 2), dt(2), worst_res, worst
+      integer(ik) :: idt, step, nstep, k, iters_max
+      print '(a)', 'test_freeze_step_independence:'
+      dt = [1800.0_wp, 60.0_wp]
+      worst_res = 0.0_wp ; iters_max = 0_ik
+      do idt = 1, 2
+         call geometric_layer_bottoms(1.0_wp, 5_ik, 3.0_wp, test_bottoms)
+         call build_profile_hydraulics(5_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
+              2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
+         call build_profile_thermal(5_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, soil)
+         forcing%soil_water(1:5) = 0.38_wp ; forcing%w_flux = 0.0_wp ; forcing%water_heat_out = 0.0_wp
+         forcing%g_top = -60.0_wp ; forcing%geothermal = 0.0_wp ; forcing%w_flux_top = 0.0_wp
+         do k = 1_ik, 5_ik
+            col%soil_energy(k) = soil_layer_energy(t_3ple + 1.0_wp, 0.38_wp, soil%dry_heat_capacity(k),   &
+                                                   soil%layer_curve(k))
+         end do
+         nstep = nint(2.0_wp * 86400.0_wp / dt(idt), ik)
+         do step = 1_ik, nstep
+            call soil_energy_step_implicit(col, forcing, soil, opts, dt(idt), flux)
+            worst_res = max(worst_res, abs(flux%energy_resid))
+            iters_max = max(iters_max, flux%iterations)
+         end do
+         t_end(:, idt) = col%soil_temp(1:5)
+      end do
+      worst = maxval(abs(t_end(:, 1) - t_end(:, 2)))
+      call check_true('freeze front: 30 min and 1 min steps agree within 0.1 K', worst < 0.1_wp, worst)
+      call check_true('freeze front: the top layer froze', t_end(1, 2) < t_3ple - 1.0_wp, t_end(1, 2))
+      call check_true('freeze front: energy residual ~ 0', worst_res < 1.0e-4_wp, worst_res)
+      call check_true('freeze front: Newton converges in 6 iterations or fewer', iters_max <= 6_ik,             &
+                      real(iters_max, wp))
+   end subroutine test_freeze_step_independence
 
    !=======================================================================================!
    !  TEMPERATURE-NEUTRALITY of a mass change that carries its own enthalpy.               !

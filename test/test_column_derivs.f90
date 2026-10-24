@@ -19,7 +19,7 @@ program test_column_derivs
                                    h2o_dry_ratio
    use meds_therm_lib,         only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, sat_specific_humidity,  &
                                       sat_vapor_pressure, sat_vapor_pressure_temp_deriv, enthalpy_vapor,  &
-                                      temp_to_internal_energy, internal_energy_to_temp, internal_energy_liquid
+                                      temp_to_internal_energy, internal_energy_liquid
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_soil_heat, only : soil_heat_env_t, soil_heat_out_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -27,7 +27,7 @@ program test_column_derivs
    use meds_soil_derive,        only : build_profile_hydraulics, build_profile_thermal
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
-   use meds_soil_heat,      only : soil_energy_step_implicit, soil_energy_time_deriv
+   use meds_soil_heat,      only : soil_energy_step_implicit, soil_energy_time_deriv, soil_layer_temp
    use meds_pft_params,  only : hydraulics_pft_t
    use meds_plant_hydr_lib,   only : tissue_psi_to_water, water_curve_t
    use meds_fast_integ_derivs, only : surface_derivs, march_derivs
@@ -572,7 +572,8 @@ contains
       type(march_state_t),  intent(in) :: y
       type(frozen_t), intent(in) :: frozen
       real(wp) :: t, fl
-      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, site%soil_profile%dry_heat_capacity(1), t, fl)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1),                 &
+                           site%soil_profile%layer_curve(1), t, fl)
    end function soil_top_temp
 
    !----- march the ESDIRK2 fixed-step from y for nstep steps of dt (embedded error discarded). -----!
@@ -1027,7 +1028,8 @@ contains
       type(march_state_t),   intent(in) :: y
       type(frozen_t),  intent(in) :: frozen
       real(wp) :: tg, fl
-      call internal_energy_to_temp(y%soil_energy(1), y%theta(1)*rho_h2o, site%soil_profile%dry_heat_capacity(1), tg, fl)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1),                 &
+                           site%soil_profile%layer_curve(1), tg, fl)
    end function tground_of
 
    logical function ieee_ok(x)

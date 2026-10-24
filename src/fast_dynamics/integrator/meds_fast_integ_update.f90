@@ -98,7 +98,7 @@ contains
       call unpack_column_state(y_out, n, nsl, dynamic)
       dynamic%soil_water%w_surface        = y_out%w_surface
       dynamic%soil_water%w_surface_energy = y_out%w_surface_energy
-      call diagnose_soil_temps(y_out, site%soil_profile%dry_heat_capacity, nsl, dynamic%soil_energy%soil_temp,    &
+      call diagnose_soil_temps(y_out, site%soil_profile, nsl, dynamic%soil_energy%soil_temp,                    &
                                dynamic%soil_energy%soil_fliq)
       t_leaf_avg(1:n) = acc%tissue_leaf_int(1:n) / dt_fast
       t_wood_avg(1:n) = acc%tissue_wood_int(1:n) / dt_fast

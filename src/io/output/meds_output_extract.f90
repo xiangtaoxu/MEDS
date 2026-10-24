@@ -453,7 +453,10 @@ contains
             case (FLD_L_SOIL_FLIQ)
                col(1:nl, ip) = poly%patch%soil_energy(ip)%soil_fliq(1:nl)
             case (FLD_L_SOIL_PSI)
-               col(1:nl, ip) = soil_matric_potential(soil%retention, poly%patch%soil_water(ip)%theta(1:nl), &
+               !----- The liquid's potential: in a frozen layer, the freezing curve's                 !
+               !      (docs/science/soil_biophysics.md, "Frozen soil"). ----------------------------!
+               col(1:nl, ip) = soil_matric_potential(soil%retention, poly%patch%soil_water(ip)%theta(1:nl)   &
+                                                     * poly%patch%soil_energy(ip)%soil_fliq(1:nl),          &
                                                      soil%theta_sat(1:nl), soil%theta_res(1:nl),          &
                                                      soil%curve_par_a(1:nl), soil%curve_par_n(1:nl))
             case (FLD_L_SOIL_WETNESS)

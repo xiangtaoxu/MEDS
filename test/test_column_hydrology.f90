@@ -19,6 +19,8 @@
 !                      infiltrates carries its own enthalpy.                                     !
 !   8. AQUIFER       : the head-driven bottom is two-way and settles to hydrostatic equilibrium. !
 !   9. EVAPORATION   : area-weighted by the snow-free share; rises monotonically with moisture.   !
+!  10. FROZEN TOP    : the ice impedes the rain's infiltration; the freezing curve's suction      !
+!                      fills a frozen layer to saturation, not past it; the water closes.         !
 !==========================================================================================!
 program test_column_hydrology
    use meds_test_assert, only : check, check_true, test_report
@@ -28,7 +30,7 @@ program test_column_hydrology
    use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_head_to_theta,  &
-                                    soil_theta_to_head
+                                    soil_theta_to_head, soil_ice_state, soil_liquid_capacity
    use meds_soil_water,       only : ground_evaporation_rate, ground_evaporation_setup, bottom_flux, ground_evap_env_t
    use meds_fast_integ_types,       only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,           &
                                      ensure_static_capacity, POND, GRP_THETA, N_WORK
@@ -63,6 +65,7 @@ program test_column_hydrology
    call test_aquifer_head_bc()
    call test_snow_free_evap()
    call test_evap_moisture_response()
+   call test_frozen_top()
    call test_report('test_column_hydrology')
 
 contains
@@ -88,7 +91,7 @@ contains
       col%drive%t_soil = 290.0_wp ; col%drive%t_rain = 290.0_wp
       !----- [fast].rtol and water_atol at their defaults. -----------------------------------!
       col%tols%rtol(GRP_THETA) = 1.0e-3_wp ; col%tols%atol(GRP_THETA) = 1.0e-4_wp
-      call set_water_state(col%static, params, no_plants, theta, w_pond, e_pond, dum, dum, col%water)
+      call set_water_state(col%static, params, no_plants, theta, col%drive%ice, w_pond, e_pond, dum, dum, col%water)
    end subroutine soil_network
 
    !----- One fast step of the column's network under the air f. ------------------------------!
@@ -101,6 +104,22 @@ contains
       col%drive%ground = f
       call water_step(dt, col%static, params, opts, no_plants, col%drive, col%tols, col%water, col%work)
    end subroutine advance
+
+   !----- Freeze the column's top nfrozen layers at temperature temp: each keeps the liquid its    !
+   !      freezing curve holds there, the rest ice, and the network restarts from that state. ----!
+   subroutine freeze_top(col, params, theta, temp, nfrozen)
+      type(column_t),       intent(inout) :: col
+      type(soil_profile_t), intent(in)    :: params
+      real(wp),             intent(in)    :: theta(:), temp
+      integer(ik),          intent(in)    :: nfrozen
+      real(wp)    :: theta_liq, dtheta, dum(0)
+      integer(ik) :: k
+      do k = 1_ik, nfrozen
+         call soil_liquid_capacity(params%layer_curve(k), temp, theta_liq, dtheta)
+         col%drive%ice(k) = soil_ice_state(params%layer_curve(k), max(theta(k) - theta_liq, 0.0_wp))
+      end do
+      call set_water_state(col%static, params, no_plants, theta, col%drive%ice, 0.0_wp, 0.0_wp, dum, dum, col%water)
+   end subroutine freeze_top
 
    real(wp) function column_water(col)
       type(column_t), intent(in) :: col
@@ -212,15 +231,15 @@ contains
       opts%water_bottom_bc = SOIL_BC_DRAIN
       !----- At one state: the two ends of the factor are free drainage and bedrock, exactly. -----!
       opts%drain_factor = 1.0_wp
-      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
       call check('f = 1 is free drainage: q = K(theta_N), bit for bit', q, K_N, 0.0_wp)
       call check('f = 1: dq/dK = 1 and dq/dpsi = 0', abs(dq_dk - 1.0_wp) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
       opts%drain_factor = 0.0_wp
-      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
       call check('f = 0 is sealed bedrock: q = 0 and no derivative, bit for bit',                     &
                  abs(q) + abs(dq_dk) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
       opts%drain_factor = F_LEAK
-      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, 1.0_wp, q, dq_dpsi, dq_dk)
       call check('a leaky base drains f K(theta_N)', q, F_LEAK * K_N, 0.0_wp)
       call check('and its flux moves with K(theta_N) by f', dq_dk, F_LEAK, 0.0_wp)
       !----- A wet column, free and leaky. -------------------------------------------------------!
@@ -397,13 +416,13 @@ contains
          real(wp) :: psi_eq, q_m, q_p, dqp_m, dqp_p, dqk, h_psi, q_k
          psi_eq = -delta * grav_head
          h_psi  = 1.0e-6_wp
-         call bottom_flux(params, opts, n, psi_eq - h_psi, 1.0e-7_wp, q_m, dqp_m, dqk)
-         call bottom_flux(params, opts, n, psi_eq + h_psi, 1.0e-7_wp, q_p, dqp_p, dqk)
+         call bottom_flux(params, opts, n, psi_eq - h_psi, 1.0e-7_wp, 1.0_wp, q_m, dqp_m, dqk)
+         call bottom_flux(params, opts, n, psi_eq + h_psi, 1.0e-7_wp, 1.0_wp, q_p, dqp_p, dqk)
          call check('AQUIFER: dq/dpsi is continuous through zero gradient', dqp_m, dqp_p, 1.0e-12_wp * dqp_p)
          call check('AQUIFER: dq/dpsi matches its finite difference', (q_p - q_m) / (2.0_wp * h_psi), dqp_p,  &
                     1.0e-6_wp * dqp_p)
-         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp, q_m, dqp_m, dqk)
-         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp * (1.0_wp + 1.0e-6_wp), q_k)
+         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp, 1.0_wp, q_m, dqp_m, dqk)
+         call bottom_flux(params, opts, n, -2.0_wp * grav_head, 1.0e-7_wp * (1.0_wp + 1.0e-6_wp), 1.0_wp, q_k)
          call check('AQUIFER: dq/dK matches its finite difference', (q_k - q_m) / 1.0e-13_wp, dqk,          &
                     1.0e-4_wp * abs(dqk))
          call check('AQUIFER: rise at -2 m head crosses the geometric-mean face',                          &
@@ -479,5 +498,59 @@ contains
       call ground_evaporation_rate(th, grav_head * soil_theta_to_head(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, &
                                    3.6_wp, 1.56_wp), f, opts, e, de1, de2)
    end function loam_evap
+
+   !=======================================================================================!
+   !----- A loam column with its top two layers at -7 C (docs/science/soil_biophysics.md, "Frozen  !
+   !      soil"). Rain of 10 mm/h for two hours on a moist column: the ice's impedance lets in a   !
+   !      tenth of what the thawed column takes, or less. Then a dry frozen top over wet soil and   !
+   !      no rain for four days: the freezing curve's suction draws water up into the frozen layer, !
+   !      which fills to saturation and no further. The water closes in both. ------------------!
+   subroutine test_frozen_top()
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      type(column_t)       :: thawed, frozen
+      real(wp) :: theta(10), rain, infil_thawed, infil_frozen, w0, runoff, drained, theta1, theta1_max
+      integer(ik) :: step
+      print '(a)', 'test_frozen_top:'
+      call loam_params(params)
+      theta = 0.36_wp
+      call soil_network(thawed, params, opts, theta, 0.0_wp, 0.0_wp)
+      call soil_network(frozen, params, opts, theta, 0.0_wp, 0.0_wp)
+      call freeze_top(frozen, params, theta, 266.0_wp, 2_ik)
+      w0 = column_water(frozen) ; rain = 0.0_wp ; infil_thawed = 0.0_wp ; infil_frozen = 0.0_wp
+      runoff = 0.0_wp ; drained = 0.0_wp
+      do step = 1_ik, 8_ik
+         thawed%drive%rain = 10.0_wp / 3600.0_wp
+         frozen%drive%rain = thawed%drive%rain
+         call advance(thawed, params, opts, humid_air(), 900.0_wp)
+         call advance(frozen, params, opts, humid_air(), 900.0_wp)
+         rain = rain + frozen%drive%rain * 900.0_wp
+         infil_thawed = infil_thawed + thawed%water%flows%infil - thawed%water%flows%exfil
+         infil_frozen = infil_frozen + frozen%water%flows%infil - frozen%water%flows%exfil
+         runoff  = runoff + frozen%water%flows%spill
+         drained = drained + frozen%water%flows%drain
+      end do
+      call check_true('the ice impedes infiltration (frozen < thawed / 10)', infil_frozen < 0.1_wp * infil_thawed,  &
+                      infil_frozen / max(infil_thawed, tiny(1.0_wp)))
+      call check('frozen column: rain = change in store + runoff + drainage', column_water(frozen) - w0,      &
+                 rain - runoff - drained, 1.0e-10_wp * rain)
+
+      !----- A dry frozen top over wet soil: cryosuction, up to saturation. ----------------------!
+      theta = 0.40_wp ; theta(1) = 0.20_wp
+      call soil_network(frozen, params, opts, theta, 0.0_wp, 0.0_wp)
+      call freeze_top(frozen, params, theta, 266.0_wp, 1_ik)
+      w0 = column_water(frozen) ; drained = 0.0_wp ; theta1_max = 0.0_wp
+      do step = 1_ik, 384_ik
+         call advance(frozen, params, opts, humid_air(), 900.0_wp)
+         drained = drained + frozen%water%flows%drain
+         theta1 = frozen%water%state%water_soil(2) / (rho_h2o * params%dz(1))
+         theta1_max = max(theta1_max, theta1)
+      end do
+      call check_true('the frozen layer draws water up from the wet soil below', theta1 > 0.25_wp, theta1)
+      call check_true('and fills no further than saturation', theta1_max <= params%theta_sat(1) + 1.0e-6_wp,   &
+                      theta1_max)
+      call check('cryosuction: change in store = - drainage', column_water(frozen) - w0, -drained,             &
+                 1.0e-10_wp * w0)
+   end subroutine test_frozen_top
 
 end program test_column_hydrology

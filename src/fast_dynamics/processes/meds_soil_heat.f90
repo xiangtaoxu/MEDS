@@ -10,17 +10,30 @@
 !==========================================================================================!
 module meds_soil_heat
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, n_soil_layer_max
+   use meds_constants,        only : rho_h2o, n_soil_layer_max, cp_liq, cp_ice, tsupercool_liq, t_3ple
    use meds_soil_params,      only : soil_profile_t, soil_params_t,                                    &
                                      ENERGY_BC_DIRICHLET
    use meds_patch_state_vars,   only : soil_energy_state_t
-   use meds_therm_lib,        only : internal_energy_to_temp, internal_energy_liquid, soil_thermal_conductivity,  &
+   use meds_therm_lib,        only : internal_energy_liquid, soil_thermal_conductivity,                         &
                                      soil_volumetric_heat_capacity
+   use meds_soil_hydr_lib,    only : soil_layer_curve_t, soil_liquid_capacity
    use meds_linear_algebra,   only : thomas_solve
    implicit none
    private
 
    public :: soil_energy_step_implicit, soil_energy_time_deriv, set_soil_heat_env, soil_layer_temp
+   public :: soil_layer_energy, soil_layer_energy_slope
+
+   !----- The inversion of a layer's energy on its freezing curve: the most Newton steps, and the !
+   !      temperature step [K] below which it has converged. -------------------------------------!
+   integer(ik), parameter :: SOIL_TEMP_ITER_MAX = 60_ik
+   real(wp),    parameter :: SOIL_TEMP_TOL      = 1.0e-10_wp
+   !----- The step's Newton on the layers' energies: the most iterations, the halvings of a step   !
+   !      that does not lower the worst residual, and the residual [K, as the temperature change   !
+   !      it would need] at which it has converged. -----------------------------------------------!
+   integer(ik), parameter :: SOIL_STEP_ITER_MAX = 30_ik
+   integer(ik), parameter :: SOIL_STEP_HALVINGS = 5_ik
+   real(wp),    parameter :: SOIL_STEP_TOL      = 1.0e-8_wp
    public :: soil_heat_env_t, soil_heat_out_t
 
    !----- The soil column's thermal forcing: the heat and water crossing its top, bottom and       !
@@ -44,7 +57,20 @@ module meds_soil_heat
       real(wp) :: bottom_heat  = 0.0_wp                     !< [W/m2] heat conducted out through the bottom face
       real(wp) :: energy_resid = 0.0_wp                     !< [J/m2] closed-budget residual (~0)
       real(wp) :: heat_capacity = 0.0_wp                    !< [J/m2/K] the column's, at the step's start
+      integer(ik) :: iterations = 0_ik                      !< Newton iterations the step took
    end type soil_heat_out_t
+
+   !----- The soil column at one set of energies (soil_energy_step_implicit): each layer's         !
+   !      temperature, apparent heat capacity and balance residual, the faces, and the worst       !
+   !      residual as a temperature change. -------------------------------------------------------!
+   type :: soil_column_eval_t
+      real(wp) :: temp(n_soil_layer_max) = 0.0_wp      !< [K]
+      real(wp) :: de(n_soil_layer_max)   = 0.0_wp      !< [J/m3/K] dE/dT on the freezing curve
+      real(wp) :: res(n_soil_layer_max)  = 0.0_wp      !< [W/m2]
+      real(wp) :: hf(0:n_soil_layer_max)  = 0.0_wp     !< [W/m2] conduction, positive up
+      real(wp) :: qwf(0:n_soil_layer_max) = 0.0_wp     !< [W/m2] the water's enthalpy, positive up
+      real(wp) :: norm = 0.0_wp                        !< [K]
+   end type soil_column_eval_t
 
 contains
 
@@ -87,17 +113,100 @@ contains
       env%water_heat_out(nsl) = env%water_heat_out(nsl) + e_drain
    end subroutine set_soil_heat_env
 
-   !----- One layer's temperature and liquid fraction from its internal energy and water content:  !
-   !      internal_energy_to_temp on the layer's water mass per volume                             !
-   !      (docs/science/soil_biophysics.md, "The soil thermal column"). ---------------------------!
-   elemental pure subroutine soil_layer_temp(soil_energy, theta, dry_heat_capacity, temp, fliq)
-      real(wp), intent(in)  :: soil_energy         !< [J/m3]   internal energy
-      real(wp), intent(in)  :: theta               !< [m3/m3]  water content
-      real(wp), intent(in)  :: dry_heat_capacity   !< [J/m3/K] heat capacity of the dry soil
-      real(wp), intent(out) :: temp                !< [K]      temperature
-      real(wp), intent(out) :: fliq                !< [-]      liquid fraction of the water
-      call internal_energy_to_temp(soil_energy, theta * rho_h2o, dry_heat_capacity, temp, fliq)
+   !----- One layer's temperature and liquid fraction from its internal energy and water content,   !
+   !      on its freezing curve (soil_liquid_capacity; docs/science/soil_biophysics.md, "Frozen     !
+   !      soil"): all liquid at and above t_3ple, or below it while the curve holds the layer's     !
+   !      water; below that the liquid the curve holds at the temperature, the rest ice. Water a    !
+   !      layer stores beyond saturation freezes at t_3ple itself, where the curve holds theta_sat, !
+   !      so an energy between the curve's there and the all-liquid one sits at t_3ple. The energy  !
+   !      rises with the temperature, and a partly frozen layer is warmer than its all-liquid       !
+   !      temperature and colder than its all-ice one and t_3ple, so Newton's iterates are kept     !
+   !      inside that bracket. ---------------------------------------------------------------------!
+   elemental pure subroutine soil_layer_temp(soil_energy, theta, dry_heat_capacity, curve, temp, fliq)
+      real(wp),                 intent(in)  :: soil_energy         !< [J/m3]   internal energy
+      real(wp),                 intent(in)  :: theta               !< [m3/m3]  water content
+      real(wp),                 intent(in)  :: dry_heat_capacity   !< [J/m3/K] heat capacity of the dry soil
+      type(soil_layer_curve_t), intent(in)  :: curve               !< the layer's retention curve
+      real(wp),                 intent(out) :: temp                !< [K]      temperature
+      real(wp),                 intent(out) :: fliq                !< [-]      liquid fraction of the water
+      real(wp) :: de
+      call soil_layer_state(soil_energy, theta, dry_heat_capacity, curve, temp, fliq, de)
    end subroutine soil_layer_temp
+
+   !----- soil_layer_temp, with the apparent heat capacity de [J/m3/K] at the temperature found   !
+   !      (soil_layer_energy_slope's), which the step's Newton reads. ----------------------------!
+   elemental pure subroutine soil_layer_state(soil_energy, theta, dry_heat_capacity, curve, temp, fliq, de)
+      real(wp),                 intent(in)  :: soil_energy, theta, dry_heat_capacity   !< as soil_layer_temp's
+      type(soil_layer_curve_t), intent(in)  :: curve
+      real(wp),                 intent(out) :: temp, fliq, de      !< [K], [-], [J/m3/K]
+      real(wp)    :: wmass, theta_liq, dtheta, lo, hi, e, step
+      integer(ik) :: it
+      wmass = theta * rho_h2o
+      temp  = (soil_energy + wmass * cp_liq * tsupercool_liq) / (dry_heat_capacity + wmass * cp_liq)
+      fliq  = 1.0_wp
+      de    = dry_heat_capacity + wmass * cp_liq
+      if (wmass <= 0.0_wp .or. temp >= t_3ple) return        ! dry, or liquid at and above t_3ple
+      call soil_liquid_capacity(curve, temp, theta_liq, dtheta)
+      if (theta_liq >= theta) return                         ! the curve holds all of it: all liquid
+      !----- At t_3ple, between the curve's energy there and the all-liquid one. ------------------!
+      call soil_layer_energy_slope(t_3ple, theta, dry_heat_capacity, curve, e, de, fliq)
+      if (soil_energy >= e) then
+         temp = t_3ple
+         fliq = (soil_energy - (dry_heat_capacity + wmass * cp_ice) * t_3ple)                              &
+                / (wmass * (internal_energy_liquid(t_3ple) - cp_ice * t_3ple))
+         return
+      end if
+      lo = temp
+      hi = min(t_3ple, soil_energy / (dry_heat_capacity + wmass * cp_ice))
+      temp = hi
+      do it = 1_ik, SOIL_TEMP_ITER_MAX
+         call soil_layer_energy_slope(temp, theta, dry_heat_capacity, curve, e, de, fliq)
+         if (e > soil_energy) then
+            hi = temp
+         else
+            lo = temp
+         end if
+         step = (soil_energy - e) / de
+         if (temp + step <= lo .or. temp + step >= hi) step = 0.5_wp * (lo + hi) - temp   ! bisect
+         temp = temp + step
+         if (abs(step) < SOIL_TEMP_TOL) exit
+      end do
+      call soil_layer_energy_slope(temp, theta, dry_heat_capacity, curve, e, de, fliq)
+   end subroutine soil_layer_state
+
+   !----- The inverse: one layer's internal energy [J/m3] at a temperature, with the liquid its     !
+   !      freezing curve holds there. --------------------------------------------------------------!
+   elemental pure function soil_layer_energy(temp, theta, dry_heat_capacity, curve) result(soil_energy)
+      real(wp),                 intent(in) :: temp, theta, dry_heat_capacity   !< [K], [m3/m3], [J/m3/K]
+      type(soil_layer_curve_t), intent(in) :: curve
+      real(wp) :: soil_energy, de, fliq
+      call soil_layer_energy_slope(temp, theta, dry_heat_capacity, curve, soil_energy, de, fliq)
+   end function soil_layer_energy
+
+   !----- A layer's internal energy [J/m3] at a temperature, its slope, the apparent heat capacity  !
+   !      [J/m3/K] (the sensible heat and the latent heat of the liquid the curve frees per         !
+   !      kelvin), and its liquid fraction: all liquid above t_3ple, and at t_3ple the bottom of    !
+   !      the plateau on which water stored beyond saturation freezes. -----------------------------!
+   elemental pure subroutine soil_layer_energy_slope(temp, theta, dry_heat_capacity, curve, e, de, fliq)
+      real(wp),                 intent(in)  :: temp, theta, dry_heat_capacity   !< [K], [m3/m3], [J/m3/K]
+      type(soil_layer_curve_t), intent(in)  :: curve
+      real(wp),                 intent(out) :: e, de, fliq                      !< [J/m3], [J/m3/K], [-]
+      real(wp) :: wmass, theta_liq, dtheta, dfliq
+      wmass = theta * rho_h2o
+      fliq  = 1.0_wp
+      dfliq = 0.0_wp
+      if (wmass > 0.0_wp .and. temp <= t_3ple) then
+         call soil_liquid_capacity(curve, temp, theta_liq, dtheta)
+         if (theta_liq < theta) then
+            fliq  = theta_liq / theta
+            dfliq = dtheta / theta
+         end if
+      end if
+      e  = dry_heat_capacity * temp + wmass * (fliq * internal_energy_liquid(temp)                        &
+                                             + (1.0_wp - fliq) * cp_ice * temp)
+      de = dry_heat_capacity + wmass * (fliq * cp_liq + (1.0_wp - fliq) * cp_ice                          &
+                                       + dfliq * (internal_energy_liquid(temp) - cp_ice * temp))
+   end subroutine soil_layer_energy_slope
 
    !----- Each layer's temperature, liquid fraction and ice-aware conductivity at its current      !
    !      energy, for the step and the tendency alike. --------------------------------------------!
@@ -110,7 +219,8 @@ contains
       real(wp),                  intent(out) :: kappa(:)           !< [W/m/K]
       integer(ik) :: k
       do k = 1_ik, n
-         call soil_layer_temp(col%soil_energy(k), forcing%soil_water(k), profile%dry_heat_capacity(k), temp(k), fliq(k))
+         call soil_layer_temp(col%soil_energy(k), forcing%soil_water(k), profile%dry_heat_capacity(k),          &
+                              profile%layer_curve(k), temp(k), fliq(k))
          kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fliq(k), profile%theta_sat(k),            &
                                               profile%solid_conductivity(k), profile%dry_conductivity(k))
       end do
@@ -194,9 +304,12 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! soil_energy_step_implicit -- one patch's soil thermal column advanced over dt by      !
-   ! backward Euler: conduction solved for T^{n+1}, then a conservative energy update from !
-   ! the faces at T^{n+1} and the water's enthalpy, and the temperatures diagnosed from    !
-   ! the new energy (docs/science/soil_biophysics.md eq. (10)).                            !
+   ! backward Euler in the layers' energies (docs/science/soil_biophysics.md eq. (10)):    !
+   ! Newton on each layer's balance dz (E - E^n)/dt = face divergence + source, with the   !
+   ! faces at the temperatures the new energies give on the freezing curve and the         !
+   ! conductivities held at the step's start. The energies are then committed from the     !
+   ! faces at the solution, so the column's budget closes to round-off whatever Newton's   !
+   ! residual, and the temperatures diagnosed from them.                                   !
    !---------------------------------------------------------------------------------------!
    subroutine soil_energy_step_implicit(col, forcing, profile, soil, dt, flux)
       type(soil_energy_state_t),   intent(inout) :: col       !< the layers' energy, temperature, liquid fraction
@@ -206,58 +319,142 @@ contains
       real(wp),                    intent(in)    :: dt        !< [s]
       type(soil_heat_out_t),         intent(out)   :: flux    !< bottom heat flux, budget residual, heat capacity
 
-      integer(ik) :: n, k
-      real(wp), dimension(n_soil_layer_max) :: t_n, fl_n, kappa, c_eff, q_src, t_new, kf
-      real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: e0, e1, div, g_deep
+      integer(ik) :: n, k, it, ib
+      real(wp), dimension(n_soil_layer_max) :: fl_n, kappa, kf, q_src, e_n, e_new, e_try, step
+      real(wp), dimension(n_soil_layer_max) :: lo_t, di_t, up_t, a, b, c
+      real(wp) :: g_deep, g_face, w_cp, lam, norm_try, e0, e1
+      type(soil_column_eval_t) :: now, try
 
       n = profile%n_active
 
-      !----- Each layer's temperature, liquid fraction and ice-aware conductivity and heat         !
-      !      capacity at the step's start. --------------------------------------------------------!
-      call layer_thermal_state(col, forcing, profile, n, t_n, fl_n, kappa)
+      !----- Each layer's temperature, liquid fraction and apparent heat capacity at the step's    !
+      !      start, and its ice-aware conductivity, held over the step. ---------------------------!
+      e_n(1:n) = col%soil_energy(1:n)
+      call soil_layer_state(e_n(1:n), forcing%soil_water(1:n), profile%dry_heat_capacity(1:n),                &
+                            profile%layer_curve(1:n), now%temp(1:n), fl_n(1:n), now%de(1:n))
       do k = 1_ik, n
-         c_eff(k) = soil_volumetric_heat_capacity(forcing%soil_water(k), fl_n(k), profile%dry_heat_capacity(k))
+         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), profile%theta_sat(k),            &
+                                              profile%solid_conductivity(k), profile%dry_conductivity(k))
+      end do
+      call face_conductivity(profile%dz, kappa, n, kf)
+      g_deep = deep_conductance(soil, profile, kappa(n), n)
+      do k = 1_ik, n
          q_src(k) = -forcing%water_heat_out(k) / profile%dz(k)               ! [W/m3] source (sink is negative)
       end do
 
-      !----- The bottom boundary: one conductance, shared by the matrix row and the flux. ---------!
-      g_deep = deep_conductance(soil, profile, kappa(n), n)
-
-      !----- Backward-Euler conduction solve for T^{n+1}. The deep anchor enters the matrix, not   !
-      !      only the right-hand side, so the solve stays unconditionally stable. -----------------!
-      call soil_heat_be_solve(t_n, profile%dz, profile%dz_node, kappa, c_eff, q_src, forcing%g_top,   &
-                              forcing%geothermal, dt, n, t_new, kf, g_deep, soil%deep_temp)
-
-      !----- Conservative energy update: conductive faces from T^{n+1}, advective upwind. ---------!
-      hf(0)  = -forcing%g_top                                             ! top face (positive up)
+      !----- The balance's slopes in the temperatures [W/m2/K], fixed over the step: conduction  !
+      !      across each face and to the deep anchor, and the water's enthalpy, whose upwind     !
+      !      donor's temperature sets it. lo_t, di_t and up_t are row k's slopes in T(k-1), T(k) !
+      !      and T(k+1). ------------------------------------------------------------------------!
+      lo_t(1:n) = 0.0_wp
+      di_t(1:n) = 0.0_wp
+      up_t(1:n) = 0.0_wp
       do k = 1_ik, n - 1_ik
-         hf(k)  = -kf(k) * (t_new(k) - t_new(k+1)) / profile%dz_node(k)      ! kf reused from soil_heat_be_solve
+         g_face = kf(k) / profile%dz_node(k)
+         di_t(k)      = di_t(k) + g_face
+         up_t(k)      = up_t(k) - g_face
+         di_t(k+1)    = di_t(k+1) + g_face
+         lo_t(k+1)    = lo_t(k+1) - g_face
+         w_cp = forcing%w_flux(k) * rho_h2o * cp_liq
+         if (forcing%w_flux(k) <= 0.0_wp) then                               ! down: layer k gives
+            di_t(k)   = di_t(k) - w_cp
+            lo_t(k+1) = lo_t(k+1) + w_cp
+         else                                                                ! up: layer k+1 gives
+            up_t(k)   = up_t(k) - w_cp
+            di_t(k+1) = di_t(k+1) + w_cp
+         end if
       end do
-      hf(n)  = bottom_heat_face(soil, forcing, g_deep, t_new(n))         ! bottom boundary (positive up)
-      !----- Water-enthalpy faces at T^{n+1}, by the same upwind rule as the tendency. ------------!
-      call water_enthalpy_faces(forcing, t_new, n, qwf)
+      if (forcing%w_flux_top > 0.0_wp) di_t(1) = di_t(1) + forcing%w_flux_top * rho_h2o * cp_liq
+      di_t(n) = di_t(n) + g_deep
 
+      !----- Newton on the energies. Each step's Jacobian is the slopes above over each layer's   !
+      !      apparent heat capacity, plus dz/dt on the diagonal; a step that does not lower the   !
+      !      worst residual is halved, up to SOIL_STEP_HALVINGS times. ---------------------------!
+      e_new(1:n) = e_n(1:n)
+      call column_balance(e_new, now)
+      flux%iterations = 0_ik
+      do it = 1_ik, SOIL_STEP_ITER_MAX
+         if (now%norm <= SOIL_STEP_TOL) exit
+         do k = 1_ik, n
+            b(k) = profile%dz(k) / dt + di_t(k) / now%de(k)
+            a(k) = 0.0_wp
+            c(k) = 0.0_wp
+            if (k > 1_ik) a(k) = lo_t(k) / now%de(k-1)
+            if (k < n)    c(k) = up_t(k) / now%de(k+1)
+         end do
+         call thomas_solve(a, b, c, -now%res, step, n)
+         lam = 1.0_wp
+         do ib = 0_ik, SOIL_STEP_HALVINGS
+            e_try(1:n) = e_new(1:n) + lam * step(1:n)
+            call eval_column(e_try, try)
+            norm_try = try%norm
+            if (norm_try < now%norm) exit
+            lam = 0.5_wp * lam
+         end do
+         e_new(1:n) = e_try(1:n)
+         now = try
+         flux%iterations = it
+      end do
+
+      !----- Conservative commit: each layer's energy from the faces at the solution. ------------!
       e0 = 0.0_wp
       e1 = 0.0_wp
       do k = 1_ik, n
-         e0  = e0 + col%soil_energy(k) * profile%dz(k)
-         div = (hf(k) - hf(k-1)) + (qwf(k) - qwf(k-1))
-         col%soil_energy(k) = col%soil_energy(k) + dt / profile%dz(k) * div + dt * q_src(k)
+         e0  = e0 + e_n(k) * profile%dz(k)
+         col%soil_energy(k) = e_n(k) + dt / profile%dz(k) * ((now%hf(k) - now%hf(k-1)) + (now%qwf(k) - now%qwf(k-1))) &
+                              + dt * q_src(k)
          e1  = e1 + col%soil_energy(k) * profile%dz(k)
       end do
 
       !----- Temperature and liquid fraction from the new energy. ---------------------------------!
       call soil_layer_temp(col%soil_energy(1:n), forcing%soil_water(1:n), profile%dry_heat_capacity(1:n),        &
-                           col%soil_temp(1:n), col%soil_fliq(1:n))
+                           profile%layer_curve(1:n), col%soil_temp(1:n), col%soil_fliq(1:n))
 
       !----- Diagnostics and the column's energy budget. ------------------------------------------!
-      flux%bottom_heat  = -hf(n)
+      flux%bottom_heat  = -now%hf(n)
       !----- The column budget carries the boundary water enthalpy too; the interior faces         !
       !      telescope out of the sum exactly, as they must. --------------------------------------!
       flux%energy_resid = (e1 - e0) - dt * (forcing%g_top - flux%bottom_heat                   &
-                          - sum(forcing%water_heat_out(1:n)) + (qwf(n) - qwf(0)))
-      flux%heat_capacity = sum(c_eff(1:n) * profile%dz(1:n))
+                          - sum(forcing%water_heat_out(1:n)) + (now%qwf(n) - now%qwf(0)))
+      flux%heat_capacity = sum(soil_volumetric_heat_capacity(forcing%soil_water(1:n), fl_n(1:n),              &
+                                                             profile%dry_heat_capacity(1:n)) * profile%dz(1:n))
+
+   contains
+
+      !----- The column at energies e: each layer's temperature and apparent heat capacity on its  !
+      !      freezing curve, the faces at those temperatures, each layer's balance residual        !
+      !      [W/m2], and the worst residual as the temperature change [K] it would need. ----------!
+      subroutine eval_column(e, ev)
+         real(wp),                 intent(in)    :: e(:)
+         type(soil_column_eval_t), intent(inout) :: ev
+         real(wp)    :: fliq
+         integer(ik) :: k
+         do k = 1_ik, n
+            call soil_layer_state(e(k), forcing%soil_water(k), profile%dry_heat_capacity(k), profile%layer_curve(k),&
+                                  ev%temp(k), fliq, ev%de(k))
+         end do
+         call column_balance(e, ev)
+      end subroutine eval_column
+
+      !----- The faces and each layer's residual at ev's temperatures and apparent heat capacities. -!
+      subroutine column_balance(e, ev)
+         real(wp),                 intent(in)    :: e(:)
+         type(soil_column_eval_t), intent(inout) :: ev
+         integer(ik) :: k
+         ev%hf(0) = -forcing%g_top
+         do k = 1_ik, n - 1_ik
+            ev%hf(k) = -kf(k) * (ev%temp(k) - ev%temp(k+1)) / profile%dz_node(k)
+         end do
+         ev%hf(n) = bottom_heat_face(soil, forcing, g_deep, ev%temp(n))
+         call water_enthalpy_faces(forcing, ev%temp, n, ev%qwf)
+         ev%norm = 0.0_wp
+         do k = 1_ik, n
+            ev%res(k) = profile%dz(k) * ((e(k) - e_n(k)) / dt - q_src(k))                                      &
+                        - ((ev%hf(k) - ev%hf(k-1)) + (ev%qwf(k) - ev%qwf(k-1)))
+            ev%norm = max(ev%norm, abs(ev%res(k)) * dt / (profile%dz(k) * ev%de(k)))
+         end do
+      end subroutine column_balance
+
    end subroutine soil_energy_step_implicit
 
    !---------------------------------------------------------------------------------------!
@@ -303,49 +500,5 @@ contains
                    - forcing%water_heat_out(k) / profile%dz(k)
       end do
    end subroutine soil_energy_time_deriv
-
-   !---------------------------------------------------------------------------------------!
-   ! soil_heat_be_solve -- the backward-Euler conduction solve for T^{n+1}, a tridiagonal  !
-   ! system: harmonic-mean face conductivities, the source q_src held at its start value,  !
-   ! g_top into the top layer, and at the bottom the flux geo plus, with the deep anchor   !
-   ! (g_deep > 0), conduction to t_deep. The water's face enthalpy is not in it:           !
-   ! soil_energy_step_implicit adds it in the energy update.                               !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine soil_heat_be_solve(t_n, dz, dz_node, kappa, c_eff, q_src, g_top, geo, dt, nzg, t_new, kf,  &
-                                      g_deep, t_deep)
-      integer(ik), intent(in)  :: nzg                                            !< number of active layers
-      real(wp),    intent(in)  :: t_n(n_soil_layer_max), dz(n_soil_layer_max)    !< [K] T^n, [m] thicknesses
-      real(wp),    intent(in)  :: dz_node(n_soil_layer_max), kappa(n_soil_layer_max)   !< [m] node spacings, [W/m/K]
-      real(wp),    intent(in)  :: c_eff(n_soil_layer_max), q_src(n_soil_layer_max)     !< [J/m3/K], [W/m3]
-      real(wp),    intent(in)  :: g_top, geo, dt   !< [W/m2] in at the top, [W/m2] in at the bottom, [s]
-      real(wp),    intent(in)  :: g_deep     !< [W/m2/K] bottom Dirichlet conductance (0 = Neumann)
-      real(wp),    intent(in)  :: t_deep     !< [K] bottom Dirichlet anchor (unread when g_deep = 0)
-      real(wp),    intent(out) :: t_new(n_soil_layer_max)                         !< [K] T^{n+1}
-      real(wp),    intent(out) :: kf(n_soil_layer_max)     !< [W/m/K] face conductivities, reused by soil_energy_step_implicit
-      real(wp) :: a(n_soil_layer_max), b(n_soil_layer_max)
-      real(wp) :: c(n_soil_layer_max), r(n_soil_layer_max)
-      integer(ik) :: k
-      call face_conductivity(dz, kappa, nzg, kf)
-      do k = 1_ik, nzg
-         if (k >= 2_ik) then
-            a(k) = -kf(k-1) / dz_node(k-1)
-         else
-            a(k) = 0.0_wp
-         end if
-         if (k <= nzg-1_ik) then
-            c(k) = -kf(k) / dz_node(k)
-         else
-            c(k) = 0.0_wp
-         end if
-         b(k) = c_eff(k) * dz(k) / dt - a(k) - c(k)
-         r(k) = c_eff(k) * dz(k) / dt * t_n(k) + dz(k) * q_src(k)
-      end do
-      r(1)   = r(1)   + g_top                                            ! top Neumann surface flux
-      !----- Bottom boundary: the prescribed flux geo is a source; the deep anchor (g_deep > 0)    !
-      !      adds g_deep to the diagonal and g_deep*t_deep to the source. -------------------------!
-      b(nzg) = b(nzg) + g_deep
-      r(nzg) = r(nzg) + geo + g_deep * t_deep
-      call thomas_solve(a, b, c, r, t_new, nzg)
-   end subroutine soil_heat_be_solve
 
 end module meds_soil_heat

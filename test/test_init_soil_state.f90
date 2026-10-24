@@ -6,9 +6,9 @@
 ! they reach the column: this asserts the path from the config through build_soil_profile  !
 ! to the patches init_bare_ground lays out, and pins the defaults (288 K, theta = 0.30). A !
 ! column with a texture per layer (the soil maps) builds each layer's own curve and starts !
-! each layer at its own field capacity. A start below freezing seeds ice and diagnoses its !
-! own temperature. A bare-ground start is empty unless a PFT's nbg_init_density seeds it,  !
-! at min_cohort_height.                                                                    !
+! each layer at its own field capacity. A start below freezing holds the liquid its        !
+! freezing curve allows, the rest ice, and diagnoses its own temperature. A bare-ground    !
+! start is empty unless a PFT's nbg_init_density seeds it, at min_cohort_height.           !
 !==========================================================================================!
 program test_init_soil_state
    use meds_kinds,            only : wp, ik
@@ -18,7 +18,8 @@ program test_init_soil_state
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, seed_bare_ground, finalize_init
    use meds_constants,        only : n_soil_layer_max, rho_h2o
-   use meds_therm_lib,        only : internal_energy_to_temp
+   use meds_soil_heat,        only : soil_layer_temp
+   use meds_soil_hydr_lib,    only : soil_liquid_capacity
    use meds_init,             only : init_fast_state
    use meds_met_types,        only : met_forcing_t
    use meds_test_support,     only : banner, build_test_config, check, check_close
@@ -27,7 +28,7 @@ program test_init_soil_state
    type(polygon_t)      :: poly
    type(soil_profile_t) :: prof
    integer(ik)          :: ip, nsl, k, n
-   real(wp)             :: bottoms(n_soil_layer_max), tdiag, fdiag
+   real(wp)             :: bottoms(n_soil_layer_max), tdiag, fdiag, theta_liq, dtheta
    type(met_forcing_t)  :: ref   !< the reference climate a start's canopy air is seeded at
 
    call banner('[init].soil_temp and soil_theta reach the soil column')
@@ -55,16 +56,19 @@ program test_init_soil_state
                  'a laid-out patch''s canopy air is not at the reference climate')
    end do
 
-   !=== 2b. A start below freezing: the water starts as ice, and the stored energy gives back the  !
-   !        start temperature. ========================================================================!
+   !=== 2b. A start below freezing: the water starts as the liquid its freezing curve holds and  !
+   !        the rest ice, and the stored energy gives back the start temperature. ==================!
    cfg%init%soil_temp = 260.0_wp
    call init_bare_ground(poly, cfg, 3_ik)
    associate (se => poly%patch%soil_energy(2), surf => poly%site%surface(1))
       do k = 1_ik, nsl
-         call internal_energy_to_temp(se%soil_energy(k), surf%theta_start(k) * rho_h2o,                     &
-                                      surf%soil_profile%dry_heat_capacity(k), tdiag, fdiag)
+         call soil_layer_temp(se%soil_energy(k), surf%theta_start(k), surf%soil_profile%dry_heat_capacity(k),   &
+                              surf%soil_profile%layer_curve(k), tdiag, fdiag)
          call check_close(tdiag, 260.0_wp, 1.0e-10_wp, 'a frozen start does not give back its temperature')
-         call check(fdiag == 0.0_wp .and. se%soil_fliq(k) == 0.0_wp, 'a frozen start is not all ice')
+         call soil_liquid_capacity(surf%soil_profile%layer_curve(k), 260.0_wp, theta_liq, dtheta)
+         call check_close(se%soil_fliq(k), theta_liq / surf%theta_start(k), 1.0e-10_wp,                        &
+                          'a frozen start does not hold its freezing curve''s liquid')
+         call check(fdiag == se%soil_fliq(k) .and. fdiag < 0.5_wp, 'a frozen start is not mostly ice')
       end do
    end associate
    cfg%init%soil_temp = 298.65_wp

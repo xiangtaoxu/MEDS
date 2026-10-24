@@ -709,9 +709,10 @@ keeps fixed-size storage (the soil column holds `n_soil_layer_max` layers) and p
 uses. None of them passes an array-valued function result straight into a call, which nvfortran
 miscompiles (`docs/building.md`).
 
-**The Thomas sweep** (`thomas_solve`) solves the tridiagonal backward-Euler system of the soil heat
-column. It does not pivot: the storage term $`C\,\Delta z/\Delta t`$ makes that matrix diagonally
-dominant. Each pivot is kept at least `tiny_num` from zero with its sign, so a degenerate input gives a
+**The Thomas sweep** (`thomas_solve`) solves the tridiagonal Newton system of the soil heat column's
+backward-Euler step ([soil_biophysics](soil_biophysics.md) eq. (10)). It does not pivot: the storage
+term $`\Delta z/\Delta t`$ on the diagonal, with the faces' slopes over each layer's apparent heat
+capacity, makes that matrix diagonally dominant. Each pivot is kept at least `tiny_num` from zero with its sign, so a degenerate input gives a
 finite answer instead of a division by zero. For the matrices the model builds this never binds.
 
 **The dense LU** (`lu_factor`, `lu_solve`) is Gaussian elimination with partial pivoting, the

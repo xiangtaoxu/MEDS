@@ -98,9 +98,11 @@ treat the surface as ice for *enthalpy* and as liquid for *vapour pressure*. Ove
 driving gradient by those factors. The ice form is within 0.1 % of Murphy & Koop (2005) at −10 °C and
 0.9 % at −30 °C.
 
-The same blend is used for ground evaporation from frozen soil, weighted by the top layer's
-`soil_fliq`. It is deliberately **not** used for dewpoint conversion or diagnostic VPD: dewpoint is
-*defined* over liquid, so an ice branch there would mis-convert the forcing.
+Ground evaporation from a frozen soil does not use the blend: its liquid sits on the soil freezing
+curve, whose potential puts the liquid's vapour pressure at the ice's, so Philip's humidity on that
+potential over liquid saturation already carries the ice ([soil_biophysics](soil_biophysics.md),
+"Frozen soil"). The blend is deliberately **not** used for dewpoint conversion or diagnostic VPD:
+dewpoint is *defined* over liquid, so an ice branch there would mis-convert the forcing.
 
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
 (`snow_cover_fraction`), with scale = `ny07_a` × `[aerodynamics].soil_rough` ×
