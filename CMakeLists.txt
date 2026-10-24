@@ -895,9 +895,9 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_column_derivs test/test_column_derivs.f90)
    target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
    meds_fortran_flags(test_column_derivs)
-   add_test(NAME march_derivs COMMAND test_column_derivs)
+   add_test(NAME column_derivs COMMAND test_column_derivs)
 
-   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 (ESDIRK2) path through fast_step. ----------#
+   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 path through fast_step. -------------------#
    add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)
    target_link_libraries(test_column_esdirk2 PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_esdirk2)
@@ -968,4 +968,9 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_several_sites PRIVATE meds_model meds_output_stream meds_testsupport)
    meds_fortran_flags(test_several_sites)
    add_test(NAME several_sites COMMAND test_several_sites)
+
+   #----- Every test stops at 10 minutes. The longest takes about 1.5 in a Debug build, so a test   #
+   #      that hangs, or slows by an order of magnitude, fails instead of holding the suite.         #
+   get_property(meds_all_tests DIRECTORY PROPERTY TESTS)
+   set_tests_properties(${meds_all_tests} PROPERTIES TIMEOUT 600)
 endif()
