@@ -726,14 +726,14 @@ energy, at the tissue's temperature, so the canopy-water runs close their energy
   coupling settles. A configuration copied from the old main config, which set 4, keeps a cap of 4.
 - **`[aerodynamics].soil_rough`** (#506), 0.01 m, is new: the bare soil's roughness length. A patch
   without cohorts, or with only shorter ones, takes it as its z0m; the 1 m bare-canopy height goes.
-
-### Changed
-
 - **A state file whose tissue energies leave out the films it holds is refused** (#510) at the first
   fast step, where its cohorts' energies and temperatures disagree; a file with no water on the canopy
   reads as before. **Fortran:** `canopy_water_out_t`'s `film_liquid_enthalpy` is `rain_liquid_enthalpy`,
   `soil_hydrology_t` drops `t_film_valuation`, and `commit_tissue_energy` and `clamp_canopy_film` take
   the films' start and end and the tissues' start-of-step temperatures.
+
+### Changed
+
 - **A canopy film is part of its tissue's energy** (#510), ED2's form. The films had no energy of their
   own: each step valued them at the rain's temperature, or at `tsupercool_liq` under a pack, where rain
   held on the canopy was worth 0 J/kg and cost the leaf about 0.95 MJ/kg extra to evaporate, and their
