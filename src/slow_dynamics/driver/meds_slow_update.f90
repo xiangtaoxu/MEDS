@@ -1174,7 +1174,7 @@ contains
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       logical, allocatable :: pkeep(:)
-      integer(ik)          :: np, ip, imax, is, p0, p1
+      integer(ik)          :: np, ip, imax, is, p0, p1, r0, r1
       real(wp)             :: s
 
       np = poly%patch%n
@@ -1195,7 +1195,9 @@ contains
       if (.not. all(pkeep)) then
          !----- Merged, not deleted: dropping a sliver and renormalizing would redistribute every conserved !
          !      quantity across the site, while merging conserves exactly, so the renormalization below     !
-         !      corrects round-off only (demography.md §4). The survivor is in the sliver's own site. ------!
+         !      corrects round-off only (demography.md §4). The survivor is in the sliver's own site, and a  !
+         !      sliver absorbs nothing, so each merge reads the survivor's cohorts over the site's cohort    !
+         !      range and patch_compact regroups the block once, as patch_fuse_pass does. -----------------!
          do is = 1_ik, poly%site%n
             p0 = poly%site%patch_offset(is)
             p1 = p0 + poly%site%patch_count(is) - 1_ik
@@ -1203,10 +1205,11 @@ contains
             if (all(pkeep(p0:p1))) cycle
             imax = p0 - 1_ik + maxloc(poly%patch%area(p0:p1), dim=1)
             if (.not. pkeep(imax)) imax = p0 - 1_ik + maxloc(poly%patch%area(p0:p1), dim=1, mask=pkeep(p0:p1))
+            r0 = poly%patch%cohort_offset(p0)
+            r1 = poly%patch%cohort_offset(p1) + poly%patch%cohort_count(p1) - 1_ik
             do ip = p0, p1
                if (pkeep(ip) .or. ip == imax) cycle
-               call fuse_2_patches(poly, imax, ip)
-               call rebuild_cohort_map(poly) ! regroup after each merge: the next one reads the survivor's slice
+               call fuse_patch_into(poly, imax, ip, r0, r1)
             end do
          end do
          call patch_compact(poly, pkeep)
