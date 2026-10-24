@@ -118,7 +118,9 @@ layer's scattered beam through its depth, so a canopy's light no longer depends 
 cohorts (#504). The Monin-Obukhov surface layer sweeps until the canopy air's coupling settles, and
 the transpiration demand stops re-solving it at the state the pre-pass already solved (#505). Bare
 ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506). The
-snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507).
+snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507). The aquifer
+face takes the column's own rule, the geometric mean of the bottom layer's and the table's
+conductivity (#508).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -725,6 +727,11 @@ snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's 
 
 ### Changed
 
+- **The aquifer face takes the geometric mean** (#508). The aquifer boundary took K_sat for capillary
+  rise, the upper bound of the half-layer between the bottom node and the table: a 0.5 m bottom layer
+  at −2 m head drew 7 K_sat however dry it was, and dq/dψ jumped by K_sat/K(θ_n) at zero gradient. It
+  is now eq. (3) with the table a saturated node, √(K(θ_n)·K_sat) both ways, as the pond face and ED2;
+  smooth, with the same equilibrium. No harness case uses the aquifer; BCI on it moves under 0.2 %.
 - **The snow-cover length scale is the ground's roughness** (#507). The Niu-Yang scale took the snow
   surface's 1 mm roughness, so 1 cm of snow covered 92 % of the ground; with `soil_rough` (0.01 m), as
   Niu & Yang (2007) and CLM4, it covers 16 %, and 10 cm 92 %. Ithaca: SWE +7 % in January, +23 % in

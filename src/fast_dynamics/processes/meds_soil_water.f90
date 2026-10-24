@@ -81,9 +81,10 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The bottom-face flux [m/s, down-positive] with its derivatives: drainage at           !
-   ! drain_factor times K(theta_n), or the two-way aquifer boundary, its conductivity      !
-   ! taken upstream (docs/science/soil_biophysics.md, "Boundary conditions, and what the   !
-   ! aquifer option actually means"). psi_n arrives in MPa and is turned into head here.   !
+   ! drain_factor times K(theta_n), or the two-way aquifer boundary, the column's own face !
+   ! rule (soil_water_flux, eq. (3)) between layer n's node and the saturated table at    !
+   ! the base, half a layer below it (docs/science/soil_biophysics.md, "Boundary          !
+   ! conditions, and what the aquifer option actually means"). psi_n arrives in MPa.      !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
       type(soil_profile_t), intent(in)  :: profile
@@ -94,21 +95,19 @@ contains
       real(wp),             intent(out) :: qbot     !< [m/s] down-positive
       real(wp), optional,   intent(out) :: dq_dpsi  !< [m/s/MPa] d(qbot)/d(psi_n)
       real(wp), optional,   intent(out) :: dq_dk    !< [-]   d(qbot)/d(k_n)
-      real(wp) :: delta, grad, k_bot
+      real(wp) :: delta, q, dq_dpsi_n, dq_dpsi_table, dq_dk_n, dq_dk_table
       qbot = 0.0_wp
       if (present(dq_dpsi)) dq_dpsi = 0.0_wp
       if (present(dq_dk))   dq_dk   = 0.0_wp
       if (soil%water_bottom_bc == SOIL_BC_AQUIFER) then
-         delta = 0.5_wp * profile%dz(n)                                  ! z_node(n) - z_bottom > 0
-         grad  = psi_n / grav_head / delta + 1.0_wp
-         if (grad >= 0.0_wp) then
-            k_bot = k_n                                                 ! downward: upstream is layer n
-            if (present(dq_dk)) dq_dk = grad
-         else
-            k_bot = profile%ksat(n)                                      ! upward: upstream is saturated
-         end if
-         qbot = k_bot * grad
-         if (present(dq_dpsi)) dq_dpsi = k_bot / (delta * grav_head)
+         !----- The table is saturated (psi 0, K_sat), half a layer below the node; the face takes  !
+         !      the geometric mean of the two conductivities, as the pond face does at the top. ----!
+         delta = 0.5_wp * profile%dz(n)
+         call soil_water_flux(k_n, profile%ksat(n), 0.5_wp, psi_n, 0.0_wp, delta, delta, q,            &
+                              dq_dpsi_n, dq_dpsi_table, dq_dk_n, dq_dk_table)
+         qbot = q / rho_h2o
+         if (present(dq_dpsi)) dq_dpsi = dq_dpsi_n / rho_h2o
+         if (present(dq_dk))   dq_dk   = dq_dk_n / rho_h2o
       else                                                              ! drainage, q = f K(theta_n)
          qbot = soil%drain_factor * k_n
          if (present(dq_dk)) dq_dk = soil%drain_factor
