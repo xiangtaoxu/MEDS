@@ -376,29 +376,18 @@ contains
       psi = 2.0_wp * log((1.0_wp + x2) * 0.5_wp)
    end function stabfunc2
 
-   !----- Integrated momentum stability function for the wind profile (both signs). ----------!
-   pure function psim(zeta) result(p)
-      real(wp), intent(in) :: zeta     !< [-] stability
-      real(wp) :: p                    !< [-] psi_m
-      if (zeta < 0.0_wp) then
-         p = stabfunc1(zeta)
-      else
-         p = -5.0_wp * zeta                                        ! Businger-Dyer stable (profile use)
-      end if
-   end function psim
-
    !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind                 !
-   !      (docs/science/canopy_aerodynamics.md eq. (7)). height - displace is held just above the  !
-   !      roughness length, so the log stays positive. --------------------------------------------!
+   !      (docs/science/canopy_aerodynamics.md eq. (7)). It is u*/kappa times the momentum         !
+   !      denominator d_mom from the roughness up to height - displace, at the surface layer's     !
+   !      Obukhov length, so the profile and u* share CLM5's four ranges. height - displace is     !
+   !      held just above the roughness length, so the log stays positive. ------------------------!
    pure function reduced_wind(cfg, ustar, zeta, height, displace, rough, zldis) result(u)
       type(aero_params_t), intent(in) :: cfg   !< aerodynamic parameters
       real(wp),            intent(in) :: ustar, zeta, height, displace, rough, zldis   !< [m/s], [-], [m], [m], [m], [m]
-      real(wp) :: u, hd, zeta_h, zeta_0        !< [m/s] the wind (the result); [m] height - displace
-      hd     = max(height - displace, rough * WIND_HEIGHT_ROUGH_MIN)
-      zeta_h = zeta * hd    / zldis
-      zeta_0 = zeta * rough / zldis
-      u      = (ustar / von_karman) * (log(hd / rough) - psim(zeta_h) + psim(zeta_0))
-      u      = max(u, cfg%ugbmin)
+      real(wp) :: u, hd                        !< [m/s] the wind (the result); [m] height - displace
+      hd = max(height - displace, rough * WIND_HEIGHT_ROUGH_MIN)
+      u  = (ustar / von_karman) * d_mom(zeta * hd / zldis, hd, rough, cfg)
+      u  = max(u, cfg%ugbmin)
    end function reduced_wind
 
    !---------------------------------------------------------------------------------------!

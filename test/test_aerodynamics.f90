@@ -8,7 +8,8 @@
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
 !      (warm air aloft) a SMALLER one, at the same wind. A stable night over a 30 m forest       !
 !      keeps zeta within zeta_max_stable, and its coupling rises with the wind.                   !
-!   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
+!   3. reduced_wind is positive and monotonically INCREASING with height (neutral); in the very   !
+!      stable range the profile through the surface layer's u* passes through the wind at zref.  !
 !   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
 !      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
 !      flat-plate value 0.6 Re^0.5 alpha/l, Re = u l/nu, with the air's 20 C nu and alpha.       !
@@ -92,11 +93,19 @@ contains
    !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!
    subroutine test_wind_profile()
       type(aero_params_t) :: cfg
-      real(wp) :: u_lo, u_hi
+      real(wp) :: u_lo, u_hi, ustar, t1, zeta, r, o
       u_lo = reduced_wind(cfg, 0.4_wp, 0.0_wp,  3.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
       u_hi = reduced_wind(cfg, 0.4_wp, 0.0_wp, 12.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
       call check_true('wind positive', u_lo > 0.0_wp, u_lo)
       call check_true('wind increases with height', u_hi > u_lo, u_hi - u_lo)
+      !----- A 4 K inversion under 3 m/s over a 30 m forest, the stable cap raised to 5: zeta 3.5, !
+      !      u* above its floor. ------------------------------------------------------------------!
+      cfg%zeta_max_stable = 5.0_wp
+      call mo_surface_layer(cfg, 3.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            286.15_wp, 0.008_wp, ustar, t1, zeta, r, o)
+      call check_true('very stable case', zeta > 1.0_wp .and. ustar > cfg%ustmin, zeta)
+      call check('very stable profile through the wind at zref',                                &
+                 reduced_wind(cfg, ustar, zeta, 40.0_wp, 18.9_wp, 3.9_wp, 21.1_wp), 3.0_wp, 1.0e-9_wp)
    end subroutine test_wind_profile
 
    !----- 4. Boundary-layer conductance positive + increases with wind. ----------------------!

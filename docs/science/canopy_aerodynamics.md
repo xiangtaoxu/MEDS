@@ -183,13 +183,16 @@ $`g_{g,net}`$ is the ground sensible/latent conductance in the surface energy ba
 ## 4. In-canopy wind and the leaf/wood boundary layers
 
 **Canopy-top wind** comes from the log profile with the surface-layer stability correction
-(`reduced_wind`):
+(`reduced_wind`): the momentum denominator of eq. (3), taken from $`z_{0m}`$ up to the canopy top at
+the surface layer's Obukhov length, so the profile and $`u_*`$ share CLM5's four ranges,
 
 ```math
-u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\zeta_0)\big] \qquad(7)
+u_h = \frac{u_*}{\kappa}\,D_m\big(\zeta_h;\ h-d,\ z_{0m}\big), \qquad
+\zeta_h = \zeta\,\frac{h-d}{z_{ldis}} \qquad(7)
 ```
 
-floored at `ugbmin`. From the top cohort down, the wind attenuates through each cohort's crowns by
+floored at `ugbmin`. When $`u_*`$ is not on its floor the profile passes through $`u_m`$ at
+$`z_{ldis}`$, so $`u_h<u_m`$; on a calm night with $`u_*=u_{*,min}`$ it lies above that profile. From the top cohort down, the wind attenuates through each cohort's crowns by
 ED2's per-cohort extinction, here with **closed crowns**: every cohort's crowns cover its patch (crown
 area 1, as in the two-stream radiation, `canopy_radiation_transfer.md` §3), so the wind meets all of the
 cohort's leaf area. Cohorts of one height are one layer, as they are in the radiation
