@@ -621,6 +621,8 @@ contains
    !---------------------------------------------------------------------------------------!
    ! transpiration_demand -- the start-of-step surface solve, at the state^n canopy air: each !
    ! cohort's transpiration demand on the water network (docs/science/soil_plant_water.md §4).!
+   ! It takes the canopy air's exchange the pre-pass solved at that same state, so the        !
+   ! surface layer is not solved again.                                                       !
    ! Each film's evaporation conductance is first scaled so its potential evaporation over    !
    ! dt_fast cannot exceed what the film holds plus this step's interception; then the leaf   !
    ! is credited the liquid enthalpy of the sapflow that replaces its transpiration, as the    !
@@ -635,12 +637,15 @@ contains
       type(frozen_t),      intent(inout) :: frozen
       type(surface_state_t) :: y_stage
       type(surface_tend_t)  :: sf0
+      type(cas_boundary_t)  :: cas_start   !< the boundary with the pre-pass's conductances
       real(wp)    :: t_up_wl
       integer(ik) :: i
       y_stage%cas_enthalpy = dynamic%cas%can_enthalpy
       y_stage%cas_shv = dynamic%cas%can_shv
       y_stage%cas_co2 = dynamic%cas%can_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
+      cas_start = frozen%cas
+      cas_start%mo_live = .false.
+      call surface_derivs(y_stage, cas_start, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
       if (canopy_water_on)                                                                                    &
          call limit_film_evaporation(n, dt_fast, dynamic%leaf_surf_water, dynamic%wood_surf_water,              &
                                      sf0%film_evap_leaf, sf0%film_evap_wood, frozen%film)
@@ -648,7 +653,7 @@ contains
          t_up_wl = merge(dynamic%wood_temp(i), dynamic%leaf_temp(i), sf0%transp_c(i) >= 0.0_wp)
          frozen%tissue%qwflux_wl(i) = sf0%transp_c(i) * internal_energy_liquid(t_up_wl)
       end do
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
+      call surface_derivs(y_stage, cas_start, frozen%tissue, frozen%film, frozen%ground, t_ground, n, sf0)
       frozen%water_drive%e_demand(1:n) = sf0%transp_c(1:n)
    end subroutine transpiration_demand
 
