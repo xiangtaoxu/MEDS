@@ -6,8 +6,9 @@
 !   * necromass_to_litter, add_necromass -- dead plant carbon to litter (§5).              !
 !   * build_litter_input             -- the patch's litter onto the source term u (§5).    !
 !   * soil_carbon_step               -- one day, by forward Euler or the exact exponential, !
-!                                       on the fast loop's accumulated decay (§6); its      !
-!                                       checks come back in soil_carbon_out_t (§7, §9).    !
+!                                       on the fast loop's accumulated decay (§6); the new  !
+!                                       pools and the checks come back in                  !
+!                                       soil_carbon_out_t (§7, §9).                        !
 !   * solve_soil_carbon_steady_state -- the semi-analytic spin-up (SASU, §8).              !
 !   * soil_carbon_bad_pool           -- plausibility, as distinct from conservation (§9).  !
 ! The pools (soil_carbon_state_t) and the litter (litter_input_t) are patch state, in      !
@@ -32,8 +33,10 @@ module meds_soil_carbon
    public :: solve_soil_carbon_steady_state
    public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
 
-   !----- One daily step's carbon-mass checks (soil_carbon.md §7, §9). --------------------!
+   !----- One daily step's result: the new pools, which the caller commits, and its     !
+   !      carbon-mass checks (soil_carbon.md §7, §9). ----------------------------------!
    type :: soil_carbon_out_t
+      type(soil_carbon_state_t) :: pools     !< the pools and lignin after the step
       !----- rh_seam_gap: zero by construction on an ordinary day, nonzero as expected on a !
       !      day the patch structure changes; do not widen a tolerance to absorb it (§7). ---!
       real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] the step's Rh less the fast loop's (set by the caller)
@@ -136,15 +139,16 @@ contains
    !  (docs/science/soil_carbon.md §6, eqs. (5)-(6)). DECOMP_STEP_EULER is forward Euler;  !
    !  DECOMP_STEP_EXPM the exact exponential of the frozen operator, for large accelerated !
    !  steps. rh_today = litter in - pool change for either solver; it is an audit value    !
-   !  and is not fed back to the canopy air. u is one day's input [kgC/m2/day].            !
+   !  and is not fed back to the canopy air. u is one day's input [kgC/m2/day]. The new    !
+   !  pools come back in out%pools; the caller commits them.                              !
    !=======================================================================================!
-   subroutine soil_carbon_step(pools, u, lignin_in, xi_int, params, rh_today, audit)
-      type(soil_carbon_state_t),  intent(inout) :: pools
+   subroutine soil_carbon_step(pools, u, lignin_in, xi_int, params, rh_today, out)
+      type(soil_carbon_state_t),  intent(in)    :: pools
       real(wp),                   intent(in)    :: u(N_SOIL_POOL), lignin_in(2)
       real(wp),                   intent(in)    :: xi_int(N_SOIL_POOL)   !< [day] INT_day xi_j dt (fast accumulator)
       type(soil_carbon_params_t), intent(in)    :: params
       real(wp),                   intent(out)   :: rh_today              !< [kgC/m2/day] actual pool loss = fast loop's Rh
-      type(soil_carbon_out_t),    intent(out)   :: audit
+      type(soil_carbon_out_t),    intent(out)   :: out                   !< the new pools and the checks
       real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: x0(N_SOIL_POOL), x1(N_SOIL_POOL), dvec(N_SOIL_POOL), loss(N_SOIL_POOL)
       real(wp) :: lig0(2), lig1(2), d_s(2), surv(2), litter_in, dc_pool, lig_resid
@@ -192,10 +196,11 @@ contains
       lig1(1) = lig0(1) * surv(1) + lignin_in(1)
       lig1(2) = lig0(2) * surv(2) + lignin_in(2)
 
-      !----- commit the new state. ----------------------------------------------------------------!
-      call unpack_pool_vector(x1, pools)
-      pools%struct_grnd_lignin = lig1(1)
-      pools%struct_soil_lignin = lig1(2)
+      !----- The new state, which the caller commits. ---------------------------------------------!
+      out%pools = pools
+      call unpack_pool_vector(x1, out%pools)
+      out%pools%struct_grnd_lignin = lig1(1)
+      out%pools%struct_soil_lignin = lig1(2)
 
       !----- carbon-mass audit (both solvers): rh_today = litter_in - dC_pool (transfers cancel). --!
       litter_in = sum(u)
@@ -204,21 +209,21 @@ contains
       !----- No pool-mass residual: rh_today is defined from the pool change, so it is zero by !
       !      definition; the independent check is test_soil_biogeochem's (soil_carbon.md §9). !
       !----- lambda: the largest fraction of any pool this step withdraws (soil_carbon_out_t). ---!
-      audit%lambda_max   = 0.0_wp
-      audit%lambda_pool  = 0_ik
+      out%lambda_max  = 0.0_wp
+      out%lambda_pool = 0_ik
       do i = 1_ik, N_SOIL_POOL
-         if (dvec(i) > audit%lambda_max) then
-            audit%lambda_max  = dvec(i)
-            audit%lambda_pool = i
+         if (dvec(i) > out%lambda_max) then
+            out%lambda_max  = dvec(i)
+            out%lambda_pool = i
          end if
       end do
-      audit%rh_seam_gap  = 0.0_wp                                    ! the caller sets it against the fast loop's Rh
+      out%rh_seam_gap = 0.0_wp                                       ! the caller sets it against the fast loop's Rh
       !----- Lignin balance dL_s == lignin_in_s - (1-surv_s)*L_s, zero for either solver. ---!
       lig_resid = 0.0_wp
       do i = 1_ik, 2_ik
          lig_resid = max(lig_resid, abs( (lig1(i) - lig0(i)) - (lignin_in(i) - (1.0_wp - surv(i)) * lig0(i)) ))
       end do
-      audit%lignin_resid = lig_resid
+      out%lignin_resid = lig_resid
    end subroutine soil_carbon_step
 
    !=======================================================================================!

@@ -9,7 +9,7 @@ program test_carbon_growth
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,  only : canopy_air_bad_field
    use meds_polygon_state_vars, only : polygon_t
-   use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives
+   use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives, commit_trait_carbon
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_slow_state, only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
                                slow_step_data_t
@@ -19,6 +19,7 @@ program test_carbon_growth
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   real(wp), allocatable :: leaf_new(:), storage_new(:)   !< the traits' leaf and storage carbon
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp)            :: shed_water   !< an operator's shed water, unread here
 
@@ -104,7 +105,8 @@ program test_carbon_growth
       sla0 = poly%cohort%sla(1) ; vc0 = poly%cohort%vcmax25(1) ; ll0 = poly%cohort%leaf_turnover_rate(1)
       ns0  = poly%cohort%nonstructural_carbon(1)
       do istep = 1_ik, 200_ik                                  ! many steps so the slow relaxation shows
-         call advance_plant_traits(poly, cfg, 1.0_wp)
+         call advance_plant_traits(poly, 1.0_wp, leaf_new, storage_new)
+         call commit_trait_carbon(poly, leaf_new, storage_new)
       end do
       call check(poly%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
       call check(poly%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')
@@ -271,7 +273,8 @@ program test_carbon_growth
       store0 = 0.25_wp * leaf0                              ! storage covers a quarter of the doubling
       poly%cohort%nonstructural_carbon(1) = store0
       carbon0 = leaf0 + store0
-      call reacclimate_plant_traits(poly, cfg)
+      call reacclimate_plant_traits(poly, cfg, leaf_new, storage_new)
+      call commit_trait_carbon(poly, leaf_new, storage_new)
       call check(poly%cohort%sla(1) == cfg%pft%sla(2_ik), 'reacclimation takes the file''s SLA')
       call check(poly%cohort%nonstructural_carbon(1) == 0.0_wp, 'reacclimation empties storage, no further')
       call check_close(poly%cohort%leaf_carbon(1) + poly%cohort%nonstructural_carbon(1), carbon0,      &

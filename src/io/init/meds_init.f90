@@ -16,7 +16,7 @@ module meds_init
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp
    use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
-   use meds_slow_update,         only : update_overtopping_lai, max_cohort_count
+   use meds_slow_update,         only : update_overtopping_lai, max_cohort_count, commit_trait_carbon
    use meds_slow_state,          only : advance_plant_traits, reacclimate_plant_traits
    use meds_init_bare_ground,    only : init_bare_ground, init_bare_sites, seed_bare_ground, seed_patch_stores, &
                                          N_PATCH_INIT
@@ -51,6 +51,7 @@ contains
       character(len=:), allocatable :: msg
       type(meds_time_t) :: restart_time
       logical           :: found
+      real(wp), allocatable :: leaf_carbon_new(:), storage_new(:)   !< [kgC/plant] the traits' leaf and storage
 
       ok = .false.
       select case (cfg%init%init_mode)
@@ -101,10 +102,12 @@ contains
       !      [init].reacclimate_traits asks for this run's PFT file instead.                      !
       if (cfg%trait_plasticity_on .and. cfg%init%init_mode == INIT_CENSUS) then
          call update_overtopping_lai(poly)
-         call advance_plant_traits(poly, cfg, cfg%dt_years, instantaneous=.true.)
+         call advance_plant_traits(poly, cfg%dt_years, leaf_carbon_new, storage_new, instantaneous=.true.)
+         call commit_trait_carbon(poly, leaf_carbon_new, storage_new)
       end if
       if (cfg%init%reacclimate_traits .and. cfg%init%init_mode == INIT_RESTART) then
-         call reacclimate_plant_traits(poly, cfg)
+         call reacclimate_plant_traits(poly, cfg, leaf_carbon_new, storage_new)
+         call commit_trait_carbon(poly, leaf_carbon_new, storage_new)
          if (verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
       !----- The final stand's cohorts in their patches, and the snowpack, with the fast loop on or   !

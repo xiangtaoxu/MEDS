@@ -23,9 +23,9 @@ module meds_slow_update
                                        cohort_water_enthalpy, cohort_tissue_water,                       &
                                        fuse_cohort_fast_state, set_cohort_tissue_temps,                  &
                                        cohort_deriv_alloc
-   use meds_patch_state_vars,   only : patch_block, blend_patch_stores, add_shed_water,                  &
-                                       patch_physical_state, DIST_TREEFALL, expand_patch_block,          &
-                                       reorder_patch_block, cas_set_depth
+   use meds_patch_state_vars,   only : patch_block, soil_carbon_state_t, blend_patch_stores,             &
+                                       add_shed_water, patch_physical_state, DIST_TREEFALL,              &
+                                       expand_patch_block, reorder_patch_block, cas_set_depth
    use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id,                  &
                                        patch_polygon_area, rebuild_patch_map, assign_patch_id
    use meds_allometry_lib,      only : height_to_dbh, carbon_to_structure
@@ -41,6 +41,7 @@ module meds_slow_update
 
    public :: commit_vegetation_step, update_cohort_derivatives, fill_cohort_deriv, update_cohort_states
    public :: advance_pool, accumulate_recruit_pool, age_patches, update_overtopping_lai
+   public :: commit_trait_carbon, commit_soil_carbon
    public :: refresh_canopy_depth, apply_recruitment, apply_patch_disturbance
    public :: sort_cohorts, max_cohort_count, fuse_cohorts, fuse_2_cohorts, split_cohorts, terminate_cohorts
    public :: sort_patches, patch_light_profile, fuse_patches, fuse_2_patches, terminate_patches
@@ -236,8 +237,7 @@ contains
    end subroutine accumulate_recruit_pool
 
    !---------------------------------------------------------------------------------------!
-   ! Age every patch by dt_yr. The soil-carbon pools, the other slow per-patch state,      !
-   ! advance in meds_slow_state's advance_soil_carbon.                                     !
+   ! Age every patch by dt_yr.                                                             !
    !---------------------------------------------------------------------------------------!
    subroutine age_patches(patch, dt_yr)
       type(patch_block), intent(inout) :: patch
@@ -247,6 +247,35 @@ contains
          patch%age(ip) = patch%age(ip) + dt_yr
       end do
    end subroutine age_patches
+
+   !---------------------------------------------------------------------------------------!
+   ! The soil-carbon step's new pools and lignin, per patch, from meds_slow_state's        !
+   ! advance_soil_carbon (docs/science/soil_carbon.md §6).                                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine commit_soil_carbon(patch, pools_new)
+      type(patch_block),         intent(inout) :: patch
+      type(soil_carbon_state_t), intent(in)    :: pools_new(:)   !< (patch)
+      patch%soil_carbon(1:patch%n) = pools_new(1:patch%n)
+   end subroutine commit_soil_carbon
+
+   !---------------------------------------------------------------------------------------!
+   ! The leaf and storage carbon a trait change leaves, at constant total carbon: the      !
+   ! light plasticity's resorption and a restart's re-acclimation, from meds_slow_state    !
+   ! (docs/science/plant_traits.md §4-§5). Leaf area follows the new SLA; the tissues     !
+   ! keep their temperatures.                                                              !
+   !---------------------------------------------------------------------------------------!
+   subroutine commit_trait_carbon(poly, leaf_carbon_new, storage_new)
+      type(polygon_t), intent(inout) :: poly
+      real(wp),        intent(in)    :: leaf_carbon_new(:)   !< [kgC/plant] (cohort)
+      real(wp),        intent(in)    :: storage_new(:)       !< [kgC/plant] (cohort)
+      integer(ik) :: j
+      do j = 1_ik, poly%cohort%n
+         poly%cohort%leaf_carbon(j)          = leaf_carbon_new(j)
+         poly%cohort%nonstructural_carbon(j) = storage_new(j)
+         call set_cohort_size_from_carbon(poly%cohort, j)   ! leaf_area = sla*leaf_carbon
+         call hold_cohort_tissue_temps(poly%cohort, j)      ! the moved leaf carbon left at the leaf's temperature
+      end do
+   end subroutine commit_trait_carbon
 
    !---------------------------------------------------------------------------------------!
    ! Each cohort's overtopping LAI, eq. (11) of demography.md §6: the LAI of the taller    !

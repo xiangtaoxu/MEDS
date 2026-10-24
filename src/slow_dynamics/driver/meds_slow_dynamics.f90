@@ -18,6 +18,7 @@ module meds_slow_dynamics
    use meds_config,             only : meds_config_t
    use meds_time,               only : meds_time_t, day_of_year
    use meds_polygon_state_vars, only : polygon_t
+   use meds_patch_state_vars,   only : soil_carbon_state_t
    use meds_slow_ledger,        only : slow_ledger_t, slow_ledger_open, slow_ledger_heat_open,           &
                                        slow_ledger_heat_close, slow_ledger_mark, slow_ledger_rebase,     &
                                        slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,         &
@@ -35,7 +36,8 @@ module meds_slow_dynamics
                                        update_overtopping_lai, age_patches, refresh_canopy_depth,        &
                                        apply_recruitment, fuse_cohorts, terminate_cohorts,               &
                                        split_cohorts, apply_patch_disturbance, sort_patches,             &
-                                       fuse_patches, terminate_patches
+                                       fuse_patches, terminate_patches, commit_trait_carbon,             &
+                                       commit_soil_carbon
    use meds_slow_diag,          only : open_slow_cohort_rows, write_slow_patch_rows
    implicit none
    private
@@ -58,6 +60,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       type(slow_ledger_t), intent(inout) :: ledger   !< the slow ledger; an inactive one books nothing
       type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
+      type(soil_carbon_state_t), allocatable :: soil_pools(:)
 
       call slow_ledger_open(ledger, poly, cfg, step_start)
 
@@ -74,7 +77,10 @@ contains
       call refresh_canopy_depth(poly, cfg, ledger)
       call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_CANOPY)
 
-      if (cfg%soil_carbon%soil_carbon_on) call advance_soil_carbon(poly, cfg, ledger)
+      if (cfg%soil_carbon%soil_carbon_on) then
+         call advance_soil_carbon(poly, cfg, ledger, soil_pools)
+         call commit_soil_carbon(poly%patch, soil_pools)
+      end if
       call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
 
@@ -90,6 +96,7 @@ contains
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       type(slow_step_data_t) :: step
       real(wp)               :: mort_water, seed_rain_carbon, handover
+      real(wp), allocatable  :: leaf_carbon_new(:), storage_new(:)
 
       !----- 0. Leaf phenology: advance the leaf tendencies one daily step, before the allocation     !
       !         reads them (docs/science/plant_phenology.md). A caller with no calendar (the C-API's   !
@@ -101,8 +108,9 @@ contains
       !          leaf carbon an SLA rise resorbs to storage (no heat capacity) changes the tissue     !
       !          energy at unchanged temperature: declared (docs/science/conservation.md §4). -------!
       if (cfg%trait_plasticity_on) then
+         call advance_plant_traits(poly, cfg%dt_years, leaf_carbon_new, storage_new)
          call slow_ledger_heat_open(ledger, poly)
-         call advance_plant_traits(poly, cfg, cfg%dt_years)
+         call commit_trait_carbon(poly, leaf_carbon_new, storage_new)
          call slow_ledger_heat_close(ledger, poly)
       end if
 

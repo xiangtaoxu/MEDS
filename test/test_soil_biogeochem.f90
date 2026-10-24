@@ -95,6 +95,7 @@ contains
          real(wp) :: rh_indep, dc
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+         p = audit%pools
          call check_true('EULER lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-12_wp*sx, audit%lignin_resid)
          !----- LAMBDA, the freeze number: the fraction of a pool one step withdraws. It must be the  !
          !      max over pools of xi_int*K, must name that pool, and -- the property that makes the   !
@@ -123,6 +124,7 @@ contains
          type(soil_carbon_state_t) :: p
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+         p = audit%pools
          call check_true('EXPM  rh_today >= 0', rh >= -1.0e-12_wp, rh)
       end block
    end subroutine test_mass_closure
@@ -308,6 +310,7 @@ contains
       opts%step_solver = DECOMP_STEP_EULER
       p = pss
       call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
+      p = audit%pools
       call pack_pool_vector(p, x1)
       worst = maxval(abs(x1 - xss))
       call check_true('  '//tag//' EULER fixed point dX~0', worst < 1.0e-10_wp*max(maxval(xss),1.0_wp), worst)
@@ -318,6 +321,7 @@ contains
       p = soil_carbon_state_t()
       do it = 1_ik, 400000_ik
          call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
+         p = audit%pools
       end do
       call pack_pool_vector(p, x1)
       relerr = maxval(abs(x1 - xss)) / max(maxval(xss), 1.0_wp)
@@ -379,6 +383,7 @@ contains
       opts%step_solver = DECOMP_STEP_EULER
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       f_lig_after = p%struct_grnd_lignin / p%struct_grnd_carbon
       d_s = xi_int(IP_STRUCT_GRND) * (opts%k_struct/yr_day)
       call check('f_lignin conserved under pure decay', f_lig_after, f_lig_before, 1.0e-12_wp)
@@ -391,6 +396,7 @@ contains
       u = 0.0_wp ; u(IP_STRUCT_GRND) = 0.5_wp ; lignin_in = [0.4_wp, 0.0_wp]     ! high-lignin input
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       call check_true('lignin input raises f_lignin', &
                       p%struct_grnd_lignin/p%struct_grnd_carbon > 0.2_wp, p%struct_grnd_lignin/p%struct_grnd_carbon)
 
@@ -404,6 +410,7 @@ contains
       u = 0.0_wp ; lignin_in = 0.0_wp
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       call check_true('EXPM large step: L >= 0 (no negative lignin)', p%struct_grnd_lignin >= 0.0_wp, p%struct_grnd_lignin)
       call check_true('EXPM large step: L <= C', p%struct_grnd_lignin <= p%struct_grnd_carbon, &
                       p%struct_grnd_carbon - p%struct_grnd_lignin)

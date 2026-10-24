@@ -19,9 +19,8 @@ module meds_slow_state
                                             tissue_capped_water
    use meds_therm_lib,               only : internal_energy_liquid
    use meds_allometry_lib,           only : size_to_leaf_carbon, storage_carbon_target
-   use meds_cohort_state_vars,       only : cohort_carbon_supply, set_cohort_size_from_carbon,           &
-                                            cohort_wood_store_carbon, hold_cohort_tissue_temps,          &
-                                            cohort_water_enthalpy
+   use meds_cohort_state_vars,       only : cohort_carbon_supply, cohort_wood_store_carbon,              &
+                                            hold_cohort_tissue_temps, cohort_water_enthalpy
    use meds_polygon_state_vars,      only : polygon_t, patch_polygon_area
    use meds_slow_ledger,             only : slow_ledger_t, slow_ledger_declare, slow_ledger_soil_check,  &
                                             KGC_PER_UMOL_C
@@ -31,7 +30,7 @@ module meds_slow_state
                                             CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE,   &
                                             PA_MORT_C_BACKGROUND
    use meds_leaf_params,             only : leaf_physiology_params_t
-   use meds_patch_state_vars,        only : litter_input_t, add_shed_water
+   use meds_patch_state_vars,        only : litter_input_t, add_shed_water, soil_carbon_state_t
    use meds_state_defaults,          only : is_unset_positive
    use meds_biogeochem_params,       only : N_SOIL_POOL
    use meds_plant_phenology,         only : pheno_env_t, pheno_state_t, pheno_out_t, phenology_kernel
@@ -133,20 +132,23 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Light trait plasticity over one slow step: each cohort's sla, vcmax25, rd25 and leaf        !
-   ! turnover rate relax toward their targets at the LAI above, as fast as leaves are replaced,  !
-   ! and leaf carbon above the new leaf target is resorbed to storage. Called only with          !
+   ! turnover rate relax toward their targets at the LAI above, as fast as leaves are replaced.  !
+   ! Leaf carbon above the new leaf target is resorbed to storage: leaf_carbon_new and          !
+   ! storage_new are the pools meds_slow_update's commit_trait_carbon writes. Called only with  !
    ! trait_plasticity_on (docs/science/plant_traits.md eqs. (1)-(2), §4).                        !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_plant_traits(poly, cfg, dt_yr, instantaneous)
-      type(polygon_t),     intent(inout) :: poly
-      type(meds_config_t), intent(in)    :: cfg
-      real(wp),            intent(in)    :: dt_yr
-      logical, optional,   intent(in)    :: instantaneous   !< census restart: jump straight to the target
+   subroutine advance_plant_traits(poly, dt_yr, leaf_carbon_new, storage_new, instantaneous)
+      type(polygon_t),       intent(inout) :: poly
+      real(wp),              intent(in)    :: dt_yr
+      real(wp), allocatable, intent(out)   :: leaf_carbon_new(:)   !< [kgC/plant] (cohort)
+      real(wp), allocatable, intent(out)   :: storage_new(:)       !< [kgC/plant] (cohort)
+      logical, optional,     intent(in)    :: instantaneous   !< census restart: jump straight to the target
       integer(ik) :: j, pf
       real(wp)    :: sla_t, vcmax_t, rd_t, turnover_t, turnover_now, leaf_target, excess
       logical     :: instant
       instant = .false.
       if (present(instantaneous)) instant = instantaneous
+      allocate(leaf_carbon_new(poly%cohort%n), storage_new(poly%cohort%n))
       associate (cohort => poly%cohort, pft => poly%cohort%pft_table)
          do j = 1_ik, cohort%n
             pf = cohort%pft(j)
@@ -162,17 +164,17 @@ contains
             cohort%rd25(j)    = update_plastic_trait(cohort%rd25(j),    rd_t,    turnover_now, dt_yr, instant)
             cohort%leaf_turnover_rate(j) = update_plastic_trait(cohort%leaf_turnover_rate(j), turnover_t,      &
                                                                 turnover_now, dt_yr, instant)
-            !----- A higher SLA lowers the leaf target: resorb the excess leaf carbon to storage, so !
+            !----- A higher SLA lowers the leaf target: the excess leaf carbon goes to storage, so  !
             !      leaf area stays at allometry; a lower SLA leaves a deficit growth fills. --------!
             leaf_target = size_to_leaf_carbon(cohort%pft_table%allom(cohort%pft(j)), cohort%dbh(j), cohort%height(j), &
                                            cohort%sla(j))
+            leaf_carbon_new(j) = cohort%leaf_carbon(j)
+            storage_new(j)     = cohort%nonstructural_carbon(j)
             if (cohort%leaf_carbon(j) > leaf_target) then
                excess = cohort%leaf_carbon(j) - leaf_target
-               cohort%leaf_carbon(j)          = leaf_target
-               cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
+               leaf_carbon_new(j) = leaf_target
+               storage_new(j)     = cohort%nonstructural_carbon(j) + excess
             end if
-            call set_cohort_size_from_carbon(cohort, j)   ! leaf_area = sla*leaf_carbon, either way
-            call hold_cohort_tissue_temps(cohort, j)      ! the resorbed leaf carbon left at the leaf's temperature
          end do
       end associate
    end subroutine advance_plant_traits
@@ -182,13 +184,18 @@ contains
    ! ([init].reacclimate_traits): the census start's instant acclimation with plasticity on,   !
    ! the top-of-canopy values without. Leaf area is kept: leaf carbon scales by the SLA's       !
    ! change, storage taking up the difference, and a lower SLA takes at most the storage there  !
-   ! is, so no carbon is made (docs/configuration.md, "How a run starts"; plant_traits.md §5).  !
+   ! is, so no carbon is made. leaf_carbon_new and storage_new are the pools                   !
+   ! meds_slow_update's commit_trait_carbon writes (docs/configuration.md, "How a run         !
+   ! starts"; plant_traits.md §5).                                                             !
    !---------------------------------------------------------------------------------------!
-   subroutine reacclimate_plant_traits(poly, cfg)
-      type(polygon_t),     intent(inout) :: poly
-      type(meds_config_t), intent(in)    :: cfg
+   subroutine reacclimate_plant_traits(poly, cfg, leaf_carbon_new, storage_new)
+      type(polygon_t),       intent(inout) :: poly
+      type(meds_config_t),   intent(in)    :: cfg
+      real(wp), allocatable, intent(out)   :: leaf_carbon_new(:)   !< [kgC/plant] (cohort)
+      real(wp), allocatable, intent(out)   :: storage_new(:)       !< [kgC/plant] (cohort)
       integer(ik) :: j, pf
-      real(wp)    :: sla_t, vcmax_t, rd_t, turnover_t, leaf_carbon_new, sla_old
+      real(wp)    :: sla_t, vcmax_t, rd_t, turnover_t, sla_old
+      allocate(leaf_carbon_new(poly%cohort%n), storage_new(poly%cohort%n))
       associate (cohort => poly%cohort, pft => poly%cohort%pft_table)
          do j = 1_ik, cohort%n
             pf = cohort%pft(j)
@@ -208,14 +215,12 @@ contains
             cohort%vcmax25(j) = vcmax_t
             cohort%rd25(j)    = rd_t
             cohort%leaf_turnover_rate(j) = turnover_t
+            leaf_carbon_new(j) = cohort%leaf_carbon(j)
+            storage_new(j)     = cohort%nonstructural_carbon(j)
             if (cohort%sla(j) == sla_old) cycle
-            leaf_carbon_new = cohort%leaf_carbon(j) * sla_old / max(cohort%sla(j), tiny_num)
-            leaf_carbon_new = min(leaf_carbon_new, cohort%leaf_carbon(j) + cohort%nonstructural_carbon(j))
-            cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + cohort%leaf_carbon(j)        &
-                                             - leaf_carbon_new
-            cohort%leaf_carbon(j) = leaf_carbon_new
-            call set_cohort_size_from_carbon(cohort, j)
-            call hold_cohort_tissue_temps(cohort, j)
+            leaf_carbon_new(j) = cohort%leaf_carbon(j) * sla_old / max(cohort%sla(j), tiny_num)
+            leaf_carbon_new(j) = min(leaf_carbon_new(j), cohort%leaf_carbon(j) + cohort%nonstructural_carbon(j))
+            storage_new(j)     = cohort%nonstructural_carbon(j) + cohort%leaf_carbon(j) - leaf_carbon_new(j)
          end do
       end associate
    end subroutine reacclimate_plant_traits
@@ -685,21 +690,24 @@ contains
    end subroutine shed_excess_tissue_water
 
    !---------------------------------------------------------------------------------------!
-   ! Advance each patch's soil-carbon pools one daily step on the step's litter,           !
+   ! Step each patch's soil-carbon pools one day on the step's litter,                     !
    ! poly%patch%litter_in (turnover and mortality; the cull and the disturbance put theirs !
-   ! on the pools directly). The ledger keeps the run's worst Rh gap, lignin residual and !
-   ! lambda (soil_carbon.md §6-§7, §9).                                                    !
+   ! on the pools directly), into pools_new, which meds_slow_update's commit_soil_carbon  !
+   ! writes. The ledger keeps the run's worst Rh gap, lignin residual and lambda          !
+   ! (soil_carbon.md §6-§7, §9).                                                           !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_soil_carbon(poly, cfg, ledger)
-      type(polygon_t),       intent(inout) :: poly
+   subroutine advance_soil_carbon(poly, cfg, ledger, pools_new)
+      type(polygon_t),       intent(in)    :: poly
       type(meds_config_t),   intent(in)    :: cfg
       !----- The slow ledger: the litter declared leaving the live pools is declared       !
       !      arriving here, and the day's Rh is declared leaving (conservation.md §3). ----!
       type(slow_ledger_t),   intent(inout) :: ledger
+      type(soil_carbon_state_t), allocatable, intent(out) :: pools_new(:)   !< (patch) the pools after the step
       real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
-      type(soil_carbon_out_t) :: audit
+      type(soil_carbon_out_t) :: out
       integer(ik)          :: ip
 
+      allocate(pools_new(poly%patch%n))
       if (ledger%active) then
          do ip = 1_ik, poly%patch%n
             associate (lit => poly%patch%litter_in(ip))
@@ -712,11 +720,12 @@ contains
          call build_litter_input(poly%patch%litter_in(ip), u, lignin_in)
          associate (xa => poly%patch%decomp_xi(ip))
             call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xa%xi_days, cfg%soil_carbon, &
-                                  rh_today, audit)
+                                  rh_today, out)
+            pools_new(ip) = out%pools
             !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
             !      debit, should equal the fast loop's accumulated Rh. --------------------!
-            audit%rh_seam_gap   = rh_today - xa%rh_fast
-            call slow_ledger_soil_check(ledger, audit, poly%patch%n)
+            out%rh_seam_gap = rh_today - xa%rh_fast
+            call slow_ledger_soil_check(ledger, out, poly%patch%n)
             !----- Declare the matrix's own Rh debit (conservation.md §3): what is left in !
             !      the residual is the fast/slow seam gap. --------------------------------!
             call slow_ledger_declare(ledger,                                  &
