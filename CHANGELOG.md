@@ -102,8 +102,10 @@ kernels' comments and science pages say what the code computes, with no change t
 Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496). The
 fast kernels are one folder of eleven process modules, `fast_dynamics/processes`, with no change to any
 result (#497). The canopy's process modules hold their own formulas, and the reference-level air and the
-canopy geometry are stored once (#498). The plants' process modules hold their own formulas, and a tissue's energy
-balance takes its two latent pathways as records (#499).
+canopy geometry are stored once (#498). The plants' process modules hold their own formulas, and a
+tissue's energy balance takes its two latent pathways as records (#499). The ground's process modules hold
+their own formulas, the ground surface's surroundings are one record, and the soil water routines take the
+soil's potential in MPa (#500).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -685,9 +687,31 @@ balance takes its two latent pathways as records (#499).
   (`h_snow`, `le_snow`, `g_base`, `subl_rate`, `ground_rad`) or the pack after them (`swe1`, `enth1`):
   the march computes them with `snow_surface_balance`, and the update commits them with
   `snow_take_exchange`.
+- **Fortran: `ground_evaporation_rate` and `bottom_flux` take the soil's matric potential in MPa** (#500),
+  not metres of head, and their potential derivatives are per MPa. `snow_env_t` is `surface_env_t`, which
+  also holds the bare ground's `soil_evap`, the pack, its cover, the snow parameters and the step:
+  `snow_surface_balance(env, flux)` reads them from it, and `surface_derivs` has no `snow` argument.
+  `prepare_snow_stage(snowfall, rainfall, t_air, snow_rough, env, st)` is `meds_surface`'s; it advances
+  `env`'s pack and returns its hand-off in `snow_out_t`.
 
 ### Changed
 
+- **The ground's process modules hold their own formulas** (#500). `set_soil_heat_env` is the soil
+  column's forcing from the ground heat flux and the water network's flows, which the ESDIRK2 stage and
+  `march_derivs` each assembled (it replaces `assemble_soil_energy_forcing`); `soil_layer_temp` is one
+  layer's temperature from its energy; `pond_inflow` is the water reaching the pond, its temperature and
+  the enthalpy it brings. What the ground surface reads is one `surface_env_t` (was `snow_env_t`), held
+  for the step: `ground_boundary_t`'s radiation, conductance and soil evaporation, the top soil node, and
+  the snow stage's pack, cover, parameters and step. What the stage hands on (the melt as a rate and
+  temperature, the precipitation's enthalpy, the pack before it) joins `snow_out_t`, so the stage's own
+  record goes. `ground_surface_exchange` is the snow/bare blend `surface_derivs` held, and
+  `prepare_snow_stage` is `meds_surface`'s.
+  `soil_water_store` and `soil_energy_store` move to `meds_patch_state_vars`, and the slow ledger takes the
+  soil column's totals from them. These moves leave every variable of the 10 harness cases identical on
+  gfortran. `ground_evaporation_rate` and `bottom_flux` then take the soil's potential in MPa, the unit the
+  water network solves in, and convert it to head once inside: gfortran stays identical, and on ifx
+  Release the PR moves results by round-off (at most 6.9e-8 relative on ex04), the moves' ifx Debug runs
+  being identical.
 - **The plants' process modules hold their own formulas** (#499). `veg_energy_balance` is
   `tissue_energy_balance`, with its eight optional arguments replaced by two `latent_pathway_t` records,
   the stomata's and the film's, which `latent_pathway` builds from a conductance; wood is the case with no

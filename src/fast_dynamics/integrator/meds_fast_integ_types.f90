@@ -16,11 +16,11 @@
 !==========================================================================================!
 module meds_fast_integ_types
    use meds_kinds, only : wp, ik
-   use meds_constants, only : t_3ple, n_soil_layer_max, rho_h2o
+   use meds_constants, only : n_soil_layer_max
    use meds_pft_params, only : leaf_photo_table_t
    use meds_patch_state_vars,   only : cas_state_t, soil_water_state_t, soil_energy_state_t, snow_state_t, soil_carbon_t
-   use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp, internal_energy_to_temp
-   use meds_biophysics_params, only : aero_params_t, snow_params_t
+   use meds_therm_lib, only : cas_temp_to_enthalpy, cas_enthalpy_to_temp
+   use meds_biophysics_params, only : aero_params_t
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_budget_check, only : budget_t
    use meds_linear_algebra, only : arrowhead_system_t
@@ -30,6 +30,8 @@ module meds_fast_integ_types
    use meds_canopy_air_space, only : cas_env_t
    use meds_plant_energy, only : plant_energy_env_t
    use meds_canopy_water, only : canopy_water_out_t
+   use meds_surface, only : surface_env_t, snow_out_t
+   use meds_soil_heat, only : soil_layer_temp
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -43,8 +45,7 @@ module meds_fast_integ_types
    public :: tol_set_t, error_control_t
    public :: ensure_static_capacity, ensure_dynamic_capacity, ensure_forcing_capacity, ensure_output_capacity
    public :: surface_state_t, surface_tend_t
-   public :: snow_stage_t
-   public :: cas_boundary_t, ground_boundary_t
+   public :: cas_boundary_t
    public :: soil_hydrology_t, root_zone_t, plant_water_t, esdirk2_stages_t
    public :: march_state_t, frozen_t, march_tend_t
    public :: stage_bflux_t, boundary_flux_t
@@ -351,15 +352,6 @@ module meds_fast_integ_types
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
    end type cas_boundary_t
 
-   !----- Bare-ground boundary: radiation reaching the ground, the ground <-> CAS conductance and   !
-   !      the ground evaporation the frozen hydrology authority committed to. ----------------------!
-   type :: ground_boundary_t
-      real(wp) :: abs_sw_ground = 0.0_wp      !< [W/m2]    shortwave reaching the ground (frozen source)
-      real(wp) :: abs_lw_ground = 0.0_wp      !< [W/m2]    net longwave at the ground (frozen source)
-      real(wp) :: ggnet         = 0.0_wp      !< [m/s]     ground<->CAS aerodynamic conductance
-      real(wp) :: soil_evap     = 0.0_wp      !< [kg/m2/s] ground latent flux (frozen hydrology authority)
-   end type ground_boundary_t
-
    !----- Surface-block tendencies and the diagnostics the ledgers and the plant-water update use   !
    !      (transp_c is each cohort's leaf water loss). ------------------------------------------!
    type :: surface_tend_t
@@ -455,31 +447,6 @@ module meds_fast_integ_types
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
    end type plant_water_t
 
-   !----- The snow stage before the march (meds_fast_integ_frozen%prepare_snow_stage): the pack after  !
-   !      this step's snowfall and rain and the drainage of the liquid it holds, which the march          !
-   !      exchanges with at every evaluation (surface_derivs) and the update commits the exchange to;    !
-   !      with what that exchange reads that the march does not carry. With no pack the cover is 0, the  !
-   !      exchange is zero, and the consumers reduce exactly to the snow-free form, with no snow branch. -!
-   type :: snow_stage_t
-      logical  :: exists     = .false.   !< a pack is present (drives rainfall routing + t_film_valuation)
-      real(wp) :: snowfac    = 0.0_wp    !< [-]        Niu-Yang cover fraction
-      real(wp) :: melt_rate  = 0.0_wp    !< [kg/m2/s]  meltwater to the ponding store (see t_melt)
-      real(wp) :: acc_enth   = 0.0_wp    !< [J/m2]     precipitation (rain and snow) enthalpy that entered the pack
-      real(wp) :: swe0       = 0.0_wp    !< [kg/m2]    pack mass BEFORE the stage (ledger store term)
-      real(wp) :: enth0      = 0.0_wp    !< [J/m2]     pack internal energy BEFORE (ledger store term)
-      real(wp) :: melt_enth  = 0.0_wp    !< [J/m2] enthalpy the meltwater carries from the pack to the pond
-      !----- The temperature with u_liq(T)*melt mass = melt_enth, handed to the water network as the  !
-      !      pond inflow's, so the pond receives exactly melt_enth; t_3ple when nothing melts. --------!
-      real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
-      !----- The pack the march exchanges with, and the rest of what its balance reads beyond the       !
-      !      ground boundary: the top soil node's depth and conductivity, the step, the parameters. -----!
-      type(snow_state_t)  :: pack
-      type(snow_params_t) :: params
-      real(wp) :: dz_soil_top   = 0.0_wp !< [m]       top soil-node depth |z_node(1)|
-      real(wp) :: k_soil_top    = 0.0_wp !< [W/m/K]   top soil layer's thermal conductivity
-      real(wp) :: dt            = 0.0_wp !< [s]       the step its balance relaxes over (dt_fast)
-   end type snow_stage_t
-
    !----- What drives the soil-plant water network over the step, held fixed across it: the water   !
    !      reaching the pond and the temperature that values it, the temperature of the water each     !
    !      layer gives up, each cohort's transpiration demand and the ground evaporation's boundary    !
@@ -551,8 +518,8 @@ module meds_fast_integ_types
       type(cas_boundary_t)         :: cas          !< CAS <-> atmosphere boundary
       type(plant_energy_env_t)     :: tissue       !< per-cohort leaf/wood energy coefficients + heat store
       type(canopy_water_out_t)     :: film         !< canopy interception film
-      type(ground_boundary_t)      :: ground       !< bare-ground boundary
-      type(snow_stage_t)           :: snow         !< the snow stage's outcome (all zero without a pack)
+      type(surface_env_t)          :: ground       !< what the ground surface reads, the snow pack among it
+      type(snow_out_t)             :: snow         !< the snow stage's hand-off (all zero without a pack)
       type(soil_hydrology_t)       :: hydrology    !< the water network's soil flows over the step
       type(root_zone_t)            :: roots        !< the network's root uptake and its placement by layer
       type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
@@ -1185,7 +1152,7 @@ contains
       real(wp),             intent(inout) :: soil_temp(:), soil_fliq(:)
       integer(ik) :: k
       do k = 1_ik, nsl
-         call internal_energy_to_temp(y_out%soil_energy(k), y_out%theta(k)*rho_h2o, dry_hcap(k), soil_temp(k), soil_fliq(k))
+         call soil_layer_temp(y_out%soil_energy(k), y_out%theta(k), dry_hcap(k), soil_temp(k), soil_fliq(k))
       end do
    end subroutine diagnose_soil_temps
 

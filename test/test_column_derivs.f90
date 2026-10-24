@@ -128,10 +128,10 @@ contains
          b%atm_co2                  = 400.0_wp
       end associate
       frozen%cas%nee_biotic    = -5.0_wp                                          ! net CO2 uptake [umol/m2/s]
-      frozen%ground%abs_sw_ground = 60.0_wp
-      frozen%ground%abs_lw_ground = -10.0_wp
-      frozen%ground%ggnet         = 0.02_wp
-      frozen%ground%soil_evap     = 2.0e-5_wp
+      frozen%ground%abs_sw    = 60.0_wp
+      frozen%ground%abs_lw    = -10.0_wp
+      frozen%ground%ggnet     = 0.02_wp
+      frozen%ground%soil_evap = 2.0e-5_wp
    end subroutine make_frozen
 
    !----- 1. The diagnosed leaf temperature must zero the (linearized) leaf energy balance. ------!
@@ -147,7 +147,7 @@ contains
       y%cas_enthalpy = cas_temp_to_enthalpy(298.0_wp, 0.012_wp)
       y%cas_shv      = 0.012_wp
       y%cas_co2      = 410.0_wp
-      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
+      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, n, f)
 
       tcas   = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -188,7 +188,7 @@ contains
       frozen%tissue%h_coeff_leaf(1) = 2.0_wp * frozen%tissue%lai(1) * 0.03_wp * 1.2_wp * cp_air
       y%cas_enthalpy = cas_temp_to_enthalpy(299.0_wp, 0.010_wp)
       y%cas_shv      = 0.010_wp
-      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
+      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, 1_ik, f)
       tcas     = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan_boltzmann * tcas ** 3 * frozen%tissue%lai(1)
       expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
@@ -210,7 +210,7 @@ contains
       y%cas_shv      = 0.013_wp
       y%cas_co2      = 415.0_wp
       enth0 = y%cas_enthalpy ; shv0 = y%cas_shv ; co20 = y%cas_co2
-      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
+      call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, n, f)
       !----- Reconstruct the implicit CAS update the box kernel commits (cas_box_step_implicit). !
       associate (b => frozen%cas%box)
          enth1 = (b%air_mass_capacity * enth0 + dt * (f%src_enth + b%atm_conductance_enthalpy * b%atm_enthalpy))   &
@@ -255,7 +255,7 @@ contains
       y%cas_co2      = 400.0_wp
       t0 = cas_enthalpy_to_temp(y%cas_enthalpy, y%cas_shv)
       do step = 1_ik, 60_ik
-         call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, n, f)
+         call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, 297.0_wp, n, f)
          enth0 = y%cas_enthalpy ; shv0 = y%cas_shv
          associate (b => frozen%cas%box)
             enth1 = (b%air_mass_capacity * enth0 + dt * (f%src_enth + b%atm_conductance_enthalpy * b%atm_enthalpy))   &
@@ -353,7 +353,7 @@ contains
 
       !----- the CAS part must equal a standalone surface_derivs at the state's diagnosed t_ground. !
       y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,     &
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground,                  &
                           tground_of(y, frozen), n, surf_tend)
       call check('march_derivs CAS enthalpy tendency = surface_derivs', f%d_cas_enthalpy, surf_tend%d_cas_enthalpy, 1.0e-12_wp)
 
@@ -987,7 +987,7 @@ contains
          b%atm_enthalpy = cas_temp_to_enthalpy(300.0_wp, 0.011_wp) ; b%atm_specific_humidity = 0.011_wp
          b%atm_co2 = 400.0_wp
       end associate
-      frozen%ground%abs_sw_ground = 60.0_wp ; frozen%ground%abs_lw_ground = -10.0_wp
+      frozen%ground%abs_sw = 60.0_wp ; frozen%ground%abs_lw = -10.0_wp
       frozen%ground%ggnet = 0.02_wp ; frozen%ground%soil_evap = 2.0e-5_wp
       y%cas_enthalpy = cas_temp_to_enthalpy(297.0_wp, 0.012_wp) ; y%cas_shv = 0.012_wp ; y%cas_co2 = 410.0_wp
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))

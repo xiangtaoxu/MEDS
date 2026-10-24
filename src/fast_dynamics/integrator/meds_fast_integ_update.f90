@@ -17,6 +17,7 @@ module meds_fast_integ_update
                                      diagnose_soil_temps
    use meds_plant_energy,     only : commit_tissue_energy
    use meds_canopy_water,     only : clamp_canopy_film
+   use meds_patch_state_vars, only : soil_water_store, soil_energy_store
    use meds_diag_vars,        only : CO_TRANSP
    use meds_surface, only : snow_take_exchange
    use meds_therm_lib,        only : internal_energy_liquid, cas_enthalpy_to_temp
@@ -106,8 +107,8 @@ contains
       !----- The pack takes its exchange over the march, the energy and vapour the canopy air and the  !
       !      soil received from it (docs/science/snow_biophysics.md §The snow store); and the warm start !
       !      of the next march. -------------------------------------------------------------------!
-      dynamic%snow = frozen%snow%pack
-      call snow_take_exchange(dynamic%snow, acc%snow_enth_in, acc%snow_vap_out, frozen%snow%params)
+      dynamic%snow = frozen%ground%pack
+      call snow_take_exchange(dynamic%snow, acc%snow_enth_in, acc%snow_vap_out, frozen%ground%params)
       moved%snow_swe1       = dynamic%snow%swe(1)
       moved%snow_enth1      = dynamic%snow%snow_energy(1)
       dynamic%adapt_dt_last = dt_warm
@@ -231,31 +232,11 @@ contains
    end function transp_per_leaf_area
 
    !---------------------------------------------------------------------------------------!
-   ! Whole-column store totals for the conservation ledgers [per m2 ground]. Plain ascending loops, !
-   ! shared by both schemes, so a ledger built from these is the same arithmetic on both.           !
+   ! The plant water's and the canopy films' totals for the conservation ledgers [per m2   !
+   ! ground]; the soil column's are the patch state's (soil_water_store,                   !
+   ! soil_energy_store). Shared by both schemes, so a ledger built from these is the same  !
+   ! arithmetic on both.                                                                   !
    !---------------------------------------------------------------------------------------!
-   pure function soil_water_store(theta, dz, nsl) result(w)     ! [kg/m2]
-      real(wp),    intent(in) :: theta(:), dz(:)
-      integer(ik), intent(in) :: nsl
-      real(wp) :: w
-      integer(ik) :: k
-      w = 0.0_wp
-      do k = 1_ik, nsl
-         w = w + theta(k) * dz(k) * rho_h2o
-      end do
-   end function soil_water_store
-
-   pure function soil_energy_store(soil_energy, dz, nsl) result(e)   ! [J/m2] from [J/m3]
-      real(wp),    intent(in) :: soil_energy(:), dz(:)
-      integer(ik), intent(in) :: nsl
-      real(wp) :: e
-      integer(ik) :: k
-      e = 0.0_wp
-      do k = 1_ik, nsl
-         e = e + soil_energy(k) * dz(k)
-      end do
-   end function soil_energy_store
-
    pure function plant_water_store(nplant, leaf_mass, wood_mass, n) result(w)   ! [kg/m2] from [kg/plant]
       real(wp),    intent(in) :: nplant(:), leaf_mass(:), wood_mass(:)
       integer(ik), intent(in) :: n

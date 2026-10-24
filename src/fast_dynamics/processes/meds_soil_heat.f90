@@ -6,6 +6,8 @@
 ! share the conductive and water-enthalpy faces:                                           !
 !   * soil_energy_time_deriv    -- the explicit tendency dE_k/dt [W/m3], faces at T^n;     !
 !   * soil_energy_step_implicit -- the backward-Euler advance over dt, faces at T^{n+1}.   !
+! set_soil_heat_env assembles their forcing from the ground heat flux and the water        !
+! network's flows; soil_layer_temp is one layer's temperature from its energy.             !
 !==========================================================================================!
 module meds_soil_heat
    use meds_kinds,            only : wp, ik
@@ -19,7 +21,7 @@ module meds_soil_heat
    implicit none
    private
 
-   public :: soil_energy_step_implicit, soil_energy_time_deriv
+   public :: soil_energy_step_implicit, soil_energy_time_deriv, set_soil_heat_env, soil_layer_temp
    public :: soil_heat_env_t, soil_heat_out_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
@@ -28,7 +30,7 @@ module meds_soil_heat
       real(wp) :: geothermal = 0.0_wp                       !< [W/m2] prescribed bottom flux, positive up (held at 0)
       real(wp) :: soil_water(n_soil_layer_max) = 0.0_wp     !< [m3/m3] theta from hydrology (kappa, C_eff)
       real(wp) :: w_flux(n_soil_layer_max)     = 0.0_wp     !< [m/s]  inter-layer water flux, upward-positive like hf
-                                                            !<        (assemble_soil_energy_forcing flips the network's)
+                                                            !<        (set_soil_heat_env flips the network's)
       real(wp) :: water_heat_out(n_soil_layer_max) = 0.0_wp !< [W/m2] enthalpy leaving each layer with water other
                                                             !<        than across a face (root uptake, drainage)
       !----- The top face's water, applied by the same upwind rule and time level as the interior      !
@@ -45,6 +47,88 @@ module meds_soil_heat
    end type soil_heat_out_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! set_soil_heat_env -- the soil column's forcing from the ground heat flux and the      !
+   ! water network's flows (docs/science/soil_plant_water.md §5): the enthalpy the water   !
+   ! takes out of each layer other than across a face (root uptake, and the top layer's    !
+   ! exfiltration, at the layer's temperature), and with the drainage at t_drain, which    !
+   ! leaves through the bottom layer, so the bottom face carries none; the faces' flows,   !
+   ! which the network gives down-positive (the column's are up-positive, hence the flip); !
+   ! and the infiltration across the top face at t_infil, upwind like the interior faces.  !
+   ! No runoff term: runoff leaves the pond. water_heat and e_drain return the two parts   !
+   ! of what leaves, for the caller's ledger.                                              !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine set_soil_heat_env(nsl, g_top, theta, root_heat, exfil_enth, face_flux, infiltration,       &
+                                     t_infil, drainage, t_drain, env, water_heat, e_drain)
+      integer(ik),           intent(in)  :: nsl
+      real(wp),              intent(in)  :: g_top          !< [W/m2]    net ground heat flux into the soil top
+      real(wp),              intent(in)  :: theta(:)       !< [m3/m3]   soil moisture (thermal properties)
+      real(wp),              intent(in)  :: root_heat(:)   !< [W/m2]    enthalpy leaving each layer with root uptake
+      real(wp),              intent(in)  :: exfil_enth     !< [W/m2]    enthalpy leaving the top layer by exfiltration
+      real(wp),              intent(in)  :: face_flux(:)   !< [m/s]     DOWN-positive water flux at the layer faces
+      real(wp),              intent(in)  :: infiltration   !< [kg/m2/s] top-face infiltration (pond -> soil)
+      real(wp),              intent(in)  :: t_infil        !< [K]       temperature of the infiltrating water
+      real(wp),              intent(in)  :: drainage       !< [kg/m2/s] out of the bottom layer
+      real(wp),              intent(in)  :: t_drain        !< [K]       temperature it leaves at
+      type(soil_heat_env_t), intent(out) :: env
+      real(wp),              intent(out) :: water_heat(:)  !< [W/m2]    root uptake and exfiltration, by layer
+      real(wp),              intent(out) :: e_drain        !< [W/m2]    the drainage's
+      integer(ik) :: k
+      water_heat(1:nsl) = root_heat(1:nsl)
+      water_heat(1)     = water_heat(1) + exfil_enth
+      e_drain = drainage * internal_energy_liquid(t_drain)
+      env%g_top = g_top
+      do k = 1_ik, nsl
+         env%soil_water(k)     = theta(k)
+         env%water_heat_out(k) = water_heat(k)
+         env%w_flux(k)         = -face_flux(k)
+      end do
+      env%w_flux_top  = -infiltration / rho_h2o
+      env%t_water_top = t_infil
+      env%water_heat_out(nsl) = env%water_heat_out(nsl) + e_drain
+   end subroutine set_soil_heat_env
+
+   !----- One layer's temperature and liquid fraction from its internal energy and water content: the  !
+   !      shared inverter on the layer's water mass per volume (docs/science/soil_biophysics.md, "The   !
+   !      soil thermal column"). --------------------------------------------------------------------!
+   elemental pure subroutine soil_layer_temp(soil_energy, theta, dry_heat_capacity, temp, fliq)
+      real(wp), intent(in)  :: soil_energy         !< [J/m3]
+      real(wp), intent(in)  :: theta               !< [m3/m3]
+      real(wp), intent(in)  :: dry_heat_capacity   !< [J/m3/K]
+      real(wp), intent(out) :: temp                !< [K]
+      real(wp), intent(out) :: fliq                !< [-]
+      call internal_energy_to_temp(soil_energy, theta * rho_h2o, dry_heat_capacity, temp, fliq)
+   end subroutine soil_layer_temp
+
+   !----- Each layer's temperature, liquid fraction and ice-aware conductivity at its current energy, !
+   !      for the step and the tendency alike. ------------------------------------------------------!
+   pure subroutine layer_thermal_state(col, forcing, profile, n, temp, fliq, kappa)
+      type(soil_energy_state_t), intent(in)  :: col
+      type(soil_heat_env_t),     intent(in)  :: forcing
+      type(soil_profile_t),      intent(in)  :: profile
+      integer(ik),               intent(in)  :: n
+      real(wp),                  intent(out) :: temp(:), fliq(:)   !< [K], [-]
+      real(wp),                  intent(out) :: kappa(:)           !< [W/m/K]
+      integer(ik) :: k
+      do k = 1_ik, n
+         call soil_layer_temp(col%soil_energy(k), forcing%soil_water(k), profile%dry_heat_capacity(k), temp(k), fliq(k))
+         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fliq(k), profile%theta_sat(k),            &
+                                              profile%solid_conductivity(k), profile%dry_conductivity(k))
+      end do
+   end subroutine layer_thermal_state
+
+   !----- Each interior face's conductivity [W/m/K]: the two half-layers in series, the dz-weighted  !
+   !      harmonic mean of the layers' conductivities. --------------------------------------------!
+   pure subroutine face_conductivity(dz, kappa, n, kf)
+      real(wp),    intent(in)  :: dz(:), kappa(:)
+      integer(ik), intent(in)  :: n
+      real(wp),    intent(out) :: kf(:)   !< face k between layers k and k+1, k < n
+      integer(ik) :: k
+      do k = 1_ik, n - 1_ik
+         kf(k) = (dz(k) + dz(k+1)) / (dz(k) / kappa(k) + dz(k+1) / kappa(k+1))
+      end do
+   end subroutine face_conductivity
 
    !---------------------------------------------------------------------------------------!
    ! water_enthalpy_faces -- the liquid enthalpy moving water carries across each soil     !
@@ -73,7 +157,7 @@ contains
          end if
       end do
       !----- Bottom face: no advective term; drainage enthalpy leaves through the bottom layer's   !
-      !      water_heat_out (assemble_soil_energy_forcing). ---------------------------------------!
+      !      water_heat_out (set_soil_heat_env). --------------------------------------------------!
       qwf(n) = 0.0_wp
    end subroutine water_enthalpy_faces
 
@@ -129,17 +213,14 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max) :: t_n, fl_n, kappa, c_eff, q_src, t_new, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: wmass, e0, e1, div, g_deep
+      real(wp) :: e0, e1, div, g_deep
 
       n = profile%n_active
 
-      !----- Invert energy -> (temp, fliq) and node-wise thermal properties at state^n. ----!
+      !----- Invert energy -> (temp, fliq) and node-wise thermal properties at state^n: the ice-aware  !
+      !      conductivity and heat capacity, on the liquid fraction the inverter returns. -----------!
+      call layer_thermal_state(col, forcing, profile, n, t_n, fl_n, kappa)
       do k = 1_ik, n
-         wmass = forcing%soil_water(k) * rho_h2o                          ! [kg/m3] water mass per volume
-         call internal_energy_to_temp(col%soil_energy(k), wmass, profile%dry_heat_capacity(k), t_n(k), fl_n(k))
-         !----- Ice-aware conductivity and heat capacity, on the liquid fraction the inverter returns. !
-         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), profile%theta_sat(k),      &
-                                      profile%solid_conductivity(k), profile%dry_conductivity(k))
          c_eff(k) = soil_volumetric_heat_capacity(forcing%soil_water(k), fl_n(k), profile%dry_heat_capacity(k))
          q_src(k) = -forcing%water_heat_out(k) / profile%dz(k)               ! [W/m3] source (sink is negative)
       end do
@@ -171,11 +252,8 @@ contains
       end do
 
       !----- Re-diagnose temperature + liquid fraction from the committed energy. ----------!
-      do k = 1_ik, n
-         wmass = forcing%soil_water(k) * rho_h2o
-         call internal_energy_to_temp(col%soil_energy(k), wmass, profile%dry_heat_capacity(k),         &
-                           col%soil_temp(k), col%soil_fliq(k))
-      end do
+      call soil_layer_temp(col%soil_energy(1:n), forcing%soil_water(1:n), profile%dry_heat_capacity(1:n),        &
+                           col%soil_temp(1:n), col%soil_fliq(1:n))
 
       !----- Diagnostics + closed energy budget. -------------------------------------------!
       flux%bottom_heat  = -hf(n)
@@ -202,21 +280,14 @@ contains
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max)   :: t_n, fl_n, kappa, kf
       real(wp), dimension(0:n_soil_layer_max) :: hf, qwf
-      real(wp) :: wmass, g_deep
+      real(wp) :: g_deep
 
       dedt = 0.0_wp
       n = profile%n_active
 
       !----- Diagnose (temp, fliq) + node conductivity at the current internal energy. --------!
-      do k = 1_ik, n
-         wmass = forcing%soil_water(k) * rho_h2o
-         call internal_energy_to_temp(col%soil_energy(k), wmass, profile%dry_heat_capacity(k), t_n(k), fl_n(k))
-         kappa(k) = soil_thermal_conductivity(forcing%soil_water(k), fl_n(k), profile%theta_sat(k),         &
-                                      profile%solid_conductivity(k), profile%dry_conductivity(k))
-      end do
-      do k = 1_ik, n - 1_ik
-         kf(k) = (profile%dz(k) + profile%dz(k+1)) / (profile%dz(k) / kappa(k) + profile%dz(k+1) / kappa(k+1))
-      end do
+      call layer_thermal_state(col, forcing, profile, n, t_n, fl_n, kappa)
+      call face_conductivity(profile%dz, kappa, n, kf)
 
       !----- Conductive faces at the current temperature (explicit) + upwind liquid enthalpy. --!
       hf(0)  = -forcing%g_top
@@ -256,9 +327,7 @@ contains
       real(wp) :: a(n_soil_layer_max), b(n_soil_layer_max)
       real(wp) :: c(n_soil_layer_max), r(n_soil_layer_max)
       integer(ik) :: k
-      do k = 1_ik, nzg - 1_ik
-         kf(k) = (dz(k) + dz(k+1)) / (dz(k) / kappa(k) + dz(k+1) / kappa(k+1))     ! series-resistor face
-      end do
+      call face_conductivity(dz, kappa, nzg, kf)
       do k = 1_ik, nzg
          if (k >= 2_ik) then
             a(k) = -kf(k-1) / dz_node(k-1)

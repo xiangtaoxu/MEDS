@@ -356,7 +356,7 @@ contains
       type(soil_profile_t)   :: sp
       type(ground_evap_env_t) :: f
       type(soil_params_t)    :: o
-      real(wp) :: theta, head, e, det, dep, ep, em, dum, ref, h
+      real(wp) :: theta, head, psi, e, det, dep, ep, em, dum, ref, h
       integer  :: i
       logical  :: ok_d, ok_v
       sp%n_active = 3 ; sp%retention = SOIL_RETENTION_VG
@@ -369,14 +369,15 @@ contains
          theta = 0.10_wp + 0.011_wp * real(i, wp)
          head  = -(1.0_wp / 0.7607_wp) * (((theta - 0.0981_wp) / (0.4314_wp - 0.0981_wp))              &
                   ** (-1.0_wp / (1.0_wp - 1.0_wp / 1.3554_wp)) - 1.0_wp) ** (1.0_wp / 1.3554_wp)
-         call ground_evaporation_rate(theta, head, f, o, e, det, dep)
+         psi   = head * grav_head                      ! [MPa], the potential the kernel takes
+         call ground_evaporation_rate(theta, psi, f, o, e, det, dep)
          h = 1.0e-7_wp
-         call ground_evaporation_rate(theta + h, head, f, o, ep, dum, dum)
-         call ground_evaporation_rate(theta - h, head, f, o, em, dum, dum)
+         call ground_evaporation_rate(theta + h, psi, f, o, ep, dum, dum)
+         call ground_evaporation_rate(theta - h, psi, f, o, em, dum, dum)
          if (.not. fd_agrees(det, (ep - em) / (2*h), 1.0e-4_wp, 1.0e-14_wp)) ok_d = .false.
-         h = 1.0e-5_wp * max(abs(head), 1.0_wp)
-         call ground_evaporation_rate(theta, head + h, f, o, ep, dum, dum)
-         call ground_evaporation_rate(theta, head - h, f, o, em, dum, dum)
+         h = 1.0e-5_wp * max(abs(psi), grav_head)
+         call ground_evaporation_rate(theta, psi + h, f, o, ep, dum, dum)
+         call ground_evaporation_rate(theta, psi - h, f, o, em, dum, dum)
          if (.not. fd_agrees(dep, (ep - em) / (2*h), 1.0e-4_wp, 1.0e-14_wp)) ok_d = .false.
          !----- Moist enough that no dry surface layer forms: the closed form rho (alpha q_sat - q_air) !
          !      / r_aero, with Philip's alpha = exp(psi g / (R_v T)). --------------------------------!

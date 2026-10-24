@@ -9,8 +9,6 @@
 !     water, which move at the water network's frozen rates (§2);                          !
 !   * cas_conductances -- the canopy-air <-> atmosphere conductances at a live canopy-air  !
 !     state;                                                                               !
-!   * assemble_soil_energy_forcing -- the soil-heat column's forcing, for the march and    !
-!     the backward-Euler stage alike;                                                      !
 !   * water_derivs -- the soil-plant water network's flows, inflows and Jacobian at one    !
 !     state, and set_water_state its state from the model's                                !
 !     (docs/science/soil_plant_water.md §1-§2).                                            !
@@ -18,20 +16,16 @@
 module meds_fast_integ_derivs
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o, grav_head
-   use meds_therm_lib, only : cas_enthalpy_to_temp, sat_specific_humidity,                                &
-                              sat_specific_humidity_temp_deriv, internal_energy_to_temp,                  &
-                              internal_energy_liquid
-   use meds_soil_heat, only : soil_heat_env_t
-   use meds_surface, only : snow_env_t, snow_out_t
+   use meds_therm_lib, only : cas_enthalpy_to_temp, sat_specific_humidity, sat_specific_humidity_temp_deriv
+   use meds_soil_heat, only : soil_heat_env_t, soil_energy_time_deriv, set_soil_heat_env, soil_layer_temp
+   use meds_surface, only : surface_env_t, ground_surface_exchange
    use meds_patch_state_vars,   only : soil_energy_state_t
-   use meds_soil_heat, only : soil_energy_time_deriv
    use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv, cas_condensation
-   use meds_surface, only : ground_surface_fluxes, snow_surface_balance
    use meds_canopy_aerodynamics, only : canopy_air_conductances
    use meds_plant_energy, only : plant_energy_env_t, canopy_tissue_energy
    use meds_canopy_water, only : canopy_water_out_t
-   use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
-                               ground_boundary_t, march_state_t, frozen_t, march_tend_t, fast_static_state_t, &
+   use meds_fast_integ_types, only : surface_state_t, surface_tend_t, cas_boundary_t,                                  &
+                               march_state_t, frozen_t, march_tend_t, fast_static_state_t,                    &
                                water_drive_t, water_tend_t, water_work_t, ensure_water_capacity, POND, WOOD, LEAF
    use meds_site_state_vars, only : site_surface_t
    use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
@@ -48,7 +42,6 @@ module meds_fast_integ_derivs
 
    public :: surface_derivs, march_derivs, cas_conductances
    public :: set_water_state, water_derivs
-   public :: assemble_soil_energy_forcing
 
 contains
 
@@ -94,13 +87,12 @@ contains
    ! also the longwave emission base (docs/science/vegetation_energy_dynamics.md eqs. (1)-(2)); the  !
    ! twins' tendencies are docs/science/canopy_air_space_biophysics.md eq. (1).                      !
    !---------------------------------------------------------------------------------------!
-   pure subroutine surface_derivs(y, cas, tissue, film, ground, snow, t_ground, n, f)
+   pure subroutine surface_derivs(y, cas, tissue, film, ground, t_ground, n, f)
       type(surface_state_t),        intent(in)  :: y
       type(cas_boundary_t),         intent(in)  :: cas      !< CAS <-> atmosphere boundary (a stage may pass its own conductances)
       type(plant_energy_env_t),     intent(in)  :: tissue   !< per-cohort leaf/wood energy coefficients
       type(canopy_water_out_t),     intent(in)  :: film     !< interception film
-      type(ground_boundary_t),      intent(in)  :: ground   !< bare-ground boundary
-      type(snow_stage_t),           intent(in)  :: snow     !< the snow stage's outcome
+      type(surface_env_t),          intent(in)  :: ground   !< what the ground surface reads, the snow pack among it
       real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at this evaluation (live, not frozen)
       integer(ik),            intent(in)  :: n
       !----- Filled in place; the per-cohort arrays are allocated only when missing or resized, so a  !
@@ -109,9 +101,7 @@ contains
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt
       real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap   !< the canopy's, into the canopy air
-      real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
-      type(snow_env_t)  :: senv        !< the pack's surroundings at this evaluation
-      type(snow_out_t) :: sfx         !< its exchange with them (zero without a pack)
+      type(surface_env_t) :: senv      !< the ground surface's surroundings at this evaluation
       real(wp)    :: gah_l, gaw_l, gac_l      !< the conductances this evaluation uses
       type(cas_env_t) :: cas_env
 
@@ -128,36 +118,19 @@ contains
                                 f%transp_c, f%film_evap_leaf, f%film_evap_wood, coh_h, coh_qw, coh_transp,        &
                                 coh_film_evap, coh_rnet)
 
-      !----- The snow pack's exchange at this evaluation's canopy air and soil top, as the tissues'      !
-      !      is at theirs: its surface balance relaxed over the step with its own heat store             !
-      !      (docs/science/snow_biophysics.md, "The snow store"). The fluxes come snowfac-weighted, and  !
-      !      are zero with no pack or no cover. ------------------------------------------------------!
-      senv%abs_sw      = ground%abs_sw_ground
-      senv%abs_lw      = ground%abs_lw_ground
-      senv%can_temp    = tcas
-      senv%can_shv     = qcas
-      senv%ggnet       = ground%ggnet
-      senv%rho_air     = cas%rho
-      senv%press       = cas%press
-      senv%t_soil_top  = t_ground
-      senv%dz_soil_top = snow%dz_soil_top
-      senv%k_soil_top  = snow%k_soil_top
-      call snow_surface_balance(snow%pack, senv, snow%params, snow%dt, snow%snowfac, sfx)
-      !----- Ground surface = snowfac-weighted snow + (1 - snowfac) bare soil. soil_evap already carries  !
-      !      its snow-free area factor (ground_evap_env_t%snow_free_frac), so le_soil is added whole. With !
-      !      no snow this is exactly bare ground, with no branch. ----------------------------------------!
-      call ground_surface_fluxes(t_ground, tcas, ground%ggnet, cas%rho, ground%soil_evap, h_bare, le_soil)
-      f%h_ground  = sfx%h_snow  + (1.0_wp - snow%snowfac) * h_bare
-      f%le_ground = sfx%le_snow + le_soil
-      f%g_top     = sfx%g_base                                                                    &
-                    + (1.0_wp - snow%snowfac) * (ground%abs_sw_ground + ground%abs_lw_ground - h_bare)       &
-                    - le_soil
-      f%ground_rad   = sfx%rnet + (1.0_wp - snow%snowfac) * (ground%abs_sw_ground + ground%abs_lw_ground)
-      f%snow_enth_in = sfx%energy_in
-      f%snow_vap_out = sfx%w_flux
+      !----- The ground surface at this evaluation's canopy air and soil top, as the tissues' is at       !
+      !      theirs: the snowfac-weighted pack and the bare soil (meds_surface). ----------------------!
+      senv            = ground
+      senv%can_temp   = tcas
+      senv%can_shv    = qcas
+      senv%rho_air    = cas%rho
+      senv%press      = cas%press
+      senv%t_soil_top = t_ground
+      call ground_surface_exchange(senv, f%h_ground, f%le_ground, f%g_top, f%ground_rad, f%snow_enth_in,         &
+                                   f%snow_vap_out)
 
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
-      f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + sfx%w_flux
+      f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + f%snow_vap_out
       f%coh_rnet   = coh_rnet
 
       !----- The condensation sink (dew, fog; meds_canopy_air_space), taken from the canopy air's vapour !
@@ -222,21 +195,20 @@ contains
       type(surface_tend_t)       :: surf_tend
       type(soil_energy_state_t)  :: soil_energy
       type(soil_heat_env_t)     :: eforc
-      real(wp)                   :: t_ground, fliq1, wmass1, transp_i, e_drain, water_heat(nsl)
+      real(wp)                   :: t_ground, fliq1, transp_i, e_drain, water_heat(nsl)
       integer(ik)                :: i
 
       allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
       allocate(f%d_leaf_surf_water(n), f%d_wood_surf_water(n))
 
       !----- The soil-top temperature from the current state, for the ground skin. -----------------!
-      wmass1   = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy
       y_stage%cas_shv = y%cas_shv
       y_stage%cas_co2 = y%cas_co2
-      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow,    &
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground,                 &
                           t_ground, n, surf_tend)
       f%d_cas_enthalpy = surf_tend%d_cas_enthalpy
       f%d_cas_shv = surf_tend%d_cas_shv
@@ -254,12 +226,10 @@ contains
       !      the ESDIRK2 stage uses (docs/science/numerical_scheme.md §5b, soil_plant_water.md §5). The !
       !      leaf pays its transpiration's full vapour enthalpy in surface_derivs. ------------------!
       soil_energy%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
-      water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
-      e_drain = f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
-      call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, y%theta,          &
-                                        water_heat, frozen%hydrology%w_flux_frozen,                                &
-                                        frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
+      call set_soil_heat_env(nsl, surf_tend%g_top, y%theta, frozen%roots%root_heat, frozen%hydrology%exfil_enth,  &
+                             frozen%hydrology%w_flux_frozen, frozen%hydrology%infiltration,                       &
+                             frozen%hydrology%t_infil, f%drainage_rate, frozen%hydrology%t_bot, eforc,            &
+                             water_heat, e_drain)
       call soil_energy_time_deriv(soil_energy, eforc, site%soil_profile, site%soil,   &
                                   f%dedt, bottom_face=f%g_bottom)
 
@@ -354,7 +324,7 @@ contains
       logical,                   intent(in)    :: with_jacobian
       integer(ik) :: k, i, ca, cb, c, nsl, nsoil
       real(wp) :: q, dq_pa, dq_pb, dq_ka, dq_kb, dqa, dqb, u, s, ds_w, ds_l
-      real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
+      real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1
       real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum, du_dpsi(profile%n_active), du_dk(profile%n_active)
 
       nsl   = profile%n_active
@@ -420,19 +390,18 @@ contains
       ev%inflow_soil(POND) = ev%inflow_soil(POND) + drive%rain
       c = 2_ik
       theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1))
-      call ground_evaporation_rate(theta1, ev%psi_soil(c) / grav_head, drive%ground, soil, e, de_dtheta, de_dpsi)
+      call ground_evaporation_rate(theta1, ev%psi_soil(c), drive%ground, soil, e, de_dtheta, de_dpsi)
       ev%evap = e
       ev%inflow_soil(c) = ev%inflow_soil(c) - e
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
                          + de_dtheta * ev%dwater_soil(c) / (rho_h2o * profile%dz(1))                               &
-                         + de_dpsi * ev%dpsi_soil(c) / grav_head
+                         + de_dpsi * ev%dpsi_soil(c)
       c = 1_ik + nsl
-      head = ev%psi_soil(c) / grav_head
-      call bottom_flux(profile, soil, nsl, head, ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
+      call bottom_flux(profile, soil, nsl, ev%psi_soil(c), ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
       ev%drain = rho_h2o * qbot
       ev%inflow_soil(c) = ev%inflow_soil(c) - ev%drain
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &
-                         + rho_h2o * (dqbot_dpsi * ev%dpsi_soil(c) / grav_head + dqbot_dk * ev%dk_soil(c))
+                         + rho_h2o * (dqbot_dpsi * ev%dpsi_soil(c) + dqbot_dk * ev%dk_soil(c))
 
       !----- Each cohort: uptake from its layers, sapflow to its leaves, and transpiration. The      !
       !      cohort's uptake comes from its whole root profile at once; its own sums are kept in       !
@@ -504,38 +473,5 @@ contains
       end subroutine add_soil_flow
 
    end subroutine water_derivs
-
-
-   !---------------------------------------------------------------------------------------!
-   ! assemble_soil_energy_forcing -- the soil-heat column's forcing from the ground heat flux and the  !
-   ! water network's flows, for the ESDIRK2 stage and march_derivs alike                              !
-   ! (docs/science/numerical_scheme.md §5b, docs/science/soil_plant_water.md §5). face_flux is down-   !
-   ! positive (the kernel wants up, hence the flip); water_heat_out is the enthalpy leaving each layer !
-   ! other than across a face, plus the drainage's in the bottom layer, whose face is therefore 0; the !
-   ! top face carries infiltration at t_infil with the interior faces' upwind rule. No runoff term:    !
-   ! runoff leaves the pond.                                                                           !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, theta, water_heat_out,                  &
-                                                face_flux, infiltration, t_infil, e_drain)
-      type(soil_heat_env_t), intent(out) :: eforc
-      integer(ik),            intent(in)  :: nsl
-      real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
-      real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
-      real(wp),               intent(in)  :: water_heat_out(:) !< [W/m2] enthalpy leaving each layer with water
-      real(wp),               intent(in)  :: face_flux(:)   !< [m/s]   DOWN-positive water flux at layer faces
-      real(wp),               intent(in)  :: infiltration   !< [kg/m2/s] top-face infiltration (pond -> soil)
-      real(wp),               intent(in)  :: t_infil        !< [K]     temperature of the infiltrating water
-      real(wp),               intent(in)  :: e_drain        !< [W/m2]  enthalpy leaving with bottom drainage
-      integer(ik) :: k
-      eforc%g_top = g_top
-      do k = 1_ik, nsl
-         eforc%soil_water(k)     = theta(k)
-         eforc%water_heat_out(k) = water_heat_out(k)
-         eforc%w_flux(k)         = -face_flux(k)
-      end do
-      eforc%w_flux_top  = -infiltration / rho_h2o
-      eforc%t_water_top = t_infil
-      eforc%water_heat_out(nsl) = eforc%water_heat_out(nsl) + e_drain
-   end subroutine assemble_soil_energy_forcing
 
 end module meds_fast_integ_derivs

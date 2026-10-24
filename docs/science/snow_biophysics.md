@@ -29,7 +29,7 @@ and the **commit** after it:
   pond, which it reaches at the melt temperature and infiltrates from in this step's water network;
   full melt-out dumps the residual and reverts to bare ground. Meltwater therefore leaves the pack
   the step after it melts, 15 minutes at the default `dt_fast`.
-- **Exchange** (`snow_surface_balance`, called by `surface_derivs` at every evaluation of the march):
+- **Exchange** (`snow_surface_balance`, called through `ground_surface_exchange` at every evaluation of the march):
   a linearized backward-Euler balance of the pack's enthalpy over the step, against the canopy air and
   the top soil node the march holds at that evaluation, as each tissue's is against them — net SW
   (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, each linearized about
@@ -106,7 +106,7 @@ and full cover. The aerodynamic roughness does not see the pack: the driver pass
 | Concept | Routine |
 |---|---|
 | snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` (`snow_energy_step`, the two in one step, for the tests) |
-| the stage before the march, the exchange in it, the commit | `meds_fast_integ_frozen`: `prepare_snow_stage`; `meds_fast_integ_derivs`: `surface_derivs`; `meds_fast_integ_update`: `update_dynamic_state` |
+| the stage before the march, the exchange in it, the commit | `meds_surface`: `prepare_snow_stage`, `ground_surface_exchange` (from `meds_fast_integ_derivs`' `surface_derivs`); `meds_fast_integ_update`: `update_dynamic_state` |
 | snow mass / cover / melt | `meds_surface`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | prognostic snow type | `meds_patch_state_vars`: `snow_state_t` |
 

@@ -6,7 +6,8 @@
 !                                layer, eqs. (3)-(4);                                      !
 !   * ground_evaporation_rate -- evaporation from the top layer, on the terms              !
 !                                ground_evaporation_setup sets once per water step;        !
-!   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer.!
+!   * bottom_flux             -- drainage through the bottom face, or a head-driven aquifer;!
+!   * pond_inflow             -- the water reaching the pond and the temperature it brings.!
 ! A layer's water relations are in meds_soil_hydr_lib, root uptake in meds_plant_hydr_lib. !
 !==========================================================================================!
 module meds_soil_water
@@ -15,12 +16,13 @@ module meds_soil_water
    use meds_soil_params,      only : soil_profile_t, soil_params_t, SOIL_BC_AQUIFER
    use meds_soil_hydr_lib,    only : soil_head_to_theta
    use meds_numerics,         only : smooth_max0
-   use meds_therm_lib,        only : sat_specific_humidity
+   use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, liquid_energy_to_temp,    &
+                                     precip_enthalpy
    implicit none
    private
 
    public :: soil_water_flux, ground_evaporation_rate, bottom_flux
-   public :: ground_evap_env_t, ground_evaporation_setup
+   public :: ground_evap_env_t, ground_evaporation_setup, pond_inflow
 
    !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
    !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
@@ -72,18 +74,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The bottom-face Darcy flux [m/s, down-positive] (docs/science/soil_biophysics.md,     !
-   ! "Boundary conditions, and what the aquifer option actually means"): drainage          !
-   ! q = drain_factor * K(theta_n), or the aquifer boundary q = K_bot (psi_n/Delta + 1),   !
-   ! Delta = dz(n)/2, with K_bot upstream: K(theta_n) downward, K_sat upward.              !
+   ! "Boundary conditions, and what the aquifer option actually means"): drainage q =      !
+   ! drain_factor * K(theta_n), or the aquifer boundary q = K_bot (h_n/Delta + 1), h_n =   !
+   ! psi_n/(rho_w g) the deepest layer's head and Delta = dz(n)/2, with K_bot upstream:    !
+   ! K(theta_n) downward, K_sat upward.                                                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
       type(soil_profile_t), intent(in)  :: profile
       type(soil_params_t),  intent(in)  :: soil
       integer(ik),          intent(in)  :: n
-      real(wp),             intent(in)  :: psi_n    !< [m]   matric head of the deepest layer
+      real(wp),             intent(in)  :: psi_n    !< [MPa] matric potential of the deepest layer
       real(wp),             intent(in)  :: k_n      !< [m/s] K(theta_n) of the deepest layer
       real(wp),             intent(out) :: qbot     !< [m/s] down-positive
-      real(wp), optional,   intent(out) :: dq_dpsi  !< [1/s] d(qbot)/d(psi_n), for the implicit solve
+      real(wp), optional,   intent(out) :: dq_dpsi  !< [m/s/MPa] d(qbot)/d(psi_n), for the implicit solve
       real(wp), optional,   intent(out) :: dq_dk    !< [-]   d(qbot)/d(k_n), for the water network
       real(wp) :: delta, grad, k_bot
       qbot = 0.0_wp
@@ -91,7 +94,7 @@ contains
       if (present(dq_dk))   dq_dk   = 0.0_wp
       if (soil%water_bottom_bc == SOIL_BC_AQUIFER) then
          delta = 0.5_wp * profile%dz(n)                                  ! z_node(n) - z_bottom > 0
-         grad  = psi_n / delta + 1.0_wp
+         grad  = psi_n / grav_head / delta + 1.0_wp
          if (grad >= 0.0_wp) then
             k_bot = k_n                                                 ! downward: upstream is layer n
             if (present(dq_dk)) dq_dk = grad
@@ -99,7 +102,7 @@ contains
             k_bot = profile%ksat(n)                                      ! upward: upstream is saturated
          end if
          qbot = k_bot * grad
-         if (present(dq_dpsi)) dq_dpsi = k_bot / delta
+         if (present(dq_dpsi)) dq_dpsi = k_bot / (delta * grav_head)
       else                                                              ! drainage, q = f K(theta_n)
          qbot = soil%drain_factor * k_n
          if (present(dq_dk)) dq_dk = soil%drain_factor
@@ -130,24 +133,25 @@ contains
    end subroutine ground_evaporation_setup
 
    !---------------------------------------------------------------------------------------!
-   ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water content        !
-   ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives (docs/science/soil_biophysics.md,    !
-   ! "The soil water column"): Philip's pore-space humidity (over ice when frozen) through the          !
-   ! Swenson-Lawrence dry-surface-layer resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from    !
-   ! the snow-free share only (docs/science/snow_biophysics.md). Both corners are rounded for Newton.   !
-   ! The boundary's constant terms are ground_evaporation_setup's.                                      !
+   ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water   !
+   ! content theta1 [m3/m3] and matric potential psi1 [MPa], with its derivatives          !
+   ! (docs/science/soil_biophysics.md, "The soil water column"): Philip's pore-space       !
+   ! humidity (over ice when frozen) through the Swenson-Lawrence dry-surface-layer        !
+   ! resistance (CLM5 eqs. 5.77-5.80) in series with r_aero, from the snow-free share only !
+   ! (docs/science/snow_biophysics.md). Both corners are rounded for Newton. The           !
+   ! boundary's constant terms are ground_evaporation_setup's.                             !
    !---------------------------------------------------------------------------------------!
    pure subroutine ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil, de_dtheta, de_dpsi)
       real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content
-      real(wp),               intent(in)  :: psi1        !< [m]     top-layer matric head
+      real(wp),               intent(in)  :: psi1        !< [MPa]   top-layer matric potential
       type(ground_evap_env_t), intent(in) :: forcing
       type(soil_params_t),    intent(in)  :: soil
       real(wp),               intent(out) :: e_soil      !< [kg/m2/s]
       real(wp),               intent(out) :: de_dtheta   !< [kg/m2/s per m3/m3]
-      real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per m of head]
+      real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per MPa]
       real(wp) :: alpha_soil, dalpha, drive, ddrive, dry, ddry, r_soil, dr_dtheta, resist
-      alpha_soil = safe_exp(psi1 * grav / forcing%rv_t)
-      dalpha     = alpha_soil * grav / forcing%rv_t
+      alpha_soil = safe_exp(psi1 / grav_head * grav / forcing%rv_t)   ! Philip's humidity, on the head
+      dalpha     = alpha_soil * grav / forcing%rv_t / grav_head          ! per MPa
       call smooth_max0(alpha_soil * forcing%q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
       !----- The dry surface layer, from theta_init down to the air-dry water content. ----------!
       call smooth_max0(forcing%theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
@@ -158,5 +162,50 @@ contains
       de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * forcing%q_sat * dalpha / resist
       de_dtheta = -e_soil * dr_dtheta / resist
    end subroutine ground_evaporation_rate
+
+   !---------------------------------------------------------------------------------------!
+   ! pond_inflow -- the water reaching the pond and the temperature that values it         !
+   ! (docs/science/soil_plant_water.md §5, "The ground inflow"). Under a pack, which took  !
+   ! the rain and the snow, it is the meltwater at t_melt; on bare ground, the             !
+   ! throughfall, at the temperature of the rain and sub-threshold snowfall valued at the  !
+   ! air temperature (t_cas when nothing falls). The water the tissues shed joins either   !
+   ! with its enthalpy, and the mixture's temperature follows. boundary_enth is the        !
+   ! enthalpy the inflow brings across the column's boundary: all of it on bare ground,    !
+   ! only the shed water's under a pack, whose meltwater comes from inside the column.     !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine pond_inflow(pack_exists, melt_rate, t_melt, throughfall, rainfall, snowfall, t_air, t_cas,     &
+                               shed_rate, shed_enth, inflow, t_inflow, t_water_base, boundary_enth)
+      logical,  intent(in)  :: pack_exists
+      real(wp), intent(in)  :: melt_rate       !< [kg/m2/s] the pack's meltwater
+      real(wp), intent(in)  :: t_melt          !< [K]       its temperature
+      real(wp), intent(in)  :: throughfall     !< [kg/m2/s] rain and snow through the canopy
+      real(wp), intent(in)  :: rainfall, snowfall   !< [kg/m2/s] above the canopy
+      real(wp), intent(in)  :: t_air           !< [K]       the air temperature precipitation is valued at
+      real(wp), intent(in)  :: t_cas           !< [K]       canopy-air temperature (nothing falling)
+      real(wp), intent(in)  :: shed_rate       !< [kg/m2/s] water the tissues shed to the ground
+      real(wp), intent(in)  :: shed_enth       !< [W/m2]    its enthalpy
+      real(wp), intent(out) :: inflow          !< [kg/m2/s] all the water reaching the pond
+      real(wp), intent(out) :: t_inflow        !< [K]       the temperature that values it
+      real(wp), intent(out) :: t_water_base    !< [K]       the meltwater's or the rain's, before the shed water
+      real(wp), intent(out) :: boundary_enth   !< [W/m2]    what it brings across the column's boundary
+      real(wp) :: water_base, inflow_enth
+      if (pack_exists) then
+         water_base = melt_rate
+      else
+         water_base = throughfall
+      end if
+      inflow = water_base + shed_rate
+      t_water_base = t_cas
+      if (pack_exists) then
+         t_water_base = t_melt
+      else if (rainfall + snowfall > tiny_num) then
+         t_water_base = liquid_energy_to_temp(precip_enthalpy(rainfall, snowfall, t_air) / (rainfall + snowfall))
+      end if
+      inflow_enth = water_base * internal_energy_liquid(t_water_base) + shed_enth
+      t_inflow = t_water_base
+      if (shed_rate > 0.0_wp) t_inflow = liquid_energy_to_temp(inflow_enth / inflow)
+      boundary_enth = inflow_enth
+      if (pack_exists) boundary_enth = shed_enth
+   end subroutine pond_inflow
 
 end module meds_soil_water

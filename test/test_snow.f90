@@ -22,7 +22,7 @@ program test_snow
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
    use meds_patch_state_vars,   only : snow_state_t
-   use meds_surface, only : snow_env_t, snow_out_t
+   use meds_surface, only : surface_env_t, snow_out_t
    use meds_biophysics_params,  only : snow_params_t
    use meds_surface,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
                                        snow_energy_step, snow_surface_fluxes
@@ -44,7 +44,7 @@ contains
 
    !----- Cold-night forcing (accumulation): no SW, net LW loss, cold dry CAS, warmer soil below. -!
    subroutine cold_env(env)
-      type(snow_env_t), intent(out) :: env
+      type(surface_env_t), intent(out) :: env
       env%abs_sw = 0.0_wp ; env%abs_lw = -40.0_wp
       env%can_temp = 265.0_wp ; env%can_shv = 1.0e-3_wp
       env%ggnet = 0.01_wp ; env%rho_air = 1.3_wp ; env%press = 101325.0_wp
@@ -89,7 +89,7 @@ contains
    !----- Build a cold pack by accumulation; assert growth, sub-freezing, and closed ledgers. -----!
    subroutine test_accumulate()
       type(snow_state_t) :: snow
-      type(snow_env_t)    :: env
+      type(surface_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_out_t)   :: fx
       type(snow_out_t)   :: melt
@@ -123,7 +123,7 @@ contains
    !----- Warm a cold pack: temp pins at t_3ple, fliq rises, melt drains, swe -> melt-out. --------!
    subroutine test_melt_event()
       type(snow_state_t) :: snow
-      type(snow_env_t)    :: env
+      type(surface_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_out_t)   :: fx
       type(snow_out_t)   :: melt
@@ -169,7 +169,7 @@ contains
    !----- Isothermal cold pack in radiative/turbulent equilibrium with the CAS + soil: steady. ----!
    subroutine test_isothermal()
       type(snow_state_t) :: snow
-      type(snow_env_t)    :: env
+      type(surface_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_out_t)   :: fx
       type(snow_out_t)   :: melt
@@ -243,7 +243,7 @@ contains
    !      hundreds of kelvin past its balance. -----------------------------------------------------!
    subroutine test_stiff_coupling()
       type(snow_state_t) :: snow
-      type(snow_env_t)    :: env
+      type(surface_env_t)    :: env
       type(snow_params_t) :: p
       type(snow_out_t)   :: fx
       type(snow_out_t)   :: melt

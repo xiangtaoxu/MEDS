@@ -298,7 +298,7 @@ hour in which wet soil refills dry-season wood at a BCI storm front.
 | tissue energy and temperature, eqs. (9)–(10) | `meds_therm_lib`: `tissue_temp_to_energy`, `tissue_energy_to_temp` |
 | the fast step's energy commit | `meds_plant_energy`: `commit_tissue_energy` |
 | a cohort's temperatures from its energies; holding them through a change of mass | `meds_cohort_state_vars`: `cohort_tissue_temps`, `set_cohort_tissue_temps`, `hold_cohort_tissue_temps` |
-| ground skin fluxes | `meds_surface`: `ground_surface_fluxes` |
+| ground surface (the snow/bare blend) and skin fluxes | `meds_surface`: `ground_surface_exchange`, `ground_surface_fluxes` |
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/rk4_derivs.f90` — the leaf/wood energy budget in the reference model.
