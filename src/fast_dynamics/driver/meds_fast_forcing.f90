@@ -186,7 +186,8 @@ contains
       do j = 1_ik, ncoh
          ig = static%order(j)
          forcing%abs_sw(ig)      = flux%abs_leaf(RAD_VIS, j) + flux%abs_leaf(RAD_NIR, j)   ! absorbed leaf SW
-         forcing%abs_par(ig)     = flux%abs_leaf(RAD_VIS, j) / max(cfg%leaf_absorptance, tiny_num)  ! incident PAR
+         forcing%abs_par(ig)     = flux%abs_leaf(RAD_VIS, j)                                          &
+                                   / max(cfg%leaf_physiology%leaf_absorptance, tiny_num)   ! incident PAR
          forcing%abs_lw(ig)      = flux%abs_leaf(RAD_LW, j)                  ! net leaf LW, its own emission included
          forcing%abs_sw_wood(ig) = flux%abs_wood(RAD_VIS, j) + flux%abs_wood(RAD_NIR, j)   ! absorbed wood SW
          forcing%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                  ! net wood LW, its own emission included

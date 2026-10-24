@@ -105,7 +105,8 @@ contains
                                     out%aero, dynamic, qcas, press, rho, gpp, ra_leaf, frozen%tissue%h_coeff_leaf, &
                                     frozen%tissue%g_transp_leaf, out%gpp_coh, out%leaf_resp_coh, out%capture,     &
                                     out%cdiag)
-      call canopy_maintenance_respiration(cfg%ea_rd, cfg%hd_rd, cfg%ds_rd, site%soil_profile,                     &
+      call canopy_maintenance_respiration(cfg%leaf_physiology%ea_rd, cfg%leaf_physiology%hd_rd,                   &
+                                          cfg%leaf_physiology%ds_rd, site%soil_profile,                           &
                                           static%root_frac_patch(1:nsl), static, dynamic%wood_temp,               &
                                           dynamic%soil_energy%soil_temp, ra_stem, ra_root, out%stem_resp_coh,     &
                                           out%root_resp_coh)

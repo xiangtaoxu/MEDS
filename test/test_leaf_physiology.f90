@@ -141,12 +141,12 @@ program test_leaf_physiology
                     'A_net must satisfy the CO2 diffusion identity')
    !----- The converged gs reproduces the Medlyn law (root really solved the coupled system). -!
    call check_close(flux%gs, stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd,                   &
-                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%vpd_min), 1.0e-4_wp, &
+                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%leaf_physiology%vpd_min), 1.0e-4_wp, &
                     'back-computed gs must match the Medlyn model at the solution')
 
    !=== 5. All three stomatal models converge; gs decreases as VPD rises. ===================!
    do i = 1_ik, 3_ik
-      cfg%stomatal_model = sms(i)
+      cfg%leaf_physiology%stomatal_model = sms(i)
       call derive_parameters(cfg)
       env = std_env() ; env%vpd = 800.0_wp
       call leaf_solve(env, 1_ik, flux)
@@ -157,7 +157,7 @@ program test_leaf_physiology
                  'each stomatal model must give a positive, open-stomata solution')
       call check(flux2%gs < flux%gs, 'gs must decrease as VPD increases')
    end do
-   cfg%stomatal_model = SM_MEDLYN
+   cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
    !=== 6. C3 vs C4 contrast (PFT 1 vs PFT 3): C4 runs and draws Ci lower (concentrating). ==!
@@ -189,7 +189,7 @@ program test_leaf_physiology
    !     (gs alone would overestimate the water flux). ===========================================!
    block
       real(wp) :: e_series
-      cfg%use_boundary_layer = .true.
+      cfg%leaf_physiology%use_boundary_layer = .true.
       call derive_parameters(cfg)
       env = std_env() ; env%gb = 0.6_wp                      ! finite water-vapour boundary conductance [mol/m2/s]
       call leaf_solve(env, 1_ik, flux)
@@ -197,7 +197,7 @@ program test_leaf_physiology
       call check_close(flux%transpiration, e_series, 1.0e-9_wp, 'transpiration uses the gs-gb series conductance')
       call check(flux%transpiration < flux%gs * env%vpd / env%pressure,                            &
                  'series transpiration is below the gs-only value (gb resistance applied)')
-      cfg%use_boundary_layer = .false.
+      cfg%leaf_physiology%use_boundary_layer = .false.
       call derive_parameters(cfg)
    end block
 
@@ -229,7 +229,7 @@ program test_leaf_physiology
    end block
 
    !=== 7b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
-   cfg%stomatal_model = SM_KATUL
+   cfg%leaf_physiology%stomatal_model = SM_KATUL
    call derive_parameters(cfg)
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_solve(env, 1_ik, flux)  ; an0 = flux%A_net
    env%psi_leaf = -5.0_wp ; call leaf_solve(env, 1_ik, flux2)
@@ -255,15 +255,15 @@ program test_leaf_physiology
    block
       logical  :: bl_saved
       real(wp) :: gs_dew
-      bl_saved = cfg%use_boundary_layer
-      cfg%use_boundary_layer = .true.
+      bl_saved = cfg%leaf_physiology%use_boundary_layer
+      cfg%leaf_physiology%use_boundary_layer = .true.
       call derive_parameters(cfg)
       env = std_env() ; env%gb = 0.2_wp ; call leaf_solve(env, 1_ik, flux)
       call check(flux%converged .and. flux%gs > 2.0_wp * cfg%pft%stomatal_g0(1),                        &
                  'Katul behind a thin boundary layer keeps its stomata open')
       call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,                  &
                        'Katul behind a thin boundary layer is diffusion-consistent')
-      cfg%use_boundary_layer = bl_saved
+      cfg%leaf_physiology%use_boundary_layer = bl_saved
       call derive_parameters(cfg)
       env = std_env() ; env%vpd = 0.0_wp ; call leaf_solve(env, 1_ik, flux) ; gs_dew = flux%gs
       env%vpd = 1.0_wp ; call leaf_solve(env, 1_ik, flux)
@@ -271,7 +271,7 @@ program test_leaf_physiology
                  'Katul at the dew point keeps its stomata open')
       call check_close(gs_dew, flux%gs, 1.0e-12_wp, 'Katul gs is continuous at the dew point')
    end block
-   cfg%stomatal_model = SM_MEDLYN
+   cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
    !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the fast limb  !
@@ -298,7 +298,7 @@ program test_leaf_physiology
    env%psi_leaf = 2.0_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_nonstomata, 0.0_wp, 0.0_wp, 'fast limb: 0 at twice the turgor-loss point')
    do j = 1_ik, size(sms)
-      cfg%stomatal_model = sms(j)
+      cfg%leaf_physiology%stomatal_model = sms(j)
       call derive_parameters(cfg)
       env = std_env()
       env%psi_leaf = psi_tlp ; call leaf_solve(env, 1_ik, flux) ; gs_top = flux%gs
@@ -325,7 +325,7 @@ program test_leaf_physiology
       call check_close(flux%A_gross, 0.0_wp, 1.0e-12_wp, 'wilted leaf by day: no photosynthesis')
       call check_close(flux%A_net, -flux%rd, 1.0e-12_wp, 'wilted leaf by day: the leaf respires')
    end do
-   cfg%stomatal_model = SM_MEDLYN
+   cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
    !=== 7f. The stomatal stress begins at an onset: half the turgor-loss point unless the PFT     !
@@ -372,13 +372,13 @@ program test_leaf_physiology
    !      term Kc(1+O/Ko), raising O2 would inhibit carboxylation while leaving the
    !      photorespiratory penalty on Aj untouched.
    env = std_env()
-   cfg%o2_mol_frac = 0.209_wp
+   cfg%leaf_physiology%o2_mol_frac = 0.209_wp
    call derive_parameters(cfg)
    call leaf_solve(env, 1_ik, flux)  ; an0 = flux%A_net       ! the calibration point
-   cfg%o2_mol_frac = 0.105_wp
+   cfg%leaf_physiology%o2_mol_frac = 0.105_wp
    call derive_parameters(cfg)
    call leaf_solve(env, 1_ik, flux)  ; an1 = flux%A_net       ! half O2
-   cfg%o2_mol_frac = 0.350_wp
+   cfg%leaf_physiology%o2_mol_frac = 0.350_wp
    call derive_parameters(cfg)
    call leaf_solve(env, 1_ik, flux2) ; an2 = flux2%A_net      ! paleo-high O2
    call check(flux%converged .and. flux2%converged, 'the O2 sweep must converge')
@@ -398,7 +398,7 @@ program test_leaf_physiology
               'halving O2 must raise A_net > 15% -- the response runs through Gamma*, not just Kc')
    call check((an2 - an0) / abs(an0) < -0.15_wp,                                                 &
               'raising O2 to 35% must cut A_net > 15% -- likewise')
-   cfg%o2_mol_frac = 0.209_wp                 ! back to the shipped default
+   cfg%leaf_physiology%o2_mol_frac = 0.209_wp                 ! back to the shipped default
    call derive_parameters(cfg)
 
    !=== 10. Gamma* as a mole fraction does not depend on pressure (docs/science/leaf_gas_exchange.md!

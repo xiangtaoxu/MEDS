@@ -64,14 +64,16 @@ contains
       cfg%gpp_ref = 0.3_wp
 
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
-      cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TEMP_RESPONSE_PEAKED
-      cfg%colimitation = COLIM_QUADRATIC ; cfg%use_boundary_layer = .false.
-      cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
-      cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
-      cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp
-      cfg%hd_vcmax = 200000.0_wp ; cfg%hd_jmax = 200000.0_wp ; cfg%hd_rd = 200000.0_wp
-      cfg%ds_vcmax = 650.0_wp ; cfg%ds_jmax = 640.0_wp ; cfg%ds_rd = 490.0_wp
-      cfg%o2_mol_frac = 0.209_wp ; cfg%leaf_absorptance = 0.85_wp ; cfg%phi_psii = 0.85_wp
+      associate (lp => cfg%leaf_physiology)
+         lp%stomatal_model = SM_MEDLYN ; lp%temp_response_form = TEMP_RESPONSE_PEAKED
+         lp%colimitation = COLIM_QUADRATIC ; lp%use_boundary_layer = .false.
+         lp%kc25 = 40.49_wp ; lp%ko25 = 27840.0_wp ; lp%gstar25 = 4.275_wp
+         lp%ea_kc = 79430.0_wp ; lp%ea_ko = 36380.0_wp ; lp%ea_gstar = 37830.0_wp
+         lp%ea_vcmax = 65330.0_wp ; lp%ea_jmax = 43540.0_wp ; lp%ea_rd = 46390.0_wp
+         lp%hd_vcmax = 200000.0_wp ; lp%hd_jmax = 200000.0_wp ; lp%hd_rd = 200000.0_wp
+         lp%ds_vcmax = 650.0_wp ; lp%ds_jmax = 640.0_wp ; lp%ds_rd = 490.0_wp
+         lp%o2_mol_frac = 0.209_wp ; lp%leaf_absorptance = 0.85_wp ; lp%phi_psii = 0.85_wp
+      end associate
 
       call alloc_pft_table(cfg%pft, 3_ik)
       associate (p => cfg%pft)

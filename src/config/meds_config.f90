@@ -20,6 +20,7 @@ module meds_config
    use meds_constants,          only : yr_day, yr_sec, n_soil_layer_max
    use meds_time,               only : meds_time_t
    use meds_pft_params,         only : pft_table_t, HYD_UNSET, leaf_photo_pft_t
+   use meds_leaf_params,        only : leaf_physiology_params_t
    use meds_pft_derive,         only : derive_leaf_params, derive_pft_tables
    use meds_soil_hydr_lib,      only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
@@ -134,24 +135,7 @@ module meds_config
       logical  :: fineroot_turnover_plastic = .false.     !< fine roots turn over with their leaves
 
       !----- [leaf_physiology]. ------------------------------------------------------------------!
-      integer(ik) :: stomatal_model                       !< SM_LEUNING | SM_MEDLYN | SM_KATUL
-      integer(ik) :: temp_response_form                   !< TEMP_RESPONSE_ARRHENIUS | TEMP_RESPONSE_PEAKED
-      integer(ik) :: colimitation                         !< COLIM_MIN | COLIM_QUADRATIC
-      logical     :: use_boundary_layer                   !< couple through the leaf boundary layer
-      real(wp)    :: kc25, ko25, gstar25                  !< [Pa]
-      real(wp)    :: ea_kc, ea_ko, ea_gstar               !< [J/mol]
-      real(wp)    :: ea_vcmax, ea_jmax, ea_rd             !< [J/mol]
-      real(wp)    :: hd_vcmax, hd_jmax, hd_rd             !< [J/mol]
-      real(wp)    :: ds_vcmax, ds_jmax, ds_rd             !< [J/mol/K]
-      real(wp)    :: o2_mol_frac                          !< [mol/mol]
-      real(wp)    :: leaf_absorptance                     !< [-]
-      real(wp)    :: phi_psii                             !< [-]
-      real(wp)    :: vpd_min = 0.05_wp                    !< [kPa]
-      logical     :: thermal_acclimation = .false.        !< Kattge & Knorr (2007), peaked form only
-      real(wp)    :: acclim_ds_vcmax_a = 668.39_wp, acclim_ds_vcmax_b = 1.07_wp   !< [J/mol/K], [J/mol/K2]
-      real(wp)    :: acclim_ds_jmax_a  = 659.70_wp, acclim_ds_jmax_b  = 0.75_wp   !< [J/mol/K], [J/mol/K2]
-      real(wp)    :: acclim_jv_a       = 2.59_wp,   acclim_jv_b       = 0.035_wp  !< [-], [1/K]
-      real(wp)    :: acclim_window_days = 30.0_wp      !< [day]
+      type(leaf_physiology_params_t) :: leaf_physiology
 
       !----- [soil_carbon], [site]/[forcing], [region], [maps], [[sites]]. ----------------------!
       type(soil_carbon_params_t) :: soil_carbon
@@ -208,33 +192,35 @@ contains
       type(meds_config_t), intent(inout) :: cfg
       call derive_config(cfg)
       call derive_leaf_params(cfg%pft)
-      call derive_pft_tables(cfg%pft, leaf_photo_shared(cfg), cfg%stomatal_model, cfg%temp_response_form,   &
-                             cfg%colimitation, cfg%use_boundary_layer)
+      associate (lp => cfg%leaf_physiology)
+         call derive_pft_tables(cfg%pft, leaf_photo_shared(lp), lp%stomatal_model, lp%temp_response_form,   &
+                                lp%colimitation, lp%use_boundary_layer)
+      end associate
    end subroutine derive_parameters
 
    !----- [leaf_physiology]'s constants: the part of every PFT's leaf parameters the PFTs share. --!
-   pure function leaf_photo_shared(cfg) result(p)
-      type(meds_config_t), intent(in) :: cfg
-      type(leaf_photo_pft_t)          :: p
-      p%kc25 = cfg%kc25
-      p%ko25 = cfg%ko25
-      p%gstar25 = cfg%gstar25
-      p%ea_kc = cfg%ea_kc
-      p%ea_ko = cfg%ea_ko
-      p%ea_gstar = cfg%ea_gstar
-      p%ea_vcmax = cfg%ea_vcmax
-      p%ea_jmax = cfg%ea_jmax
-      p%ea_rd = cfg%ea_rd
-      p%hd_vcmax = cfg%hd_vcmax
-      p%hd_jmax = cfg%hd_jmax
-      p%hd_rd = cfg%hd_rd
-      p%ds_vcmax = cfg%ds_vcmax
-      p%ds_jmax = cfg%ds_jmax
-      p%ds_rd = cfg%ds_rd
-      p%o2_mol_frac = cfg%o2_mol_frac
-      p%absorptance = cfg%leaf_absorptance
-      p%phi_psii = cfg%phi_psii
-      p%vpd_min = cfg%vpd_min
+   pure function leaf_photo_shared(lp) result(p)
+      type(leaf_physiology_params_t), intent(in) :: lp
+      type(leaf_photo_pft_t)                     :: p
+      p%kc25 = lp%kc25
+      p%ko25 = lp%ko25
+      p%gstar25 = lp%gstar25
+      p%ea_kc = lp%ea_kc
+      p%ea_ko = lp%ea_ko
+      p%ea_gstar = lp%ea_gstar
+      p%ea_vcmax = lp%ea_vcmax
+      p%ea_jmax = lp%ea_jmax
+      p%ea_rd = lp%ea_rd
+      p%hd_vcmax = lp%hd_vcmax
+      p%hd_jmax = lp%hd_jmax
+      p%hd_rd = lp%hd_rd
+      p%ds_vcmax = lp%ds_vcmax
+      p%ds_jmax = lp%ds_jmax
+      p%ds_rd = lp%ds_rd
+      p%o2_mol_frac = lp%o2_mol_frac
+      p%absorptance = lp%leaf_absorptance
+      p%phi_psii = lp%phi_psii
+      p%vpd_min = lp%vpd_min
    end function leaf_photo_shared
 
    !----- The steps the growth-memory window spans (at least 1): the length of each cohort's   !

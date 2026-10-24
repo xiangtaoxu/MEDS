@@ -54,7 +54,7 @@ contains
       integer(c_int)                     :: status
       g_open = .false.
       call load_meds_config(f_string(path, path_len), g_cfg)
-      if (g_cfg%thermal_acclimation) then
+      if (g_cfg%leaf_physiology%thermal_acclimation) then
          status = -1_c_int
          return
       end if

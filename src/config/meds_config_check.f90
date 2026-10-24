@@ -445,18 +445,20 @@ contains
    !      (docs/science/leaf_gas_exchange.md eq. (4)). ----------------------------------------------!
    subroutine check_leaf_physiology(cfg)
       type(meds_config_t), intent(in) :: cfg
-      if (cfg%kc25 <= 0.0_wp)             error stop TAG//'kc25 <= 0'
-      if (cfg%ko25 <= 0.0_wp)             error stop TAG//'ko25 <= 0'
-      if (cfg%gstar25 <= 0.0_wp)          error stop TAG//'gstar25 <= 0'
-      if (cfg%o2_mol_frac <= 0.0_wp)      error stop TAG//'o2_mol_frac <= 0'
-      if (cfg%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
-      if (cfg%phi_psii <= 0.0_wp)         error stop TAG//'phi_psii <= 0'
-      if (cfg%vpd_min <= 0.0_wp)   error stop TAG//'vpd_min <= 0 [kPa]'
-      if (cfg%thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
-         error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//        &
-                    '"peaked" (the Arrhenius form has no entropy term to shift)'
-      if (cfg%thermal_acclimation .and. cfg%acclim_window_days <= 0.0_wp)                        &
-         error stop TAG//'leaf_physiology.acclim_window_days must be > 0'
+      associate (lp => cfg%leaf_physiology)
+         if (lp%kc25 <= 0.0_wp)             error stop TAG//'kc25 <= 0'
+         if (lp%ko25 <= 0.0_wp)             error stop TAG//'ko25 <= 0'
+         if (lp%gstar25 <= 0.0_wp)          error stop TAG//'gstar25 <= 0'
+         if (lp%o2_mol_frac <= 0.0_wp)      error stop TAG//'o2_mol_frac <= 0'
+         if (lp%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
+         if (lp%phi_psii <= 0.0_wp)         error stop TAG//'phi_psii <= 0'
+         if (lp%vpd_min <= 0.0_wp)          error stop TAG//'vpd_min <= 0 [kPa]'
+         if (lp%thermal_acclimation .and. lp%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
+            error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//      &
+                       '"peaked" (the Arrhenius form has no entropy term to shift)'
+         if (lp%thermal_acclimation .and. lp%acclim_window_days <= 0.0_wp)                        &
+            error stop TAG//'leaf_physiology.acclim_window_days must be > 0'
+      end associate
    end subroutine check_leaf_physiology
 
    !----- [forcing]/[site] (docs/science/forcing.md). The archive is hourly, end-stamped and holds    !
