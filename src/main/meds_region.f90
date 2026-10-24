@@ -328,16 +328,14 @@ contains
             end if
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call site_configs(pcfg, site_cfg, site_area)
-            call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
-                              ok, site_cfg=site_cfg, site_area=site_area)
-            if (.not. ok) return
             poly%id            = ids(p)
             poly%latitude_deg  = places%lat(p)
             poly%longitude_deg = places%lon(p)
             poly%elevation_m   = places%elevation(p)
-            call set_site_terrain(poly, pcfg)
+            call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
+                              ok, site_cfg=site_cfg, site_area=site_area)
+            if (.not. ok) return
             call polygon_prepare(cfg, reg%met_src, p, poly, run,                                       &
-                                 keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
          end associate
@@ -389,22 +387,6 @@ contains
       call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
       if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
    end subroutine ensure_output_dir
-
-   !----- Each site's terrain: the polygon's elevation, flat, unless its [[sites]] table gives its own. !
-   subroutine set_site_terrain(poly, pcfg)
-      type(polygon_t),     intent(inout) :: poly
-      type(meds_config_t), intent(in)    :: pcfg
-      integer(ik) :: is
-      poly%site%surface(1:poly%site%n)%elevation_m = poly%elevation_m
-      if (.not. allocated(pcfg%sites)) return
-      do is = 1_ik, poly%site%n
-         associate (spec => pcfg%sites(is), surf => poly%site%surface(is))
-            if (spec%has_elevation) surf%elevation_m = spec%elevation
-            surf%slope_deg  = spec%slope
-            surf%aspect_deg = spec%aspect
-         end associate
-      end do
-   end subroutine set_site_terrain
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !

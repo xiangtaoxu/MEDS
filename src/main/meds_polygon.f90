@@ -14,27 +14,23 @@
 ! (met_prefetch) and writes the queued output records after a month closes.                !
 !==========================================================================================!
 module meds_polygon
-   use, intrinsic :: ieee_arithmetic,   only : ieee_is_finite
-   use meds_kinds,                      only : wp, ik
-   use meds_config,                     only : meds_config_t
-   use meds_time,                       only : meds_time_t, calendar_step_t, time_to_string
-   use meds_budget_check,               only : budget_t, budget_report
-   use meds_cohort_state_vars,          only : cohort_bad_field, cohort_field_finite, cohort_field_name
-   use meds_patch_state_vars,           only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_state_t, &
-                                               litter_input_t
-   use meds_polygon_state_vars,         only : polygon_t, reset_step_diagnostics
-   use meds_stepper,                    only : run_ledgers_t, advance_one_step
-   use meds_slow_update,                only : refresh_canopy_depth, max_cohort_count
-   use meds_slow_ledger,                only : slow_ledger_t, slow_ledger_report
-   use meds_biogeochem_params,          only : N_SOIL_POOL
-   use meds_soil_carbon,                only : solve_soil_carbon_steady_state, build_litter_input,      &
-                                               soil_carbon_bad_pool, soil_carbon_pool_name
-   use meds_respiration,                only : decomposition_transfer_matrix
-   use meds_met_types,                  only : met_source_t, met_cursor_t
-   use meds_met,                        only : met_cursor_init
-   use meds_output_types,               only : output_files_t, output_buffers_t
-   use meds_output_integrate,           only : output_tick
-   use meds_output_reduce,              only : total_area
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
+   use meds_kinds,                    only : wp, ik
+   use meds_config,                   only : meds_config_t
+   use meds_time,                     only : meds_time_t, calendar_step_t, time_to_string
+   use meds_budget_check,             only : budget_report
+   use meds_cohort_state_vars,        only : cohort_bad_field, cohort_field_finite, cohort_field_name
+   use meds_patch_state_vars,         only : canopy_air_bad_field, canopy_air_field_name
+   use meds_polygon_state_vars,       only : polygon_t, reset_step_diagnostics
+   use meds_stepper,                  only : run_ledgers_t, advance_one_step
+   use meds_slow_update,              only : max_cohort_count
+   use meds_slow_ledger,              only : slow_ledger_report
+   use meds_soil_carbon,              only : soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_met_types,                only : met_source_t, met_cursor_t
+   use meds_met,                      only : met_cursor_init
+   use meds_output_types,             only : output_files_t, output_buffers_t
+   use meds_output_integrate,         only : output_tick
+   use meds_output_reduce,            only : total_area
    implicit none
    private
 
@@ -68,22 +64,21 @@ module meds_polygon
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! polygon_prepare -- what follows the initial state (init_polygon), on a freshly        !
-   ! allocated run record: the forcing cursor at the polygon's cell and location, the      !
-   ! canopy-air depth for the stand, and the soil-carbon spin-up, unless a restart         !
-   ! restored the pools (keep_soil_carbon).                                                !
+   ! polygon_prepare -- the run record of a polygon whose start is complete                !
+   ! (init_polygon), on a freshly allocated record: its starting area, its patch threads,  !
+   ! its forcing cursor at the polygon's cell and location, and whether its slow ledger    !
+   ! books.                                                                                !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_prepare(cfg, met_src, cell, poly, run, keep_soil_carbon, patch_threads, verbose)
+   subroutine polygon_prepare(cfg, met_src, cell, poly, run, patch_threads, verbose)
       type(meds_config_t), intent(in)    :: cfg
       type(met_source_t),  intent(in)    :: met_src
       integer(ik),         intent(in)    :: cell            !< the polygon's cell in the forcing source's list
-      type(polygon_t),     intent(inout) :: poly
+      type(polygon_t),     intent(in)    :: poly
       type(polygon_run_t), intent(inout) :: run
-      logical,             intent(in)    :: keep_soil_carbon, verbose
       integer(ik),         intent(in)    :: patch_threads   !< [run].n_threads for one polygon, 1 for a region's
-      type(slow_ledger_t) :: no_ledger                      !< inactive: the first canopy-air depth books nothing
-      run%area_start      = total_area(poly)
-      run%patch_threads   = patch_threads
+      logical,             intent(in)    :: verbose
+      run%area_start    = total_area(poly)
+      run%patch_threads = patch_threads
       if (cfg%fast_biophysics_on) then
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, run%met_cur, cell, poly%latitude_deg, poly%longitude_deg,      &
@@ -91,12 +86,6 @@ contains
          end if
          if (verbose) write(*,'(a)') ' fast  : sub-daily biophysics ON'
       end if
-      !----- The canopy-air depth follows the stand from the first step, whatever the stand came   !
-      !      from; the slow step keeps it current after that. A plain geometry update that keeps   !
-      !      the canopy air's intensive state, so no ledger books it. -----------------------------!
-      call refresh_canopy_depth(poly, cfg, no_ledger)
-      if (cfg%soil_carbon%soil_carbon_on .and. cfg%soil_carbon%spinup_steady .and. .not. keep_soil_carbon)    &
-         call soil_carbon_steady(poly, cfg, verbose)
       run%ledgers%slow%active = cfg%slow_on .and. cfg%slow_ledger_on
    end subroutine polygon_prepare
 
@@ -281,34 +270,5 @@ contains
                '): cohort_size_tol_max kept dissimilar cohorts apart'
       call slow_ledger_report(run%ledgers%slow)
    end subroutine polygon_report
-
-   !----- The SASU steady-state soil-carbon spin-up from the configured climatological xi and      !
-   !      litter (docs/science/soil_carbon.md §8, eq. (7)), into every patch. ---------------------!
-   subroutine soil_carbon_steady(poly, cfg, verbose)
-      type(polygon_t),     intent(inout) :: poly
-      type(meds_config_t), intent(in)    :: cfg
-      logical,             intent(in)    :: verbose
-      type(soil_carbon_state_t) :: pools0, pools_ss
-      type(litter_input_t) :: lit
-      real(wp)    :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
-      real(wp)    :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL), lignin_bar(2)
-      integer(ik) :: ipp
-      pools0 = soil_carbon_state_t()                    ! zero-carbon reference (f_lignin = 0)
-      call decomposition_transfer_matrix(pools0, cfg%soil_carbon, a_mat, k_diag, er)
-      xi_bar = cfg%soil_carbon%spinup_xi
-      lit%labile_grnd = cfg%soil_carbon%spinup_labile_grnd
-      lit%labile_soil = cfg%soil_carbon%spinup_labile_soil
-      lit%struct_grnd = cfg%soil_carbon%spinup_struct_grnd
-      lit%struct_soil = cfg%soil_carbon%spinup_struct_soil
-      call build_litter_input(lit, u_bar, lignin_bar)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, pools_ss)
-      do ipp = 1_ik, poly%patch%n
-         poly%patch%soil_carbon(ipp) = pools_ss
-      end do
-      if (verbose) write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',               &
-         pools_ss%fast_grnd_carbon + pools_ss%fast_soil_carbon + pools_ss%struct_grnd_carbon +   &
-         pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
-         pools_ss%passive_carbon, ' kgC/m2'
-   end subroutine soil_carbon_steady
 
 end module meds_polygon

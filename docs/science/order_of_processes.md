@@ -35,9 +35,11 @@ region (`"region"`). Both go through the same stages.
    climate, so every setup cohort is born in its patch's state. Once the stand is final, its
    cohorts' tissues are settled in step with their patches, and the initial snow laid
    (`init_fast_state`), with the fast loop on or off; a restart read all of these instead. The fast
-   loop's first window then puts the canopy air at the first forcing sample.
-4. Prepare each polygon: the forcing cursor, the canopy-air depth from the stand, the steady-state
-   soil carbon (unless restored), and the slow ledger.
+   loop's first window then puts the canopy air at the first forcing sample. Every start ends with
+   its sites' terrain, the canopy-air depth from the stand, and, unless a restart restored them, the
+   steady-state soil carbon `spinup_steady` asks for (`init_polygon`).
+4. Prepare each polygon's run record: its forcing cursor, its patch threads and its slow ledger
+   (`polygon_prepare`).
 5. Open the state (restart) stream and the output files (`open_files`).
 
 **The loop.** Until `end_time`, the executable steps a month at a time (`region_step_month`) and
@@ -60,7 +62,8 @@ next.
 
 ## 2. One slow step
 
-`polygon_step` advances one polygon from `prev` to `now`, in this order:
+`polygon_step` advances one polygon over one calendar step, in this order; items 1–5 are
+`advance_one_step` (`meds_stepper`), the step the tests drive too:
 
 1. **The boundary the last step ended on**, if it owes one (`restructure_pending`): the stand's
    monthly and yearly restructuring ([§5](#5-the-calendar-boundary)).
@@ -182,7 +185,7 @@ it.
 ## 5. The calendar boundary
 
 A slow step whose end `now` lies in a new month leaves the stand's restructuring **owed**. The next
-step performs it first, before its fast loop (`advance_boundary` → `restructure_stand`). Between the
+step performs it first, before its fast loop (`advance_one_step` → `restructure_stand`). Between the
 two steps sit the output tick, the I/O phase and any checkpoint. The restructuring runs only with
 `[run].slow_on` (the master freeze of the slow tier), and each operator has its own switch besides.
 
@@ -306,14 +309,14 @@ file's instant, so none carries `mean_`.
 |---|---|---|
 | run setup, loop, finish | `region_open` (`choose_polygons`, `open_forcing`, `start_polygons`, `open_files`), `region_step_month` / `region_step` → `list_steps`, `step_polygons`, `region_finalize` | `meds_region` |
 | one slow step | `polygon_step` | `meds_polygon` |
-| fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
+| the coupled step: the owed restructuring, the acclimation, the fast loop, the slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
 | vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met` |
 | one sub-step of one patch | `fast_step` | `meds_fast_integ_stepper` |
 | the slow dynamics | `advance_slow_dynamics` | `meds_slow_dynamics` |
 | the cohorts' day | `vegetation_dynamics` | `meds_slow_dynamics` |
 | soil carbon | `advance_soil_carbon`, `commit_soil_carbon` | `meds_slow_state`, `meds_slow_update` |
-| the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics` |
+| the calendar boundary | `advance_one_step` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics` |
 | the output tick | `output_tick` → `output_integrate_fast`, `close_tier`, `output_integrate` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_polygon_state_vars` |
 | writing records | `output_serialize` | `meds_output_stream` |
