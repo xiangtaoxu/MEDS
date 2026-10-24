@@ -23,11 +23,9 @@ module meds_slow_update
                                        cohort_water_enthalpy, cohort_tissue_water,                       &
                                        fuse_cohort_fast_state, set_cohort_tissue_temps,                  &
                                        cohort_deriv_alloc
-   use meds_patch_state_vars,   only : patch_block, patch_physical_state, DIST_TREEFALL,                 &
-                                       expand_patch_block, reorder_patch_block, blend_cas,               &
-                                       blend_soil_water, blend_soil_energy, blend_snow,                  &
-                                       blend_soil_carbon, blend_litter_input, blend_decomp_xi,           &
-                                       cas_set_depth
+   use meds_patch_state_vars,   only : patch_block, blend_patch_stores, add_shed_water,                  &
+                                       patch_physical_state, DIST_TREEFALL, expand_patch_block,          &
+                                       reorder_patch_block, cas_set_depth
    use meds_polygon_state_vars, only : polygon_t, rebuild_cohort_map, assign_cohort_id,                  &
                                        patch_polygon_area, rebuild_patch_map, assign_patch_id
    use meds_allometry_lib,      only : height_to_dbh, carbon_to_structure
@@ -467,7 +465,7 @@ contains
       !----- What the killed canopy handed on, for the caller to declare to the slow ledger. ---!
       real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
-      real(wp)    :: frac, new_area, atot, wd
+      real(wp)    :: frac, new_area, atot
       real(wp), allocatable :: donor_area(:)
       real(wp)    :: lost_density, lab_g, lab_s, str_g, str_s, lig_g, lig_s
       real(wp)    :: kill_frac, w_kill, w_tot
@@ -544,30 +542,9 @@ contains
             !      them: a gap does not sterilise the ground it opens (demography.md §4). ---------------!
             atot = sum(patch%area(p0:p1))                       ! donors still hold pre-disturbance area here
             if (atot > tiny_num) then
-               patch%recruit_pool(:,newp) = (patch%area(p0)/atot) * patch%recruit_pool(:,p0)
-               patch%cas(newp)    = blend_cas(   patch%area(p0)/atot, patch%cas(p0),    0.0_wp, patch%cas(p0))
-               patch%snow(newp)   = blend_snow(  patch%area(p0)/atot, patch%snow(p0),   0.0_wp, patch%snow(p0))
-               patch%soil_water(newp) = blend_soil_water(patch%area(p0)/atot, patch%soil_water(p0), 0.0_wp,   &
-                                                         patch%soil_water(p0))
-               patch%soil_energy(newp) = blend_soil_energy(patch%area(p0)/atot, patch%soil_energy(p0), 0.0_wp, &
-                                                           patch%soil_energy(p0))
-               patch%soil_carbon(newp) = blend_soil_carbon(patch%area(p0)/atot, patch%soil_carbon(p0), &
-                                                           0.0_wp, patch%soil_carbon(p0))
-               patch%decomp_xi(newp) = blend_decomp_xi(patch%area(p0)/atot, patch%decomp_xi(p0), 0.0_wp,       &
-                                                     patch%decomp_xi(p0))
-               patch%litter_in(newp) = blend_litter_input(patch%area(p0)/atot, patch%litter_in(p0),     &
-                                                          0.0_wp, patch%litter_in(p0))
+               call blend_patch_stores(patch, newp, patch%area(p0) / atot, p0, 0.0_wp, p0)
                do d = p0 + 1_ik, p1
-                  wd = patch%area(d) / atot
-                  patch%recruit_pool(:,newp) = patch%recruit_pool(:,newp) + wd * patch%recruit_pool(:,d)
-                  patch%cas(newp)    = blend_cas(   1.0_wp, patch%cas(newp),    wd, patch%cas(d))
-                  patch%snow(newp)   = blend_snow(  1.0_wp, patch%snow(newp),   wd, patch%snow(d))  ! conserve snow into the gap
-                  patch%soil_water(newp) = blend_soil_water(1.0_wp, patch%soil_water(newp), wd, patch%soil_water(d))
-                  patch%soil_energy(newp) = blend_soil_energy(1.0_wp, patch%soil_energy(newp), wd, patch%soil_energy(d))
-                  patch%soil_carbon(newp) = blend_soil_carbon(1.0_wp, patch%soil_carbon(newp), wd, patch%soil_carbon(d))
-                  patch%decomp_xi(newp)    = blend_decomp_xi(1.0_wp, patch%decomp_xi(newp), wd, patch%decomp_xi(d))
-                  patch%litter_in(newp)   = blend_litter_input(1.0_wp, patch%litter_in(newp), wd,        &
-                                                               patch%litter_in(d))
+                  call blend_patch_stores(patch, newp, 1.0_wp, newp, patch%area(d) / atot, d)
                end do
             end if
 
@@ -586,11 +563,9 @@ contains
                      !      cohort's area density the gap takes, the factor the survivor branch uses. ---!
                      kill_frac = frac * patch%area(d)
                      w_kill = kill_frac * (cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i))
-                     patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
-                                                 + w_kill / new_area / cfg%dt_slow
-                     patch%shed_water_enth(newp) = patch%shed_water_enth(newp)                         &
-                                                 + kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i) &
-                                                   / new_area / cfg%dt_slow
+                     call add_shed_water(patch, newp, w_kill / new_area,                               &
+                                         kill_frac * cohort%nplant(i) * cohort_water_enthalpy(cohort, i)   &
+                                         / new_area, cfg%dt_slow)
                      w_tot = w_tot + poly%site%area(is) * w_kill   ! w_kill is per m2 of the site
                      if (cfg%soil_carbon%soil_carbon_on) then
                         lost_density = cohort%nplant(i) * (frac * patch%area(d) / new_area)
@@ -950,9 +925,8 @@ contains
             !      shedding uses (conservation.md §3). The heat of its tissues is a thermal-mass !
             !      change the caller declares with the phase's (conservation.md §4). ------------!
             w_cohort = cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i)
-            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / cfg%dt_slow
-            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + cohort%nplant(i) * cohort_water_enthalpy(cohort, i) / cfg%dt_slow
+            call add_shed_water(patch, ip, w_cohort, cohort%nplant(i) * cohort_water_enthalpy(cohort, i), &
+                                cfg%dt_slow)
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
             !----- The cull's mortality carbon, a rate [kgC/m2/yr] times the step's seconds, on    !
             !      the cohort's patch, which the cohort restructuring leaves in place              !
@@ -1193,23 +1167,13 @@ contains
          !----- The fields in the patch file's section order; the area, the weight, is set last. ---!
          !----- 1. The age, area-weighted. ---------------------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
-         !----- 3. The recruit bank. ------------------------------------------------------!
-         patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
-         !----- 4-6. The canopy air, snow, soil water and soil heat, area-weighted, which conserves !
-         !      each store; temperatures and liquid fractions are re-diagnosed in the fast loop. ---!
-         patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
-         patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))
-         patch%soil_water(recp) = blend_soil_water(rawgt, patch%soil_water(recp), dawgt, patch%soil_water(donp))
-         patch%soil_energy(recp) = blend_soil_energy(rawgt, patch%soil_energy(recp), dawgt, patch%soil_energy(donp))
-         !----- 7. The soil carbon, area-weighted. ----------------------------------------!
-         patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
+         !----- 3-7, 9. The stores, area-weighted, which conserves each; the temperatures and liquid !
+         !      fractions are re-diagnosed in the fast loop. -------------------------------------!
+         call blend_patch_stores(patch, recp, rawgt, recp, dawgt, donp)
          !----- 8. The shed water, its enthalpy and the CO2 owed are per-area rates: area-weighted. ---!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          patch%shed_water_enth(recp) = rawgt*patch%shed_water_enth(recp) + dawgt*patch%shed_water_enth(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
-         !----- 9. The day's decomposition integral and litter are per-area amounts: area-weighted. ---!
-         patch%decomp_xi(recp)    = blend_decomp_xi(rawgt, patch%decomp_xi(recp), dawgt, patch%decomp_xi(donp))
-         patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
          !----- 10. adapt_dt_last only seeds the step controller; area-weighted to be deterministic. ---!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
          !----- fast_cost orders the fast loop only: the fused patch carries both patches' work. --------!

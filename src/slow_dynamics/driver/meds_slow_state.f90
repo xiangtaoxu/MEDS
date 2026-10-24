@@ -31,7 +31,7 @@ module meds_slow_state
                                             CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE,   &
                                             PA_MORT_C_BACKGROUND
    use meds_leaf_params,             only : leaf_physiology_params_t
-   use meds_patch_state_vars,        only : litter_input_t
+   use meds_patch_state_vars,        only : litter_input_t, add_shed_water
    use meds_state_defaults,          only : is_unset_positive
    use meds_biogeochem_params,       only : N_SOIL_POOL
    use meds_plant_phenology,         only : pheno_env_t, pheno_state_t, pheno_out_t, phenology_kernel
@@ -643,9 +643,7 @@ contains
             w_j = died_nplant * (max(cohort%leaf_water_mass(j), 0.0_wp)                            &
                                + max(cohort%wood_water_mass(j), 0.0_wp)                            &
                                + cohort%leaf_surf_water(j) + cohort%wood_surf_water(j))
-            patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_j / cfg%dt_slow
-            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + died_nplant * cohort_water_enthalpy(cohort, j) / cfg%dt_slow
+            call add_shed_water(patch, ip, w_j, died_nplant * cohort_water_enthalpy(cohort, j), cfg%dt_slow)
             water_shed = water_shed + patch_polygon_area(poly, ip) * w_j
          end do
       end associate
@@ -681,10 +679,8 @@ contains
             cohort%wood_water_mass(i) = wood_kept
             call hold_cohort_tissue_temps(cohort, i)          ! the excess leaves at the tissue's temperature
             ip = cohort%owner_patch(i)
-            patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
-                                      + cohort%nplant(i) * excess / cfg%dt_slow
-            patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
-                                      + cohort%nplant(i) * excess_enth / cfg%dt_slow
+            call add_shed_water(patch, ip, cohort%nplant(i) * excess, cohort%nplant(i) * excess_enth,  &
+                                cfg%dt_slow)
             water_shed = water_shed + patch_polygon_area(poly, ip) * cohort%nplant(i) * excess
          end do
       end associate

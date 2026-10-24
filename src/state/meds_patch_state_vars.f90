@@ -32,7 +32,7 @@ module meds_patch_state_vars
    public :: decomp_xi_t, litter_input_t
    public :: blend_cas, cas_set_depth, cas_capacities, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
    public :: soil_water_store, soil_energy_store, pack_pool_vector, unpack_pool_vector
-   public :: blend_decomp_xi, blend_litter_input
+   public :: blend_decomp_xi, blend_litter_input, blend_patch_stores, add_shed_water
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
    public :: canopy_air_bad_field, canopy_air_field_name
@@ -625,5 +625,37 @@ contains
       nm = '(none)'
       if (k >= 1_ik .and. k <= size(NAMES, kind=ik)) nm = NAMES(k)
    end function canopy_air_field_name
+
+   !=======================================================================================!
+   !  One patch's stores from two others', and its shed channel.                           !
+   !=======================================================================================!
+
+   !----- Patch dst's stores as w1 x src1's plus w2 x src2's, in the file's section order: the  !
+   !      recruit pool, the canopy air, snow, soil water and heat, soil carbon, the day's      !
+   !      decomposition integral and litter. Patch fusion and a new treefall gap both blend     !
+   !      through it, so a store added to the patch is blended in both. ----------------------!
+   subroutine blend_patch_stores(patch, dst, w1, src1, w2, src2)
+      type(patch_block), intent(inout) :: patch
+      integer(ik),       intent(in)    :: dst, src1, src2
+      real(wp),          intent(in)    :: w1, w2
+      patch%recruit_pool(:, dst) = w1 * patch%recruit_pool(:, src1) + w2 * patch%recruit_pool(:, src2)
+      patch%cas(dst)         = blend_cas(w1, patch%cas(src1), w2, patch%cas(src2))
+      patch%snow(dst)        = blend_snow(w1, patch%snow(src1), w2, patch%snow(src2))
+      patch%soil_water(dst)  = blend_soil_water(w1, patch%soil_water(src1), w2, patch%soil_water(src2))
+      patch%soil_energy(dst) = blend_soil_energy(w1, patch%soil_energy(src1), w2, patch%soil_energy(src2))
+      patch%soil_carbon(dst) = blend_soil_carbon(w1, patch%soil_carbon(src1), w2, patch%soil_carbon(src2))
+      patch%decomp_xi(dst)   = blend_decomp_xi(w1, patch%decomp_xi(src1), w2, patch%decomp_xi(src2))
+      patch%litter_in(dst)   = blend_litter_input(w1, patch%litter_in(src1), w2, patch%litter_in(src2))
+   end subroutine blend_patch_stores
+
+   !----- Add water [kg/m2 of patch] and its enthalpy [J/m2] to patch ip's shed channel, as rates  !
+   !      over the slow step; the next fast window lands them on the ground (conservation.md §3). !
+   pure subroutine add_shed_water(patch, ip, water, enthalpy, dt_slow)
+      type(patch_block), intent(inout) :: patch
+      integer(ik),       intent(in)    :: ip
+      real(wp),          intent(in)    :: water, enthalpy, dt_slow
+      patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + water / dt_slow
+      patch%shed_water_enth(ip) = patch%shed_water_enth(ip) + enthalpy / dt_slow
+   end subroutine add_shed_water
 
 end module meds_patch_state_vars
