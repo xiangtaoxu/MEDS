@@ -122,7 +122,9 @@ snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's 
 face takes the column's own rule, the geometric mean of the bottom layer's and the table's
 conductivity (#508). The plant hydraulics page says how far the Kirchhoff sapflow law is from the
 exact steady flux under gravity, and a test pins it (#509). A canopy film is part of its tissue's
-energy, at the tissue's temperature, so the canopy-water runs close their energy (#510).
+energy, at the tissue's temperature, so the canopy-water runs close their energy (#510). A soil layer
+freezes on its freezing curve, holding supercooled liquid; its ice impedes the water and fills its
+pores, and the soil heat step solves the latent heat with the heat (#511).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -731,9 +733,35 @@ energy, at the tissue's temperature, so the canopy-water runs close their energy
   reads as before. **Fortran:** `canopy_water_out_t`'s `film_liquid_enthalpy` is `rain_liquid_enthalpy`,
   `soil_hydrology_t` drops `t_film_valuation`, and `commit_tissue_energy` and `clamp_canopy_film` take
   the films' start and end and the tissues' start-of-step temperatures.
+- **A state file written below freezing reads its soil on the freezing curve** (#511): a layer the
+  old plateau held at t_3ple reads a little below it, partly frozen. **Fortran:** `soil_layer_temp`
+  takes the layer's curve and `diagnose_soil_temps` the profile; `set_water_state`,
+  `soil_water_relations` and `soil_theta_to_unknown` take the layers' ice (`soil_ice_t`), and
+  `bottom_flux` the bottom layer's impedance; `ground_evap_env_t` drops `ground_fliq`;
+  `soil_heat_be_solve` goes, and `soil_heat_out_t` gains `iterations`.
 
 ### Changed
 
+- **Frozen soil on the soil freezing curve** (#511), CLM5's form. A layer held no liquid below 273.16 K
+  and froze on a plateau at it, and its water drained, infiltrated and fed roots at its unfrozen
+  conductivity through the ice. Below the triple point a layer now holds the liquid its retention
+  curve holds at the freezing-point-depression head L_f (T − T_f)/(g T) (Niu & Yang 2006), the rest
+  ice. In the water network each layer's ice is held over the step: the liquid takes the curve's
+  potential at its own content, the ice impedes the conductivity by 10^(−6 θ_ice/θ_sat), in full on
+  the pond and aquifer faces, and once the liquid fills the pores the ice leaves, the layer holds
+  θ_sat while its head rises to zero. Ground evaporation reads the liquid's potential over liquid
+  saturation, and the dry surface layer CLM5's effective porosity. Ithaca in January: drainage 3.49 →
+  2.69 mm/d, surface runoff 0 → 0.54 mm/d, the wettest day's runoff 7.0 → 22.9 mm/d, the top layer's
+  water 0.24 → 0.37 m³/m³ (cryosuction) and its liquid fraction 0.08 → 0.26; in spring the snowmelt
+  runs off frozen ground (surface runoff 0 → 2.2 mm/d, the wettest day 6.1 → 35 mm/d). Unfrozen runs
+  move under 0.03 %.
+- **The soil heat step solves for the energies** (#511). It solved for T^{n+1} with the sensible heat
+  capacity at the step's start, so no latent heat entered the step, and the water's enthalpy was
+  outside its matrix. It is now Newton on the layers' energies, the Jacobian the faces' slopes over
+  each layer's apparent heat capacity, the energies committed from the faces at the solution so the
+  budget closes to round-off. A column frozen from the top gives the same profile at 30-minute and
+  1-minute steps, to 0.007 K. ex04's wall time is unchanged; Ithaca in January takes 38 % longer, from
+  the frozen water network's extra Newton iterations.
 - **A canopy film is part of its tissue's energy** (#510), ED2's form. The films had no energy of their
   own: each step valued them at the rain's temperature, or at `tsupercool_liq` under a pack, where rain
   held on the canopy was worth 0 J/kg and cost the leaf about 0.95 MJ/kg extra to evaporate, and their

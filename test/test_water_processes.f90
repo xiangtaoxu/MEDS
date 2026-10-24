@@ -18,15 +18,19 @@
 !   7. TRANSPIRATION: zero at an empty leaf, the demand above the closing water content.        !
 !   8. EVAPORATION  : the closed form where no dry surface layer forms.                          !
 !   9. HEAD         : one constant, rho_w g, converts head to potential for soil and plant.      !
+!  10. FROZEN SOIL  : the freezing curve against the retention curve at the freezing head; a    !
+!                     layer's ice adds its water, impedes K, and fills the pores smoothly;      !
+!                     a zero-ice record is a layer with no ice.                                 !
 !==========================================================================================!
 program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : grav_head, rho_h2o
+   use meds_constants,   only : grav_head, rho_h2o, t_3ple, latent_heat_fusion
    use meds_soil_hydr_lib,   only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,  &
                                     soil_theta_to_unknown, pond_water_relations, pond_water_to_head,   &
                                     SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,   &
-                                    SOIL_RETENTION_CAMPBELL, soil_head_to_theta, VG_PORE_CONNECTIVITY
+                                    SOIL_RETENTION_CAMPBELL, soil_head_to_theta, VG_PORE_CONNECTIVITY,  &
+                                    soil_ice_t, soil_ice_state, soil_liquid_capacity
    use meds_plant_hydr_lib,  only : tissue_water_relations, tissue_water_to_rwc, rhizosphere_conductance,  &
                                     xylem_max_conductance, conductance_retained_fraction,                  &
                                     water_curve_t, tissue_rwc_to_psi, tissue_psi_to_water
@@ -50,6 +54,7 @@ program test_water_processes
    call test_transpiration()
    call test_evaporation()
    call test_hydrostatic_head()
+   call test_frozen_soil()
    call test_report('test_water_processes')
 
 contains
@@ -77,6 +82,7 @@ contains
    !=======================================================================================!
    subroutine test_soil_water_relations()
       type(soil_layer_curve_t) :: c(3)
+      type(soil_ice_t)         :: no_ice
       character(len=24)  :: label(3)
       real(wp) :: tau, h, psi, dpsi, w, dw, k, dk, psip, psim, wp_, wm, kp, km, dum1, dum2
       real(wp) :: worst_psi, worst_w, worst_k, theta, theta_ref, k_ref, tau_back, head
@@ -99,9 +105,9 @@ contains
             if (abs(tau - c(ic)%se_switch) < 1.0e-6_wp) cycle            ! straddles the join
             if (abs(tau - (c(ic)%se_switch - c(ic)%slope_switch * c(ic)%head_switch)) < 1.0e-6_wp) cycle
             h = 1.0e-7_wp * max(abs(tau), 1.0e-3_wp)
-            call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
-            call soil_water_relations(c(ic), tau + h, psip, dum1, wp_, dum2, kp, dum1)
-            call soil_water_relations(c(ic), tau - h, psim, dum1, wm, dum2, km, dum1)
+            call soil_water_relations(c(ic), no_ice, tau, psi, dpsi, w, dw, k, dk)
+            call soil_water_relations(c(ic), no_ice, tau + h, psip, dum1, wp_, dum2, kp, dum1)
+            call soil_water_relations(c(ic), no_ice, tau - h, psim, dum1, wm, dum2, km, dum1)
             if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok_psi = .false.
             if (.not. fd_agrees(dw,   (wp_ - wm) / (2*h),    1.0e-4_wp, 1.0e-9_wp))  ok_w = .false.
             !----- Mualem's 1 - (1 - Se^(1/m))^m is the difference of two numbers within Se^(1/m) of !
@@ -118,8 +124,8 @@ contains
          call check_true(trim(label(ic))//': dK/dtau matches finite differences', ok_k)
          !----- The two branches meet with the same value and slope. ------------------------!
          tau = c(ic)%se_switch
-         call soil_water_relations(c(ic), tau - 1.0e-9_wp, psi_lo, dpsi_lo, w_lo, dw_lo, dum1, dum2)
-         call soil_water_relations(c(ic), tau + 1.0e-9_wp, psi_hi, dpsi_hi, w_hi, dw_hi, dum1, dum2)
+         call soil_water_relations(c(ic), no_ice, tau - 1.0e-9_wp, psi_lo, dpsi_lo, w_lo, dw_lo, dum1, dum2)
+         call soil_water_relations(c(ic), no_ice, tau + 1.0e-9_wp, psi_hi, dpsi_hi, w_hi, dw_hi, dum1, dum2)
          call check_true(trim(label(ic))//': branches meet (potential)', abs(psi_hi - psi_lo) < 1.0e-8_wp)
          call check_true(trim(label(ic))//': branches meet (slope of potential)',                     &
                          abs(dpsi_hi - dpsi_lo) <= 1.0e-5_wp * abs(dpsi_lo))
@@ -133,8 +139,8 @@ contains
                                             c(ic)%par_a, c(ic)%par_n)
             k_ref = conductivity_ref(c(ic), (theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res))
             if ((theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res) < 1.0e-8_wp) cycle
-            tau = soil_theta_to_unknown(c(ic), theta_ref)
-            call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
+            tau = soil_theta_to_unknown(c(ic), no_ice, theta_ref)
+            call soil_water_relations(c(ic), no_ice, tau, psi, dpsi, w, dw, k, dk)
             theta = w / (rho_h2o * c(ic)%dz)
             if (abs(theta - theta_ref) > 1.0e-10_wp) ok_val = .false.
             if (k_ref > 1.0e-12_wp .and. abs(k - k_ref) > 1.0e-8_wp * k_ref) ok_k_val = .false.
@@ -145,14 +151,113 @@ contains
          call check_true(trim(label(ic))//': K(theta) matches the closed form', ok_k_val)
          call check_true(trim(label(ic))//': theta -> unknown -> potential round-trips', ok_round)
          !----- Above saturation the layer holds theta_sat + S_s * head. ---------------------!
-         tau = soil_theta_to_unknown(c(ic), c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
-         call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
+         tau = soil_theta_to_unknown(c(ic), no_ice, c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
+         call soil_water_relations(c(ic), no_ice, tau, psi, dpsi, w, dw, k, dk)
          call check_close(trim(label(ic))//': head above saturation', psi / grav_head, 0.5_wp, 1.0e-9_wp)
          call check_close(trim(label(ic))//': conductivity above saturation', k, c(ic)%ksat, 0.0_wp)
-         tau_back = soil_theta_to_unknown(c(ic), w / (rho_h2o * c(ic)%dz))
+         tau_back = soil_theta_to_unknown(c(ic), no_ice, w / (rho_h2o * c(ic)%dz))
          call check_close(trim(label(ic))//': supersaturated round trip', tau_back, tau, 1.0e-9_wp)
       end do
    end subroutine test_soil_water_relations
+
+   !=======================================================================================!
+   subroutine test_frozen_soil()
+      type(soil_layer_curve_t) :: c(3)
+      type(soil_ice_t)         :: ice, no_ice, zero_ice
+      character(len=24)        :: label(3)
+      real(wp) :: theta_ice, tau, h, psi, dpsi, w, dw, k, dk, psip, psim, wp_, wm, kp, km, dum1, dum2
+      real(wp) :: psi0, dpsi0, w0, dw0, k0, dk0, psi_lo, dpsi_lo, w_lo, psi_hi, dpsi_hi, w_hi
+      real(wp) :: temp, theta_liq, dtheta, theta_p, theta_m, head, theta_ref, tau_back, theta, tau_zero
+      integer  :: ic, i
+      logical  :: ok_fd, ok_add, ok_same, ok_round
+      call build_soil_layer_curve(SOIL_RETENTION_VG, 0.4314_wp, 0.0981_wp, 0.7607_wp, 1.3554_wp, 4.54e-6_wp, 0.05_wp, c(1))
+      call build_soil_layer_curve(SOIL_RETENTION_VG, 0.38_wp, 0.05_wp, 3.5_wp, 2.7_wp, 8.0e-5_wp, 0.10_wp, c(2))
+      call build_soil_layer_curve(SOIL_RETENTION_CAMPBELL, 0.45_wp, 0.0_wp, -0.25_wp, 6.0_wp, 5.0e-6_wp, 0.20_wp, c(3))
+      label = [character(len=24) :: 'vG clay (BCI)', 'vG sand', 'Campbell loam']
+      theta_ice = 0.15_wp
+      do ic = 1, 3
+         !----- The freezing curve: saturation at and above t_3ple; below, the retention curve at  !
+         !      the freezing head L_f (T - t_3ple) / (g T), with its slope. -----------------------!
+         call soil_liquid_capacity(c(ic), t_3ple + 0.5_wp, theta_liq, dtheta)
+         call check_true(trim(label(ic))//': thawed layer holds saturation', theta_liq == c(ic)%theta_sat      &
+                         .and. dtheta == 0.0_wp)
+         temp = 263.15_wp
+         head = latent_heat_fusion * (temp - t_3ple) / (grav * temp)
+         theta_ref = soil_head_to_theta(c(ic)%retention, head, c(ic)%theta_sat, c(ic)%theta_res, c(ic)%par_a,   &
+                                        c(ic)%par_n)
+         call soil_liquid_capacity(c(ic), temp, theta_liq, dtheta)
+         call check_close(trim(label(ic))//': -10 C liquid = retention at the freezing head', theta_liq,        &
+                          theta_ref, 1.0e-10_wp)
+         call soil_liquid_capacity(c(ic), temp + 1.0e-4_wp, theta_p, dum1)
+         call soil_liquid_capacity(c(ic), temp - 1.0e-4_wp, theta_m, dum1)
+         call check_true(trim(label(ic))//': freezing curve slope matches finite differences',                  &
+                         fd_agrees(dtheta, (theta_p - theta_m) / 2.0e-4_wp, 1.0e-5_wp, 1.0e-12_wp))
+
+         !----- A zero-ice record is a layer with no ice, to the bit. ----------------------------!
+         zero_ice = soil_ice_state(c(ic), 0.0_wp)
+         ok_same = .true.
+         do i = 1, 50
+            tau = c(ic)%se_switch * real(i, wp) / 40.0_wp
+            call soil_water_relations(c(ic), no_ice, tau, psi0, dpsi0, w0, dw0, k0, dk0)
+            call soil_water_relations(c(ic), zero_ice, tau, psi, dpsi, w, dw, k, dk)
+            if (psi /= psi0 .or. dpsi /= dpsi0 .or. w /= w0 .or. dw /= dw0 .or. k /= k0 .or. dk /= dk0)     &
+               ok_same = .false.
+         end do
+         call check_true(trim(label(ic))//': zero ice = no ice', ok_same)
+
+         !----- With ice: the impedance; below the pore-full point the liquid's relations plus the  !
+         !      ice's water and the impedance on K; every slope against finite differences across  !
+         !      that point and into the pore-full branch. ------------------------------------------!
+         ice = soil_ice_state(c(ic), theta_ice)
+         call check_close(trim(label(ic))//': ice impedance 10^(-6 theta_ice/theta_sat)', ice%impedance,          &
+                          10.0_wp ** (-6.0_wp * theta_ice / c(ic)%theta_sat), 1.0e-14_wp)
+         ok_fd = .true. ; ok_add = .true.
+         tau_zero = ice%tau_full - ice%head_full / ice%dhead_full      ! where the full layer's head passes zero
+         do i = 1, 300
+            tau = 0.2_wp * ice%tau_full + (2.0_wp * tau_zero - 1.2_wp * ice%tau_full) * real(i, wp) / 300.0_wp
+            if (abs(tau - ice%tau_full) < 1.0e-6_wp * ice%tau_full) cycle
+            if (abs(tau - tau_zero) < 1.0e-6_wp * tau_zero) cycle
+            if (abs(tau - c(ic)%se_switch) < 1.0e-6_wp) cycle
+            h = 1.0e-7_wp * max(abs(tau), 1.0e-3_wp)
+            call soil_water_relations(c(ic), ice, tau, psi, dpsi, w, dw, k, dk)
+            call soil_water_relations(c(ic), ice, tau + h, psip, dum1, wp_, dum2, kp, dum1)
+            call soil_water_relations(c(ic), ice, tau - h, psim, dum1, wm, dum2, km, dum1)
+            if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok_fd = .false.
+            if (.not. fd_agrees(dw,   (wp_ - wm) / (2*h),    1.0e-4_wp, 1.0e-9_wp))  ok_fd = .false.
+            if (.not. fd_agrees(dk,   (kp - km) / (2*h),     1.0e-4_wp, 1.0e-20_wp)) ok_fd = .false.
+            if (tau < ice%tau_full) then
+               call soil_water_relations(c(ic), no_ice, tau, psi0, dpsi0, w0, dw0, k0, dk0)
+               if (abs(w - w0 - rho_h2o * c(ic)%dz * theta_ice) > 1.0e-12_wp * w .or. psi /= psi0 .or.       &
+                   abs(k - k0 * ice%impedance) > 1.0e-14_wp * k) ok_add = .false.
+            end if
+         end do
+         call check_true(trim(label(ic))//': frozen slopes match finite differences', ok_fd)
+         call check_true(trim(label(ic))//': frozen = liquid + ice, K x impedance', ok_add)
+         call soil_water_relations(c(ic), ice, ice%tau_full * (1.0_wp - 1.0e-10_wp), psi_lo, dpsi_lo, w_lo, dum1, &
+                                   dum2, dum2)
+         call soil_water_relations(c(ic), ice, ice%tau_full * (1.0_wp + 1.0e-10_wp), psi_hi, dpsi_hi, w_hi, dum1, &
+                                   dum2, dum2)
+         call check_true(trim(label(ic))//': pores fill smoothly (potential, slope, water)',                    &
+                         abs(psi_hi - psi_lo) <= 1.0e-6_wp * abs(psi_lo) + 1.0e-12_wp .and.                    &
+                         abs(dpsi_hi - dpsi_lo) <= 1.0e-5_wp * abs(dpsi_lo) .and.                              &
+                         abs(w_hi - w_lo) <= 1.0e-9_wp * w_lo)
+         call check_close(trim(label(ic))//': pores full at theta_sat', w_lo / (rho_h2o * c(ic)%dz),            &
+                          c(ic)%theta_sat, 1.0e-8_wp)
+         call soil_water_relations(c(ic), ice, 0.5_wp * (ice%tau_full + tau_zero), psi, dpsi, w, dw, k, dk)
+         call check_true(trim(label(ic))//': a full layer holds theta_sat until its head passes zero',          &
+                         abs(w / (rho_h2o * c(ic)%dz) - c(ic)%theta_sat) < 1.0e-12_wp .and. dw == 0.0_wp)
+         !----- theta -> unknown -> theta round-trips, below and above the pore-full point. --------!
+         ok_round = .true.
+         do i = 1, 20
+            theta = theta_ice + c(ic)%theta_res + (c(ic)%theta_sat - c(ic)%theta_res - theta_ice)             &
+                    * real(i, wp) / 20.0_wp + merge(SOIL_SPECIFIC_STORAGE, 0.0_wp, i == 20)
+            tau_back = soil_theta_to_unknown(c(ic), ice, theta)
+            call soil_water_relations(c(ic), ice, tau_back, psi, dpsi, w, dw, k, dk)
+            if (abs(w / (rho_h2o * c(ic)%dz) - theta) > 1.0e-10_wp) ok_round = .false.
+         end do
+         call check_true(trim(label(ic))//': frozen theta -> unknown -> theta round-trips', ok_round)
+      end do
+   end subroutine test_frozen_soil
 
    !=======================================================================================!
    subroutine test_tissue_water_relations()

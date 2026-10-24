@@ -78,7 +78,10 @@ Each store is solved in the unknown in which its curve is best behaved:
   $`S_s = 10^{-4}`$ m⁻¹, so a layer pushed past saturation raises its potential and sends the excess up to
   the pond and down to the next layer: there is no saturation clip. Dry, $S_e > 0$ always, and the
   potential falls without bound towards $`\theta_{res}`$, so no flow can empty a layer and ground
-  evaporation stops by itself.
+  evaporation stops by itself. A frozen layer's ice is held over the step: the unknown measures the
+  liquid, which takes the curve's potential at its own content; the ice adds its water and impedes the
+  conductivity; and once the liquid fills the pores the ice leaves, the layer holds no more water while
+  its head rises to zero ([soil_biophysics](soil_biophysics.md), "Frozen soil").
 - A **tissue** uses its symplastic relative water content $R$, on which the pressure–volume curve is
   linear in water and has a finite slope $d\psi/dR$ everywhere. A leafless cohort's leaves hold no
   water; their $R$ stays defined.
@@ -134,12 +137,12 @@ with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
 - Newton has converged when every store's imbalance over the sub-step is below 1 % of the step's
   absolute water tolerance.
 
-What drives the network is held over the step: the rain, each cohort's transpiration demand, and the
-ground evaporation's boundary (the ground skin's temperature and phase, the canopy air over it). The
-evaporation's terms that depend only on that boundary and the top layer's curve, $`R_vT`$ and the
-saturation humidity at the ground skin (at the air's pressure), and the dry surface layer's
-water-content span and vapour diffusivity, are set once per step (`ground_evaporation_setup`); an
-evaluation computes only what moves with the top layer's water.
+What drives the network is held over the step: the rain, each cohort's transpiration demand, each
+layer's ice, and the ground evaporation's boundary (the ground skin's temperature, the canopy air over
+it). The evaporation's terms that depend only on that boundary and the top layer's curve, $`R_vT`$ and
+the saturation humidity over liquid at the ground skin (at the air's pressure), and the dry surface
+layer's water-content span and vapour diffusivity, are set once per step (`ground_evaporation_setup`);
+an evaluation computes only what moves with the top layer's water.
 
 **Error and sub-steps.** A sub-step's error is implicit Euler's local error, half the change in the
 inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last Newton

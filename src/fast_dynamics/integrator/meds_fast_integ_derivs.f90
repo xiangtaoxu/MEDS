@@ -29,7 +29,7 @@ module meds_fast_integ_derivs
                                water_drive_t, water_tend_t, water_work_t, ensure_water_capacity, POND, WOOD, LEAF
    use meds_site_state_vars, only : site_surface_t
    use meds_soil_hydr_lib, only : soil_water_relations, soil_theta_to_unknown, pond_water_relations,              &
-                                  pond_water_to_head
+                                  pond_water_to_head, soil_ice_t
    use meds_plant_hydr_lib, only : tissue_water_relations, tissue_water_to_rwc, tissue_rwc_to_unknown,            &
                                    tissue_psi_to_rwc
    use meds_plant_hydraulics, only : supply_limited_transpiration, root_water_uptake_profile, xylem_sapflow
@@ -202,7 +202,8 @@ contains
       allocate(f%d_leaf_surf_water(n), f%d_wood_surf_water(n))
 
       !----- The soil-top temperature from the current state, for the ground skin. -----------------!
-      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1),                &
+                           site%soil_profile%layer_curve(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy
@@ -255,17 +256,18 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! set_water_state -- the network's state from the model's: each soil layer's water       !
-   ! content, the pond's water and enthalpy, and each cohort's leaf and wood water [kg per   !
-   ! plant]; each store's unknown is read from its water. A leafless cohort's leaves hold    !
-   ! none, so their unknown starts at the wood's potential less the head to the crown, where !
-   ! an empty leaf comes to rest.                                                           !
+   ! set_water_state -- the network's state from the model's: each soil layer's water      !
+   ! content and ice, the pond's water and enthalpy, and each cohort's leaf and wood water !
+   ! [kg per plant]; each store's unknown is read from its water. A leafless cohort's      !
+   ! leaves hold none, so their unknown starts at the wood's potential less the head to    !
+   ! the crown, where an empty leaf comes to rest.                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine set_water_state(static, profile, hyd, theta, w_pond, e_pond, leaf_water, wood_water, water)
+   subroutine set_water_state(static, profile, hyd, theta, ice, w_pond, e_pond, leaf_water, wood_water, water)
       type(fast_static_state_t), intent(in)    :: static
       type(soil_profile_t),      intent(in)    :: profile
       type(hydraulics_table_t),  intent(in)    :: hyd
-      real(wp),                  intent(in)    :: theta(:)                       !< (nsl) [m3/m3]
+      real(wp),                  intent(in)    :: theta(:)                       !< (nsl) [m3/m3] liquid and ice
+      type(soil_ice_t),          intent(in)    :: ice(:)                         !< (nsl) each layer's ice
       real(wp),                  intent(in)    :: w_pond, e_pond                 !< [kg/m2], [J/m2]
       real(wp),                  intent(in)    :: leaf_water(:), wood_water(:)   !< (ncoh) [kg/plant]
       type(water_work_t),        intent(inout) :: water
@@ -274,7 +276,7 @@ contains
       call ensure_water_capacity(water, profile%n_active, static%n)
       associate (st => water%state)
          do k = 1_ik, profile%n_active
-            st%tau_soil(1_ik + k)   = soil_theta_to_unknown(profile%layer_curve(k), theta(k))
+            st%tau_soil(1_ik + k)   = soil_theta_to_unknown(profile%layer_curve(k), ice(k), theta(k))
             st%water_soil(1_ik + k) = rho_h2o * profile%dz(k) * theta(k)
          end do
          !----- The pond starts at its water's head, but no higher than the head at which it neither   !
@@ -282,7 +284,7 @@ contains
          !      step, and its own head would start Newton at a flow thousands of times what it holds. --!
          st%water_soil(POND) = w_pond
          st%e_pond = e_pond
-         call soil_water_relations(profile%layer_curve(1), st%tau_soil(2), psi, dpsi, w, dw, kk, dk)
+         call soil_water_relations(profile%layer_curve(1), ice(1), st%tau_soil(2), psi, dpsi, w, dw, kk, dk)
          head1 = psi / grav_head
          st%tau_soil(POND) = min(pond_water_to_head(w_pond), head1 + profile%z_node(1))
          do i = 1_ik, static%n
@@ -348,12 +350,15 @@ contains
       !----- Storage. ------------------------------------------------------------------!
       call pond_water_relations(tau_soil(POND), ev%psi_soil(1), ev%dpsi_soil(1), ev%water_soil(1),             &
                                 ev%dwater_soil(1))
-      ev%k_soil(1) = profile%ksat(1)
-      ev%dk_soil(1) = 0.0_wp      ! the pond conducts as saturated soil
+      !----- The pond conducts as saturated soil; its path lies in the top layer, so it takes that  !
+      !      layer's ice impedance in full. --------------------------------------------------------!
+      ev%k_soil(1) = profile%ksat(1) * drive%ice(1)%impedance
+      ev%dk_soil(1) = 0.0_wp
       do k = 1_ik, nsl
          c = 1_ik + k
-         call soil_water_relations(profile%layer_curve(k), tau_soil(c), ev%psi_soil(c), ev%dpsi_soil(c),          &
-                                   ev%water_soil(c), ev%dwater_soil(c), ev%k_soil(c), ev%dk_soil(c))
+         call soil_water_relations(profile%layer_curve(k), drive%ice(k), tau_soil(c), ev%psi_soil(c),             &
+                                   ev%dpsi_soil(c), ev%water_soil(c), ev%dwater_soil(c), ev%k_soil(c),            &
+                                   ev%dk_soil(c))
       end do
       do i = 1_ik, static%n
          associate (hp => hyd%pft(static%pft(i)))
@@ -386,10 +391,12 @@ contains
          call add_soil_flow(ca, cb, q, dqa, dqb)
       end do
 
-      !----- Rain into the pond; evaporation from the top layer; drainage from the bottom one. ----!
+      !----- Rain into the pond; evaporation from the top layer; drainage from the bottom one. The  !
+      !      dry surface layer reads the liquid and dsl_theta_init of the ice, so its onset is      !
+      !      dsl_theta_init of the pores the ice leaves (CLM5's effective porosity). ---------------!
       ev%inflow_soil(POND) = ev%inflow_soil(POND) + drive%rain
       c = 2_ik
-      theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1))
+      theta1 = ev%water_soil(c) / (rho_h2o * profile%dz(1)) - (1.0_wp - soil%dsl_theta_init) * drive%ice(1)%theta_ice
       call ground_evaporation_rate(theta1, ev%psi_soil(c), drive%ground, soil, e, de_dtheta, de_dpsi)
       ev%evap = e
       ev%inflow_soil(c) = ev%inflow_soil(c) - e
@@ -397,7 +404,8 @@ contains
                          + de_dtheta * ev%dwater_soil(c) / (rho_h2o * profile%dz(1))                               &
                          + de_dpsi * ev%dpsi_soil(c)
       c = 1_ik + nsl
-      call bottom_flux(profile, soil, nsl, ev%psi_soil(c), ev%k_soil(c), qbot, dqbot_dpsi, dqbot_dk)
+      call bottom_flux(profile, soil, nsl, ev%psi_soil(c), ev%k_soil(c), drive%ice(nsl)%impedance, qbot,           &
+                       dqbot_dpsi, dqbot_dk)
       ev%drain = rho_h2o * qbot
       ev%inflow_soil(c) = ev%inflow_soil(c) - ev%drain
       if (with_jacobian) sys%a(c, c) = sys%a(c, c)                                                              &

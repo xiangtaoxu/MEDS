@@ -28,6 +28,7 @@ module meds_fast_integ_frozen
    use meds_surface, only : snow_out_t
    use meds_soil_derive,      only : top_soil_psi
    use meds_soil_params,      only : soil_profile_t
+   use meds_soil_hydr_lib,    only : soil_ice_state
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_surface_t
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, set_aero_env_atm, set_aero_env_canopy
@@ -147,12 +148,13 @@ contains
       call tissue_coefficients(dt_fast, cfg, static, forcing, dynamic, out%aero, rho, frozen%tissue, frozen%film, &
                                frozen%plant)
       call canopy_air_boundary(cfg%aero, static%geom, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
-      call ground_inflow(static, forcing, dynamic, out%aero%ggnet, throughfall, tcas, qcas, rho, t_ground, nsl,    &
-                         frozen)
+      call ground_inflow(static, site%soil_profile, forcing, dynamic, out%aero%ggnet, throughfall, tcas, qcas, rho, &
+                         t_ground, nsl, frozen)
       call transpiration_demand(dt_fast, cfg%canopy_water_on, n, dynamic, t_ground, frozen)
 
       !----- The start states: the water network's, from the stores' state^n water, and the march's. --!
       call set_water_state(static, site%soil_profile, cfg%pft%hydraulics, dynamic%soil_water%theta(1:nsl),       &
+                           frozen%water_drive%ice(1:nsl),                                                        &
                            dynamic%soil_water%w_surface, dynamic%soil_water%w_surface_energy,                    &
                            dynamic%leaf_water_mass(1:n), dynamic%wood_water_mass(1:n), water)
       call pack_march_start(dynamic, n, nsl, y)
@@ -666,12 +668,14 @@ contains
    ! ground_inflow -- what drives the water network besides the transpiration demand       !
    ! (docs/science/soil_plant_water.md §5, "The ground inflow"): the water reaching the    !
    ! pond, the temperature that values it and the enthalpy it brings across the column's   !
-   ! boundary (pond_inflow), each layer's temperature and the ground evaporation's         !
+   ! boundary (pond_inflow), each layer's temperature and ice, and the ground evaporation's!
    ! boundary. Also the liquid enthalpy of the rain the canopy films exchange water with,  !
    ! which the start-of-step surface solves read, so it runs before them.                  !
    !---------------------------------------------------------------------------------------!
-   subroutine ground_inflow(static, forcing, dynamic, ggnet, throughfall, tcas, qcas, rho, t_ground, nsl, frozen)
+   subroutine ground_inflow(static, profile, forcing, dynamic, ggnet, throughfall, tcas, qcas, rho, t_ground, nsl, &
+                            frozen)
       type(fast_static_state_t),  intent(in)    :: static
+      type(soil_profile_t),       intent(in)    :: profile
       type(fast_forcing_t),       intent(in)    :: forcing
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       real(wp),                   intent(in)    :: ggnet         !< [m/s] ground <-> canopy-air conductance
@@ -689,12 +693,13 @@ contains
          drive%ground%q_air           = qcas
          drive%ground%rho_air         = rho
          drive%ground%press           = forcing%press
-         !----- Phase of the evaporating surface, for the ice saturation branch                             !
-         !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
-         drive%ground%ground_fliq     = dynamic%soil_energy%soil_fliq(1)
          !----- Bare-soil aerodynamic resistance; snow_free_frac above weights the flux, not this. -------!
          drive%ground%r_aero = 1.0_wp / max(ggnet, tiny_num)
          drive%t_soil(1:nsl) = dynamic%soil_energy%soil_temp(1:nsl)
+         !----- Each layer's ice, held over the step (docs/science/soil_biophysics.md, "Frozen soil"). ----!
+         drive%ice(1:nsl) = soil_ice_state(profile%layer_curve(1:nsl),                                            &
+                                           (1.0_wp - dynamic%soil_energy%soil_fliq(1:nsl))                        &
+                                           * dynamic%soil_water%theta(1:nsl))
          !----- The rain the canopy films capture and drip back is the throughfall's, at its temperature. -!
          frozen%film%rain_liquid_enthalpy = internal_energy_liquid(t_water_base)
       end associate

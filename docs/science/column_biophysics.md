@@ -32,10 +32,12 @@ that weave the stores together:
 
 1. **Prognostic internal energy, not temperature.** Every thermal store carries specific enthalpy or
    internal energy as its prognostic variable and diagnoses temperature (and liquid fraction) by
-   inverting the thermodynamics (`meds_therm_lib%internal_energy_to_temp`). Freeze/thaw is then a *read-off* of the
-   inverter — cooling a wet layer pins its temperature at the triple point while the internal energy
-   keeps falling and the liquid fraction absorbs $`w\,L_f`$. Phase change comes for free, with zero
-   solver change.
+   inverting the thermodynamics: `meds_therm_lib%internal_energy_to_temp` for a snow layer, whose
+   water melts at the triple point, and the layer's freezing curve for a soil layer, whose liquid the
+   pores hold below it (`meds_soil_heat%soil_layer_temp`; [soil_biophysics](soil_biophysics.md),
+   "Frozen soil"). Freeze/thaw is then a *read-off* of the inverter: cooling a wet pack pins its
+   temperature at the triple point while the liquid fraction absorbs $`w\,L_f`$, and a wet soil layer
+   lingers just below it as its curve gives up the liquid. Phase change needs no separate solver.
 2. **Closed-budget discipline.** Every store returns a residual that is the change in storage minus the
    time-integral of its boundary fluxes, algebraically zero by construction and asserted to round-off in
    Debug builds. A whole-column ledger (`budg%whole_energy`/`whole_water`) catches cross-seam leaks the

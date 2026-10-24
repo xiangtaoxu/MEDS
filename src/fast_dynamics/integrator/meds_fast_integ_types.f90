@@ -25,6 +25,7 @@ module meds_fast_integ_types
    use meds_budget_check, only : budget_t
    use meds_linear_algebra, only : arrowhead_system_t
    use meds_soil_water, only : ground_evap_env_t
+   use meds_soil_hydr_lib, only : soil_ice_t
    use meds_fast_params, only : CTRL_I
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    use meds_canopy_air_space, only : cas_env_t
@@ -32,6 +33,7 @@ module meds_fast_integ_types
    use meds_canopy_water, only : canopy_water_out_t
    use meds_surface, only : surface_env_t, snow_out_t
    use meds_soil_heat, only : soil_layer_temp
+   use meds_soil_params, only : soil_profile_t
    use meds_diag_vars, only : N_CO_FAST_ROWS
    use meds_state_defaults,    only : UNSET_NEGATIVE
    implicit none
@@ -458,6 +460,7 @@ module meds_fast_integ_types
       real(wp) :: rain   = 0.0_wp                          !< [kg/m2/s] water reaching the pond
       real(wp) :: t_rain = 298.15_wp                       !< [K] the temperature that values it
       real(wp) :: t_soil(n_soil_layer_max) = 298.15_wp     !< [K] temperature of the water a layer gives up
+      type(soil_ice_t) :: ice(n_soil_layer_max)              !< each layer's ice, held over the step
       real(wp), allocatable :: e_demand(:)                 !< (ncoh) [kg/m2/s] the stomata's transpiration demand
       type(ground_evap_env_t) :: ground                    !< the ground evaporation's boundary
    end type water_drive_t
@@ -1148,14 +1151,15 @@ contains
    end function zero_like
 
    !----- Re-diagnose every layer's temperature and liquid fraction from the committed energy + water. -!
-   pure subroutine diagnose_soil_temps(y_out, dry_hcap, nsl, soil_temp, soil_fliq)
+   pure subroutine diagnose_soil_temps(y_out, profile, nsl, soil_temp, soil_fliq)
       type(march_state_t), intent(in)    :: y_out
-      real(wp),             intent(in)    :: dry_hcap(:)
+      type(soil_profile_t), intent(in)    :: profile
       integer(ik),          intent(in)    :: nsl
       real(wp),             intent(inout) :: soil_temp(:), soil_fliq(:)
       integer(ik) :: k
       do k = 1_ik, nsl
-         call soil_layer_temp(y_out%soil_energy(k), y_out%theta(k), dry_hcap(k), soil_temp(k), soil_fliq(k))
+         call soil_layer_temp(y_out%soil_energy(k), y_out%theta(k), profile%dry_heat_capacity(k),             &
+                              profile%layer_curve(k), soil_temp(k), soil_fliq(k))
       end do
    end subroutine diagnose_soil_temps
 

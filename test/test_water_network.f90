@@ -155,7 +155,7 @@ contains
       st%drive%t_soil = 299.0_wp ; st%drive%t_rain = 297.0_wp
       st%drive%ground = forc
       st%tols%rtol(GRP_THETA) = WATER_RTOL ; st%tols%atol(GRP_THETA) = WATER_ATOL
-      call set_water_state(st%static, soil, hyd, theta, w_pond, 0.0_wp, leaf_w, wood_w, st%water)
+      call set_water_state(st%static, soil, hyd, theta, st%drive%ice, w_pond, 0.0_wp, leaf_w, wood_w, st%water)
    end subroutine make_stand
 
    !----- One fast step of the stand's network on the fixture soil, with the column's options. --!
@@ -371,7 +371,8 @@ contains
       call make_stand(st, 1_ik, theta, 0.0_wp, 0.6_wp, 0.5_wp, 0.0_wp)
       st%static%bleaf(1) = 1.0e-3_wp                            ! a few grams of leaf
       st%static%k_xylem(1) = 1.0e-3_wp * st%static%k_xylem(1)   ! and a xylem that can hardly feed it
-      call set_water_state(st%static, soil, hyd, theta, 0.0_wp, 0.0_wp, [1.0e-3_wp * 2.0_wp * 0.75_wp],         &
+      call set_water_state(st%static, soil, hyd, theta, st%drive%ice,                                                &
+                           0.0_wp, 0.0_wp, [1.0e-3_wp * 2.0_wp * 0.75_wp],         &
                            [st%water%state%water_coh(WOOD, 1) / st%static%nplant(1)], st%water)
       demand = 1.0e-4_wp
       st%drive%e_demand(1) = demand
@@ -506,7 +507,7 @@ contains
       leaf_w = st%water%state%water_coh(LEAF, :) / st%static%nplant
       wood_w = st%water%state%water_coh(WOOD, :) / st%static%nplant
       leaf_w(3) = 2.0_wp * st%static%bleaf(3) * 0.9_wp
-      call set_water_state(st%static, soil, hyd, theta, 3.0e-8_wp, 0.0_wp, leaf_w, wood_w, st%water)
+      call set_water_state(st%static, soil, hyd, theta, st%drive%ice, 3.0e-8_wp, 0.0_wp, leaf_w, wood_w, st%water)
       w0 = total_water(st) ; flows = 0.0_wp ; nfail = 0_ik ; rwc_max = 0.0_wp ; pond_min = 0.0_wp
       do step = 1_ik, 96_ik
          st%drive%rain = merge(1.0e-6_wp, 1.2e-3_wp, step < 40)

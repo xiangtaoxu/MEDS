@@ -97,7 +97,8 @@ contains
       call state_init(y, n, nsl, y_out)
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
-      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1), t_ground, fliq1)
+      call soil_layer_temp(y%soil_energy(1), y%theta(1), site%soil_profile%dry_heat_capacity(1),                &
+                           site%soil_profile%layer_curve(1), t_ground, fliq1)
 
       cas_mass_capacity = frozen%cas%box%air_mass_capacity
       cas_molar_capacity = frozen%cas%box%air_molar_capacity

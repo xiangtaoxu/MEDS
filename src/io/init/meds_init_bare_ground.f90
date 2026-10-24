@@ -9,9 +9,9 @@
 !==========================================================================================!
 module meds_init_bare_ground
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : rho_h2o, t_3ple
    use meds_config,     only : meds_config_t, growth_window_steps
-   use meds_therm_lib,  only : temp_to_internal_energy, cas_temp_to_enthalpy
+   use meds_therm_lib,  only : cas_temp_to_enthalpy
+   use meds_soil_heat,  only : soil_layer_energy, soil_layer_temp
    use meds_met_types,  only : met_forcing_t
    use meds_allometry_lib, only : height_to_dbh
    use meds_cohort_state_vars,     only : expand_cohort_block, init_cohort
@@ -81,19 +81,17 @@ contains
    end subroutine init_bare_sites
 
    !----- A start's patch stores, the same on every patch of a site: the soil at its site's        !
-   !      theta_start and [init].soil_temp, its water as ice below the freezing point so the       !
-   !      stored energy gives back that temperature (liquid there would read as half-frozen at the !
-   !      freezing point); the pond dry; and the canopy air at the reference climate              !
-   !      (met_forcing_t's air, at the run's CO2), which the fast loop's first window replaces with !
-   !      the first forcing sample (docs/science/canopy_air_space_biophysics.md, The start). -----!
+   !      theta_start and [init].soil_temp, its water liquid and ice as the layer's freezing curve !
+   !      holds them there (soil_layer_energy); the pond dry; and the canopy air at the reference  !
+   !      climate (met_forcing_t's air, at the run's CO2), which the fast loop's first window      !
+   !      replaces with the first forcing sample (docs/science/canopy_air_space_biophysics.md, The !
+   !      start). ---------------------------------------------------------------------------------!
    subroutine seed_patch_stores(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       type(met_forcing_t) :: ref   !< the reference climate
-      real(wp)    :: fliq_start
       integer(ik) :: ip, k, nsl
       ref = met_forcing_t()
-      fliq_start = merge(1.0_wp, 0.0_wp, cfg%init%soil_temp >= t_3ple)
       do ip = 1_ik, poly%patch%n
          associate (cas => poly%patch%cas(ip), se => poly%patch%soil_energy(ip), sw => poly%patch%soil_water(ip), &
                     surf => poly%site%surface(poly%patch%owner_site(ip)))
@@ -102,10 +100,11 @@ contains
             sw%w_surface        = 0.0_wp
             sw%w_surface_energy = 0.0_wp        ! dry pond -> zero enthalpy
             do k = 1_ik, nsl
-               se%soil_energy(k) = temp_to_internal_energy(surf%soil_profile%dry_heat_capacity(k),             &
-                                   surf%theta_start(k) * rho_h2o, cfg%init%soil_temp, fliq_start)
-               se%soil_temp(k)   = cfg%init%soil_temp
-               se%soil_fliq(k)   = fliq_start
+               se%soil_energy(k) = soil_layer_energy(cfg%init%soil_temp, surf%theta_start(k),                  &
+                                                     surf%soil_profile%dry_heat_capacity(k),                    &
+                                                     surf%soil_profile%layer_curve(k))
+               call soil_layer_temp(se%soil_energy(k), surf%theta_start(k), surf%soil_profile%dry_heat_capacity(k), &
+                                    surf%soil_profile%layer_curve(k), se%soil_temp(k), se%soil_fliq(k))
             end do
             cas%can_shv      = ref%air_shv
             cas%can_co2      = cfg%forcing%co2_const

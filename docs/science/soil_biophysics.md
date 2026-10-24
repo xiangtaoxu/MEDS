@@ -9,8 +9,9 @@ plants' water as one network ([soil_plant_water](soil_plant_water.md)); this pag
 This page is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes
 the two cross-cutting principles (**prognostic internal energy**, not temperature; **closed-budget
 discipline**) and how the stores are woven each `dt_fast`. Both principles are load-bearing here: the
-thermal column is prognostic in volumetric internal energy so freeze/thaw is a read-off of the
-thermodynamic inverter, and both sub-columns close a machine-precision budget every step.
+thermal column is prognostic in volumetric internal energy so freeze/thaw is a read-off of each
+layer's freezing curve (§ Frozen soil), and both sub-columns close a machine-precision budget every
+step.
 
 ---
 
@@ -255,28 +256,52 @@ column: its top layers hold the surface's organic, high-CEC soil and its deep la
 ## The soil thermal column
 
 `soil_energy_step_implicit` (`meds_soil_heat`) advances the prognostic volumetric internal energy
-$`E_k`$ [J m⁻³] by an implicit BE heat-diffusion solve, a Thomas sweep (`meds_linear_algebra`: `thomas_solve`)
-on **the same negative-$z$ geometry** as the water column. At each state it inverts
-$`E_k\to(T_k,\text{fliq}_k)`$, forms the ice-aware thermal conductivity $`\kappa(\theta,\text{fliq})`$
-and effective volumetric heat capacity $`C_{eff}(\theta,\text{fliq})`$, solves for $`T^{n+1}`$ with a
-top Neumann flux $`G_{top}`$ and the bottom boundary of § The bottom thermal boundary, then commits a
-**conservative** energy update from the $`T^{n+1}`$ conductive faces plus the upwind
-water-enthalpy advection:
+$`E_k`$ [J m⁻³] by backward Euler on **the same negative-$z$ geometry** as the water column. Each
+layer's balance over the step is
+
+```math
+\Delta z_k\,\frac{E_k^{n+1}-E_k^n}{\Delta t}
+= (hf_k-hf_{k-1}) + (qwf_k-qwf_{k-1}) + \Delta z_k\,q_{src,k} \qquad(10)
+```
+
+with its faces at the temperatures $`T_k(E_k^{n+1})`$ the new energies give on the layers' freezing
+curves (§ Frozen soil):
+- the conduction $`hf_k=-\kappa_{k+1/2}\,(T_k-T_{k+1})/\Delta z_{k+1/2}`$, the face conductivity the
+  thickness-weighted harmonic mean of the layers' ice-aware $`\kappa(\theta,f_{liq})`$ (eq. (11)), held at
+  the step's start;
+- the water's enthalpy $`qwf_k`$, upwind on the giving layer's temperature (§ Water–thermal coupling);
+- a top Neumann flux $`G_{top}`$, and the bottom boundary of § The bottom thermal boundary.
+
+**Newton on the energies.** The step's Jacobian is tridiagonal: the faces' slopes in the temperatures,
+divided by each layer's apparent heat capacity $`dE/dT`$, plus $`\Delta z_k/\Delta t`$ on the diagonal.
+The apparent heat capacity is the sensible heat plus the latent heat of the liquid the freezing curve
+frees per kelvin, so the latent heat is inside each step's balance. A step that does not lower the worst
+residual is halved. The iteration stops when the worst residual, as the temperature change it would need,
+is under 10⁻⁸ K:
+- a thawed column's balance is linear, so it takes one iteration;
+- a column freezing from the top takes three.
+
+The energies are then **committed** from the faces at the solution,
 
 ```math
 E_k^{n+1} = E_k^n + \frac{\Delta t}{\Delta z_k}\big[(hf_k-hf_{k-1}) + (qwf_k-qwf_{k-1})\big]
-            + \Delta t\,q_{src,k} \qquad(10)
+            + \Delta t\,q_{src,k},
 ```
 
-Temperature and liquid fraction are re-diagnosed from the committed energy — so **freeze/thaw is the
-internal-energy plateau**, captured for free and unconditionally (ice-aware
-$`\kappa`$/$`C_{eff}`$; the zero-curtain is tested, cooling a wet layer pins `soil_temp` at the triple
-point while `soil_fliq` absorbs the fusion enthalpy). The closed residual is `energy_resid`
-$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{water\_heat\_out}+qwf_n-qwf_0)\approx0`$, with
-`water_heat_out` the enthalpy leaving each layer with root uptake, exfiltration and drainage, and the
-infiltrating water's enthalpy, the top face's $`qwf_0`$, among the inputs. A sibling
-`soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at $`T^n`$) for the
-RK45 integrator; ESDIRK2's implicit stages take the BE step.
+so the column's budget closes to round-off whatever Newton's residual. Temperature and liquid fraction
+are re-diagnosed from the committed energy. The closed residual is `energy_resid`
+$`=\Delta E - \Delta t\,(G_{top}-\text{bottom}-\sum\text{water\_heat\_out}+qwf_n-qwf_0)\approx0`$, with:
+- `water_heat_out`, the enthalpy leaving each layer with root uptake, exfiltration and drainage;
+- the infiltrating water's enthalpy, the top face's $`qwf_0`$, among the inputs.
+
+A sibling `soil_energy_time_deriv` exposes the same flux divergence as an explicit RHS (faces at
+$`T^n`$) for the RK45 integrator; ESDIRK2's implicit stages take the backward-Euler step.
+
+**Why the energies.** A solve for $`T^{n+1}`$ with the sensible heat capacity at the step's start takes no
+latent heat into the step. A layer reaching freezing then overshoots in temperature, and the
+conservative commit puts the latent heat back only afterwards, so the freezing front depended on
+$`\Delta t`$. With Newton on the energies, a five-layer column frozen from the top for two days gives the
+same profile with 30-minute and 1-minute steps, to 0.007 K (`test_column_energy`).
 
 The conductivity is Johansen's, made ice-aware (`soil_thermal_conductivity`, `meds_therm_lib`). With the
 relative saturation $`S_r=\theta/\theta_{sat}`$, floored at 0.05 where the logarithm leaves its range of
@@ -371,10 +396,80 @@ column base, so it biases deep-soil temperature in the annual mean; there is no 
 a silent one would reintroduce, in a new place, exactly the bias this boundary condition exists to
 remove.
 
+## Frozen soil
+
+Below the triple point a layer's water is shared between liquid and ice by the **soil freezing curve**
+(CLM5's supercooled liquid; Niu & Yang 2006). Liquid water and ice are in equilibrium in the pores when
+the liquid's potential equals the freezing-point-depression head (Clausius–Clapeyron):
+
+```math
+h_{frz}(T) = \frac{L_f\,(T - T_f)}{g\,T},\qquad T_f = t_{3ple} \qquad(14)
+```
+
+The layer's own retention curve at that head is the liquid it can hold,
+$`\theta_{liq,max}(T)=\theta(h_{frz}(T))`$ (`soil_liquid_capacity`). A layer is:
+- all liquid at and above $`T_f`$, and below it while $`\theta\le\theta_{liq,max}(T)`$;
+- otherwise liquid $`\theta_{liq,max}(T)`$ and ice $`\theta-\theta_{liq,max}(T)`$.
+
+At $`T_f`$ the curve holds $`\theta_{sat}`$. Water a layer stores beyond saturation (through the
+specific storage, § The soil water column) therefore freezes at $`T_f`$ itself, on a plateau as narrow
+as that excess.
+
+The curve treats ice as it would air (the soil "dries" as it freezes). A van Genuchten loam
+($`\theta_{res}`$ 0.078, $`\alpha`$ 3.6 m⁻¹, $`n`$ 1.56) holds 0.090 m³ m⁻³ of liquid at −1 °C and 0.081
+at −10 °C, a little more than its residual water, so a frozen soil is never quite dry. Freezing happens over a range of
+temperatures just below $`T_f`$, so a wet layer lingers there as the latent heat comes out (the zero
+curtain) instead of sitting exactly at $`T_f`$.
+
+**Energy and temperature.** A layer's energy at temperature $`T`$ is
+
+```math
+E(T) = C_{dry}\,T + \rho_w\theta\,\big[f_{liq}\,u_{liq}(T) + (1-f_{liq})\,c_{ice}T\big],\qquad
+f_{liq}=\min\!\big(1,\theta_{liq,max}(T)/\theta\big)
+```
+
+It rises with $`T`$. Its slope, the apparent heat capacity, adds to the sensible heat the latent heat of
+the liquid freed per kelvin, $`\rho_w\,(u_{liq}-c_{ice}T)\,d\theta_{liq,max}/dT`$.
+
+`soil_layer_temp` inverts it:
+- the all-liquid temperature when the curve holds all the water;
+- otherwise Newton, kept inside the bracket between the all-liquid temperature and the lower of the
+  all-ice temperature and $`T_f`$, with bisection when a step leaves it.
+
+The thermal step (§ The soil thermal column) and every diagnosis use this one inversion.
+
+**Water.** Over a water step each layer's ice is held at its start, $`\theta_{ice}=(1-f_{liq})\,\theta`$
+(`soil_ice_t`, built by `soil_ice_state`). The water network then reads the layer as follows:
+- **The liquid's potential is the curve's at the liquid's content**, $`\psi(\theta-\theta_{ice})`$, on
+  the full pore space. A frozen layer's liquid therefore sits at $`h_{frz}(T)`$, and a frozen layer
+  draws water from the wet soil beside it (cryosuction).
+- **The ice impedes the flow:** each node's conductivity is the liquid's times
+  $`10^{-6\,\theta_{ice}/\theta_{sat}}`$ (CLM5; Swenson et al. 2012). The face conductivity is the
+  weighted geometric mean of its two nodes' (eq. (3)), so a face takes 10 to the mean of its nodes' ice
+  fractions, which is CLM5's face impedance.
+  - The pond face and the aquifer face lie inside the top and bottom layers, so each takes its layer's
+    impedance in full: the pond conducts at $`K_{sat,1}`$ times the top layer's impedance, and the table
+    at $`K_{sat,n}`$ times the bottom layer's.
+- **Pores the ice leaves.** Once the liquid fills the pores the ice leaves,
+  $`\theta_{liq}=\theta_{sat}-\theta_{ice}`$, the layer holds no more water: the liquid's head rises from
+  the head the pores filled at (pressure in a gas-free frozen soil), and above zero the layer stores
+  through the specific storage, as a thawed layer does. Cryosuction therefore fills a frozen layer to
+  saturation and no further.
+- **Evaporation** reads the liquid:
+  - Philip's humidity is taken on the liquid's potential, with saturation over liquid. On the freezing
+    curve the liquid's vapour pressure is the ice's, so blending in the ice's saturation as well would
+    count the ice twice.
+  - The dry surface layer reads the liquid plus `dsl_theta_init` of the ice, so it forms below
+    `dsl_theta_init` of the pores the ice leaves. That is CLM5's effective porosity.
+
+A layer with no ice is read exactly as before, to the bit. The energy step that follows sees the new
+water through $`\theta`$, so water drawn into a frozen layer freezes there at the next diagnosis, and
+its latent heat enters the layer's energy balance.
+
 ## Water–thermal coupling
 
 The water and thermal columns are coupled by construction: the thermal step reads the just-updated soil
-moisture (for $`\kappa,C_{eff}`$), and the water the network moves carries liquid enthalpy: across each
+moisture (for $`\kappa`$ and the freezing curve), and the water the network moves carries liquid enthalpy: across each
 face at the temperature of the node it leaves, out of each layer by root uptake at that layer's own
 temperature (`root_heat`, per layer), and between the pond and the top layer (`water_heat_out`).
 Infiltration crosses the top face at the pond's temperature. Drainage has no face term: its enthalpy
@@ -422,9 +517,11 @@ and passes the resulting flux into the CO₂ source.
 | retention curves (vG / Campbell) | `meds_soil_hydr_lib`, with the matric potential `soil_matric_potential` [MPa] |
 | hydraulic parameters from texture, eqs. (6)–(8) | `meds_soil_hydr_lib`: `soil_texture_to_hydraulics` |
 | thermal properties from texture, eq. (9) | `meds_therm_lib`: `soil_texture_to_thermal` |
-| soil thermal (implicit BE heat) | `meds_soil_heat`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
+| soil thermal (backward Euler, Newton on the energies) | `meds_soil_heat`: `soil_energy_step_implicit` |
 | the column's forcing from the water network's flows | `meds_soil_heat`: `set_soil_heat_env` |
-| a layer's temperature from its energy | `meds_soil_heat`: `soil_layer_temp` |
+| a layer's temperature from its energy, and back | `meds_soil_heat`: `soil_layer_temp`, `soil_layer_energy`, `soil_layer_energy_slope` |
+| the soil freezing curve, eq. (14) | `meds_soil_hydr_lib`: `soil_liquid_capacity` |
+| a layer's ice in the water network | `meds_soil_hydr_lib`: `soil_ice_t`, `soil_ice_state` |
 | explicit thermal tendency (RK45) | `meds_soil_heat`: `soil_energy_time_deriv` |
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
@@ -443,4 +540,7 @@ and passes the resulting flux into the CO₂ source.
 - Gupta et al. (2021), *Earth Syst. Sci. Data* 13:1593 (SoilKsatDB) and (2022), *Sci. Data* 9:444 (GSHP) — the measurements the function was chosen on.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
 - Lawrence & Slater (2008), *Clim. Dyn.* 30:145 — the mineral and dry-soil thermal properties CLM uses, eq. (9).
+- Niu & Yang (2006), *J. Hydrometeorol.* 7:937 — the supercooled liquid of a frozen soil, eq. (14).
+- Swenson, Lawrence & Lee (2012), *J. Adv. Model. Earth Syst.* 4:M08002 — the ice impedance on the conductivity.
+- Lawrence et al. (2018), *Technical Description of version 5.0 of the Community Land Model (CLM)*, NCAR — the supercooled soil water and frozen-soil hydrology.
 - Design records: `docs/dev_plans/archive/MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.

@@ -42,8 +42,6 @@ module meds_soil_water
    !      and the terms that depend only on them and the top layer's curve. -------------------------!
    type :: ground_evap_env_t
       real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
-      !----- A frozen surface evaporates over ice (docs/science/snow_biophysics.md eq. (1)). --------!
-      real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: press    = p_std                        !< [Pa] air pressure, for the saturation humidity
@@ -82,16 +80,18 @@ contains
    !---------------------------------------------------------------------------------------!
    ! The bottom-face flux [m/s, down-positive] with its derivatives: drainage at           !
    ! drain_factor times K(theta_n), or the two-way aquifer boundary, the column's own face !
-   ! rule (soil_water_flux, eq. (3)) between layer n's node and the saturated table at    !
-   ! the base, half a layer below it (docs/science/soil_biophysics.md, "Boundary          !
-   ! conditions, and what the aquifer option actually means"). psi_n arrives in MPa.      !
+   ! rule (soil_water_flux, eq. (3)) between layer n's node and the saturated table at the !
+   ! base, half a layer below it (docs/science/soil_biophysics.md, "Boundary conditions,   !
+   ! and what the aquifer option actually means"). psi_n arrives in MPa. The path to the   !
+   ! table lies in layer n, so the table's side takes the layer's ice impedance too.       !
    !---------------------------------------------------------------------------------------!
-   pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
+   pure subroutine bottom_flux(profile, soil, n, psi_n, k_n, impedance, qbot, dq_dpsi, dq_dk)
       type(soil_profile_t), intent(in)  :: profile
       type(soil_params_t),  intent(in)  :: soil
       integer(ik),          intent(in)  :: n        !< the deepest active layer
       real(wp),             intent(in)  :: psi_n    !< [MPa] matric potential of the deepest layer
       real(wp),             intent(in)  :: k_n      !< [m/s] K(theta_n) of the deepest layer
+      real(wp),             intent(in)  :: impedance   !< [-] its ice impedance (soil_ice_t)
       real(wp),             intent(out) :: qbot     !< [m/s] down-positive
       real(wp), optional,   intent(out) :: dq_dpsi  !< [m/s/MPa] d(qbot)/d(psi_n)
       real(wp), optional,   intent(out) :: dq_dk    !< [-]   d(qbot)/d(k_n)
@@ -103,7 +103,7 @@ contains
          !----- The table is saturated (psi 0, K_sat), half a layer below the node; the face takes  !
          !      the geometric mean of the two conductivities, as the pond face does at the top. ----!
          delta = 0.5_wp * profile%dz(n)
-         call soil_water_flux(k_n, profile%ksat(n), 0.5_wp, psi_n, 0.0_wp, delta, delta, q,            &
+         call soil_water_flux(k_n, profile%ksat(n) * impedance, 0.5_wp, psi_n, 0.0_wp, delta, delta, q,  &
                               dq_dpsi_n, dq_dpsi_table, dq_dk_n, dq_dk_table)
          qbot = q / rho_h2o
          if (present(dq_dpsi)) dq_dpsi = dq_dpsi_n / rho_h2o
@@ -116,15 +116,17 @@ contains
 
    !----- The terms of ground_evaporation_rate that depend only on its boundary and the top layer's  !
    !      curve, so they are computed once for a boundary: R_v T and the saturation humidity at the  !
-   !      ground skin (over ice when frozen, at the air's pressure), and the dry surface layer's     !
-   !      water-content span and vapour diffusivity (docs/science/soil_plant_water.md §3). ----------!
+   !      ground skin over liquid at the air's pressure, and the dry surface layer's water-content   !
+   !      span and vapour diffusivity (docs/science/soil_plant_water.md §3). A frozen layer's ice    !
+   !      enters through its liquid's potential, which the freezing curve puts at the ice's vapour   !
+   !      pressure (docs/science/soil_biophysics.md, "Frozen soil"). --------------------------------!
    pure subroutine ground_evaporation_setup(profile, soil, forcing)
       type(soil_profile_t),    intent(in)    :: profile
       type(soil_params_t),     intent(in)    :: soil
       type(ground_evap_env_t), intent(inout) :: forcing   !< its boundary in, its derived terms set
       real(wp) :: theta_air, dvap, phi, phi_air, tau
       forcing%rv_t  = r_wv * forcing%t_ground
-      forcing%q_sat = sat_specific_humidity(forcing%t_ground, forcing%press, forcing%ground_fliq)
+      forcing%q_sat = sat_specific_humidity(forcing%t_ground, forcing%press)
       !----- The dry surface layer, referenced to the air-dry water content. ------------------------!
       theta_air = soil_head_to_theta(profile%retention, PSI_AIR_DRY, profile%theta_sat(1), profile%theta_res(1),  &
                                      profile%curve_par_a(1), profile%curve_par_n(1))
