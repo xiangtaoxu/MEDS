@@ -15,15 +15,17 @@
 !     compiles.                                                                                    !
 !                                                                                          !
 ! The assertions cover the shim's own logic: the invalid-handle guard (every accessor has to      !
-! return a sentinel rather than index a stale registry slot), distinct handles, and a real         !
-! open -> step -> finalize -> free cycle through the C boundary.                                    !
+! return a sentinel rather than index a stale registry slot), distinct handles, a real             !
+! open -> step -> finalize -> free cycle through the C boundary, and a failed open that leaves its  !
+! slot free for the next one.                                                                       !
 !                                                                                          !
 ! The cycle runs on a config DERIVED from the shipped default one: fast biophysics and live met    !
 ! forcing off (the forcing netCDF is not tracked in git), bare ground, three days. The derivation   !
 ! prepends an override block and then copies the original verbatim -- `meds_toml`'s lookup returns  !
 ! the FIRST match for a key, so the prepended values win. Deriving it, rather than writing a config !
 ! from scratch, means this test also proves the shipped file is complete enough to INITIALISE, not  !
-! merely to parse.                                                                                   !
+! merely to parse. The derived configs go into the work directory (the first argument), the only   !
+! place the test writes.                                                                            !
 !==========================================================================================!
 program test_c_api_run
    use, intrinsic :: iso_c_binding, only : c_double, c_int, c_char
@@ -40,18 +42,28 @@ program test_c_api_run
 
    character(len=*), parameter :: CFG_DEFAULT    = 'meds_config_eval.toml'
    character(len=*), parameter :: CFG_CALIBRATED = 'calibration/meds_config_calibrated.toml'
-   character(len=*), parameter :: CFG_DERIVED = 'test_c_api_run_derived.toml'
+   character(len=512)            :: work
+   character(len=:), allocatable :: cfg_derived, cfg_no_census, pft_seeded, pft_file
+   integer                       :: npft
    integer(c_int)      :: h, h2, status, d0, d1, nsteps
    real(c_double)      :: agb, lai, soilc
    type(meds_config_t) :: cfg
 
    call banner('full-model C-API shim (meds.model)')
+   call get_command_argument(1, work)
+   if (len_trim(work) == 0) error stop 'test_c_api_run: pass the work directory'
+   call execute_command_line('mkdir -p "'//trim(work)//'"')
+   cfg_derived   = trim(work)//'/derived.toml'
+   cfg_no_census = trim(work)//'/no_census.toml'
+   pft_seeded    = trim(work)//'/pft_seeded.toml'
 
    !=== 1. Both SHIPPED example04_column_biophysics configs load. ===========================!
    !      The schema-drift guard: the example's scripts are outside the build, so nothing else !
    !      here would notice its configs falling behind the config reader.                      !
    call load_meds_config(CFG_DEFAULT, cfg)
    call check(cfg%pft%n >= 1_c_int, 'the shipped default config loads and carries PFTs')
+   npft     = int(cfg%pft%n)
+   pft_file = trim(cfg%init%pft_config)
    call check(cfg%fast_biophysics_on, 'the default config requests fast biophysics')
    call check(cfg%soil_carbon%soil_carbon_on, 'the default config requests SOIL CARBON')
    call load_meds_config(CFG_CALIBRATED, cfg)
@@ -69,8 +81,9 @@ program test_c_api_run
    call check(meds_run_total_agb(99_c_int) == 0.0_wp,   'aggregates on a bogus handle read 0')
 
    !=== 3. A real open -> step -> finalize -> free cycle across the C boundary. ==============!
-   call write_derived_config()
-   h = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
+   call write_seeded_pft(pft_seeded, pft_file, npft)
+   call write_derived_config(cfg_derived, pft=pft_seeded)
+   h = meds_run_open(to_c(cfg_derived), int(len(cfg_derived), c_int), 0_c_int)
    call check(h > 0_c_int, 'a run opens from a config through the C-API')
    call check(meds_run_is_done(h) == 0_c_int, 'a freshly opened run is not already done')
    call check(meds_run_n_patch(h) >= 1_c_int, 'the opened run reports its patch count')
@@ -84,7 +97,7 @@ program test_c_api_run
       call check(all(owner(1:meds_run_n_patch(h)) == 1_c_int), 'every patch is in the one site')
    end block
 
-   h2 = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
+   h2 = meds_run_open(to_c(cfg_derived), int(len(cfg_derived), c_int), 0_c_int)
    call check(h2 > 0_c_int .and. h2 /= h, 'two live runs get DISTINCT handles')
    call meds_run_free(h2)
    call check(meds_run_is_done(h2) == 1_c_int, 'a freed handle reads as done, not as a live run')
@@ -94,7 +107,7 @@ program test_c_api_run
    nsteps = 0_c_int
    do while (meds_run_is_done(h) == 0_c_int)
       status = meds_run_step(h)
-      call check(status == 0_c_int, 'each step reports DRIVER_OK')
+      call check(status == 0_c_int, 'each step reports RUN_OK')
       nsteps = nsteps + 1_c_int
       if (nsteps > 10_c_int) exit                     ! the derived config is a 3-day window
    end do
@@ -104,19 +117,18 @@ program test_c_api_run
    call check(meds_run_istep(h) == nsteps, 'the driver istep counter matches the steps taken')
 
    !----- Stepping past the end is a STATUS, not a crash: the Python loop relies on it. -------!
-   call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns DRIVER_FINISHED')
+   call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns RUN_FINISHED')
 
    !=== 3b. A REUSED registry slot must not inherit the previous run's counters. =============!
-   !      The registry is module-`save`, so a freed handle is handed out again -- and the run       !
-   !      object in that slot still holds whatever the last run left in it. `meds_region_t`'s       !
-   !      default initialisers do NOT help: they apply to a fresh variable, not to a slot being      !
-   !      reopened.                                                                                !
+   !      The registry is module-`save`, so a freed handle is handed out again. `meds_region_t`'s   !
+   !      default initialisers apply to a fresh variable, not to a slot being reopened: what makes  !
+   !      the slot fresh is region_free, which leaves it as a run never opened.                     !
    !                                                                                          !
    !      A Python process that runs one config after another (a calibration's trials) reuses   !
-   !      slots this way, so the step counters, both whole-column budgets, the slow ledger and the !
-   !      soil-carbon seam maximum must start fresh at every open.  -------------------------------!
+   !      slots this way. The step counter, which the C API reads, is what is checked: a slot     !
+   !      that kept it would have kept the rest of the old run too. -------------------------------!
    call meds_run_free(h)
-   h = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
+   h = meds_run_open(to_c(cfg_derived), int(len(cfg_derived), c_int), 0_c_int)
    call check(h > 0_c_int, 'a second run opens after the first is freed')
    call check(meds_run_istep(h) == 0_c_int,                                                        &
               'a reopened registry slot starts at step 0, not the previous run''s count')
@@ -124,13 +136,27 @@ program test_c_api_run
    status = meds_run_step(h)
    call check(meds_run_istep(h) == 1_c_int, 'the second run counts its own steps from 1')
 
+   !=== 3c. A run that FAILS to open holds nothing. ==========================================!
+   !      A census start whose file is missing stops in the polygons' start, after the run has  !
+   !      allocated them. The slot it failed in is the next one handed out, so the open after   !
+   !      it must start clean rather than find the failed attempt's arrays still there. -------!
+   call write_derived_config(cfg_no_census, census='no_such_census.csv')
+   h2 = meds_run_open(to_c(cfg_no_census), int(len(cfg_no_census), c_int), 0_c_int)
+   call check(h2 == -2_c_int, 'a run whose census file is missing does not open')
+   h2 = meds_run_open(to_c(cfg_derived), int(len(cfg_derived), c_int), 0_c_int)
+   call check(h2 > 0_c_int .and. h2 /= h, 'a run opens in the slot a failed open left')
+   call check(meds_run_step(h2) == 0_c_int, 'and steps from its own start')
+   call meds_run_free(h2)
+
    !=== 4. State is readable, and readable AFTER finalize (that is why free is separate). ====!
    agb   = meds_run_total_agb(h)
    lai   = meds_run_total_lai(h)
    soilc = meds_run_soil_carbon(h)
-   call check(agb >= 0.0_wp .and. lai >= 0.0_wp, 'site aggregates read back non-negative')
-   call check(soilc >= 0.0_wp, 'site soil carbon reads back non-negative')
-   call check(meds_run_n_cohort(h) >= 0_c_int, 'the cohort count is readable')
+   !      The derived run's bare ground is seeded (write_seeded_pft), so the stepped stand has   !
+   !      cohorts, biomass, leaves and soil carbon for the shim to read back.                  !
+   call check(agb > 0.0_wp .and. lai > 0.0_wp, 'the seeded stand reads back its biomass and leaves')
+   call check(soilc > 0.0_wp, 'and its soil carbon')
+   call check(meds_run_n_cohort(h) > 0_c_int, 'and its cohorts')
 
    status = meds_run_finalize(h)
    call check(status == 0_c_int, 'finalize reports no area-conservation failure')
@@ -138,7 +164,6 @@ program test_c_api_run
    call meds_run_free(h)
    call check(meds_run_total_agb(h) == 0.0_wp, 'a freed handle no longer reads state')
 
-   call delete_file(CFG_DERIVED)
    print '(a)', 'test_c_api_run: ALL PASSED'
 
 contains
@@ -146,13 +171,16 @@ contains
    !----- Prepend an override block to the shipped default config. `meds_toml` returns the FIRST !
    !      match for a key, so these win over the same keys later in the file. What is turned off: !
    !      the fast loop and live met forcing (the forcing netCDF is untracked), the output        !
-   !      streams and the state checkpoint (a test must not litter the source tree), and the      !
-   !      window is cut to three days from bare ground.  -----------------------------------------!
-   subroutine write_derived_config()
+   !      streams and the state checkpoint, and the window is cut to three days from bare ground,  !
+   !      or from `census`, a census file. The shipped config's own paths stay relative to the     !
+   !      example's directory, the test's working directory. -------------------------------------!
+   subroutine write_derived_config(path, census, pft)
+      character(len=*),           intent(in) :: path
+      character(len=*), optional, intent(in) :: census, pft
       integer :: uin, uout, ios
       character(len=512) :: line
-      open(newunit=uout, file=CFG_DERIVED, status='replace', action='write')
-      write(uout,'(a)') '# GENERATED by test_c_api_run -- deleted when the test passes.'
+      open(newunit=uout, file=path, status='replace', action='write')
+      write(uout,'(a)') '# GENERATED by test_c_api_run.'
       write(uout,'(a)') '[run]'
       write(uout,'(a)') 'start_time = "2024-07-01"'
       write(uout,'(a)') 'end_time   = "2024-07-04"'
@@ -162,7 +190,13 @@ contains
       write(uout,'(a)') '[forcing]'
       write(uout,'(a)') 'forcing_on = false'
       write(uout,'(a)') '[init]'
-      write(uout,'(a)') 'init_mode = 0'
+      if (present(census)) then
+         write(uout,'(a)') 'init_mode = 1'
+         write(uout,'(3a)') 'census_file = "', census, '"'
+      else
+         write(uout,'(a)') 'init_mode = 0'
+      end if
+      if (present(pft)) write(uout,'(3a)') 'pft_config = "', pft, '"'
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'state_write = false'
       write(uout,'(a)') 'enabled = false'
@@ -178,15 +212,25 @@ contains
       close(uout)
    end subroutine write_derived_config
 
-   subroutine delete_file(path)
-      character(len=*), intent(in) :: path
-      integer :: u
-      logical :: there
-      inquire(file=path, exist=there)
-      if (.not. there) return
-      open(newunit=u, file=path, status='old')
-      close(u, status='delete')
-   end subroutine delete_file
+   !----- The example's PFT file with every PFT seeding a bare-ground start (pft.nbg_init_density, !
+   !      0.1 plants/m2 per patch), so the derived run's stand has cohorts. ----------------------!
+   subroutine write_seeded_pft(path, source, npft)
+      character(len=*), intent(in) :: path, source
+      integer,          intent(in) :: npft
+      integer :: uin, uout, ios
+      character(len=2048) :: line
+      open(newunit=uout, file=path, status='replace', action='write')
+      open(newunit=uin, file=source, status='old', action='read')
+      do
+         read(uin,'(a)',iostat=ios) line
+         if (ios /= 0) exit
+         write(uout,'(a)') trim(line)
+         if (trim(adjustl(line)) == '[pft]')                                                      &
+            write(uout,'(3a)') 'nbg_init_density = [', repeat('0.1, ', npft - 1), '0.1]'
+      end do
+      close(uin)
+      close(uout)
+   end subroutine write_seeded_pft
 
    !----- A NUL-free c_char array; the shim takes (buffer, length), not a C string. ----------!
    function to_c(s) result(a)

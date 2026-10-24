@@ -20,22 +20,25 @@ Everything below is per polygon. A run is one polygon or many, each stepped the 
 A run is one polygon at the `[site]` location (`[run].mode = "site"`) or every selected cell of a
 region (`"region"`). Both go through the same stages.
 
-**Setup** (`region_open`):
+**Setup** (`region_open`, step by step):
 
-1. Read the configuration and choose the polygons.
-2. Build each polygon's initial state from `[init].init_mode`: bare ground, a census, or a
-   restart from the polygon's row of a state file. A census or state file that cannot start the run
-   stops it. A restart also restores the calendar date and any restructuring the checkpoint still owes
-   ([§5](#5-the-calendar-boundary)). Bare ground and a census seed each patch's stores as they lay
-   the patches out (`init_bare_sites`): the soil at `[init]`'s temperature and water, the canopy air
-   at the reference climate, so every setup cohort is born in its patch's state. Once the stand is
-   final, its cohorts' tissues are settled in step with their patches, and the initial snow laid
+1. Read the configuration and choose the polygons (`choose_polygons`): a region's selected cells, or
+   the `[site]`, which reads the archive cell nearest it when the run reads the archive's forcing or
+   maps. With `[maps]`, read each cell's map inputs.
+2. Open the forcing source at those cells, or, without forcing, the CO2 series alone (`open_forcing`).
+3. Start each polygon (`start_polygons`) on its configuration, the run's with its cell's map inputs,
+   from `[init].init_mode`: bare ground, a census, or a restart from the polygon's row of a state
+   file. A census or state file that cannot start the run stops it. A restart also restores the
+   calendar date and any restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
+   Bare ground and a census seed each patch's stores as they lay the patches out
+   (`init_bare_sites`): the soil at `[init]`'s temperature and water, the canopy air at the reference
+   climate, so every setup cohort is born in its patch's state. Once the stand is final, its
+   cohorts' tissues are settled in step with their patches, and the initial snow laid
    (`init_fast_state`), with the fast loop on or off; a restart read all of these instead. The fast
    loop's first window then puts the canopy air at the first forcing sample.
-3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, the
-   canopy-air depth, from the stand; the steady-state soil carbon (unless restored); and the slow
-   ledger.
-4. Open the state (restart) stream and the output files.
+4. Prepare each polygon: the forcing cursor, the canopy-air depth from the stand, the steady-state
+   soil carbon (unless restored), and the slow ledger.
+5. Open the state (restart) stream and the output files (`open_files`).
 
 **The loop.** Until `end_time`, the executable steps a month at a time (`region_step_month`) and
 Python one slow step at a time (`region_step`). Either way:
@@ -301,7 +304,7 @@ file's instant, so none carries `mean_`.
 
 | Stage | Routine | Module |
 |---|---|---|
-| run setup, loop, finish | `region_open`, `region_step_month` / `region_step` → `step_polygons`, `region_finalize` | `meds_region` |
+| run setup, loop, finish | `region_open` (`choose_polygons`, `open_forcing`, `start_polygons`, `open_files`), `region_step_month` / `region_step` → `list_steps`, `step_polygons`, `region_finalize` | `meds_region` |
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
@@ -311,9 +314,9 @@ file's instant, so none carries `mean_`.
 | the cohorts' day | `vegetation_dynamics` | `meds_slow_dynamics` |
 | soil carbon | `advance_soil_carbon`, `commit_soil_carbon` | `meds_slow_state`, `meds_slow_update` |
 | the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics` |
-| the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
+| the output tick | `output_tick` → `output_integrate_fast`, `close_tier`, `output_integrate` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_polygon_state_vars` |
 | writing records | `output_serialize` | `meds_output_stream` |
-| checkpoints | `region_write_state` → `restart_file_open` / `restart_file_write`; `read_restart_file` | `meds_region`, `meds_init_restart` |
+| checkpoints | `write_state_file` → `restart_file_open` / `restart_file_write`; `read_restart_file` | `meds_region`, `meds_init_restart` |
 | the start of a polygon | `init_polygon` | `meds_init` |
 | the output file set | `open_output_files`, `attach_output` | `meds_output_setup` |

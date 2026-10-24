@@ -44,7 +44,7 @@ _PATCH_REAL = {"area": 0, "age": 1, "share": 2}
 _PATCH_INT = {"site": 0}
 _SITE_REAL = {"area": 0}
 
-#----- A step's status codes (the DRIVER_* parameters of meds_polygon). -----------------------#
+#----- A step's status codes (the RUN_* parameters of meds_polygon). -----------------------#
 OK, FINISHED, ERR_NAN, ERR_AREA, ERR_BOUNDS = 0, 1, 2, 3, 4
 
 

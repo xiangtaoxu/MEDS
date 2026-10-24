@@ -1,56 +1,48 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_region -- a run: one polygon or many, in one process (docs/science/order_of_processes.md  !
-! §1; the configuration is docs/configuration.md). Every run goes through here: `meds_main`      !
-! steps it a month at a time, and the C-API shim `meds_c_api_run` (Python's `meds.model`) one    !
-! slow step at a time.                                                                            !
+! meds_region -- a run: one polygon or many, in one process                                !
+! (docs/science/order_of_processes.md §1; the configuration is docs/configuration.md).     !
+! Every run goes through here: meds_main steps it a month at a time, and the C-API shim    !
+! meds_c_api_run (Python's meds.model) one slow step at a time.                            !
 !                                                                                          !
-!   type(meds_region_t) :: reg                                                                   !
-!   call region_open('meds_config_main.toml', reg, ok)                                            !
-!   do while (.not. region_done(reg)) ; call region_step_month(reg, status) ; end do               !
-!   call region_finalize(reg, status) ; call region_free(reg)                                      !
+! [run].mode chooses the polygons: "site" (the default) is one polygon at the [site]       !
+! location, on either forcing format; "region" is every selected cell of a box of the      !
+! ED_ERA5land archive. The forcing loads a month for every cell at once; then each polygon !
+! runs through it, reading its own cell; then the I/O phase writes every polygon's queued  !
+! records. Nothing inside the polygon loop touches a file, so the polygons of a month run  !
+! side by side on [run].n_threads threads, each with a one-thread patch loop; a run of one !
+! polygon gives its patch loop the threads instead.                                        !
 !                                                                                          !
-! [run].mode chooses the polygons: "site" (the default) is one polygon at the [site] location,     !
-! on either forcing format; "region" is every selected cell of a box of the ED_ERA5land archive.  !
-! Each polygon is stepped by polygon_step. The forcing source loads a month for every cell once;   !
-! then each polygon runs through it, reading its own cell; then the I/O phase writes every         !
-! polygon's queued records, one hyperslab per variable per record. Nothing inside the polygon      !
-! loop touches a file, so the polygons of a month run side by side on [run].n_threads threads,     !
-! each with a single-threaded patch loop; one polygon gives its patch loop the threads instead.   !
-!                                                                                          !
-! Output and state files always carry a `polygon` axis, one row per polygon, the cohort and       !
-! patch axes padded to the largest polygon's. A NaN state or a state out of its bounds is a        !
-! STATUS RETURN, not an `error stop`: this module is compiled into the shared library Python       !
-! loads, and `error stop` there takes the interpreter down with it. `meds_main` turns the status  !
-! into an `error stop`.                                                                             !
+! Output and state files carry a polygon axis, the cohort and patch axes padded to the     !
+! largest polygon's. A failed step is returned as a status, not an `error stop`: this      !
+! module is in the shared library Python loads, where an `error stop` ends the             !
+! interpreter. meds_main makes the status fatal.                                           !
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, INIT_RESTART,                                &
-                                           RUN_MODE_REGION, soil_maps_on, site_config, apply_map_inputs
+                                           RUN_MODE_REGION, soil_maps_on, site_configs, apply_map_inputs
    use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
-   use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
-                                           years_between
+   use meds_time,                   only : meds_time_t, calendar_step_t, calendar_step, time_lt,       &
+                                           time_to_string, years_between
    use meds_polygon_state_vars,     only : polygon_t, free_polygon
    use meds_init_restart,           only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                            restart_file_slots
    use meds_init,                   only : init_polygon
    use meds_met_types,              only : met_source_t, met_grid_t, met_cells_t
    use meds_forcing_params,         only : MET_BACKEND_ERA5LAND
-   use meds_met,             only : met_open, met_open_co2, met_close, met_prefetch
-   use meds_met_share,       only : MET_OK
+   use meds_met,                    only : met_open, met_open_co2, met_close, met_prefetch
+   use meds_met_share,              only : MET_OK
    use meds_maps,                   only : apply_cell_mask, map_status_message, MAP_OK, read_map_inputs
    use meds_maps_params,            only : map_inputs_t
    use meds_met_grid,               only : select_box_cells, select_site_cell, GRID_OK, GRID_ERR_NO_CELL
    use meds_met_era5land,           only : era5land_grid
-   use meds_output_reduce,      only : print_summary, total_area, total_agb, total_lai
+   use meds_output_reduce,          only : print_summary, total_area, total_agb, total_lai
    use meds_polygon,                only : polygon_run_t, polygon_prepare, polygon_step, polygon_report,  &
-                                           ensure_output_dir,                                     &
-                                           DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
-                                           DRIVER_ERR_BOUNDS
+                                           RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_params,          only : output_params_t, STATE_DAYS, STATE_MONTHS, STATE_YEARS
    use meds_output_stream,          only : output_serialize, output_close
@@ -61,40 +53,44 @@ module meds_region
 
    public :: meds_region_t, region_open, region_step, region_step_month, region_done, region_finalize
    public :: region_free
-   !----- The status codes live with the step (meds_polygon); re-exported for the run's callers. ---!
-   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
+   !----- The status codes live with the step (meds_polygon); re-exported for the run's            !
+   !      callers. --------------------------------------------------------------------------------!
+   public :: RUN_OK, RUN_FINISHED, RUN_ERR_NAN, RUN_ERR_AREA, RUN_ERR_BOUNDS
 
-   !----- How far the patch areas of a polygon may sum from one at the end of a run before the run  !
-   !      reports DRIVER_ERR_AREA. ------------------------------------------------------------------!
+   !----- How far a polygon's patch areas may sum from one at the end of a run                     !
+   !      (RUN_ERR_AREA). ----------------------------------------------------------------------!
    real(wp), parameter :: AREA_TOL = 1.0e-5_wp
 
-   !----- Everything a run needs between steps. No state hides in module scope, so two runs can be  !
-   !      open at once (which is what the C-API's handle registry does). --------------------------!
+   !----- Everything a run needs between steps. No state hides in module scope, so two runs can be !
+   !      open at once (the C API's handles). -----------------------------------------------------!
    type :: meds_region_t
       type(meds_config_t)   :: cfg
       type(met_source_t)    :: met_src          !< one reader for every polygon (opened only if forcing_on)
       type(output_files_t)  :: out_files           !< the run's files (built only if output.enabled)
-      !----- Each polygon as two records side by side: its state (the stand) and what the run needs  !
-      !      to step and check it (meds_polygon). -------------------------------------------------!
+      !----- Each polygon as its state (the stand) and what the run keeps to step and check it     !
+      !      (meds_polygon). ----------------------------------------------------------------------!
       type(polygon_t),     allocatable :: poly(:)
       type(polygon_run_t), allocatable :: run(:)
-      !----- Each polygon's share of the files, one per polygon. A contiguous array of its own, so  !
-      !      the I/O phase passes it whole: a section run(:)%bufs of a type with allocatable         !
-      !      components makes gfortran copy it through a temporary whose copy-out dangles them. ----!
+      !----- Each polygon's share of the files, one per polygon. A contiguous array of its own, so !
+      !      the I/O phase passes it whole: a section run(:)%bufs of a type with allocatable       !
+      !      components makes gfortran copy it through a temporary whose copy-out dangles          !
+      !      them. --------------------------------------------------------------------------------!
       type(output_buffers_t), allocatable :: out_bufs(:)
       type(meds_time_t)     :: now
       integer(ik)           :: step_days = 1_ik
       integer(ik)           :: istep = 0_ik       !< slow steps taken
       integer(ik)           :: iyear = 0_ik       !< year boundaries stepped across, for the state files
       integer(ik)           :: imonth = 0_ik      !< month boundaries stepped across, likewise
-      !----- The time spent loading the forcing before each month (met_prefetch), over the run and   !
-      !      this year, and the archive month files read before this year: the year summary and the  !
-      !      end of the run report them, so a run shows what its forcing reads cost. -----------------!
+      !----- The forcing's load time (met_prefetch) over the run and this year, and the archive    !
+      !      month files read before this year, for the summaries. --------------------------------!
       real(wp)              :: read_seconds = 0.0_wp, year_read_seconds = 0.0_wp
       integer(ik)           :: year_loads0 = 0_ik
-      !----- Last month's wall time per polygon: the next month starts the costliest first, so a   !
-      !      slow polygon does not leave the other threads idle at the end of the month. ------------!
+      !----- Last month's wall time per polygon: the next month starts the costliest first. -------!
       real(wp),    allocatable :: cost(:)
+      !----- The restructuring the calendar owes after the last step, the same for every polygon   !
+      !      still running: a state file takes it from here, not from a polygon that has           !
+      !      failed. ------------------------------------------------------------------------------!
+      logical               :: restructure_pending = .false., restructure_new_year = .false.
       logical               :: verbose = .true.
    end type meds_region_t
 
@@ -106,80 +102,54 @@ contains
    end function region_done
 
    !---------------------------------------------------------------------------------------!
-   ! region_open -- config -> the polygons (one at the [site], or the box's cells) -> the shared  !
-   ! forcing source -> each polygon's initial community and preparation -> the output files:      !
-   ! everything before the first step.                                                            !
+   ! region_open -- everything before the first step: the configuration, the polygons (one !
+   ! at the [site], or the box's cells), the forcing, each polygon's start and             !
+   ! preparation, and the files. A run that cannot open is freed, so the variable (a C-API !
+   ! handle's slot) can open another.                                                      !
    !---------------------------------------------------------------------------------------!
    subroutine region_open(path, reg, ok, verbose)
       character(len=*),    intent(in)    :: path
       type(meds_region_t), intent(inout) :: reg
       logical,             intent(out)   :: ok
       logical, optional,   intent(in)    :: verbose
-      type(met_cells_t)          :: cells
-      type(met_grid_t)           :: grid
-      integer(ik)                :: st, p, n
-      integer(ik), allocatable   :: ids(:), slot(:)
+      if (present(verbose)) reg%verbose = verbose
+      call open_run(path, reg, ok)
+      if (.not. ok) call region_free(reg)
+   end subroutine region_open
+
+   !----- Everything region_open does, in order; ok = .false. (after saying why) when the run      !
+   !      cannot start. ---------------------------------------------------------------------------!
+   subroutine open_run(path, reg, ok)
+      character(len=*),    intent(in)    :: path
+      type(meds_region_t), intent(inout) :: reg
+      logical,             intent(out)   :: ok
+      type(met_cells_t)          :: cells, places
       type(map_inputs_t)         :: inputs
-      type(meds_config_t)        :: pcfg
-      type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
-      real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
+      integer(ik), allocatable   :: ids(:), slot(:)
+      real(wp)                   :: distance_km
       character(len=:), allocatable :: msg
-      logical                    :: region, started
+      logical                    :: have_maps
 
       ok = .false.
-      if (present(verbose)) reg%verbose = verbose
-      !----- The C-API reuses a freed registry slot, so the counters start again here. ------------!
-      reg%istep = 0_ik
-      reg%iyear = 0_ik
-      reg%imonth = 0_ik
-      reg%read_seconds = 0.0_wp
-      reg%year_read_seconds = 0.0_wp
-      reg%year_loads0 = 0_ik
-
       call load_meds_config(trim(path), reg%cfg)
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
       associate (cfg => reg%cfg)
-      region = cfg%mode == RUN_MODE_REGION
+      !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE  !
+      !      (4 MB by default with ifx): a grown stand's automatic arrays overflow it within a few !
+      !      decades, a SIGSEGV. Say so when neither variable sets it. ----------------------------!
+      if (cfg%mode == RUN_MODE_REGION .and. cfg%n_threads > 1_ik .and.                              &
+          .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE')))                           &
+         write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a ', &
+                         'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
 
-      if (region) then
-         !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE   !
-         !      (4 MB by default with ifx), not the process's. A grown stand's automatic arrays        !
-         !      overflow 4 MB after a few decades of regrowth and the run dies with SIGSEGV (the        !
-         !      stack-ceiling note in CMakeLists.txt). Say so at open when neither variable sets it. ---!
-         if (cfg%n_threads > 1_ik .and. .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE'))) &
-            write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a ', &
-                            'worker thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
-         !----- The cells: the box's valid cells with enough land, in row-major order, less those the  !
-         !      cell mask drops; each one's soil and site index from the [maps] files. ----------------!
-         grid = era5land_grid(cfg%forcing)
-         if (.not. select_cells(cfg, grid, cells, reg%verbose)) return
-         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
-         if (len(msg) > 0) then
-            write(*,'(2a)') ' region: ', msg
-            return
-         end if
-         n = cells%ncell
-         allocate(ids(n))
-         ids = cells%row * cells%nlon + cells%col        ! each cell's row-major index on the global grid
-      else
-         !----- One polygon at the [site]: its soil column and height allometry's site index from   !
-         !      the [maps] files at the forcing cell it reads, before anything is built on them. -------!
-         if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
-            call site_map_inputs(reg%cfg, msg)
-            if (len(msg) > 0) then
-               write(*,'(2a)') ' maps  : ', msg
-               return
-            end if
-            if (reg%verbose) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
-         end if
-         n = 1_ik
-         allocate(ids(1), source=0_ik)
-      end if
+      if (.not. choose_polygons(cfg, reg%verbose, cells, places, distance_km, inputs, have_maps)) return
+      allocate(ids(places%ncell), source=0_ik)
+      if (cfg%mode == RUN_MODE_REGION) ids = places%row * places%nlon + places%col   ! the cells' row-major index
 
-      !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file may  !
-      !      hold more polygons than the run: a region whose cell failed resumes with that cell      !
-      !      masked out. ------------------------------------------------------------------------------!
-      allocate(slot(n), source=0_ik)
+      !----- A restart (init_mode = 2): each polygon's row of the state file, by its id. A file    !
+      !      may hold more polygons than the run: a region whose cell failed resumes with that     !
+      !      cell masked out. ---------------------------------------------------------------------!
+      allocate(slot(places%ncell), source=0_ik)
       if (cfg%init%init_mode == INIT_RESTART) then
          call restart_file_slots(trim(cfg%init%restart_file), ids, slot, msg)
          if (len(msg) > 0) then
@@ -188,16 +158,131 @@ contains
          end if
       end if
 
-      !----- The forcing source: a region's cells, or the cell or grid nearest the [site]. ----------!
-      if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
-         if (region) then
+      if (.not. open_forcing(reg, cells, distance_km)) return
+      if (.not. start_polygons(reg, places, ids, slot, inputs, have_maps)) return
+      reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
+      allocate(reg%cost(places%ncell), source=0.0_wp)
+
+      if (reg%verbose) then
+         write(*,'(a)') '==================== MEDS run ===================='
+         if (cfg%mode == RUN_MODE_REGION)                                                          &
+            write(*,'(a,4(1x,f0.3),a,i0,a,f0.2,a)') ' region: box_nwse =', cfg%region%box_nwse, ', ',    &
+               places%ncell, ' polygons (land fraction >= ', cfg%region%land_fraction_min, ')'
+         write(*,'(5a)') ' run   : ', time_to_string(cfg%start_time), ' -> ', time_to_string(cfg%end_time)
+         write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(reg%now, cfg%end_time), ' yr  steps/yr~',    &
+               max(1_ik, nint(yr_day / real(reg%step_days, wp), ik))
+      end if
+      call open_files(reg, ids, places)
+      if (reg%verbose .and. places%ncell == 1_ik) then
+         write(*,'(a)') '-----------------------------------------------------------------------------'
+         call print_summary(reg%poly(1), 'start')
+      end if
+      end associate
+      ok = .true.
+   end subroutine open_run
+
+   !----- The polygons, and the archive cells they read. A region's are its box's cells, each      !
+   !      polygon at its cell's centre; a site run's is one polygon at the [site] location,        !
+   !      reading the archive cell nearest it when the run reads the archive's forcing or maps     !
+   !      (distance_km away), and none on a point forcing file. With [maps], each cell's map       !
+   !      inputs. .false. (after saying why) when the cells or the maps cannot be had. ------------!
+   logical function choose_polygons(cfg, verbose, cells, places, distance_km, inputs, have_maps) result(ok)
+      type(meds_config_t), intent(in)  :: cfg
+      logical,             intent(in)  :: verbose
+      type(met_cells_t),   intent(out) :: cells        !< the archive cells the run reads (none: ncell = 0)
+      type(met_cells_t),   intent(out) :: places       !< each polygon's location and grid indices
+      real(wp),            intent(out) :: distance_km  !< a site's distance to its cell
+      type(map_inputs_t),  intent(out) :: inputs
+      logical,             intent(out) :: have_maps
+      type(met_grid_t)              :: grid
+      character(len=:), allocatable :: msg
+      integer(ik)                   :: st
+      logical                       :: region, archive
+      ok = .false.
+      distance_km = 0.0_wp
+      region    = cfg%mode == RUN_MODE_REGION
+      have_maps = soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0
+      archive   = cfg%fast_biophysics_on .and. cfg%forcing%forcing_on .and.                          &
+                  cfg%forcing%format == MET_BACKEND_ERA5LAND
+      if (region .or. have_maps .or. archive) grid = era5land_grid(cfg%forcing)
+      if (region) then
+         if (.not. select_cells(cfg, grid, cells, verbose)) return
+         places = cells
+      else
+         if (have_maps .or. archive) then
+            call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude,                 &
+                                  cfg%forcing%max_distance_km, cells, distance_km, st)
+            if (st == GRID_ERR_NO_CELL) then
+               write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' force : no valid ED_ERA5land cell within ',        &
+                     cfg%forcing%max_distance_km, ' km of the site (', cfg%forcing%latitude, ', ',        &
+                     cfg%forcing%longitude, ')'
+               return
+            else if (st /= GRID_OK) then
+               write(*,'(2a)') ' force : cannot read the ED_ERA5land static file ', trim(grid%static_file)
+               return
+            end if
+         end if
+         call site_place(cfg, cells, places)
+      end if
+      if (have_maps) then
+         call read_map_inputs(cfg%maps, grid, cells, inputs, msg)
+         if (len(msg) > 0) then
+            write(*,'(2a)') merge(' region: ', ' maps  : ', region), msg
+            return
+         end if
+         if (verbose .and. .not. region) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
+      end if
+      ok = .true.
+   end function choose_polygons
+
+   !----- A one-polygon run's place: the [site] location, which the polygon runs at, with the grid !
+   !      indices of the archive cell it reads (0 when it reads none). ----------------------------!
+   subroutine site_place(cfg, cells, place)
+      type(meds_config_t), intent(in)  :: cfg
+      type(met_cells_t),   intent(in)  :: cells
+      type(met_cells_t),   intent(out) :: place
+      place%ncell = 1_ik
+      allocate(place%row(1), place%col(1), source=0_ik)
+      allocate(place%lat(1), source=cfg%forcing%latitude)
+      allocate(place%lon(1), source=cfg%forcing%longitude)
+      allocate(place%elevation(1), source=cfg%forcing%elevation)
+      if (cells%ncell == 1_ik) then
+         place%nlat = cells%nlat
+         place%nlon = cells%nlon
+         place%row  = cells%row
+         place%col  = cells%col
+      end if
+   end subroutine site_place
+
+   !----- The forcing: the archive at the run's cells, or a point forcing file; without forcing,   !
+   !      the CO2 series alone, at whose CO2 the fast loop reads the reference climate             !
+   !      (docs/science/forcing.md §12). .false. when it cannot be opened (met_open says why). ----!
+   logical function open_forcing(reg, cells, distance_km) result(ok)
+      type(meds_region_t), intent(inout) :: reg
+      type(met_cells_t),   intent(in)    :: cells
+      real(wp),            intent(in)    :: distance_km
+      integer(ik) :: st
+      ok = .true.
+      associate (cfg => reg%cfg)
+      if (.not. cfg%fast_biophysics_on) return
+      if (cfg%forcing%forcing_on) then
+         if (cells%ncell > 0_ik) then
             call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,              &
                           run_end=cfg%end_time, cells=cells)
          else
             call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,              &
                           run_end=cfg%end_time)
          end if
-         if (st /= MET_OK) return
+         ok = st == MET_OK
+         if (.not. ok) return
+         if (cells%ncell > 0_ik) then
+            if (cfg%mode == RUN_MODE_REGION) then
+               write(*,'(a,i0,a)') ' force : ED_ERA5land region, ', cells%ncell, ' cells'
+            else
+               write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', cells%lat(1), ', ',  &
+                     cells%lon(1), '), ', distance_km, ' km from the site; orography ', cells%elevation(1), ' m'
+            end if
+         end if
          if (reg%verbose) then
             if (cfg%forcing%format == MET_BACKEND_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
@@ -205,114 +290,105 @@ contains
                write(*,'(3a)') ' force : met forcing ON (', trim(cfg%forcing%path), ')'
             end if
          end if
-      else if (cfg%fast_biophysics_on) then
-         !----- Without forcing the fast loop reads the reference climate at the run's CO2, so only  !
-         !      the CO2 is opened (docs/science/forcing.md §12). ----------------------------------!
+      else
          call met_open_co2(reg%met_src, cfg%forcing, cfg%start_time, cfg%end_time, stat=st)
-         if (st /= MET_OK) return
+         ok = st == MET_OK
       end if
-      if (.not. region) call site_cell(reg%met_src, cfg, cells)
+      end associate
+   end function open_forcing
 
-      !----- Each polygon at its location, from its initial community, with its own configuration: !
-      !      the run's, with a region cell's own soil and site index. --------------------------------!
+   !----- Each polygon at its place, from its start, on its own configuration: the run's, with its !
+   !      cell's map inputs. Then what follows the start (polygon_prepare); one polygon gives its  !
+   !      patch loop the run's threads, a region gives them to its polygons. .false. when a        !
+   !      start's file cannot serve it. -----------------------------------------------------------!
+   logical function start_polygons(reg, places, ids, slot, inputs, have_maps) result(ok)
+      type(meds_region_t), intent(inout) :: reg
+      type(met_cells_t),   intent(in)    :: places
+      integer(ik),         intent(in)    :: ids(:), slot(:)
+      type(map_inputs_t),  intent(in)    :: inputs
+      logical,             intent(in)    :: have_maps
+      type(meds_config_t)              :: pcfg
+      type(meds_config_t), allocatable :: site_cfg(:)     !< [[sites]]: each site's configuration ...
+      real(wp),            allocatable :: site_area(:)    !< ... and share of the polygon
+      integer(ik) :: p, n
+      ok = .false.
+      n = places%ncell
+      associate (cfg => reg%cfg)
       allocate(reg%poly(n), reg%run(n), reg%out_bufs(n))
       reg%now = cfg%start_time
       do p = 1_ik, n
          associate (poly => reg%poly(p), run => reg%run(p))
-            run%cell = p
             pcfg = cfg
-            if (region) then
-               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', cells%lat(p), ', ',   &
-                                                       cells%lon(p), ')'
+            if (cfg%mode == RUN_MODE_REGION)                                                        &
+               write(run%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', ids(p), ' (', places%lat(p), ', ',  &
+                                                       places%lon(p), ')'
+            if (have_maps) then
                call apply_map_inputs(inputs, p, pcfg)
                call validate_config(pcfg)
             end if
-            !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----------!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
-            if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
+            if (allocated(pcfg%sites)) call site_configs(pcfg, site_cfg, site_area)
             call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
-                              started, site_cfg=site_cfg, site_area=site_area)
-            if (.not. started) return
-            !----- The polygon's id and place, on the stand the initial community built. -------------!
+                              ok, site_cfg=site_cfg, site_area=site_area)
+            if (.not. ok) return
             poly%id            = ids(p)
-            poly%latitude_deg  = cells%lat(p)
-            poly%longitude_deg = cells%lon(p)
-            poly%elevation_m   = cells%elevation(p)
+            poly%latitude_deg  = places%lat(p)
+            poly%longitude_deg = places%lon(p)
+            poly%elevation_m   = places%elevation(p)
             call set_site_terrain(poly, pcfg)
-
-            !----- The fast context, the forcing cursor, the soil-carbon spin-up. One                   !
-            !      polygon gives its patch loop the run's threads; a region gives them to its polygons. -!
-            call polygon_prepare(cfg, reg%met_src, poly, run,                                          &
+            call polygon_prepare(cfg, reg%met_src, p, poly, run,                                       &
                                  keep_soil_carbon=cfg%init%init_mode == INIT_RESTART,                     &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &
                                  verbose=reg%verbose .and. n == 1_ik)
          end associate
       end do
+      !----- A restart's polygons all read the restructuring their file owes; a new stand owes     !
+      !      none. --------------------------------------------------------------------------------!
+      reg%restructure_pending  = reg%poly(1)%restructure_pending
+      reg%restructure_new_year = reg%poly(1)%restructure_new_year
+      end associate
+   end function start_polygons
 
-      reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
-      allocate(reg%cost(n), source=0.0_wp)
-
-      if (reg%verbose) then
-         write(*,'(a)') '==================== MEDS run ===================='
-         if (region) write(*,'(a,4(1x,f0.3),a,i0,a,f0.2,a)') ' region: box_nwse =', cfg%region%box_nwse, ', ', &
-               n, ' polygons (land fraction >= ', cfg%region%land_fraction_min, ')'
-         write(*,'(5a)') ' run   : ', time_to_string(cfg%start_time), ' -> ', time_to_string(cfg%end_time)
-         write(*,'(a,f0.2,a,i0)') ' span  : ', years_between(reg%now, cfg%end_time), ' yr  steps/yr~',    &
-               max(1_ik, nint(yr_day / real(reg%step_days, wp), ik))
+   !----- The run's files: the state files' directory and the run's PFT table; the diagnostic      !
+   !      output ([output].enabled), behind the polygon axis, each polygon writing its own layers, !
+   !      cohorts and patches; and the parameter record beside the output and the state, every     !
+   !      setting the loader read, from which file, set or defaulted, and its value, so a caller   !
+   !      can tell whether a key was read. --------------------------------------------------------!
+   subroutine open_files(reg, ids, places)
+      type(meds_region_t), intent(inout) :: reg
+      integer(ik),         intent(in)    :: ids(:)
+      type(met_cells_t),   intent(in)    :: places
+      integer(ik) :: p
+      associate (cfg => reg%cfg, out => reg%cfg%output)
+      if (out%state_write) then
+         call ensure_output_dir(trim(out%state_file_dir))
+         call write_pft_params_csv(cfg, trim(out%state_file_dir)//'/'//trim(out%state_file_prefix)//     &
+                                   '_pft_parameters.csv')
       end if
-
-      !----- The state files and the run's PFT provenance table. -------------------------------------!
-      if (cfg%output%state_write) then
-         call ensure_output_dir(trim(cfg%output%state_file_dir))
-         call write_pft_params_csv(cfg, trim(cfg%output%state_file_dir)//'/'//                           &
-                                   trim(cfg%output%state_file_prefix)//'_pft_parameters.csv')
-      end if
-
-      !----- DIAGNOSTIC output ([output].enabled): every configured variable and tier, behind the     !
-      !      polygon axis. Each polygon writes its own soil layers, cohorts and patches and leaves the  !
-      !      rest of each axis empty; the files carry each polygon's own layer depths and inputs. -----!
-      if (cfg%output%enabled) then
-         call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, cells%lat, cells%lon, &
-                                cells%row, cells%col)
-         do p = 1_ik, n
-            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p)%cell)
+      if (out%enabled) then
+         call ensure_output_dir(trim(out%dir))
+         call open_output_files(cfg, reg%out_files, reg%verbose, ids, reg%poly(:)%site%n, places%lat,    &
+                                places%lon, places%row, places%col)
+         do p = 1_ik, size(reg%poly, kind=ik)
+            call attach_output(cfg, reg%out_files, reg%out_bufs(p), reg%poly(p), p)
          end do
          if (reg%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
-
-      !----- The PARAMETER RECORD: every setting the loader read, from which file, whether it was set  !
-      !      there or defaulted, and the value used -- beside the output and beside the state,         !
-      !      whichever the run writes. A caller that set a key finds it here or learns that the key was !
-      !      never read. ---------------------------------------------------------------------------------!
-      if (cfg%output%enabled)                                                                      &
-         call toml_write_record(trim(cfg%output%dir)//'/'//trim(cfg%output%prefix)//'_parameters.csv')
-      if (cfg%output%state_write)                                                                  &
-         call toml_write_record(trim(cfg%output%state_file_dir)//'/'//trim(cfg%output%state_file_prefix)// &
-                                '_parameters.csv')
-
-      if (reg%verbose .and. n == 1_ik) then
-         write(*,'(a)') '-----------------------------------------------------------------------------'
-         call print_summary(reg%poly(1), 'start')
-      end if
+      if (out%enabled) call toml_write_record(trim(out%dir)//'/'//trim(out%prefix)//'_parameters.csv')
+      if (out%state_write)                                                                         &
+         call toml_write_record(trim(out%state_file_dir)//'/'//trim(out%state_file_prefix)//'_parameters.csv')
       end associate
-      ok = .true.
-   end subroutine region_open
+   end subroutine open_files
 
-   !----- A polygon's sites from its configuration's [[sites]]: each one's configuration (the        !
-   !      polygon's, with the site's own ground when it has one) and its share of the polygon, the   !
-   !      shares made to sum to exactly 1. ----------------------------------------------------------!
-   subroutine polygon_sites(pcfg, site_cfg, site_area)
-      type(meds_config_t),              intent(in)  :: pcfg
-      type(meds_config_t), allocatable, intent(out) :: site_cfg(:)
-      real(wp),            allocatable, intent(out) :: site_area(:)
-      integer(ik) :: is
-      allocate(site_cfg(size(pcfg%sites)))
-      do is = 1_ik, size(pcfg%sites, kind=ik)
-         site_cfg(is) = site_config(pcfg, is)
-      end do
-      site_area = pcfg%sites%area_fraction / sum(pcfg%sites%area_fraction)
-   end subroutine polygon_sites
+   !----- Create an output directory that does not exist yet. The model's libraries never touch    !
+   !      the file system; the run does. ----------------------------------------------------------!
+   subroutine ensure_output_dir(dir)
+      character(len=*), intent(in) :: dir
+      integer :: stat
+      if (len_trim(dir) == 0 .or. trim(dir) == '.') return
+      call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
+      if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
+   end subroutine ensure_output_dir
 
    !----- Each site's terrain: the polygon's elevation, flat, unless its [[sites]] table gives its own. !
    subroutine set_site_terrain(poly, pcfg)
@@ -329,34 +405,6 @@ contains
          end associate
       end do
    end subroutine set_site_terrain
-
-   !----- A site run's [maps] inputs, at the forcing cell its [site] location reads (the archive's  !
-   !      own choice, select_site_cell), into cfg, which is then validated again. msg is '' on    !
-   !      success, else why the inputs could not be had. ---------------------------------------!
-   subroutine site_map_inputs(cfg, msg)
-      type(meds_config_t),           intent(inout) :: cfg
-      character(len=:), allocatable, intent(out)   :: msg
-      type(met_grid_t)   :: grid
-      type(met_cells_t)  :: cell
-      type(map_inputs_t) :: inp
-      real(wp)    :: distance_km
-      integer(ik) :: st
-      grid = era5land_grid(cfg%forcing)
-      call select_site_cell(grid, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%max_distance_km, &
-                            cell, distance_km, st)
-      if (st /= GRID_OK) then
-         if (st == GRID_ERR_NO_CELL) then
-            msg = 'no valid forcing cell near the site for the [maps] maps'
-         else
-            msg = 'cannot read the forcing''s static file '//trim(grid%static_file)//' for the [maps] maps'
-         end if
-         return
-      end if
-      call read_map_inputs(cfg%maps, grid, cell, inp, msg)
-      if (len(msg) > 0) return
-      call apply_map_inputs(inp, 1_ik, cfg)
-      call validate_config(cfg)
-   end subroutine site_map_inputs
 
    !----- A region's cells: the box's valid cells with enough land, in row-major order, less those   !
    !      the cell mask drops. .false. (after saying why) when none is left or a file cannot be read. !
@@ -394,27 +442,7 @@ contains
       ok = .true.
    end function select_cells
 
-   !----- A one-polygon run's cell: the [site] location, which the polygon runs at, and the grid      !
-   !      indices of the archive cell the forcing reads (0 on the MEDS forcing file, whose grids are    !
-   !      not on a global grid). ---------------------------------------------------------------------!
-   subroutine site_cell(met_src, cfg, cells)
-      type(met_source_t),  intent(in)  :: met_src
-      type(meds_config_t), intent(in)  :: cfg
-      type(met_cells_t),   intent(out) :: cells
-      cells%ncell = 1_ik
-      allocate(cells%row(1), cells%col(1), source=0_ik)
-      allocate(cells%lat(1), source=cfg%forcing%latitude)
-      allocate(cells%lon(1), source=cfg%forcing%longitude)
-      allocate(cells%elevation(1), source=cfg%forcing%elevation)
-      if (met_src%cells%ncell == 1_ik) then
-         cells%nlat = met_src%cells%nlat
-         cells%nlon = met_src%cells%nlon
-         cells%row  = met_src%cells%row
-         cells%col  = met_src%cells%col
-      end if
-   end subroutine site_cell
-
-   !----- How messages name a polygon: its label, or "the site" for a one-polygon run. -------------!
+   !----- How messages name a polygon: its label, or "the site" for a one-polygon run. ------------!
    function polygon_name(run) result(name)
       type(polygon_run_t), intent(in) :: run
       character(len=:), allocatable :: name
@@ -425,7 +453,7 @@ contains
       end if
    end function polygon_name
 
-   !----- Is the environment variable set? ---------------------------------------------------------!
+   !----- Is the environment variable set? --------------------------------------------------------!
    logical function env_set(name) result(yes)
       character(len=*), intent(in) :: name
       integer :: n, st
@@ -434,108 +462,89 @@ contains
    end function env_set
 
    !---------------------------------------------------------------------------------------!
-   ! region_step -- ONE slow step of every polygon: load the step's forcing (a no-op unless a new  !
-   ! month starts), step the polygons, and after a month's last step run the I/O phase. The C API  !
-   ! steps a run this way; region_step_month takes a month of these steps at once.                !
+   ! region_step -- one slow step of every polygon, as the C API steps a run: the step's   !
+   ! forcing (loaded when a month starts), the polygons, and after a month's last step the !
+   ! I/O phase.                                                                            !
    !---------------------------------------------------------------------------------------!
    subroutine region_step(reg, status)
       type(meds_region_t), intent(inout) :: reg
       integer(ik),         intent(out)   :: status
-      type(meds_time_t) :: step_start(1), step_end(1)
-      logical           :: new_month(1), new_year(1)
-      status = DRIVER_OK
       if (region_done(reg)) then
-         status = DRIVER_FINISHED
+         status = RUN_FINISHED
          return
       end if
-      step_start(1) = reg%now
-      step_end(1)   = time_advance_days(reg%now, reg%step_days)
-      new_year(1)   = step_end(1)%year /= step_start(1)%year
-      new_month(1)  = new_year(1) .or. step_end(1)%month /= step_start(1)%month
-      call step_polygons(reg, step_start, step_end, new_month, new_year, status)
+      call step_polygons(reg, list_steps(reg, 1_ik), status)
    end subroutine region_step
 
    !---------------------------------------------------------------------------------------!
-   ! region_step_month -- one month of every polygon: load the month's forcing for every cell, !
-   ! advance each polygon through it, then write the queued output. The month runs from the   !
-   ! current date to the next month boundary, to end_time, or to the next state file, which a  !
-   ! state file every N days can put inside a month.                                           !
+   ! region_step_month -- every polygon through a month: to the next month boundary, to    !
+   ! end_time, or to a state file that falls inside the month.                             !
    !---------------------------------------------------------------------------------------!
    subroutine region_step_month(reg, status)
       type(meds_region_t), intent(inout) :: reg
       integer(ik),         intent(out)   :: status
-      type(meds_time_t), allocatable :: step_start(:), step_end(:)
-      logical,           allocatable :: new_month(:), new_year(:)
-      type(meds_time_t) :: clk
-      integer(ik)       :: nstep, s
-
-      status = DRIVER_OK
       if (region_done(reg)) then
-         status = DRIVER_FINISHED
+         status = RUN_FINISHED
          return
       end if
-      !----- The month's steps, listed once. A step's forcing lies in the month its start date      !
-      !      belongs to (daily steps from midnight, and validate_config puts the recycle seam on a   !
-      !      month boundary), so one prefetch at the month's start loads every step's forcing. ------!
-      nstep = 0_ik
-      clk = reg%now
-      do
-         clk = time_advance_days(clk, reg%step_days)
-         nstep = nstep + 1_ik
-         if (clk%year /= reg%now%year .or. clk%month /= reg%now%month) exit
-         if (.not. time_lt(clk, reg%cfg%end_time)) exit
-         if (state_due(reg%cfg%output, reg%istep + nstep, reg%step_days, .false., .false.,          &
-                       reg%imonth, reg%iyear)) exit
-      end do
-      allocate(step_start(nstep), step_end(nstep), new_month(nstep), new_year(nstep))
-      clk = reg%now
-      do s = 1_ik, nstep
-         step_start(s) = clk
-         clk = time_advance_days(clk, reg%step_days)
-         step_end(s) = clk
-         new_year(s)  = step_end(s)%year /= step_start(s)%year
-         new_month(s) = new_year(s) .or. step_end(s)%month /= step_start(s)%month
-      end do
-      call step_polygons(reg, step_start, step_end, new_month, new_year, status)
+      call step_polygons(reg, list_steps(reg, huge(1_ik)), status)
    end subroutine region_step_month
 
+   !----- The steps from the run's date, at most max_steps of them, ending at the first month      !
+   !      boundary, at end_time, or where a state file every N days falls due. A step's forcing    !
+   !      lies in the month its start date belongs to (daily steps from midnight, and              !
+   !      validate_config puts the recycle seam on a month boundary), so one prefetch at the first !
+   !      step's start loads every step's forcing. ------------------------------------------------!
+   function list_steps(reg, max_steps) result(steps)
+      type(meds_region_t), intent(in) :: reg
+      integer(ik),         intent(in) :: max_steps
+      type(calendar_step_t), allocatable :: steps(:)
+      type(calendar_step_t) :: step
+      integer(ik)           :: n
+      allocate(steps(0))
+      step%end = reg%now
+      do
+         step  = calendar_step(step%end, reg%step_days)
+         steps = [steps, step]
+         n = size(steps, kind=ik)
+         if (n >= max_steps .or. step%new_month) exit
+         if (.not. time_lt(step%end, reg%cfg%end_time)) exit
+         if (state_file_due(reg%cfg%output, reg%istep + n, step, reg%imonth, reg%iyear)) exit
+      end do
+   end function list_steps
+
    !---------------------------------------------------------------------------------------!
-   ! step_polygons -- advance every polygon through the listed steps, then close what they end. !
-   !                                                                                          !
-   ! The forcing the steps read is loaded first. The polygons run side by side on               !
-   ! [run].n_threads threads, costliest first; they share only what they read (the config, the  !
-   ! forcing, the output layout), and each writes its own state and output buffers, so the      !
-   ! results do not depend on the thread count. One polygon runs on the calling thread and gives !
-   ! its patch loop the threads instead. A polygon that fails is reported and stops; the others   !
-   ! finish, the output is written, and the run moves on either way. The status returned is the  !
-   ! first failure's.                                                                              !
+   ! step_polygons -- the listed steps of every polygon, then the I/O phase. The polygons  !
+   ! run side by side on [run].n_threads threads, costliest first; they share only what    !
+   ! they read, so the results do not depend on the thread count. One polygon runs on the  !
+   ! calling thread and gives its patch loop the threads. A polygon that fails stops; the  !
+   ! others finish, the output is written, and the status returned is the first failure's. !
    !---------------------------------------------------------------------------------------!
-   subroutine step_polygons(reg, step_start, step_end, new_month, new_year, status)
-      type(meds_region_t), intent(inout) :: reg
-      type(meds_time_t),   intent(in)    :: step_start(:), step_end(:)
-      logical,             intent(in)    :: new_month(:), new_year(:)
-      integer(ik),         intent(out)   :: status
+   subroutine step_polygons(reg, steps, status)
+      type(meds_region_t),   intent(inout) :: reg
+      type(calendar_step_t), intent(in)    :: steps(:)
+      integer(ik),           intent(out)   :: status
       logical,     allocatable :: was_running(:)
       integer(ik), allocatable :: order(:), failed_step(:)
       integer(ik) :: nstep, s, p, k, st, npoly
       integer(ik) :: tick0, tick1, tick_rate
 
-      status = DRIVER_OK
-      associate (cfg => reg%cfg)
+      status = RUN_OK
+      associate (cfg => reg%cfg, last => steps(size(steps)))
       npoly = size(reg%poly, kind=ik)
-      nstep = size(step_start, kind=ik)
+      nstep = size(steps, kind=ik)
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call system_clock(tick0, tick_rate)
-         call met_prefetch(reg%met_src, step_start(1))
+         call met_prefetch(reg%met_src, steps(1)%start)
          call system_clock(tick1)
          reg%year_read_seconds = reg%year_read_seconds + real(tick1 - tick0, wp) / real(max(tick_rate, 1_ik), wp)
       end if
 
-      !----- The compute phase: no file is touched here; each polygon writes only its own state  !
-      !      and buffers. ---------------------------------------------------------------------------!
+      !----- The compute phase: no file is touched here; each polygon writes only its own state    !
+      !      and buffers. -------------------------------------------------------------------------!
       allocate(order(npoly), failed_step(npoly), was_running(npoly))
       call ascending_order(-reg%cost, npoly, order)
-      was_running = reg%run(:)%status == DRIVER_OK
+      was_running = reg%run(:)%status == RUN_OK
       failed_step = 0_ik
       !$omp parallel do schedule(dynamic, 1) num_threads(cfg%n_threads) default(shared) if(npoly > 1)   &
       !$omp    private(k, p, s, st, tick0, tick1, tick_rate)
@@ -544,10 +553,9 @@ contains
          if (.not. was_running(p)) cycle
          call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
-                              reg%run(p),                                                              &
-                              step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
-            if (st /= DRIVER_OK) then
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p),  &
+                              steps(s), st)
+            if (st /= RUN_OK) then
                failed_step(p) = s
                exit
             end if
@@ -560,15 +568,17 @@ contains
       do p = 1_ik, npoly
          if (failed_step(p) == 0_ik) cycle
          if (npoly > 1_ik) write(*,'(4a)') ' region: ', trim(reg%run(p)%label), ' failed on ',       &
-                                           time_to_string(step_end(failed_step(p)))
-         if (status == DRIVER_OK) status = reg%run(p)%status
+                                           time_to_string(steps(failed_step(p))%end)
+         if (status == RUN_OK) status = reg%run(p)%status
       end do
-      reg%now   = step_end(nstep)
+      reg%now   = last%end
       reg%istep = reg%istep + nstep
-      if (new_month(nstep)) reg%imonth = reg%imonth + 1_ik
+      if (last%new_month) reg%imonth = reg%imonth + 1_ik
+      reg%restructure_pending  = last%new_month
+      reg%restructure_new_year = last%new_year
 
-      !----- A year's end: the summary line(s), and the forcing-read accounting. -------------------!
-      if (new_year(nstep)) then
+      !----- A year's end: the summary line(s), and the forcing-read accounting. ------------------!
+      if (last%new_year) then
          reg%iyear = reg%iyear + 1_ik
          if (reg%verbose) call year_summary(reg)
          reg%read_seconds = reg%read_seconds + reg%year_read_seconds
@@ -576,39 +586,37 @@ contains
          reg%year_loads0 = reg%met_src%n_loads
       end if
 
-      !----- The I/O phase: the records the steps closed, after a month's last step, a failure or the  !
-      !      run's last step, and the state file when one is due. ------------------------------------!
-      if (cfg%output%enabled .and. (new_month(nstep) .or. status /= DRIVER_OK .or. region_done(reg)))  &
+      !----- The I/O phase: the records the steps closed, after a month's last step, a failure or  !
+      !      the run's last step, and the state file when one is due. -----------------------------!
+      if (cfg%output%enabled .and. (last%new_month .or. status /= RUN_OK .or. region_done(reg)))  &
          call output_serialize(reg%out_files, reg%out_bufs)
-      if (state_due(cfg%output, reg%istep, reg%step_days, new_month(nstep), new_year(nstep), reg%imonth, &
-                    reg%iyear)) call region_write_state(reg)
+      if (state_file_due(cfg%output, reg%istep, last, reg%imonth, reg%iyear)) call write_state_file(reg)
       end associate
    end subroutine step_polygons
 
-   !----- Is a state file due at the end of the step that brings the run to `istep` steps, which     !
-   !      crosses a month and a year boundary as new_month and new_year say, the run having crossed  !
-   !      imonth and iyear of them by then? Every state_every days from the run's start, or at every  !
-   !      state_every-th month or year boundary ([output].state_interval). ----------------------------!
-   pure logical function state_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
+   !----- Is a state file due after `step`, the step that brings the run to `istep` steps, the run !
+   !      having crossed imonth months and iyear years by then? Every state_every days from the    !
+   !      start, or at every state_every-th month or year boundary ([output].state_interval). -----!
+   pure logical function state_file_due(out, istep, step, imonth, iyear) result(due)
       type(output_params_t), intent(in) :: out
-      integer(ik),           intent(in) :: istep, step_days, imonth, iyear
-      logical,               intent(in) :: new_month, new_year
+      integer(ik),           intent(in) :: istep, imonth, iyear
+      type(calendar_step_t), intent(in) :: step
       due = .false.
       if (.not. out%state_write) return
       select case (out%state_unit)
       case (STATE_DAYS)
-         due = mod(istep * step_days, out%state_every) == 0_ik
+         due = mod(istep * step%days, out%state_every) == 0_ik
       case (STATE_MONTHS)
-         due = new_month .and. mod(imonth, out%state_every) == 0_ik
+         due = step%new_month .and. mod(imonth, out%state_every) == 0_ik
       case (STATE_YEARS)
-         due = new_year .and. mod(iyear, out%state_every) == 0_ik
+         due = step%new_year .and. mod(iyear, out%state_every) == 0_ik
       end select
-   end function state_due
+   end function state_file_due
 
-   !----- The state file: every polygon's row, at the current date (meds_init_restart). The cohort, patch and   !
-   !      site axes are the largest polygon's. The polygons share the calendar, so they owe the same  !
-   !      boundary restructuring. --------------------------------------------------------------------!
-   subroutine region_write_state(reg)
+   !----- The state file: every polygon's row, at the current date (meds_init_restart). The        !
+   !      cohort, patch and site axes are the largest polygon's. The restructuring it owes is the  !
+   !      calendar's (the run's), which a polygon that has failed no longer tracks. ---------------!
+   subroutine write_state_file(reg)
       type(meds_region_t), intent(in) :: reg
       type(restart_file_t)       :: sf
       integer(ik), allocatable :: ids(:)
@@ -629,16 +637,16 @@ contains
       call restart_file_open(sf, trim(reg%cfg%output%state_file_dir), trim(reg%cfg%output%state_file_prefix), reg%now, &
                            reg%cfg%pft%n, int(size(reg%poly(1)%cohort%growth_hist, 1), ik), n_cohort,       &
                            n_patch, n_site, polygon_id=ids, polygon_lat=lat, polygon_lon=lon,              &
-                           restructure_pending=reg%poly(1)%restructure_pending,                            &
-                           restructure_new_year=reg%poly(1)%restructure_new_year)
+                           restructure_pending=reg%restructure_pending,                                    &
+                           restructure_new_year=reg%restructure_new_year)
       do p = 1_ik, size(reg%poly, kind=ik)
          call restart_file_write(sf, reg%poly(p), reg%now, p)
       end do
       call restart_file_close(sf)
-   end subroutine region_write_state
+   end subroutine write_state_file
 
-   !----- A year's summary: one polygon's stand every 5 years, or a line for the polygons' mean and  !
-   !      range of AGB and LAI every year, with what the forcing reads cost. ------------------------!
+   !----- A year's summary: one polygon's stand every 5 years, or a line for the polygons' mean    !
+   !      and range of AGB and LAI every year, with what the forcing reads cost. ------------------!
    subroutine year_summary(reg)
       type(meds_region_t), intent(in) :: reg
       character(len=19) :: when
@@ -661,11 +669,10 @@ contains
    end subroutine year_summary
 
    !---------------------------------------------------------------------------------------!
-   ! region_finalize -- the terminal state file, the end-of-run report (one polygon's stand and   !
-   ! conservation reports, or a table of the polygons), close every file and the forcing source.  !
-   ! DRIVER_ERR_AREA if any polygon's patch areas do not sum to 1. Once a polygon has failed, the   !
-   ! run writes nothing more: no state file and no partial periods, so a closed chunk file is      !
-   ! never made again from scratch.                                                                 !
+   ! region_finalize -- the terminal state file, the end-of-run report, and every file and !
+   ! the forcing closed; RUN_ERR_AREA if a polygon's patch areas do not sum to 1. After !
+   ! a failure the run writes nothing more, so a closed chunk file is never made again     !
+   ! from scratch.                                                                         !
    !---------------------------------------------------------------------------------------!
    subroutine region_finalize(reg, status)
       type(meds_region_t),   intent(inout) :: reg
@@ -674,11 +681,11 @@ contains
       real(wp)    :: a1
       logical     :: failed
 
-      st = DRIVER_OK
+      st = RUN_OK
       n_bad = 0_ik
-      failed = any(reg%run(:)%status /= DRIVER_OK)
-      !----- The true terminal state, so a restart resumes exactly here. -----------------------------!
-      if (reg%cfg%output%state_write .and. .not. failed) call region_write_state(reg)
+      failed = any(reg%run(:)%status /= RUN_OK)
+      !----- The true terminal state, so a restart resumes exactly here. --------------------------!
+      if (reg%cfg%output%state_write .and. .not. failed) call write_state_file(reg)
       if (size(reg%poly) == 1) then
          associate (poly => reg%poly(1), run => reg%run(1))
             if (reg%verbose) call print_summary(poly, 'final')
@@ -687,7 +694,7 @@ contains
                write(*,'(a)') '-----------------------------------------------------------------------------'
                write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
             end if
-            if (abs(a1 - 1.0_wp) > AREA_TOL) st = DRIVER_ERR_AREA
+            if (abs(a1 - 1.0_wp) > AREA_TOL) st = RUN_ERR_AREA
             if (reg%verbose) call polygon_report(reg%cfg, run)
          end associate
       else
@@ -699,7 +706,7 @@ contains
             associate (poly => reg%poly(p), run => reg%run(p))
                a1 = total_area(poly)
                if (abs(a1 - 1.0_wp) > AREA_TOL) then
-                  st = DRIVER_ERR_AREA
+                  st = RUN_ERR_AREA
                   n_bad = n_bad + 1_ik
                end if
                if (reg%verbose)                                                                    &
@@ -721,11 +728,9 @@ contains
    end subroutine region_finalize
 
    !---------------------------------------------------------------------------------------!
-   ! region_free -- release a run, finalized or not: close its output files (a period still    !
-   ! open is not written; region_finalize writes it) and its forcing source, free its polygons, !
-   ! and leave the variable as a run never opened, which region_open takes again. Separate from  !
-   ! finalize, so a caller can still read the final state (the getters the C-API exposes) after   !
-   ! the files are closed.                                                                        !
+   ! region_free -- close a run's files (an open period is not written) and its forcing,   !
+   ! free its polygons, and leave the variable as a run never opened. Apart from finalize, !
+   ! so a caller can read the final state after the files are closed.                      !
    !---------------------------------------------------------------------------------------!
    subroutine region_free(reg)
       type(meds_region_t), intent(inout) :: reg

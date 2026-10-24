@@ -91,7 +91,7 @@ src/                                    37.5 k lines · 98 modules · 21 CMake l
                    restructuring), meds_polygon (one polygon's run
                    machinery and step), meds_region (a run of one polygon
                    or many: open / step / finalize), meds_main
-                   (the PROGRAM)                                             1 357
+                   (the program)                                             1 267
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module
@@ -169,7 +169,7 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
                                                                      (INTERFACE)
   met, config ──→ maps ──────────────────────────┐
   output_stream ─────────────────────────────────┤
-  model ─────────────────────────────────────────┴──→ driver ──→ meds_main
+  model ─────────────────────────────────────────┴──→ run ─────→ meds_main
                                                                └→ c_api ──→ meds_py (libmeds.so)
                                                                         └→ the C-API tests
 ```
