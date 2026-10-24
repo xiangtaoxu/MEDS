@@ -17,7 +17,7 @@ module meds_polygon
    use, intrinsic :: ieee_arithmetic,   only : ieee_is_finite
    use meds_kinds,                      only : wp, ik
    use meds_config,                     only : meds_config_t, INIT_RESTART
-   use meds_time,                       only : meds_time_t, time_to_string
+   use meds_time,                       only : meds_time_t, calendar_step_t, time_to_string
    use meds_budget_check,               only : budget_t, budget_report
    use meds_cohort_state_vars,          only : cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,           only : canopy_air_bad_field, canopy_air_field_name, soil_carbon_t
@@ -111,24 +111,20 @@ contains
    end subroutine polygon_prepare
 
    !---------------------------------------------------------------------------------------!
-   ! polygon_step -- one slow step of one polygon, from `prev` to `now`: the restructuring !
-   ! the last step's boundary owes, the thermal acclimation, the coupled step, the output  !
-   ! tick and the state guard. The step's forcing is already loaded into `met_src`; closed !
-   ! output records are queued in the polygon's buffers, `out_bufs`.                       !
+   ! polygon_step -- one slow step of one polygon, `step`: the restructuring the last      !
+   ! step's boundary owes, the thermal acclimation, the coupled step, the output tick and  !
+   ! the state guard. The step's forcing is already loaded into `met_src`; closed output   !
+   ! records are queued in the polygon's buffers, `out_bufs`.                              !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_step(cfg, met_src, out_files, out_bufs, poly, run, prev, now, step_days,      &
-                           is_new_month, is_new_year, status)
+   subroutine polygon_step(cfg, met_src, out_files, out_bufs, poly, run, step, status)
       type(meds_config_t),    intent(in)    :: cfg
       type(met_source_t),     intent(in)    :: met_src
       type(output_files_t),   intent(in)    :: out_files
       type(output_buffers_t), intent(inout) :: out_bufs   !< this polygon's share of out_files
       type(polygon_t),        intent(inout) :: poly
       type(polygon_run_t),    intent(inout) :: run
-      type(meds_time_t),      intent(in)    :: prev, now
-      integer(ik),            intent(in)    :: step_days
-      logical,                intent(in)    :: is_new_month, is_new_year
+      type(calendar_step_t),  intent(in)    :: step
       integer(ik),            intent(out)   :: status
-      logical     :: is_new_day
       real(wp)    :: seam_prev
       integer(ik) :: n_cohort_max
 
@@ -144,12 +140,12 @@ contains
          poly%restructure_new_year = .false.
          if (poly%patch%n > run%most_patches) then
             run%most_patches      = poly%patch%n
-            run%most_patches_when = time_to_string(prev)
+            run%most_patches_when = time_to_string(step%start)
          end if
          n_cohort_max = max_cohort_count(poly)
          if (n_cohort_max > run%most_cohorts) then
             run%most_cohorts      = n_cohort_max
-            run%most_cohorts_when = time_to_string(prev)
+            run%most_cohorts_when = time_to_string(step%start)
          end if
       end if
 
@@ -157,11 +153,11 @@ contains
       !      growth-temperature mean takes the daily mean the last step's fast loop accumulated,   !
       !      and its leaf table follows. The mean tracks the preceding weeks, so one step's delay  !
       !      is a thirtieth of its window. --------------------------------------------------------!
-      if (cfg%leaf_physiology%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, step_days)
+      if (cfg%leaf_physiology%thermal_acclimation) call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, step%days)
 
       !----- The coupled step: the fast loop, which stages its sub-steps in `out_bufs` when the    !
       !      output reads them, then the slow dynamics. -------------------------------------------!
-      call advance_one_step(poly, cfg, met_src=met_src, met_cur=run%met_cur, step_start=prev,            &
+      call advance_one_step(poly, cfg, met_src=met_src, met_cur=run%met_cur, step_start=step%start,      &
                             out_bufs=out_bufs, run_energy_budget=run%energy_budget,                    &
                             run_water_budget=run%water_budget, run_face_budget=run%face_budget,         &
                             slow_ledger=run%slow_ledger, seam=run%seam,                                &
@@ -170,14 +166,13 @@ contains
       !----- The date the seam's worst Rh gap moved on: a gap only on the days a patch operator    !
       !      fires tells a different story from one that drifts every day. ------------------------!
       if (run%seam%worst_rh_gap > seam_prev) then
-         run%worst_rh_seam_when   = time_to_string(now)
+         run%worst_rh_seam_when   = time_to_string(step%end)
          run%worst_rh_seam_npatch = poly%patch%n
       end if
 
-      !----- Output: replay the staged FAST samples, then fold this step -- its fluxes from `prev` !
-      !      to `now` and its state at `now` -- into the slower tiers' windows that hold `prev`,   !
-      !      closing each period `now` has left and queueing it for the I/O phase. ----------------!
-      is_new_day = is_new_month .or. (now%day /= prev%day)
+      !----- Output: replay the staged FAST samples, then fold this step -- its fluxes over the    !
+      !      step and its state at its end -- into the slower tiers' windows that hold its start,  !
+      !      closing each period its end has left and queueing it for the I/O phase. --------------!
       if (out_files%enabled) call tick_output(out_files, out_bufs)
 
       !----- The output has read the step: zero its diagnostics. A step that ends on a month       !
@@ -185,10 +180,10 @@ contains
       !      records describe one stand and what the restructuring does belongs to the period that !
       !      begins (docs/science/diagnostics.md §4). ---------------------------------------------!
       call reset_step_diagnostics(poly)
-      poly%restructure_pending  = is_new_month
-      poly%restructure_new_year = is_new_year
+      poly%restructure_pending  = step%new_month
+      poly%restructure_new_year = step%new_year
 
-      status = check_polygon_state(cfg, poly, run, now)
+      status = check_polygon_state(cfg, poly, run, step%end)
       run%status = status
 
    contains
@@ -208,8 +203,8 @@ contains
                   call close_tier(files, bufs, TIER_FAST)
             end do
          end if
-         call output_integrate(files, bufs, poly, prev, cfg%dt_slow, is_new_day, is_new_month,           &
-                               is_new_year)
+         call output_integrate(files, bufs, poly, step%start, cfg%dt_slow, step%new_day, step%new_month,  &
+                               step%new_year)
          bufs%fast_ready = .false.
       end subroutine tick_output
 
@@ -219,9 +214,9 @@ contains
    ! check_polygon_state -- the guard every step ends with: the run's energy and water     !
    ! ledgers, each cohort's state, each patch's canopy air and, with soil carbon on, each  !
    ! soil-carbon pool (docs/science/order_of_processes.md §2). The first value found that  !
-   ! is not finite is RUN_ERR_NAN, the first outside its bounds RUN_ERR_BOUNDS,      !
-   ! reported with what and where. An operator keeps these in bounds by construction, so   !
-   ! either is a bug, and stopping on the step it happens is what makes it findable.       !
+   ! is not finite is RUN_ERR_NAN, the first outside its bounds RUN_ERR_BOUNDS, reported   !
+   ! with what and where. An operator keeps these in bounds by construction, so either is  !
+   ! a bug, and stopping on the step it happens is what makes it findable.                 !
    !---------------------------------------------------------------------------------------!
    integer(ik) function check_polygon_state(cfg, poly, run, now) result(status)
       type(meds_config_t), intent(in) :: cfg

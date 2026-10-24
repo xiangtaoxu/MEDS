@@ -26,8 +26,8 @@ module meds_region
                                            RUN_MODE_REGION, soil_maps_on, site_config, apply_map_inputs
    use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
-   use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
-                                           years_between
+   use meds_time,                   only : meds_time_t, calendar_step_t, calendar_step, time_lt,       &
+                                           time_to_string, years_between
    use meds_polygon_state_vars,     only : polygon_t, free_polygon
    use meds_init_restart,           only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
                                            restart_file_slots
@@ -443,18 +443,11 @@ contains
    subroutine region_step(reg, status)
       type(meds_region_t), intent(inout) :: reg
       integer(ik),         intent(out)   :: status
-      type(meds_time_t) :: step_start(1), step_end(1)
-      logical           :: new_month(1), new_year(1)
-      status = RUN_OK
       if (region_done(reg)) then
          status = RUN_FINISHED
          return
       end if
-      step_start(1) = reg%now
-      step_end(1)   = time_advance_days(reg%now, reg%step_days)
-      new_year(1)   = step_end(1)%year /= step_start(1)%year
-      new_month(1)  = new_year(1) .or. step_end(1)%month /= step_start(1)%month
-      call step_polygons(reg, step_start, step_end, new_month, new_year, status)
+      call step_polygons(reg, list_steps(reg, 1_ik), status)
    end subroutine region_step
 
    !---------------------------------------------------------------------------------------!
@@ -464,40 +457,35 @@ contains
    subroutine region_step_month(reg, status)
       type(meds_region_t), intent(inout) :: reg
       integer(ik),         intent(out)   :: status
-      type(meds_time_t), allocatable :: step_start(:), step_end(:)
-      logical,           allocatable :: new_month(:), new_year(:)
-      type(meds_time_t) :: clk
-      integer(ik)       :: nstep, s
-
-      status = RUN_OK
       if (region_done(reg)) then
          status = RUN_FINISHED
          return
       end if
-      !----- The month's steps, listed once. A step's forcing lies in the month its start date     !
-      !      belongs to (daily steps from midnight, and validate_config puts the recycle seam on a !
-      !      month boundary), so one prefetch at the month's start loads every step's forcing. ----!
-      nstep = 0_ik
-      clk = reg%now
-      do
-         clk = time_advance_days(clk, reg%step_days)
-         nstep = nstep + 1_ik
-         if (clk%year /= reg%now%year .or. clk%month /= reg%now%month) exit
-         if (.not. time_lt(clk, reg%cfg%end_time)) exit
-         if (state_file_due(reg%cfg%output, reg%istep + nstep, reg%step_days, .false., .false.,          &
-                       reg%imonth, reg%iyear)) exit
-      end do
-      allocate(step_start(nstep), step_end(nstep), new_month(nstep), new_year(nstep))
-      clk = reg%now
-      do s = 1_ik, nstep
-         step_start(s) = clk
-         clk = time_advance_days(clk, reg%step_days)
-         step_end(s) = clk
-         new_year(s)  = step_end(s)%year /= step_start(s)%year
-         new_month(s) = new_year(s) .or. step_end(s)%month /= step_start(s)%month
-      end do
-      call step_polygons(reg, step_start, step_end, new_month, new_year, status)
+      call step_polygons(reg, list_steps(reg, huge(1_ik)), status)
    end subroutine region_step_month
+
+   !----- The steps from the run's date, at most max_steps of them, ending at the first month      !
+   !      boundary, at end_time, or where a state file every N days falls due. A step's forcing    !
+   !      lies in the month its start date belongs to (daily steps from midnight, and              !
+   !      validate_config puts the recycle seam on a month boundary), so one prefetch at the first !
+   !      step's start loads every step's forcing. ------------------------------------------------!
+   function list_steps(reg, max_steps) result(steps)
+      type(meds_region_t), intent(in) :: reg
+      integer(ik),         intent(in) :: max_steps
+      type(calendar_step_t), allocatable :: steps(:)
+      type(calendar_step_t) :: step
+      integer(ik)           :: n
+      allocate(steps(0))
+      step%end = reg%now
+      do
+         step  = calendar_step(step%end, reg%step_days)
+         steps = [steps, step]
+         n = size(steps, kind=ik)
+         if (n >= max_steps .or. step%new_month) exit
+         if (.not. time_lt(step%end, reg%cfg%end_time)) exit
+         if (state_file_due(reg%cfg%output, reg%istep + n, step, reg%imonth, reg%iyear)) exit
+      end do
+   end function list_steps
 
    !---------------------------------------------------------------------------------------!
    ! step_polygons -- the listed steps of every polygon, then the I/O phase. The polygons  !
@@ -506,23 +494,22 @@ contains
    ! calling thread and gives its patch loop the threads. A polygon that fails stops; the  !
    ! others finish, the output is written, and the status returned is the first failure's. !
    !---------------------------------------------------------------------------------------!
-   subroutine step_polygons(reg, step_start, step_end, new_month, new_year, status)
-      type(meds_region_t), intent(inout) :: reg
-      type(meds_time_t),   intent(in)    :: step_start(:), step_end(:)
-      logical,             intent(in)    :: new_month(:), new_year(:)
-      integer(ik),         intent(out)   :: status
+   subroutine step_polygons(reg, steps, status)
+      type(meds_region_t),   intent(inout) :: reg
+      type(calendar_step_t), intent(in)    :: steps(:)
+      integer(ik),           intent(out)   :: status
       logical,     allocatable :: was_running(:)
       integer(ik), allocatable :: order(:), failed_step(:)
       integer(ik) :: nstep, s, p, k, st, npoly
       integer(ik) :: tick0, tick1, tick_rate
 
       status = RUN_OK
-      associate (cfg => reg%cfg)
+      associate (cfg => reg%cfg, last => steps(size(steps)))
       npoly = size(reg%poly, kind=ik)
-      nstep = size(step_start, kind=ik)
+      nstep = size(steps, kind=ik)
       if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
          call system_clock(tick0, tick_rate)
-         call met_prefetch(reg%met_src, step_start(1))
+         call met_prefetch(reg%met_src, steps(1)%start)
          call system_clock(tick1)
          reg%year_read_seconds = reg%year_read_seconds + real(tick1 - tick0, wp) / real(max(tick_rate, 1_ik), wp)
       end if
@@ -540,9 +527,8 @@ contains
          if (.not. was_running(p)) cycle
          call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
-                              reg%run(p),                                                              &
-                              step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), reg%run(p),  &
+                              steps(s), st)
             if (st /= RUN_OK) then
                failed_step(p) = s
                exit
@@ -556,17 +542,17 @@ contains
       do p = 1_ik, npoly
          if (failed_step(p) == 0_ik) cycle
          if (npoly > 1_ik) write(*,'(4a)') ' region: ', trim(reg%run(p)%label), ' failed on ',       &
-                                           time_to_string(step_end(failed_step(p)))
+                                           time_to_string(steps(failed_step(p))%end)
          if (status == RUN_OK) status = reg%run(p)%status
       end do
-      reg%now   = step_end(nstep)
+      reg%now   = last%end
       reg%istep = reg%istep + nstep
-      if (new_month(nstep)) reg%imonth = reg%imonth + 1_ik
-      reg%restructure_pending  = new_month(nstep)
-      reg%restructure_new_year = new_year(nstep)
+      if (last%new_month) reg%imonth = reg%imonth + 1_ik
+      reg%restructure_pending  = last%new_month
+      reg%restructure_new_year = last%new_year
 
       !----- A year's end: the summary line(s), and the forcing-read accounting. ------------------!
-      if (new_year(nstep)) then
+      if (last%new_year) then
          reg%iyear = reg%iyear + 1_ik
          if (reg%verbose) call year_summary(reg)
          reg%read_seconds = reg%read_seconds + reg%year_read_seconds
@@ -576,29 +562,28 @@ contains
 
       !----- The I/O phase: the records the steps closed, after a month's last step, a failure or  !
       !      the run's last step, and the state file when one is due. -----------------------------!
-      if (cfg%output%enabled .and. (new_month(nstep) .or. status /= RUN_OK .or. region_done(reg)))  &
+      if (cfg%output%enabled .and. (last%new_month .or. status /= RUN_OK .or. region_done(reg)))  &
          call output_serialize(reg%out_files, reg%out_bufs)
-      if (state_file_due(cfg%output, reg%istep, reg%step_days, new_month(nstep), new_year(nstep), reg%imonth, &
-                    reg%iyear)) call write_state_file(reg)
+      if (state_file_due(cfg%output, reg%istep, last, reg%imonth, reg%iyear)) call write_state_file(reg)
       end associate
    end subroutine step_polygons
 
-   !----- Is a state file due after the step that brings the run to `istep` steps? Every           !
-   !      state_every days from the start, or at every state_every-th month or year boundary       !
-   !      ([output].state_interval). --------------------------------------------------------------!
-   pure logical function state_file_due(out, istep, step_days, new_month, new_year, imonth, iyear) result(due)
+   !----- Is a state file due after `step`, the step that brings the run to `istep` steps, the run !
+   !      having crossed imonth months and iyear years by then? Every state_every days from the    !
+   !      start, or at every state_every-th month or year boundary ([output].state_interval). -----!
+   pure logical function state_file_due(out, istep, step, imonth, iyear) result(due)
       type(output_params_t), intent(in) :: out
-      integer(ik),           intent(in) :: istep, step_days, imonth, iyear
-      logical,               intent(in) :: new_month, new_year
+      integer(ik),           intent(in) :: istep, imonth, iyear
+      type(calendar_step_t), intent(in) :: step
       due = .false.
       if (.not. out%state_write) return
       select case (out%state_unit)
       case (STATE_DAYS)
-         due = mod(istep * step_days, out%state_every) == 0_ik
+         due = mod(istep * step%days, out%state_every) == 0_ik
       case (STATE_MONTHS)
-         due = new_month .and. mod(imonth, out%state_every) == 0_ik
+         due = step%new_month .and. mod(imonth, out%state_every) == 0_ik
       case (STATE_YEARS)
-         due = new_year .and. mod(iyear, out%state_every) == 0_ik
+         due = step%new_year .and. mod(iyear, out%state_every) == 0_ik
       end select
    end function state_file_due
 
