@@ -7,11 +7,11 @@
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
 !   2. BEER'S LAW           : a single black cohort under a direct beam attenuates as exp(-k L).!
 !   3. ZERO-LAI ALBEDO      : an empty canopy has albedo = ground albedo.                       !
-!   4. LEAF-ANGLE LIMITS     : bf and the diffuse backscatter beta hit their analytic limits    !
-!                              (uniform LAD -> bf=0.5; horizontal -> beta -> rho/(rho+tau)).      !
-!   5. MULTI-PFT PATCH       : cohorts of different PFTs get their OWN diffuse optics (MEDS        !
-!                              avoids ED2 bug B1 of docs/ed2_comparison.md by construction), and    !
-!                              energy still conserves.                                               !
+!   4. LEAF-ANGLE LIMITS     : bf hits its limits (uniform LAD -> 0.5, planophile -> 1,          !
+!                              erectophile -> 0), and a narrow LIDF still sums to one.              !
+!   5. MULTI-PFT PATCH       : energy conserves, and each cohort's diffuse light follows its OWN    !
+!                              PFT's optics, not the top cohort's (the guard against ED2 bug B1 of  !
+!                              docs/ed2_comparison.md).                                              !
 !   6. LONGWAVE EQUILIBRIUM  : an isothermal canopy+ground+sky has ~zero net thermal absorption.    !
 !   7. DELTA LIDF            : a zero-spread leaf-angle distribution gives finite Beta (p, q).      !
 !   8. COHORT ORDER          : the upper of two equal cohorts absorbs more and sees the top light.  !
@@ -49,9 +49,6 @@ program test_canopy_radiation
    call test_report('test_canopy_radiation')
 
 contains
-
-   !----- Assertions. ------------------------------------------------------------------------!
-
 
    !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
    !      floor keeps kappa finite, where mt(1-mt)/0 would give a NaN LIDF. ----------------------!
@@ -363,17 +360,15 @@ contains
       integer(ik), parameter :: NC = 2_ik
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
+      real(wp) :: a_own1, a_own2, a_top1, a_top2
       integer :: ih
-      print '(a)', '[5] multi-PFT patch: per-cohort optics + conservation (ED2 bug B1 avoided)'
+      print '(a)', '[5] multi-PFT patch: conservation, and each cohort on its own optics (ED2 bug B1)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.6_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik, 2_ik] ; lai = [1.5_wp, 1.5_wp] ; wai = 0.15_wp ; tcan = 298.0_wp
-      !----- The two PFTs have DISTINCT VIS optics: the RT must see per-cohort values. -------!
-      if (abs(opt%omega_leaf(RAD_VIS,1) - opt%omega_leaf(RAD_VIS,2)) < 1.0e-6_wp) then
-         call check_true('the two PFTs differ in VIS omega', .false.)
-      else
-         print '(a)', '  ok   : PFTs differ in VIS omega (per-cohort optics exercised)'
-      end if
+      call check_true('the two PFTs differ in VIS omega',                                              &
+                      abs(opt%omega_leaf(RAD_VIS,1) - opt%omega_leaf(RAD_VIS,2)) > 1.0e-3_wp,           &
+                      opt%omega_leaf(RAD_VIS,2) - opt%omega_leaf(RAD_VIS,1))
       hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
       call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, tcan, flux)
       incid      = f%incid_beam(RAD_VIS) + f%incid_diff(RAD_VIS)
@@ -382,6 +377,28 @@ contains
       reflected  = flux%albedo(RAD_VIS) * incid
       resid      = incid - (absorbed + net_ground + reflected)
       call check('energy residual (2 PFT)', resid, 0.0_wp, 1.0e-8_wp * incid)
+
+      !----- ED2 bug B1 gave every cohort's DIFFUSE light the top cohort's PFT optics. Under      !
+      !      diffuse light only, cohort 1 (2 m) sits below cohort 2 (4 m). (a) Changing only the   !
+      !      lower cohort's PFT must change its absorption: under B1 it would not. (b) Changing   !
+      !      only the PFT of a top cohort too thin to shade must leave the lower cohort's          !
+      !      absorption alone: under B1 it would move with the top's optics. Conservation alone   !
+      !      cannot see this, since B1 conserves energy. ---------------------------------------!
+      f%incid_beam = 0.0_wp
+      lai = [1.5_wp, 0.5_wp] ; wai = [0.15_wp, 0.05_wp]
+      call canopy_radiation(opt, f, NC, [1_ik, 1_ik], hgt, lai, wai, tcan, tcan, flux)
+      a_own1 = flux%abs_leaf(RAD_VIS,1)
+      call canopy_radiation(opt, f, NC, [2_ik, 1_ik], hgt, lai, wai, tcan, tcan, flux)
+      a_own2 = flux%abs_leaf(RAD_VIS,1)
+      call check_true('B1: the lower cohort''s diffuse absorption follows its own PFT',                   &
+                      abs(a_own2 - a_own1) > 1.0e-3_wp * a_own1, (a_own2 - a_own1) / a_own1)
+      lai = [1.5_wp, 1.0e-6_wp] ; wai = [0.15_wp, 0.0_wp]
+      call canopy_radiation(opt, f, NC, [1_ik, 1_ik], hgt, lai, wai, tcan, tcan, flux)
+      a_top1 = flux%abs_leaf(RAD_VIS,1)
+      call canopy_radiation(opt, f, NC, [1_ik, 2_ik], hgt, lai, wai, tcan, tcan, flux)
+      a_top2 = flux%abs_leaf(RAD_VIS,1)
+      call check_true('B1: a thin top cohort''s PFT does not set the lower cohort''s optics',              &
+                      abs(a_top2 - a_top1) < 1.0e-4_wp * a_top1, (a_top2 - a_top1) / a_top1)
    end subroutine test_multi_pft
 
    !=======================================================================================!
