@@ -111,8 +111,8 @@ resistances, $`E=(1-\mathrm{snowfac})\,\rho\,(q_g-q_{air})/(r_{aero}+r_{soil})`$
 $`1/(1-\mathrm{snowfac})`$ instead is not the same whenever the dry-surface-layer resistance $`r_{soil}`$
 is positive: it divides only the aerodynamic leg, so it over-predicts bare-soil evaporation at
 intermediate cover, most where a dry surface makes $`r_{soil}`$ dominant. The two agree only at no cover
-and full cover. The aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to the aerodynamics
-([canopy_aerodynamics](canopy_aerodynamics.md) §1; see `docs/ROADMAP.md`).
+and full cover. The canopy's roughness sees the pack through its own burial fraction, the pack's depth
+over the canopy height, not this cover fraction ([canopy_aerodynamics](canopy_aerodynamics.md) §1).
 
 ---
 
