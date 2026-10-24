@@ -121,9 +121,11 @@ patch's site (`site_surface_t`); it never uses a met, output, calendar or driver
 **2. A kernel goes where its caller's timescale is**, and within that, in its process module: the fast
 half's are flat in `fast_dynamics/processes/`, the slow half's in its domain folder. A
 kernel called from *both* tiers is a documented seam, never a folder of its own. There is exactly
-one: `heterotrophic_respiration_matrix`, so that the sub-daily respiration debits the same CENTURY
-matrix the daily step does. Co-locating it with the daily step is what closes the seam gap to
-machine precision.
+one: the soil's respiration chemistry in `meds_respiration` (`decomposition_env_scalar`,
+`decomposition_transfer_matrix`, `heterotrophic_respiration`). The fast loop respires with it at
+every step, and the daily soil-carbon step (`meds_soil_biogeochem`) integrates the same matrix, which
+is what closes the seam gap to machine precision. It sits with its most frequent caller, in the fast
+half, and the slow kernels link the fast kernels for it.
 
 **3. A derived type lives with whoever mutates it.** If two subsystems mutate it, it is state, and
 belongs in the `state/` file of the level that holds it: a patch's stores in
@@ -155,6 +157,7 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
   share  ──→ config ──→ state ──────────────────────→ demography ──→ output
      │                    │                              ↑             │
      │                    ├──→ fast_kernels ──────┐      │             │
+     │                    │         ↓             │      │             │
      │                    └──→ slow_kernels ──────┼──────┘             │
      │                                            │                    │
   netcdf_c, config ──→ met ─────────────────────→ fast  ←──────────────┘

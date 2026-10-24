@@ -407,9 +407,9 @@ above capacity leaves as outflow.
 ## Soil heterotrophic respiration
 
 The heterotrophic soil CO₂ flux $`R_h`$ comes from **one authority**: the CENTURY transfer matrix
-(`meds_soil_biogeochem`: `heterotrophic_respiration_matrix`, reached through
-`patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the slow
-biogeochemistry lives in `src/slow_dynamics/soil/`; [soil_carbon](soil_carbon.md)), but its flux enters the fast loop as a source term of
+(`meds_respiration`: `heterotrophic_respiration`, reached through
+`patch_heterotrophic_respiration`). It is a soil-carbon decomposition process (the pools' daily step
+lives in `src/slow_dynamics/soil/`; [soil_carbon](soil_carbon.md)), but its flux enters the fast loop as a source term of
 the CAS CO₂ twin
 (see [canopy_air_space_biophysics](canopy_air_space_biophysics.md)). The driver is its single authority
 and passes the resulting flux into the CO₂ source.
@@ -440,7 +440,7 @@ and passes the resulting flux into the CO₂ source.
 | bottom thermal boundary, eqs. (12)–(13) | `meds_soil_heat`: `bottom_heat_face`, `deep_conductance` |
 | the column from the soil maps | `meds_maps`: `read_map_inputs`; `meds_config`: `apply_map_inputs` |
 | canopy interception | `meds_canopy_water`: `intercept_canopy_layer`, swept over the cohorts by `canopy_interception`; `limit_film_evaporation`, `clamp_canopy_film` |
-| soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_matrix`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
+| soil heterotrophic Rh | `meds_respiration`: `heterotrophic_respiration`; `meds_fast_integ_frozen`: `patch_heterotrophic_respiration` |
 | prognostic soil types | `meds_patch_state_vars`: `soil_water_state_t`, `soil_energy_state_t` |
 
 ## References

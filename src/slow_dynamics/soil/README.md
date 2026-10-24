@@ -1,13 +1,14 @@
 # `slow_dynamics/soil/` — the daily soil carbon cycle
 
 The **slow soil-carbon cycle** of the ecosystem column: the CENTURY-family soil-organic-matter and
-litter pools, advanced once a day. Links the column state and the config leaves only, and every
-compute kernel is stateless, `pure` where possible, and device-eligible.
+litter pools, advanced once a day. Links the column state, the config leaves and the fast kernels'
+`meds_respiration`, whose decomposition and respiration chemistry it integrates, and every compute
+kernel is stateless, `pure` where possible, and device-eligible.
 
 **The fast canopy-air CO₂ exchange is not here.** It is a sub-daily biophysical process —
 turbulent diffusion and venting — and lives in `fast_dynamics/processes/meds_canopy_air_space`. This
-folder is the slow carbon half, and it owns heterotrophic respiration, which the fast loop reaches
-across the one documented fast/slow kernel seam.
+folder is the slow carbon half: it advances the pools whose heterotrophic respiration the fast loop
+charges, across the one documented fast/slow kernel seam.
 
 ## Modules
 
@@ -15,15 +16,11 @@ across the one documented fast/slow kernel seam.
   options, the litter input record, the carbon and lignin audits, the traceability diagnostics, the
   seven-pool `soil_carbon_t` with its lignin sub-tracer, and the pool index and scheme parameters.
 - **`meds_soil_biogeochem`** — ED2's CENTURY decomposition network, reorganized as the carbon matrix
-  ODE `dX/dt = B·I + A·ξ·K·X`, as stateless kernels:
-  - `assemble_env_scalar` — the per-pool temperature × moisture × oxygen scalar with the lignin
-    brake, matched to the fast-loop respiration chemistry;
-  - `assemble_transfer_matrix` — the CENTURY topology for either scheme, with the respired
-    complement falling out of the column sums;
+  ODE `dX/dt = B·I + A·ξ·K·X`, as stateless kernels. ξ, A, K and Rh are `meds_respiration`'s
+  (`decomposition_env_scalar`, `decomposition_transfer_matrix`, `heterotrophic_respiration`):
   - `build_litter_input` — where dead plant carbon enters;
   - `soil_carbon_step` — the daily advance, as forward Euler over the fast loop's *accumulated*
     environmental integral, or as an exact augmented matrix exponential for large accelerated steps;
-  - `heterotrophic_respiration_matrix` — the respired complement, and the single Rh authority;
   - `solve_soil_carbon_steady_state` — the SASU solve, over the active block only, because the full
     system is singular once a pool is inert;
   - `soil_carbon_diagnostics` — storage capacity and potential, and residence time.
@@ -33,7 +30,7 @@ across the one documented fast/slow kernel seam.
 ## The seam that matters
 
 The fast loop's heterotrophic respiration respires the **same frozen pool** the daily step debits,
-by calling the matrix form directly. That co-location is deliberate and it is the reason the day's
+through the one matrix both take from `meds_respiration`. That shared matrix is deliberate and it is the reason the day's
 total sub-daily respiration equals the daily pool debit *by construction* rather than approximately.
 The residual is asserted every step and closes to machine precision.
 
