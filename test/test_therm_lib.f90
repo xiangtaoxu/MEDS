@@ -20,6 +20,8 @@
 !   5. SOIL CONDUCTIVITY (soil_thermal_conductivity; docs/science/soil_biophysics.md eq.   !
 !      (11)): frozen soil conducts more than thawed; the Kersten number is Johansen's log  !
 !      form thawed and the linear form frozen.                                             !
+!   6. SOIL TEXTURE (soil_texture_to_thermal; soil_biophysics.md eq. (9)): CLM5's solids'  !
+!      and dry soil's conductivities and the solids' heat capacity, computed apart.        !
 !==========================================================================================!
 program test_therm_lib
    use meds_test_assert, only : check, check_true, test_report
@@ -28,7 +30,7 @@ program test_therm_lib
    use meds_therm_lib,   only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,                    &
                                 temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                 sat_vapor_pressure, sat_vapor_pressure_temp_deriv, sat_specific_humidity,         &
-                                soil_thermal_conductivity
+                                soil_thermal_conductivity, soil_texture_to_thermal
    implicit none
 
    call test_temperature_response()
@@ -36,6 +38,7 @@ program test_therm_lib
    call test_clausius()
    call test_ice_saturation()
    call test_soil_conductivity()
+   call test_soil_texture()
 
    call test_report('test_therm_lib')
 
@@ -219,5 +222,19 @@ contains
       call check('unfrozen Kersten is the log10 form',  ke_liq, log10(sr) + 1.0_wp, 1.0e-9_wp)
       call check('frozen Kersten is the linear s_r form', ke_frz, sr,               1.0e-9_wp)
    end subroutine test_soil_conductivity
+
+   !----- 6. CLM5's mineral soil at Palo Verde's column (sand 33 %, clay 40 %, porosity 0.4456),      !
+   !      computed apart from MEDS: solids (8.80 x 33 + 2.92 x 40) / 73 = 5.57808 W/m/K; dry bulk   !
+   !      density 1496.88 kg/m3, so dry soil (0.135 x 1496.88 + 64.7) / (2700 - 0.947 x 1496.88)   !
+   !      = 0.208022 W/m/K; and the solids' heat capacity (2.128 x 33 + 2.385 x 40) / 73 x 1e6 x    !
+   !      0.5544 = 1.257835e6 J/m3/K. -------------------------------------------------------------!
+   subroutine test_soil_texture()
+      real(wp) :: k_solid, k_dry, dry_cvol
+      print '(a)', 'test_soil_texture:'
+      call soil_texture_to_thermal(33.0_wp, 40.0_wp, 0.4456_wp, k_solid, k_dry, dry_cvol)
+      call check('CLM5 solids conductivity', k_solid, 5.5780822_wp, 1.0e-6_wp)
+      call check('CLM5 dry conductivity', k_dry, 0.20802202_wp, 1.0e-7_wp)
+      call check('CLM5 solids heat capacity', dry_cvol, 1.2578349e6_wp, 1.0_wp)
+   end subroutine test_soil_texture
 
 end program test_therm_lib

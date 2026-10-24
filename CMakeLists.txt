@@ -553,17 +553,10 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
-   #----- Soil pedotransfer function: Hodnett & Tomasella (2002)'s worked example, Ks, coarse  #
-   #      fragments (links meds_share only). ---------------------------------------------------#
-   add_executable(test_pedotransfer test/test_pedotransfer.f90)
-   target_link_libraries(test_pedotransfer PRIVATE meds_share meds_testassert)
-   meds_fortran_flags(test_pedotransfer)
-   add_test(NAME pedotransfer COMMAND test_pedotransfer)
-
    #----- The share/functions libraries, one test each, named after its module. Each links meds_share #
    #      alone; test_optics_lib also the config layer, whose meds_pft_derive turns a PFT's leaf-angle #
    #      moments into the LIDF's Beta parameters.                                                    #
-   foreach(t therm_lib plant_hydr_lib optics_lib)
+   foreach(t therm_lib plant_hydr_lib soil_hydr_lib optics_lib)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_share meds_testassert)
       meds_fortran_flags(test_${t})
@@ -734,7 +727,7 @@ if(MEDS_BUILD_TESTS)
    #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
    #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
    foreach(t canopy_aerodynamics canopy_air_space canopy_radiation leaf_gas_exchange plant_energy
-             plant_hydraulics respiration soil_heat surface)
+             plant_hydraulics respiration soil_heat soil_water surface)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
@@ -747,12 +740,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_column_hydrology PRIVATE meds_fast meds_testassert)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
-
-   #----- The soil-plant water network's water relations and flows: values and derivatives. --#
-   add_executable(test_water_processes test/test_water_processes.f90)
-   target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_water_processes)
-   add_test(NAME water_processes COMMAND test_water_processes)
 
    #----- The soil-plant water network on synthetic stands and soils. ------------------------#
    add_executable(test_water_network test/test_water_network.f90)
