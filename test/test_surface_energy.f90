@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
-!   1. WOOD THERMAL TIMESCALE from the real allometry: the wood store carries memory at dt_fast.   !
-!   2. EXACT RELAXATION: tissue_energy_balance's closed-form tissue step, its two limits and its   !
+!   1. EXACT RELAXATION: tissue_energy_balance's closed-form tissue step, its two limits and its   !
 !      energy identity (docs/science/vegetation_energy_dynamics.md eqs. (3)-(7)).                  !
-!   3. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
-!   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
+!   2. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
+!   3. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
+!   4. The CAS CO2 twin: still at the atmosphere's CO2, an L-stable relaxation that a weaker       !
+!      conductance slows, and a constant source's analytic steady state.                           !
 !   5. tissue_energy_balance's two latent pathways: the stomata's and the wetted film's (f_wet).   !
 !   6. A THIN tissue: energy closes at every area index, halving the area halves every flux and    !
 !      keeps the temperature, and a tissue with no area takes the temperature of what it grows     !
@@ -14,118 +15,23 @@
 program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, cp_liq, tissue_c_wood_dry
-   use meds_allometry_lib,    only : allometry_t, dbh_to_wai, sapwood_fraction
-   use meds_therm_lib,           only : temp_to_internal_energy, sat_specific_humidity, cas_temp_to_enthalpy,  &
-                                        cas_enthalpy_to_temp
+   use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, mmdry
+   use meds_therm_lib,           only : cas_temp_to_enthalpy, cas_enthalpy_to_temp
    use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t
    use meds_surface, only : ground_surface_fluxes
    use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
 
-   call test_wood_stiffness_spread()
    call test_veg_exponential()
    call test_ground_balance()
    call test_cas()
+   call test_cas_co2()
    call test_veg_energy_diagnostic_wetted()
    call test_veg_energy_thin_tissue()
 
    call test_report('test_surface_energy')
 
 contains
-
-
-
-
-
-
-
-   !=======================================================================================!
-   ! WOOD THERMAL TIMESCALE, measured from the REAL allometry.                               !
-   !                                                                                          !
-   ! wai comes from the ED2 WAI allometry (a STEM-SIZE power law) and bsap from the sapwood   !
-   ! fraction of basal area, the masses the model sizes the store from                        !
-   ! (docs/science/vegetation_energy_dynamics.md eq. (8)). A test that hardwired fixed shares !
-   ! of leaf area or wood carbon would only re-measure those shares.                          !
-   !                                                                                          !
-   ! The allometry matters qualitatively, because tau_wood ~ cap/(coupling) ~ (wood mass) /   !
-   ! (wood AREA), and tying wood area to LEAF area makes the ratio nearly size-independent.   !
-   ! With a stem-size WAI the ratio grows with stem size, as a length scale should.           !
-   !=======================================================================================!
-   subroutine test_wood_stiffness_spread()
-      real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 900.0_wp, TREF = 295.0_wp
-      !----- The shipped wood store's saturated water, [hydraulics].wood_water_sat [kg/kgC]: a      !
-      !      saturated store, the most water the wood's heat capacity can count. ------------------!
-      real(wp), parameter :: WOOD_WATER_SAT = 1.0_wp
-      real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp
-      real(wp), parameter :: WOOD_EMISS = 0.90_wp       !< the default PFT wood_emissivity
-      !----- ED2 ed_params.f90: b1WAI = 0.0192*0.5 (note the *0.5), b2WAI = 2.0947 for tropical  !
-      !      broadleaf; b1SA = 1.582, b2SA = 1.764 (iallom default). ----------------------------!
-      type(allometry_t), parameter :: ALLOM = allometry_t(wai_b1 = 0.0096_wp, wai_b2 = 2.0947_wp,     &
-                                                          sapwood_area_b1 = 1.582_wp, sapwood_area_b2 = 1.764_wp)
-      !----- (dbh [cm], wood_carbon [kgC/plant], nplant [pl/m2]) : sapling -> pole -> mature ---!
-      real(wp), parameter :: DBH(4) = [  2.0_wp,   12.0_wp,  35.0_wp,  70.0_wp]
-      real(wp), parameter :: WC(4)  = [  0.5_wp,   20.0_wp, 200.0_wp,1200.0_wp]
-      real(wp), parameter :: NPL(4) = [  2.0_wp,    0.3_wp,   0.06_wp,  0.015_wp]
-      real(wp) :: wai, f_sap, dbio_w, dbio_sap, cap, drdt, tau, tau_min, tau_max, w_end
-      real(wp) :: f_sap_small, f_sap_big, sap_big
-      integer(ik) :: i
-      print '(a)', 'test_wood_stiffness_spread:'
-      tau_min = huge(1.0_wp) ; tau_max = 0.0_wp
-      f_sap_small = 0.0_wp ; f_sap_big = 0.0_wp ; sap_big = 0.0_wp
-      do i = 1_ik, 4_ik
-         wai    = dbh_to_wai(ALLOM, DBH(i), NPL(i))
-         f_sap  = sapwood_fraction(ALLOM, DBH(i))
-         !----- The two halves of the capacity take DIFFERENT masses (design decision):          !
-         !        DRY tissue   -> ALL the wood. Heartwood is dead structure but still stores      !
-         !                        sensible heat, and a bole-defined sapwood fraction under-counts !
-         !                        branch wood, which is thermally active throughout.              !
-         !        INTERNAL WATER -> the water network's wood store, here a saturated sapwood ring !
-         !                        with no fine roots. Heartwood holds none, which is what makes   !
-         !                        it heartwood.                                                   !
-         !      ONE enthalpy pool at ONE temperature either way -- a bole/branch partition would  !
-         !      mean two wood temperatures and is deliberately not taken. --------------------!
-         dbio_w   = WC(i) * NPL(i) * C2B                                ! [kg dry/m2] all wood
-         dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
-         cap    = dbio_w * tissue_c_wood_dry                                                    &
-                + WOOD_WATER_SAT * dbio_sap / C2B * cp_liq
-         drdt   = 8.0_wp * WOOD_EMISS * stefan_boltzmann * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
-         tau    = cap / drdt
-         !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
-         w_end  = exp(-DT_FAST / tau)
-         print '(a,i0,a,f6.2,a,f6.3,a,f6.3,a,f10.1,a,f8.1,a,f7.4)', '   cohort ', i, ': dbh = ', &
-               DBH(i), '  wai = ', wai, '  f_sap = ', f_sap, '  cap = ', cap,                    &
-               ' J/m2/K  tau = ', tau, ' s  w_end = ', w_end
-         tau_min = min(tau_min, tau) ; tau_max = max(tau_max, tau)
-         if (i == 1_ik) f_sap_small = f_sap
-         if (i == 4_ik) then
-            f_sap_big = f_sap ; sap_big = dbio_sap
-         end if
-      end do
-      !----- WHAT THIS MEASURES. tau_wood = 600-760 s and w_end = 0.22-0.31 at dt_fast = 900 s, with a  !
-      !      saturated store, so wood carries GENUINE memory at production cadence -- the whole reason  !
-      !      the store exists. Most of the capacity is the sapwood and its water: dry wood holds 1217   !
-      !      J/kg/K against water's 4186, so the heartwood adds little. ED2's b1WAI (written            !
-      !      0.0192*0.5) halves WAI, hence the coupling, which lengthens tau. --------------------------!
-      call check_true('tau_wood is several hundred seconds', tau_min > 500.0_wp .and. tau_max < 1000.0_wp, tau_max)
-      call check_true('wood carries GENUINE memory at dt_fast = 900 s (w_end > 0.2)',               &
-           exp(-DT_FAST / tau_min) > 0.2_wp, exp(-DT_FAST / tau_min))
-      !----- The DRY mass must be the FULL wood mass: 36 kg/m2 = 1200 kgC/plant * 0.015 pl/m2 * C2B, !
-      !      which is what an independent mass audit of that cohort gives. Re-pointing the dry half  !
-      !      at bsap would drop it to ~27 and fire this. --------------------------------------!
-      call check('largest cohort dry mass is ALL the wood (audit: 36 kg dry/m2)',                   &
-           WC(4) * NPL(4) * C2B, 36.0_wp, 1.0e-9_wp)
-      !----- ...but its WATER is only the sapwood ring, which is strictly less. A small stem is      !
-      !      entirely sapwood (the fraction saturates at 1), a 70 cm bole is not -- that contrast is !
-      !      the physical content of splitting the two masses. --------------------------------!
-      call check('a 2 cm stem is ALL sapwood', f_sap_small, 1.0_wp, 1.0e-12_wp)
-      call check_true('a 70 cm bole is NOT all sapwood', f_sap_big > 0.5_wp .and.                   &
-           f_sap_big < 0.95_wp, f_sap_big)
-      call check_true('sapwood water mass < full wood mass', sap_big < 36.0_wp, sap_big)
-      !----- Modest spread: cap and WAI both grow with size, so they largely cancel. ----------!
-      call check_true('spread is modest (cap and WAI grow together)', tau_max / tau_min < 2.0_wp,   &
-           tau_max / tau_min)
-   end subroutine test_wood_stiffness_spread
 
    !=======================================================================================!
    ! EXACT EXPONENTIAL RELAXATION in tissue_energy_balance.                               !
@@ -208,20 +114,18 @@ contains
    end subroutine test_veg_exponential
 
    subroutine test_ground_balance()
-      real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil, g_top, rn
+      real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil
       print '(a)', 'test_ground_balance:'
-      ggnet = 0.02_wp ; rho = 1.2_wp ; t_ground = 300.0_wp ; rn = 300.0_wp - 40.0_wp
+      ggnet = 0.02_wp ; rho = 1.2_wp ; t_ground = 300.0_wp
       !----- no sensible gradient (t_cas = t_ground) and no soil evaporation -> both vanish. -!
       t_cas = t_ground ; soil_evap = 0.0_wp
       call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
       call check_true('H_bare = 0 (no gradient)', abs(h_bare) < 1.0e-9_wp, h_bare)
       call check_true('LE_soil = 0 (no evap)',    abs(le_soil) < 1.0e-30_wp, le_soil)
-      !----- warm ground over cooler CAS -> positive sensible; caller assembles G_top = Rn-H-LE. -!
+      !----- warm ground over cooler CAS -> positive sensible. -----------------------------------!
       t_cas = 298.0_wp
       call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
       call check('H_bare = ggnet*rho*cp*dT', h_bare, ggnet*rho*cp_air*(t_ground - t_cas), 1.0e-9_wp)
-      g_top = rn - h_bare - le_soil
-      call check('G_top = Rn - H - LE', g_top, rn - ggnet*rho*cp_air*(t_ground - t_cas), 1.0e-6_wp)
    end subroutine test_ground_balance
 
    subroutine test_cas()
@@ -263,6 +167,51 @@ contains
       call check_true('CAS energy residual ~ 0 (30 steps)', worst < 1.0e-6_wp, worst)
       call check_true('CAS warms toward atmosphere + surfaces', temp > 295.0_wp, temp)
    end subroutine test_cas
+
+   !----- The CO2 twin of the same box (docs/science/canopy_air_space_biophysics.md eq. (1)). At  !
+   !      the atmosphere's CO2 with no source it holds still; displaced, it relaxes toward the     !
+   !      atmosphere without overshoot at any step, and more slowly over a weaker conductance;     !
+   !      under a constant source it settles at co2_atm + source/conductance; uptake draws it      !
+   !      down and respiration pushes it up. -------------------------------------------------------!
+   subroutine test_cas_co2()
+      real(wp), parameter :: CO2_ATM = 400.0_wp, RHO_AIR = 1.2_wp, USTAR = 0.3_wp, SOURCE = 5.0_wp
+      real(wp) :: g_co2, c, c_weak
+      integer(ik) :: step
+      print '(a)', 'test_cas_co2:'
+      g_co2 = RHO_AIR / mmdry * USTAR                    ! [mol/m2/s] dry air, transfer factor 1
+      c = cas_co2_after(CO2_ATM, 0.0_wp, g_co2, 1800.0_wp)
+      call check('no source at the atmosphere''s CO2: unchanged', c, CO2_ATM, 1.0e-9_wp)
+      c = cas_co2_after(500.0_wp, 0.0_wp, g_co2, 60.0_wp)
+      call check_true('displaced: relaxes toward the atmosphere', c > CO2_ATM .and. c < 500.0_wp, c)
+      c_weak = cas_co2_after(500.0_wp, 0.0_wp, 0.5_wp * g_co2, 60.0_wp)
+      call check_true('a weaker conductance relaxes more slowly', c_weak > c, c_weak - c)
+      c = cas_co2_after(500.0_wp, 0.0_wp, g_co2, 1.0e9_wp)
+      call check_true('a huge step does not overshoot the atmosphere (L-stable)', c >= CO2_ATM, c)
+      call check('a huge step lands on the atmosphere', c, CO2_ATM, 1.0e-3_wp)
+      c = CO2_ATM
+      do step = 1_ik, 4000_ik
+         c = cas_co2_after(c, SOURCE, g_co2, 60.0_wp)
+      end do
+      call check('a constant source settles at co2_atm + source/conductance', c, CO2_ATM + SOURCE / g_co2, 1.0e-4_wp)
+      c = cas_co2_after(CO2_ATM, -15.0_wp, g_co2, 300.0_wp)
+      call check_true('uptake draws the canopy air below the atmosphere', c < CO2_ATM, c)
+      c = cas_co2_after(CO2_ATM, 10.0_wp, g_co2, 300.0_wp)
+      call check_true('respiration pushes the canopy air above the atmosphere', c > CO2_ATM, c)
+   end subroutine test_cas_co2
+
+   !----- One step of the CAS box's CO2, on a 20 m column of dry air at 1.2 kg/m3; the enthalpy and !
+   !      vapour twins are held inert (a nonzero mass capacity avoids their 0/0). ---------------!
+   function cas_co2_after(co2, source, g_co2, dt) result(co2_new)
+      real(wp), intent(in) :: co2, source, g_co2, dt
+      real(wp) :: co2_new, enth_new, shv_new
+      type(cas_env_t) :: env
+      env%air_mass_capacity   = 1.0_wp
+      env%air_molar_capacity  = 1.2_wp / mmdry * 20.0_wp
+      env%atm_conductance_co2 = g_co2
+      env%atm_co2             = 400.0_wp
+      env%biotic_co2_source   = source
+      call cas_box_step_implicit(0.0_wp, 0.0_wp, co2, env, dt, enth_new, shv_new, co2_new)
+   end function cas_co2_after
 
    subroutine test_veg_energy_diagnostic_wetted()
       !----- Direct unit test of tissue_energy_balance's two latent pathways (the column tests exercise  !

@@ -770,11 +770,6 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Column CO2-balance test: the fast CAS CO2 twin lives in meds_fast_kernels.      #
-   add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
-   meds_fortran_flags(test_column_co2)
-   add_test(NAME column_co2 COMMAND test_column_co2)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
