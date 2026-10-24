@@ -563,7 +563,7 @@ if(MEDS_BUILD_TESTS)
    #----- The share/functions libraries, one test each, named after its module. Each links meds_share #
    #      alone; test_optics_lib also the config layer, whose meds_pft_derive turns a PFT's leaf-angle #
    #      moments into the LIDF's Beta parameters.                                                    #
-   foreach(t optics_lib)
+   foreach(t therm_lib optics_lib)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_share meds_testassert)
       meds_fortran_flags(test_${t})
@@ -667,12 +667,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_init)
    add_test(NAME init COMMAND test_init)
 
-   #----- Leaf-physiology test links meds_fast + test support (assertions). ---------------#
-   add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
-   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_fast)
-   meds_fortran_flags(test_leaf_physiology)
-   add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
-
    #----- C-API shims. Linking every C-API shim INTO a ctest target is the point: a shim          #
    #      built only by the optional -DMEDS_BUILD_PYLIB=ON shared library breaks unseen -- a       #
    #      component inserted mid-type in leaf_photo_args_t, or a signature changed under the       #
@@ -739,13 +733,15 @@ if(MEDS_BUILD_TESTS)
    endforeach()
 
    #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
-   #      its module. Each links the kernel library alone, so the kernels build and test standalone. #
-   foreach(t canopy_aerodynamics canopy_radiation)
+   #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
+   #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
+   foreach(t canopy_aerodynamics canopy_radiation leaf_gas_exchange)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+   target_link_libraries(test_leaf_gas_exchange PRIVATE meds_testsupport)
 
    #----- Vertical soil-hydrology test links meds_fast (it runs the soil-plant water solve). #
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
