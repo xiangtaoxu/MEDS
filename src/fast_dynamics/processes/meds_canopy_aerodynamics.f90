@@ -14,6 +14,7 @@ module meds_canopy_aerodynamics
    use meds_constants,        only : grav, pi, tiny_num, von_karman, safe_exp, virtual_temp_factor
    use meds_biophysics_params, only : aero_params_t
    use meds_therm_lib,        only : cas_molar_density
+   use meds_numerics,         only : equal_height_layers
    implicit none
    private
 
@@ -211,7 +212,7 @@ contains
       type(aero_out_t),    intent(inout) :: out     !< the patch's winds, conductances and boundary layers
 
       real(wp)    :: rough, displace, zldis, uh, stab, denom, lai_layer
-      integer(ik) :: ico, ico0
+      integer(ik) :: ico, ico0, il, n_layer, layer(n)
 
       !----- 1. Roughness + displacement from canopy height (snow blend). ------------------!
       call canopy_roughness(cfg, geom, rough, displace)
@@ -241,16 +242,17 @@ contains
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
       out%ggnet = geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg
 
-      !----- 4. In-canopy wind, top -> bottom through each layer's closed crowns. Cohorts of one   !
-      !      height are one layer, consecutive because heights arrive ascending. ------------------!
+      !----- 4. In-canopy wind, top -> bottom through each layer's closed crowns, a layer being   !
+      !      the cohorts of one height (equal_height_layers). ------------------------------------!
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
+      call equal_height_layers(height, n, layer, n_layer)
       ico = n
-      do while (ico >= 1_ik)
+      do il = n_layer, 1_ik, -1_ik
          ico0 = ico
          lai_layer = lai(ico)
          do while (ico0 > 1_ik)
-            if (height(ico0 - 1_ik) /= height(ico)) exit
+            if (layer(ico0 - 1_ik) /= il) exit
             ico0 = ico0 - 1_ik
             lai_layer = lai_layer + lai(ico0)
          end do

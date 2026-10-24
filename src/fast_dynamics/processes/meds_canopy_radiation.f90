@@ -14,6 +14,7 @@ module meds_canopy_radiation
    use meds_constants,    only : stefan_boltzmann, tiny_num, lnexp_max
    use meds_pft_params,   only : rad_pft_optics_t
    use meds_optics_lib,   only : gfun_direct
+   use meds_numerics,     only : equal_height_layers
    implicit none
    private
 
@@ -343,18 +344,10 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
-      !----- Cohorts of exactly equal height share one layer, as the demography's                  !
-      !      update_overtopping_lai treats them. Heights arrive ascending, so ties are             !
-      !      consecutive; a one-member layer is its cohort, bit for bit. --------------------------!
-      nlayer = 0_ik
-      do i = 1_ik, ncoh
-         if (i == 1_ik) then
-            nlayer = 1_ik
-         else if (height(i) /= height(i-1_ik)) then
-            nlayer = nlayer + 1_ik
-         end if
-         lyr(i) = nlayer
-      end do
+      !----- Cohorts of exactly equal height share one layer (equal_height_layers), as the        !
+      !      demography's update_overtopping_lai treats them; a one-member layer is its cohort,   !
+      !      bit for bit. ------------------------------------------------------------------------!
+      call equal_height_layers(height, ncoh, lyr(1:ncoh), nlayer)
       nmemb(1:nlayer) = 0_ik
       do i = 1_ik, ncoh
          nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik

@@ -323,6 +323,7 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | ground reflectance / emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_env_t`) |
 | single-band adding solve | `meds_canopy_radiation`: `solve_band`, `layer_rt` |
 | the per-patch entry point (+ tied-cohort layers) | `meds_canopy_radiation`: `canopy_radiation` |
+| cohorts of one height are one layer (with the wind and the overtopping LAI) | `meds_numerics`: `equal_height_layers` |
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
 | each tissue's emission and the leaf/wood split, eqs. (13)–(14) | `meds_canopy_radiation`: `canopy_radiation` |

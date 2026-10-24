@@ -11,12 +11,13 @@
 !      with the same tie rule (the larger index first).                                          !
 !   6. conserved: the tolerance scales with the terms' absolute sum, not the net total.         !
 !   7. pair_mean: the two-member weighted mean fusion blends with; weights of any size count.   !
+!   8. equal_height_layers: runs of exactly equal heights are one layer, either way up.         !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_numerics,     only : quadratic_smaller_root, adaptive_step_update, ascending_order, conserved, &
-                                 pair_mean
+                                 pair_mean, equal_height_layers
    use meds_linear_algebra, only : thomas_solve
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
@@ -31,6 +32,7 @@ program test_numerics
    call test_ascending_order()
    call test_conserved()
    call test_pair_mean()
+   call test_equal_height_layers()
 
    call test_report('test_numerics')
 
@@ -154,6 +156,23 @@ contains
       call ascending_order(shuffled, 1_ik, ord1)
       call check_true('ascending_order: one cohort', ord1(1) == 1_ik, real(ord1(1), wp))
    end subroutine test_ascending_order
+
+   !----- 8. Cohorts of exactly equal height share a layer, numbered from the first cohort, in  !
+   !      ascending (radiation, wind) or descending (overtopping LAI) order. -----------------!
+   subroutine test_equal_height_layers()
+      integer(ik) :: layer(5), layer0(0), n_layer
+      call equal_height_layers([2.0_wp, 2.0_wp, 7.5_wp, 20.0_wp, 20.0_wp], 5_ik, layer, n_layer)
+      call check_true('equal_height_layers: ascending, two ties', all(layer == [1_ik, 1_ik, 2_ik, 3_ik, 3_ik])  &
+                      .and. n_layer == 3_ik, real(n_layer, wp))
+      call equal_height_layers([30.0_wp, 20.0_wp, 20.0_wp, 20.0_wp, 5.0_wp], 5_ik, layer, n_layer)
+      call check_true('equal_height_layers: descending, three tied', all(layer == [1_ik, 2_ik, 2_ik, 2_ik, 3_ik])&
+                      .and. n_layer == 3_ik, real(n_layer, wp))
+      call equal_height_layers([20.0_wp, 20.0_wp * (1.0_wp + epsilon(1.0_wp))], 2_ik, layer(1:2), n_layer)
+      call check_true('equal_height_layers: heights one ulp apart are two layers', n_layer == 2_ik,           &
+                      real(n_layer, wp))
+      call equal_height_layers([real(wp) ::], 0_ik, layer0, n_layer)
+      call check_true('equal_height_layers: an empty canopy has no layer', n_layer == 0_ik, real(n_layer, wp))
+   end subroutine test_equal_height_layers
 
    !----- The two-member weighted mean fusion blends with: weights of any size count. -------!
    subroutine test_pair_mean()

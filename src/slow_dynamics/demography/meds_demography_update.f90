@@ -26,6 +26,7 @@
 module meds_demography_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
+   use meds_numerics,  only : equal_height_layers
    use meds_cohort_state_vars, only : cohort_block, cohort_deriv_block, set_cohort_size_from_carbon, &
                                       hold_cohort_tissue_temps
    use meds_patch_state_vars, only : patch_block
@@ -196,42 +197,44 @@ contains
    ! Fill cohort%overtopping_lai for every cohort from the current (height-sorted) stand:    !
    ! for each patch, a single top-down pass accumulates the overtopping leaf-area index (the !
    ! cumulative LAI of all TALLER cohorts), with equal-height cohorts sharing one layer      !
-   ! (co-dominance). A pure GEOMETRIC reduction -- NO rate law, NO plant physiology.          !
+   ! (co-dominance, equal_height_layers). A pure GEOMETRIC reduction -- NO rate law, NO      !
+   ! plant physiology.                                                                       !
    !---------------------------------------------------------------------------------------!
    subroutine update_overtopping_lai(poly)
       type(polygon_t), intent(inout) :: poly
-      integer(ik) :: ip, i0, i1, i, j, k
+      integer(ik) :: ip, i0, i1, i, j, k, il, n_layer
       real(wp)    :: cum, over_lai, layer_lai
 
       associate (cohort => poly%cohort, patch => poly%patch)
          do ip = 1_ik, patch%n
             i0  = patch%cohort_offset(ip)
             i1  = i0 + patch%cohort_count(ip) - 1_ik
-            cum = 0.0_wp                                   ! overtopping LAI accumulator
-            i   = i0
-            do while (i <= i1)
-               !----- Equal-height cohorts are CO-DOMINANT here: they share the overtopping LAI  !
-               !      and do not shade each other, so the result does not depend on the arbitrary   !
-               !      within-layer order. Exact-equality is the right test -- recruits are born from !
-               !      one shared `recruit_dbh`, so they tie bit-exactly.                             !
-               !                                                                                  !
-               !      The light capture agrees: canopy_radiation puts exactly tied cohorts in one   !
-               !      radiative-transfer layer. What this sweep drives is the light-plastic         !
-               !      traits and the demography's competition index.                                !
-               k = i
-               do while (k < i1)
-                  if (cohort%height(k + 1_ik) /= cohort%height(i)) exit
-                  k = k + 1_ik
+            block
+               integer(ik) :: layer(i0:i1)
+               !----- Equal-height cohorts are CO-DOMINANT here: they share the overtopping LAI   !
+               !      and do not shade each other, so the result does not depend on the arbitrary !
+               !      within-layer order. The light capture agrees: canopy_radiation puts them in !
+               !      one radiative-transfer layer. What this sweep drives is the light-plastic   !
+               !      traits and the demography's competition index. -----------------------------!
+               call equal_height_layers(cohort%height(i0:i1), i1 - i0 + 1_ik, layer, n_layer)
+               cum = 0.0_wp                                ! overtopping LAI accumulator
+               i   = i0
+               do il = 1_ik, n_layer
+                  k = i
+                  do while (k < i1)
+                     if (layer(k + 1_ik) /= il) exit
+                     k = k + 1_ik
+                  end do
+                  over_lai  = cum
+                  layer_lai = 0.0_wp
+                  do j = i, k
+                     cohort%overtopping_lai(j) = over_lai
+                     layer_lai = layer_lai + cohort%nplant(j) * cohort%leaf_area(j)
+                  end do
+                  cum = cum + layer_lai                     ! whole layer shades those below
+                  i   = k + 1_ik
                end do
-               over_lai  = cum
-               layer_lai = 0.0_wp
-               do j = i, k
-                  cohort%overtopping_lai(j) = over_lai
-                  layer_lai = layer_lai + cohort%nplant(j) * cohort%leaf_area(j)
-               end do
-               cum = cum + layer_lai                        ! whole layer shades those below
-               i   = k + 1_ik
-            end do
+            end block
          end do
       end associate
    end subroutine update_overtopping_lai
