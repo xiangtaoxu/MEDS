@@ -259,7 +259,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`\kappa`$ | — (`von_karman`, `meds_constants`) | von Karman constant (0.4) |
 | $`c_{z0}`$ | `z0m_ratio` | roughness / canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement / canopy height (0.63) |
-| $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
+| $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, a buried canopy's $`z_{0m}`$ and the $`z_{0m}`$ floor [m] |
 | — | `n_iter_mo` | the most Monin-Obukhov sweeps (20); they stop when $`u_*\cdot\mathrm{temp1}`$ settles to 10⁻⁴ |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
 | — | `zeta_max_stable` | cap on the stable $\zeta$, of the first guess and of each sweep (CLM5) |
@@ -271,7 +271,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | — | `gbh_2_gbw` | boundary-layer heat:vapour ratio (1.075) |
 | $`g_{bh,min}`$ | `gbhmos_min` | boundary-layer conductance floor [m s⁻¹] |
 | — | `kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air` | linear-in-T air viscosity and diffusivity |
-| $`z_{0g}`$ | `soil_rough` | bare soil's roughness length (0.01 m, CLM's `zlnd`): the soil coefficient of eq. (6) and a bare patch's $`z_{0m}`$ |
+| $`z_{0g}`$ | `soil_rough` | bare soil's roughness length (0.01 m, CLM's `zlnd`): the soil coefficient of eq. (6), a bare patch's $`z_{0m}`$ and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
 | — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients (`aero_params_t` only, no TOML key) |
 | — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients (`aero_params_t` only, no TOML key) |
 | — | `min_canopy_depth` | CAS-depth floor [m] |

@@ -173,7 +173,7 @@ contains
       surf%soil_emiss  = cfg%soil%ground_emissivity
       surf%soil_temp   = soil_temp_top
       !----- A pack blends them toward its own (meds_surface). -----------------------------------!
-      call snow_blend_ground_optics(dynamic%snow, cfg%snow, cfg%aero%snow_rough, surf%soil_albedo(RAD_VIS),   &
+      call snow_blend_ground_optics(dynamic%snow, cfg%snow, cfg%aero%soil_rough, surf%soil_albedo(RAD_VIS),   &
                                     surf%soil_albedo(RAD_NIR), surf%soil_emiss, surf%soil_temp)
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)

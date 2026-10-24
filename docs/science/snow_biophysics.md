@@ -103,8 +103,9 @@ The same blend is used for ground evaporation from frozen soil, weighted by the 
 *defined* over liquid, so an ice branch there would mis-convert the forcing.
 
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
-(`snow_cover_fraction`), with scale = `ny07_a` × `[aerodynamics].snow_rough` ×
-($`\rho_{snow}`$/100 kg m⁻³)^`ny07_m`, the snow surface's one roughness length, ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
+(`snow_cover_fraction`), with scale = `ny07_a` × `[aerodynamics].soil_rough` ×
+($`\rho_{snow}`$/100 kg m⁻³)^`ny07_m` (Niu & Yang's ground roughness, the micro-relief a thin pack has to
+fill: 6.25 cm at the defaults, so 1 cm of snow covers 16 % of the ground and 10 cm 92 %), ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
 (stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store.
 Ground evaporation is such a tile flux: only the snow-free share evaporates, at the bare soil's own
 resistances, $`E=(1-\mathrm{snowfac})\,\rho\,(q_g-q_{air})/(r_{aero}+r_{soil})`$. Inflating $`r_{aero}`$ by

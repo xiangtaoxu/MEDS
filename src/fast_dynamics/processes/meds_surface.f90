@@ -144,16 +144,17 @@ contains
 
    !----- Niu-Yang (2007) snow-cover fraction [-], tanh(depth/scale): it ramps the ground optics   !
    !      and the soil-top blend and area-weights the pack's exchange                              !
-   !      (docs/science/snow_biophysics.md). ------------------------------------------------------!
-   pure function snow_cover_fraction(swe, snow_depth, params, snow_rough) result(snowfac)
+   !      (docs/science/snow_biophysics.md). The scale is set by the ground's roughness, the       !
+   !      micro-relief a thin pack has to fill. ---------------------------------------------------!
+   pure function snow_cover_fraction(swe, snow_depth, params, ground_rough) result(snowfac)
       real(wp),            intent(in) :: swe, snow_depth   !< [kg/m2], [m]
       type(snow_params_t), intent(in) :: params
-      real(wp),            intent(in) :: snow_rough   !< [m] the snow surface's roughness ([aerodynamics])
+      real(wp),            intent(in) :: ground_rough   !< [m] the ground's roughness ([aerodynamics].soil_rough)
       real(wp) :: snowfac, scale
       if (swe <= params%tiny_snow_mass) then
          snowfac = 0.0_wp
       else
-         scale   = max(params%ny07_a * snow_rough * (params%rho_snow / NY07_RHO_REF) ** params%ny07_m, tiny_num)
+         scale   = max(params%ny07_a * ground_rough * (params%rho_snow / NY07_RHO_REF) ** params%ny07_m, tiny_num)
          snowfac = tanh(snow_depth / scale)
       end if
    end function snow_cover_fraction
@@ -163,17 +164,17 @@ contains
    !      temperature at which the blended emissivity emits what the soil and the pack emit at     !
    !      their own (docs/science/snow_biophysics.md, "The ground's radiation"). Unchanged without !
    !      a pack. ---------------------------------------------------------------------------------!
-   pure subroutine snow_blend_ground_optics(snow, params, snow_rough, albedo_vis, albedo_nir, emiss, temp)
+   pure subroutine snow_blend_ground_optics(snow, params, ground_rough, albedo_vis, albedo_nir, emiss, temp)
       type(snow_state_t),  intent(in)    :: snow
       type(snow_params_t), intent(in)    :: params
-      real(wp),            intent(in)    :: snow_rough   !< [m] the snow surface's roughness ([aerodynamics])
+      real(wp),            intent(in)    :: ground_rough   !< [m] the ground's roughness ([aerodynamics].soil_rough)
       real(wp),            intent(inout) :: albedo_vis   !< [-] VIS albedo: the bare soil's on entry
       real(wp),            intent(inout) :: albedo_nir   !< [-] NIR albedo: the bare soil's on entry
       real(wp),            intent(inout) :: emiss        !< [-] thermal emissivity: the bare soil's on entry
       real(wp),            intent(inout) :: temp         !< [K] emission temperature: the top soil node's on entry
       real(wp) :: fc, snow_vis, snow_nir, emit_soil, emit_snow
       if (.not. (snow%nlayer >= 1_ik .and. snow%swe(1) > params%tiny_snow_mass)) return
-      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), params, snow_rough)
+      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), params, ground_rough)
       call snow_albedos(snow, params, snow_vis, snow_nir)
       emit_soil  = emiss * temp ** 4                                ! [K4] emission over sigma
       emit_snow  = params%snow_emiss * snow%snow_temp(1) ** 4
@@ -299,11 +300,11 @@ contains
    ! and the stage's hand-off. The exchange is then with this pack                         !
    ! (ground_surface_exchange), and the pack takes it afterwards (snow_take_exchange).     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine prepare_snow_stage(snowfall, rainfall, t_air, snow_rough, env, st)
+   pure subroutine prepare_snow_stage(snowfall, rainfall, t_air, ground_rough, env, st)
       real(wp),            intent(in)    :: snowfall       !< [kg/m2/s] frozen precipitation
       real(wp),            intent(in)    :: rainfall       !< [kg/m2/s] liquid precipitation (rain-on-snow)
       real(wp),            intent(in)    :: t_air          !< [K]       reference-level air temperature
-      real(wp),            intent(in)    :: snow_rough     !< [m]       snow-surface roughness ([aerodynamics])
+      real(wp),            intent(in)    :: ground_rough   !< [m]       the ground's roughness ([aerodynamics].soil_rough)
       type(surface_env_t), intent(inout) :: env            !< its pack advanced, its cover set; params and dt read
       type(snow_out_t),    intent(out)   :: st             !<           the drainage and the stage's hand-off
       real(wp) :: swe0, enth0, acc_enth, melt_enth
@@ -328,7 +329,7 @@ contains
          !----- snowfac is snow, 1 - snowfac bare soil; the pack's exchange scales by it, so a patchy  !
          !      pack barely exchanges and its fluxes come snowfac-weighted. ---------------------------!
          if (env%pack%nlayer >= 1_ik .and. env%pack%swe(1) > env%params%tiny_snow_mass)                 &
-            env%snowfac = snow_cover_fraction(env%pack%swe(1), env%pack%snow_depth(1), env%params, snow_rough)
+            env%snowfac = snow_cover_fraction(env%pack%swe(1), env%pack%snow_depth(1), env%params, ground_rough)
       end if
       st%exists   = exists
       st%acc_enth = acc_enth
