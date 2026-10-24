@@ -751,6 +751,12 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Changed
 
+- **One script checks the runs `meds_main` refuses** (#518), `test/check_main_refuses.cmake`, with five
+  cases: unknown config keys, an RK45 `rtol` too loose, a missing or empty census, and a missing restart.
+  Each is a one-day run in a directory of the build tree; the three scripts it replaces ran the reference
+  config's whole window in the source tree. Every ctest has a 600 s time limit; `march_derivs` is
+  `column_derivs` again, after its file; `test_several_sites` runs 30 days, not 60; and the met tests
+  write their files in the build tree, not the repository root.
 - **Each tissue pays its own longwave emission** (#514). A cohort's net longwave was split between
   leaves and wood by their share of the absorption, so the leaves paid a share of the wood's emission
   whatever their temperatures. Leaves and wood now share what the cohort takes in, the two-stream's net
@@ -1607,6 +1613,9 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Removed
 
+- **`test_phenology_config` and `test_column_co2`** (#518). The first's section checks join
+  `test_config_keys`, and the canopy-air CO₂ update joins `test_surface_energy`. The wood-timescale check
+  (8εσT³) and the `G_top` identity go: neither checked the model.
 - **The process mask, the probe and the uncoupled stage** (#480): `apply_process_mask` and
   `mask_is_full`, `write_fast_probe`, the uncoupled backward-Euler pass of `column_be_stage`, the
   strict floor-step stop, and the LAI-split radiation and `reference_met` of a run without forcing.
@@ -1672,6 +1681,15 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Fixed
 
+- **Tests that did not test what they said** (#518).
+  - `restart_exact` was skipped without pandas, which it does not use. It now checks its own dependencies.
+  - `test_column_rk45`'s "sealed" saturated column drained. It is sealed now, and its θ bound is hydrostatic.
+    Its budget test asserts all seven ledgers, not two, and its leaf-potential check, which could not fail,
+    goes.
+  - `test_canopy_radiation`'s guard against ED2's bug B1 checked only that the cohorts' scattering differed.
+    Under diffuse light, the lower cohort's absorption now follows its own PFT and not that of a near-bare
+    cohort above it.
+  - The comments of seven tests and of the test fixture say what they do now.
 - **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
   targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
   `-j 16`). The shims now compile in one target.
