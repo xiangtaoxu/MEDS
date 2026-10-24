@@ -20,6 +20,14 @@ module meds_canopy_radiation
    public :: ground_optics
    public :: canopy_radiation, radiative_temperature
    public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
+   public :: layer_beam_sources   ! used only by the tests
+
+   !----- The largest single-scatter albedo a layer takes, off conservative scattering (omega =    !
+   !      1), where the two-stream's diffuse rate m vanishes. -------------------------------------!
+   real(wp), parameter :: OMEGA_MAX = 1.0_wp - 1.0e-6_wp     !< [-]
+   !----- The relative distance the beam's extinction is moved off the diffuse rate m, where the   !
+   !      in-layer beam solution has a removable singularity. -------------------------------------!
+   real(wp), parameter :: RESONANCE_REL = 1.0e-6_wp          !< [-]
 
    !----- Per-band incident forcing and the ground boundary. In the thermal band the diffuse is    !
    !      the sky's longwave and grnd_emiss the ground's emission; in a shortwave band grnd_emiss  !
@@ -158,7 +166,7 @@ contains
       real(wp), dimension(ncoh+1) :: down0                       ! direct-beam profile (interfaces)
       real(wp), dimension(0:ncoh) :: rbel, sbel                  ! reflectance & up-source of stack below
       real(wp), dimension(ncoh)   :: din, dbot, uup, utop        ! diffuse fluxes per layer
-      real(wp) :: intercept, scat, emit_face, denom, incid_tot
+      real(wp) :: beam_up, beam_dn, emit_face, denom, incid_tot
       integer(ik) :: i
 
       !----- Direct-beam profile: Beer's law from the top down (each layer covers the ground). -!
@@ -171,15 +179,18 @@ contains
          down0(1:ncoh+1) = 0.0_wp                    ! no beam: zero the whole profile, incl. top face
       end if
 
-      !----- Per-layer diffuse reflectance/transmittance and source fluxes. ----------------!
+      !----- Per-layer diffuse reflectance/transmittance and the sources at its faces: the beam it !
+      !      scatters, as it leaves the layer, and its emission. ----------------------------------!
       do i = 1_ik, ncoh
          call layer_rt(omega(i), beta(i), etai(i), rdd(i), tdd(i))
-         intercept = down0(i+1) - down0(i)                        ! beam intercepted by layer i (>=0)
-         scat      = omega(i) * intercept                         ! beam single-scattered into diffuse
+         beam_up = 0.0_wp
+         beam_dn = 0.0_wp
+         if (has_beam) call layer_beam_sources(omega(i), beta(i), beta0(i), kdir(i), etai(i), down0(i+1),  &
+                                                beam_up, beam_dn)
          emit_face = 0.0_wp
          if (has_emission) emit_face = (1.0_wp - rdd(i) - tdd(i)) * emission(i)
-         sup(i) = beta0(i)          * scat + emit_face            ! up-source (top of layer)
-         sdn(i) = (1.0_wp - beta0(i)) * scat + emit_face          ! down-source (bottom of layer)
+         sup(i) = beam_up + emit_face                             ! up-source (top of layer)
+         sdn(i) = beam_dn + emit_face                             ! down-source (bottom of layer)
       end do
 
       !----- Bottom-up sweep: reflectance and upward source of {ground + layers 1..i}. The         !
@@ -224,7 +235,7 @@ contains
       real(wp), intent(in)  :: omega, beta, etai   !< [-] single-scatter albedo, [-] backscatter, [m2/m2] area index
       real(wp), intent(out) :: rdd, tdd            !< [-] diffuse reflectance and transmittance
       real(wp) :: w, sigb, sigf, att, m, rinf, e, e2, denom
-      w = min(omega, 1.0_wp - 1.0e-6_wp)          ! guard the conservative-scattering singularity
+      w = min(omega, OMEGA_MAX)                    ! guard the conservative-scattering singularity
       sigb = w * beta                              ! backward diffuse scattering
       sigf = w * (1.0_wp - beta)                   ! forward diffuse scattering
       att  = 1.0_wp - sigf
@@ -241,6 +252,41 @@ contains
       tdd  = (1.0_wp - rinf * rinf) * e / denom
       rdd  = rinf * (1.0_wp - e2) / denom
    end subroutine layer_rt
+
+   !----- The diffuse light a homogeneous layer scatters out of the beam entering its top, as it   !
+   !      leaves the layer's two faces (docs/science/canopy_radiation_transfer.md eqs.             !
+   !      (10)-(10b)): the two-stream equations with the beam's source omega k S0 exp(-k x)        !
+   !      through the layer's depth, split up by beta0 and down by 1 - beta0, solved exactly with  !
+   !      no diffuse entering either face. Their solution is a particular part in exp(-k x) plus   !
+   !      the two diffuse modes of layer_rt. The adding method then combines the layers exactly,   !
+   !      so the light does not depend on how a canopy is cut into cohorts. -----------------------!
+   pure subroutine layer_beam_sources(omega, beta, beta0, kdir, etai, beam_top, src_up, src_dn)
+      real(wp), intent(in)  :: omega, beta, beta0   !< [-] single-scatter albedo, diffuse backscatter, beam upscatter
+      real(wp), intent(in)  :: kdir, etai            !< [-] beam extinction per unit area; [m2/m2] area index
+      real(wp), intent(in)  :: beam_top              !< [W/m2] beam entering the layer's top
+      real(wp), intent(out) :: src_up, src_dn        !< [W/m2] scattered beam leaving the top and the bottom
+      real(wp) :: w, sigb, att, m, rinf, k, det, a_up, b_dn, e, ek, c1, c2
+      w    = min(omega, OMEGA_MAX)
+      sigb = w * beta                                ! backward diffuse scattering
+      att  = 1.0_wp - w * (1.0_wp - beta)            ! diffuse attenuation
+      m    = sqrt(max(att * att - sigb * sigb, 0.0_wp))
+      rinf = 0.0_wp
+      if (sigb >= tiny_num) rinf = (att - m) / sigb
+      k = kdir
+      if (abs(m - k) < RESONANCE_REL * m) k = m * (1.0_wp + RESONANCE_REL)
+      !----- The particular solution, up a_up e^(-k x) and down b_dn e^(-k x). --------------------!
+      det  = m * m - k * k
+      a_up = w * k * beam_top * (beta0 * (att - k) + sigb * (1.0_wp - beta0)) / det
+      b_dn = w * k * beam_top * ((1.0_wp - beta0) * (att + k) + sigb * beta0) / det
+      !----- The diffuse modes' weights, c1 for e^(-m x) and c2 for e^(m (x - etai)), so that no   !
+      !      diffuse enters the top (down = 0 at x = 0) or the bottom (up = 0 at x = etai). -------!
+      e  = exp(-min(m * etai, lnexp_max))
+      ek = exp(-min(k * etai, lnexp_max))
+      c1 = (rinf * e * a_up * ek - b_dn) / (1.0_wp - rinf * rinf * e * e)
+      c2 = -c1 * rinf * e - a_up * ek
+      src_up = c1 * rinf + c2 * e + a_up
+      src_dn = c1 * e + c2 * rinf + b_dn * ek
+   end subroutine layer_beam_sources
 
    !=======================================================================================!
    ! The patch's radiation: every band for one patch, the module's entry point.            !

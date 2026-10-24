@@ -113,7 +113,9 @@ takes the air's pressure, the leaf boundary layer its air properties at the righ
 Monin-Obukhov sweep CLM5's stability bounds, snow and bare soil the ground's radiation at their own
 optics, a snow pack buries the canopy's roughness, the drought limb reaches C4 leaves, Katul's solve
 brackets behind a boundary layer and at the dew point, the configuration refuses impossible traits and
-NaN soil layers, and the reported net radiation includes the wood (#503).
+NaN soil layers, and the reported net radiation includes the wood (#503). The two-stream solves each
+layer's scattered beam through its depth, so a canopy's light no longer depends on how it is cut into
+cohorts (#504).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -716,6 +718,12 @@ NaN soil layers, and the reported net radiation includes the wood (#503).
 
 ### Changed
 
+- **The two-stream solves each layer's scattered beam through its depth** (#504). The beam a layer
+  scattered entered at its two faces, unattenuated inside it, so the light depended on the cohort cut
+  (default optics, LAI 5: VIS albedo 0.075 for one cohort, 0.053 for five, 0.043 converged).
+  `layer_beam_sources` gives each layer's exact emergent sources, so any cut gives the converged light.
+  ex04's midday albedo 0.178 → 0.165 (the tower's is 0.13); net radiation +0.9 % at BCI and +2.1 % in
+  the census cases, mostly as sensible heat; GPP −0.2 to −0.4 %.
 - **Physics fixes from the fast process-kernel review** (#503), each measured against the one before
   on the harness:
   - **Ground evaporation and the canopy-air VPD at the air's pressure,** not 1 atm: at 3,050 m (Niwot,
