@@ -18,16 +18,16 @@
 module meds_fast_integ_derivs
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o, grav_head
-   use meds_therm_lib, only : cas_molar_density, cas_enthalpy_to_temp, sat_specific_humidity,             &
+   use meds_therm_lib, only : cas_enthalpy_to_temp, sat_specific_humidity,                                &
                               sat_specific_humidity_temp_deriv, enthalpy_vapor, internal_energy_to_temp,  &
                               internal_energy_liquid
    use meds_soil_heat, only : soil_heat_env_t
    use meds_surface, only : snow_env_t, snow_out_t
    use meds_patch_state_vars,   only : soil_energy_state_t
    use meds_soil_heat, only : soil_energy_time_deriv
-   use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv
+   use meds_canopy_air_space, only : cas_env_t, cas_box_time_deriv, cas_condensation
    use meds_surface, only : ground_surface_fluxes, snow_surface_balance
-   use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
+   use meds_canopy_aerodynamics, only : canopy_air_conductances
    use meds_plant_energy, only : veg_energy_balance, lw_emission_slope
    use meds_fast_integ_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t,                     &
                                tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t,                  &
@@ -50,11 +50,6 @@ module meds_fast_integ_derivs
    public :: set_water_state, water_derivs
    public :: assemble_soil_energy_forcing
 
-   !----- [s] e-folding time of the smooth condensation sink, dq/dt = -(q - qsat)/TAU_COND: short       !
-   !      against dt_fast, so supersaturated canopy air condenses within the step, and smooth (no clamp), !
-   !      so the embedded error stays small. Any strong restoring rate pins q near qsat. ----------------!
-   real(wp), parameter :: TAU_COND = 300.0_wp
-
 contains
 
    !---------------------------------------------------------------------------------------!
@@ -68,15 +63,11 @@ contains
       type(cas_boundary_t),   intent(in)  :: cas
       real(wp),               intent(in)  :: cas_enthalpy, cas_shv
       real(wp),               intent(out) :: g_atm_heat, g_atm_vapour, g_atm_co2
-      real(wp) :: tcas, ustar, heat_transfer_factor, zeta, rib, obu, can_dmol
+      real(wp) :: tcas
       tcas = cas_enthalpy_to_temp(cas_enthalpy, cas_shv)
-      !----- The pre-pass also passes can_theta = tcas, so only the state differs from its solve. -!
-      call mo_surface_layer(cas%aero_cfg, cas%mo_u_ref, cas%mo_zref, cas%mo_displace, cas%mo_rough, &
-                            cas%mo_theta_atm, cas%mo_shv_atm, tcas, cas_shv,                      &
-                            ustar, heat_transfer_factor, zeta, rib, obu)
-      can_dmol = cas_molar_density(cas%mo_rho, cas_shv)
-      call cas_atm_conductances(cas%mo_rho, can_dmol, ustar, heat_transfer_factor, heat_transfer_factor,         &
-                                g_atm_heat, g_atm_vapour, g_atm_co2)
+      !----- The pre-pass solved at tcas too, so only the state differs from its solve. ----------!
+      call canopy_air_conductances(cas%aero_cfg, cas%env, cas%geom, cas%rho, tcas, cas_shv,              &
+                                   g_atm_heat, g_atm_vapour, g_atm_co2)
    end subroutine refresh_cas_conductances
 
    !---------------------------------------------------------------------------------------!
@@ -234,12 +225,10 @@ contains
       f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + sfx%w_flux
       f%coh_rnet   = coh_rnet
 
-      !----- Smooth condensation sink (dew, fog): supersaturated canopy air relaxes to qsat over TAU_COND. !
-      !      The condensate leaves as liquid at tcas, taking only its liquid enthalpy; the latent heat    !
-      !      stays in the air, as in real condensation. ----------------------------------------------!
-      f%cond     = (cas%box%air_mass_capacity / TAU_COND) * max(0.0_wp, y%cas_shv - qsat_c)
+      !----- The condensation sink (dew, fog; meds_canopy_air_space), taken from the canopy air's vapour !
+      !      and, as the condensate's liquid enthalpy, from its enthalpy. ------------------------------!
+      call cas_condensation(cas%box%air_mass_capacity, y%cas_shv, qsat_c, tcas, f%cond, f%cond_enth)
       f%src_vap  = f%src_vap  - f%cond
-      f%cond_enth = f%cond * internal_energy_liquid(tcas)
       f%src_enth = f%src_enth - f%cond_enth
 
       !----- CAS box tendencies (shared kernel; the condensation adjustment above is folded into    !

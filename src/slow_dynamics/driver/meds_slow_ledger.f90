@@ -34,7 +34,7 @@ module meds_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_therm_lib,          only : cas_molar_density
+   use meds_patch_state_vars,   only : cas_capacities
    use meds_allometry_lib,      only : min_cohort_carbon
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_biogeochem,    only : soil_carbon_bad_pool, soil_carbon_pool_name,          &
@@ -328,13 +328,11 @@ contains
          store%water  = store%water  + a * sum(poly%patch%snow(ip)%swe)
          store%energy = store%energy + a * sum(poly%patch%snow(ip)%snow_energy)
 
-         !----- Canopy air. The capacities are rho*depth and dmol*depth, exactly as the fast       !
-         !      prepass forms them, so a depth change moves the store by the amount the open        !
-         !      control volume entrained or detrained (refresh_canopy_depth declares it). ---------!
+         !----- Canopy air. The capacities are the fast step's own (cas_capacities), so a depth     !
+         !      change moves the store by the amount the open control volume entrained or          !
+         !      detrained (refresh_canopy_depth declares it). ------------------------------------!
          associate (cas => poly%patch%cas(ip))
-            dmol     = cas_molar_density(rho_air, cas%can_shv)
-            cap_mass = rho_air * cas%can_depth
-            cap_mol  = dmol    * cas%can_depth
+            call cas_capacities(rho_air, cas%can_shv, cas%can_depth, dmol, cap_mass, cap_mol)
             store%water  = store%water  + a * cap_mass * cas%can_shv
             store%energy = store%energy + a * cap_mass * cas%can_enthalpy
             store%carbon = store%carbon + a * cap_mol  * cas%can_co2 * KGC_PER_UMOL_C

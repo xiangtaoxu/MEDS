@@ -29,7 +29,7 @@ module meds_patch_state_vars
 
    public :: cas_state_t, snow_state_t, soil_water_state_t, soil_energy_state_t, soil_carbon_t
    public :: decomp_xi_t, litter_input_t
-   public :: blend_cas, cas_set_depth, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
+   public :: blend_cas, cas_set_depth, cas_capacities, blend_snow, blend_soil_water, blend_soil_energy, blend_soil_carbon
    public :: blend_decomp_xi, blend_litter_input
    public :: patch_block, alloc_patch_block, expand_patch_block, reorder_patch_block, free_patch_block
    public :: patch_physical_state
@@ -255,6 +255,22 @@ contains
       if (present(dc_open)) dc_open = dmol  * cas%can_co2
       cas%can_depth = depth_new
    end subroutine cas_set_depth
+
+   !----- The canopy air's capacities for its three variables: its air mass [kg/m2] and its dry-air  !
+   !      moles [mol/m2], the depth times the density and the dry-air molar density at its humidity  !
+   !      (docs/science/canopy_air_space_biophysics.md eq. (1)). The fast step and the slow ledger   !
+   !      both take them from here. -------------------------------------------------------------!
+   elemental subroutine cas_capacities(rho_air, shv, depth, molar_density, mass_capacity, molar_capacity)
+      real(wp), intent(in)  :: rho_air          !< [kg/m3]  air density
+      real(wp), intent(in)  :: shv              !< [kg/kg]  specific humidity
+      real(wp), intent(in)  :: depth            !< [m]      canopy-air depth
+      real(wp), intent(out) :: molar_density    !< [mol/m3] dry-air molar density
+      real(wp), intent(out) :: mass_capacity    !< [kg/m2]
+      real(wp), intent(out) :: molar_capacity   !< [mol/m2]
+      molar_density  = cas_molar_density(rho_air, shv)
+      mass_capacity  = rho_air * depth
+      molar_capacity = molar_density * depth
+   end subroutine cas_capacities
 
    !----- nlayer is the larger; the caller sets it to 0 when no snow is left. -------------!
    pure function blend_snow(w1, a, w2, b) result(c)

@@ -101,7 +101,8 @@ to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 
 kernels' comments and science pages say what the code computes, with no change to any result (#495). The
 Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496). The
 fast kernels are one folder of eleven process modules, `fast_dynamics/processes`, with no change to any
-result (#497).
+result (#497). The canopy's process modules hold their own formulas, and the reference-level air and the
+canopy geometry are stored once (#498).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -686,6 +687,16 @@ result (#497).
 
 ### Changed
 
+- **The canopy's process modules hold their own formulas** (#498). `canopy_aerodynamics` takes the
+  gather's bottom-to-top order and reorders the cohorts itself, so the integrator's `aero_bottom_to_top`
+  is gone, and the per-stage surface-layer re-solve is its `canopy_air_conductances`. `aero_env_t` drops
+  `co2_atm`, `can_co2`, `press`, `rho_air` and `can_theta`, and `set_aero_env_atm`/`_canopy` fill it;
+  `cas_boundary_t` carries the step's `aero_env_t` and `aero_args_t` in place of its seven `mo_*` copies.
+  The canopy air's capacities are `cas_capacities` in `meds_patch_state_vars`, which the frozen build and
+  the slow ledger share, and its condensation sink is `cas_condensation`. A cohort's emission temperature
+  is `radiative_temperature`, and the ground's optics under a pack `snow_blend_ground_optics`. Every
+  variable of the 10 harness cases is identical on gfortran; on ifx Release they move by round-off (at
+  most 5e-8 relative on ex04), and the ifx Debug runs are identical.
 - **The fast kernels are one folder of process modules, `fast_dynamics/processes`** (#497).
   `canopy/`, `plant/` and `soil/` become eleven modules, each named after its science page:
   `meds_canopy_air_space` was `meds_cas_biophysics`, `meds_plant_energy` was `meds_plant_biophysics`

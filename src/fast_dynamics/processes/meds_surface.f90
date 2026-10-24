@@ -21,7 +21,7 @@ module meds_surface
    private
 
    public :: ground_surface_fluxes
-   public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater
+   public :: snow_cover_fraction, snow_accumulate, snow_drain_meltwater, snow_blend_ground_optics
    public :: snow_surface_balance, snow_take_exchange
    public :: snow_energy_step      ! used only by the tests: a balance and its commit in one step
    public :: snow_surface_fluxes   ! used only by the tests
@@ -94,6 +94,30 @@ contains
          snowfac = tanh(snow_depth / scale)
       end if
    end function snow_cover_fraction
+
+   !----- The ground's optics under a pack: its albedo, emissivity and emission temperature blended  !
+   !      toward the pack's by the snow-cover fraction, so a partial pack is continuous; the fresh    !
+   !      and aged albedos are weighted by the surface liquid fraction                               !
+   !      (docs/science/canopy_radiation_transfer.md §4). Unchanged without a pack. ---------------!
+   pure subroutine snow_blend_ground_optics(snow, params, snow_rough, albedo_vis, albedo_nir, emiss, temp)
+      type(snow_state_t),  intent(in)    :: snow
+      type(snow_params_t), intent(in)    :: params
+      real(wp),            intent(in)    :: snow_rough   !< [m] the snow surface's roughness ([aerodynamics])
+      real(wp),            intent(inout) :: albedo_vis   !< [-] VIS albedo: the bare soil's on entry
+      real(wp),            intent(inout) :: albedo_nir   !< [-] NIR albedo: the bare soil's on entry
+      real(wp),            intent(inout) :: emiss        !< [-] thermal emissivity: the bare soil's on entry
+      real(wp),            intent(inout) :: temp         !< [K] emission temperature: the top soil node's on entry
+      real(wp) :: fc, fl
+      if (.not. (snow%nlayer >= 1_ik .and. snow%swe(1) > params%tiny_snow_mass)) return
+      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), params, snow_rough)
+      fl = snow%snow_fliq(1)
+      albedo_vis = (1.0_wp - fc) * albedo_vis                                                        &
+                   + fc * ((1.0_wp - fl) * params%albedo_vis_fresh + fl * params%albedo_vis_aged)
+      albedo_nir = (1.0_wp - fc) * albedo_nir                                                        &
+                   + fc * ((1.0_wp - fl) * params%albedo_nir_fresh + fl * params%albedo_nir_aged)
+      emiss      = (1.0_wp - fc) * emiss + fc * params%snow_emiss
+      temp       = (1.0_wp - fc) * temp + fc * snow%snow_temp(1)
+   end subroutine snow_blend_ground_optics
 
    !----- Accumulation of snowfall (as ice) and rain-on-snow (as liquid) with their precip_enthalpy.  !
    !      A layer is created only from min_new_snow_mass of new snow; with no layer and less, the      !

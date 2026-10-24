@@ -335,21 +335,15 @@ module meds_fast_integ_types
       type(cas_env_t) :: box   !< its sources are each evaluation's, set where the box is advanced
       !----- The box's conductances are the state^n values, which seed the march and the diagnostics; a stage !
       !      re-solves them at its own canopy-air state (docs/science/numerical_scheme.md §2, item 3; !
-      !      docs/science/canopy_aerodynamics.md §2). mo_live says the mo_* inputs below are set: it  !
+      !      docs/science/canopy_aerodynamics.md §2). mo_live says env and geom below are set: it     !
       !      is false for a hand-built record, which supplies its own conductances (a re-solve from    !
       !      unset roughness and wind would not converge), true from build_frozen, and false   !
       !      again in ESDIRK2's stage copy once refreshed, so the Newton's repeated evaluations reuse !
       !      it.                                                                                      !
-      logical :: mo_live = .false.            !< the mo_* inputs are populated => re-solve per evaluation
+      logical :: mo_live = .false.            !< env and geom are set => re-solve per evaluation
       type(aero_params_t) :: aero_cfg         !< MO constants (copy; POD)
-      real(wp) :: mo_u_ref      = 0.0_wp      !< [m/s]  wind at the reference height
-      real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
-      real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)
-      real(wp) :: mo_rough      = 0.0_wp      !< [m]    roughness length     (canopy geometry, frozen)
-      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature referenced to zref (= the air temperature there)
-      real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
-                                              !<        which need not equal the box's)
-      real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
+      type(aero_env_t)    :: env              !< the step's aerodynamic environment: the reference level, the canopy air
+      type(aero_args_t)   :: geom             !< the canopy geometry the roughness and displacement come from
       real(wp) :: nee_biotic    = 0.0_wp      !< [umol/m2/s] frozen biotic CO2 source (Ra+Rh-GPP)
       real(wp) :: rho           = 0.0_wp      !< [kg/m3]   canopy-air density
       real(wp) :: press         = 0.0_wp      !< [Pa]      canopy-air pressure
@@ -627,7 +621,6 @@ module meds_fast_integ_types
    end type esdirk2_stages_t
 
    type :: fast_workspace_t
-      type(aero_env_t)      :: aenv                          !< the aerodynamic environment (set_aero_env)
       type(water_work_t)    :: water                         !< the soil-plant water network
       type(frozen_t)        :: frozen                        !< the frozen record (prepare_frozen resets it)
       type(march_state_t)  :: y_march, y_new, y_err, y_lo   !< the ESDIRK2 march's state and trial step

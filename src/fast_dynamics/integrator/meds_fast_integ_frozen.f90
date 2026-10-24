@@ -30,7 +30,7 @@ module meds_fast_integ_frozen
    use meds_soil_params,      only : soil_profile_t
    use meds_config,           only : meds_config_t
    use meds_site_state_vars,  only : site_surface_t
-   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, set_aero_env_atm
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, set_aero_env_atm, set_aero_env_canopy
    use meds_pft_params,       only : leaf_photo_table_t, hydraulics_table_t
    use meds_fast_integ_types,       only : fast_dynamic_state_t, fast_static_state_t, fast_forcing_t, fast_output_t,     &
                                      march_state_t, frozen_t, surface_state_t,                            &
@@ -40,7 +40,7 @@ module meds_fast_integ_frozen
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t, snow_params_t
-   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t
+   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, snow_state_t, cas_capacities
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_energy, only : sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, EFFAREA_HEAT, &
@@ -52,14 +52,14 @@ module meds_fast_integ_frozen
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, assemble_env_scalar, assemble_transfer_matrix
    use meds_surface, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_therm_lib,        only : internal_energy_liquid, liquid_energy_to_temp, precip_enthalpy,             &
-                                     cas_molar_density, cas_enthalpy_to_temp, sat_vapor_pressure,               &
+                                     cas_enthalpy_to_temp, sat_vapor_pressure,                                  &
                                      soil_thermal_conductivity, specific_humidity_to_vapor_pressure
    use meds_numerics,         only : weighted_mean
    implicit none
    private
 
    public :: build_frozen, record_water_flows
-   public :: cohort_leaf_par, aero_bottom_to_top   ! used only by the tests
+   public :: cohort_leaf_par   ! used only by the tests
 
 contains
 
@@ -71,7 +71,7 @@ contains
    ! per-cohort rates, the step's GPP, NEE and decomposition scalars, and, with            !
    ! out%capture, the per-cohort diagnostics (docs/science/diagnostics.md §1, stage [2]).  !
    !---------------------------------------------------------------------------------------!
-   subroutine build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, aenv, water, frozen, y)
+   subroutine build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, water, frozen, y)
       real(wp),                   intent(in)    :: dt_fast
       type(meds_config_t),        intent(in)    :: cfg
       type(site_surface_t),       intent(in)    :: site
@@ -79,13 +79,13 @@ contains
       type(fast_forcing_t),       intent(in)    :: forcing
       type(fast_dynamic_state_t), intent(in)    :: dynamic
       type(fast_output_t),        intent(inout) :: out
-      type(aero_env_t),           intent(inout) :: aenv     !< the aerodynamic environment
       type(water_work_t),         intent(inout) :: water    !< the soil-plant water network
       type(frozen_t),             intent(inout) :: frozen
       type(march_state_t),       intent(out)   :: y
       !----- The canopy air's temperature and humidity at the start state, the air's pressure and     !
       !      density, and the ground's temperature, which the later steps read. ---------------------!
       real(wp)    :: tcas, qcas, press, rho, t_ground
+      real(wp)    :: can_dmol      !< [mol/m3] the canopy air's dry-air molar density
       !----- The processes' patch totals [umol/m2 ground/s] and the root zone's drivers. ----------!
       real(wp)    :: gpp, ra_leaf, ra_stem, ra_root, rh, soil_temp_root, theta_mean
       real(wp)    :: throughfall   !< [kg/m2/s] the rain and snow through the canopy
@@ -98,7 +98,7 @@ contains
       call prepare_frozen(n, nsl, frozen)
 
       !----- The processes' rates at the start state. --------------------------------------------!
-      call refresh_canopy_aerodynamics(cfg%aero, aenv, static, forcing, dynamic%cas,                         &
+      call refresh_canopy_aerodynamics(cfg%aero, frozen%cas%env, static, forcing, dynamic%cas,               &
                                        dynamic%soil_energy%soil_temp(1), dynamic%leaf_temp, dynamic%wood_temp, &
                                        out%aero, tcas, qcas, press, rho, t_ground)
       call root_zone_environment(site%soil_profile, static%root_frac_patch(1:nsl), dynamic%soil_energy%soil_temp, &
@@ -120,13 +120,14 @@ contains
       frozen%cas%nee_biotic = ra_leaf + ra_stem + ra_root + rh - gpp + static%slow_co2_rate
       out%report%exports%gpp_last = gpp
       out%report%exports%nee_last = frozen%cas%nee_biotic
-      call cas_capacities_and_conductances(rho, qcas, dynamic%cas%can_depth, out%aero%ustar,                    &
-                                           out%aero%heat_transfer_factor, out%aero%vapour_transfer_factor,      &
-                                           frozen%cas%box%air_mass_capacity,                                   &
-                                           frozen%cas%box%air_molar_capacity,                                   &
-                                           frozen%cas%box%atm_conductance_enthalpy,                             &
-                                           frozen%cas%box%atm_conductance_vapor,                                &
-                                           frozen%cas%box%atm_conductance_co2)
+      !----- The canopy air's capacities, and its exchange with the atmosphere at the start state    !
+      !      (docs/science/canopy_aerodynamics.md eq. (5)): heat on heat_transfer_factor, vapour and  !
+      !      CO2 on vapour_transfer_factor (equal, z0q = z0h). -----------------------------------!
+      call cas_capacities(rho, qcas, dynamic%cas%can_depth, can_dmol, frozen%cas%box%air_mass_capacity,         &
+                          frozen%cas%box%air_molar_capacity)
+      call cas_atm_conductances(rho, can_dmol, out%aero%ustar, out%aero%heat_transfer_factor,                  &
+                                out%aero%vapour_transfer_factor, frozen%cas%box%atm_conductance_enthalpy,     &
+                                frozen%cas%box%atm_conductance_vapor, frozen%cas%box%atm_conductance_co2)
 
       !----- The snow stage (docs/science/snow_biophysics.md §The snow store): the step's snow and rain  !
       !      into the pack and the liquid it holds out to the pond, before the water network, which takes !
@@ -143,7 +144,7 @@ contains
       call intercept_rain(dt_fast, cfg, static, forcing, dynamic, frozen%snow%exists, frozen%film, throughfall)
       call tissue_coefficients(dt_fast, cfg, static, forcing, dynamic, out%aero, rho, frozen%tissue, frozen%film, &
                                frozen%plant)
-      call canopy_air_boundary(cfg%aero, aenv, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
+      call canopy_air_boundary(cfg%aero, static%geom, out%aero, forcing, rho, press, frozen%cas, frozen%ground)
       call transpiration_demand(dt_fast, cfg%canopy_water_on, n, dynamic, t_ground, frozen)
       call ground_inflow(static, forcing, dynamic, out%aero%ggnet, throughfall, tcas, qcas, rho, t_ground, nsl,    &
                          frozen)
@@ -281,23 +282,15 @@ contains
       real(wp),                  intent(in)    :: wood_temp(:)     !< [K] per-cohort wood temperature
       type(aero_out_t),          intent(inout) :: aero
       real(wp),                  intent(out)   :: tcas, qcas, press, rho, t_ground
-      aenv%u_ref   = forcing%wind
-      aenv%zref    = static%z_top
-      aenv%press   = forcing%press
-      aenv%rho_air = forcing%rho_air
-      call set_aero_env_atm(aenv, forcing%air_temp, forcing%shv_atm, forcing%co2_atm)
+      call set_aero_env_atm(aenv, forcing%wind, static%z_top, forcing%air_temp, forcing%shv_atm)
       tcas = cas_enthalpy_to_temp(cas%can_enthalpy, cas%can_shv)
       qcas = cas%can_shv
-      press = aenv%press
-      rho = aenv%rho_air
+      press = forcing%press
+      rho = forcing%rho_air
       t_ground = soil_temp_top
-      aenv%can_temp = tcas
-      aenv%can_theta = tcas
-      aenv%can_shv = qcas
-      aenv%can_co2 = cas%can_co2
-      aenv%t_ground = t_ground
-      call aero_bottom_to_top(aero_cfg, aenv, static%geom, static%n, static%order, static%height, static%lai, &
-                              static%leaf_width, static%branch_diam, leaf_temp, wood_temp, aero)
+      call set_aero_env_canopy(aenv, tcas, qcas, t_ground)
+      call canopy_aerodynamics(aero_cfg, aenv, static%geom, static%n, static%order, static%height, static%lai, &
+                               leaf_temp, wood_temp, static%leaf_width, static%branch_diam, aero)
    end subroutine refresh_canopy_aerodynamics
 
    !---------------------------------------------------------------------------------------!
@@ -521,79 +514,6 @@ contains
    end subroutine patch_heterotrophic_respiration
 
    !---------------------------------------------------------------------------------------!
-   ! cas_capacities_and_conductances -- canopy-air-space mass and molar capacities [kg/m2],         !
-   ! [mol/m2] and the CAS <-> atmosphere conductances for enthalpy, vapour and CO2                  !
-   ! (docs/science/canopy_aerodynamics.md eq. (5)). Heat rides heat_transfer_factor, vapour !
-   ! and CO2 vapour_transfer_factor (equal in canopy_aerodynamics, z0q = z0h).             !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine cas_capacities_and_conductances(rho, qcas, can_depth, ustar, heat_transfer_factor,                &
-                                                   vapour_transfer_factor,                                           &
-                                                   cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2)
-      real(wp), intent(in)  :: rho, qcas, can_depth, ustar, heat_transfer_factor, vapour_transfer_factor
-      real(wp), intent(out) :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
-      real(wp) :: can_dmol
-      can_dmol = cas_molar_density(rho, qcas)
-      cas_mass_capacity = rho      * can_depth
-      cas_molar_capacity = can_dmol * can_depth
-      call cas_atm_conductances(rho, can_dmol, ustar, heat_transfer_factor, vapour_transfer_factor, g_atm_heat,   &
-                                g_atm_vapour, g_atm_co2)
-   end subroutine cas_capacities_and_conductances
-
-   !---------------------------------------------------------------------------------------!
-   ! aero_bottom_to_top -- canopy_aerodynamics takes its cohorts bottom (1) to top (n); the cohort     !
-   ! arrays are tallest first. Only the wind cascade and the per-cohort boundary layers depend on     !
-   ! order, so the inputs are permuted by ord (ord(k) = the k-th cohort from the bottom,              !
-   ! ascending_order) and the per-cohort outputs scattered back. An identity for n <= 1.              !
-   !---------------------------------------------------------------------------------------!
-   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, ord, height, lai, leaf_width, branch_diam,      &
-                                 leaf_temp, wood_temp, aero)
-      type(aero_params_t),   intent(in)    :: acfg
-      type(aero_env_t),      intent(in)    :: aenv
-      type(aero_args_t),     intent(in)    :: ageom
-      integer(ik),           intent(in)    :: n
-      integer(ik),           intent(in)    :: ord(:)          !< the cohorts from the ground up (static%order)
-      real(wp),              intent(in)    :: height(:)       !< [m]  cohort height (gather order, top first)
-      real(wp),              intent(in)    :: lai(:)          !< [m2/m2] leaf area index
-      real(wp),              intent(in)    :: leaf_width(:)   !< [m]  leaf width (boundary layer)
-      real(wp),              intent(in)    :: branch_diam(:)  !< [m]  branch diameter (wood boundary layer)
-      real(wp),              intent(in)    :: leaf_temp(:)    !< [K]  leaf temperature
-      !----- The wood's own temperature drives its boundary layer's free convection; it lags the leaves. !
-      real(wp),              intent(in)    :: wood_temp(:)    !< [K]  wood temperature
-      type(aero_out_t),      intent(inout) :: aero
-      integer(ik) :: k, i
-      real(wp)    :: h_bt(n), lai_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
-      real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
-
-      do k = 1_ik, n
-         i = ord(k)
-         h_bt(k)   = height(i)
-         lai_bt(k) = lai(i)
-         lt_bt(k)  = leaf_temp(i)
-         wt_bt(k)  = wood_temp(i)
-         lw_bt(k)  = leaf_width(i)
-         bd_bt(k)  = branch_diam(i)
-      end do
-
-      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)
-
-      !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
-      do k = 1_ik, n
-         wind_bt(k) = aero%wind(k)
-         lgbh_bt(k) = aero%leaf_gbh(k)
-         lgbw_bt(k) = aero%leaf_gbw(k)
-         wgbh_bt(k) = aero%wood_gbh(k)
-         wgbw_bt(k) = aero%wood_gbw(k)
-      end do
-      do k = 1_ik, n
-         aero%wind(ord(k))     = wind_bt(k)
-         aero%leaf_gbh(ord(k)) = lgbh_bt(k)
-         aero%leaf_gbw(ord(k)) = lgbw_bt(k)
-         aero%wood_gbh(ord(k)) = wgbh_bt(k)
-         aero%wood_gbw(ord(k)) = wgbw_bt(k)
-      end do
-   end subroutine aero_bottom_to_top
-
-   !---------------------------------------------------------------------------------------!
    ! prepare_snow_stage -- the pack before the march: this step's snowfall and rain-on-snow,     !
    ! then the drainage of the liquid it holds (the last step's melt and this step's rain) to the !
    ! pond as a paired (mass, enthalpy) transfer, reported as melt_rate and t_melt, and its cover !
@@ -751,26 +671,21 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! canopy_air_boundary -- the rest of the canopy-air boundary: what a per-stage surface-     !
-   ! layer re-solve needs besides the live canopy air, the air above, and the ground's        !
-   ! radiation and conductance. Displacement and roughness are the aerodynamics' own, so a     !
-   ! re-solve at the state^n canopy air reproduces its conductances exactly.                  !
+   ! layer re-solve needs besides the live canopy air and its environment (set by            !
+   ! refresh_canopy_aerodynamics), the air above, and the ground's radiation and              !
+   ! conductance. The re-solve takes its roughness from the same geometry, so at the state^n  !
+   ! canopy air it reproduces the conductances exactly.                                       !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_air_boundary(aero_cfg, aenv, aero, forcing, rho, press, cas, ground)
+   subroutine canopy_air_boundary(aero_cfg, geom, aero, forcing, rho, press, cas, ground)
       type(aero_params_t),     intent(in)    :: aero_cfg
-      type(aero_env_t),        intent(in)    :: aenv
+      type(aero_args_t),       intent(in)    :: geom
       type(aero_out_t),        intent(in)    :: aero
       type(fast_forcing_t),    intent(in)    :: forcing
       real(wp),                intent(in)    :: rho, press
       type(cas_boundary_t),    intent(inout) :: cas
       type(ground_boundary_t), intent(inout) :: ground
       cas%aero_cfg     = aero_cfg
-      cas%mo_u_ref     = aenv%u_ref
-      cas%mo_zref      = aenv%zref
-      cas%mo_displace  = aero%displace
-      cas%mo_rough     = aero%rough
-      cas%mo_theta_atm = aenv%theta_atm
-      cas%mo_shv_atm   = aenv%shv_atm
-      cas%mo_rho       = rho
+      cas%geom         = geom
       !----- Live inputs license the per-stage re-solve; a record not built here (a test fixture)    !
       !      leaves mo_live false, and its box conductances are used as given. ----------------------!
       cas%mo_live      = .true.

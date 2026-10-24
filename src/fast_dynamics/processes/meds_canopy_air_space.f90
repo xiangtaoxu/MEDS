@@ -11,11 +11,17 @@
 !==========================================================================================!
 module meds_canopy_air_space
    use meds_kinds,            only : wp, ik
+   use meds_therm_lib,        only : internal_energy_liquid
    implicit none
    private
 
    public :: cas_env_t
-   public :: cas_box_time_deriv, cas_box_step_implicit
+   public :: cas_box_time_deriv, cas_box_step_implicit, cas_condensation
+
+   !----- [s] e-folding time of the smooth condensation sink, dq/dt = -(q - qsat)/TAU_COND: short       !
+   !      against dt_fast, so supersaturated canopy air condenses within the step, and smooth (no clamp), !
+   !      so the embedded error stays small. Any strong restoring rate pins q near qsat. ----------------!
+   real(wp), parameter :: TAU_COND = 300.0_wp
 
    !----- What the canopy-air box reads, per patch: its capacities, the atm<->CAS conductances and the   !
    !      atmosphere's state, held for the step, and the summed sources into it, set at each         !
@@ -77,5 +83,19 @@ contains
                               + env%atm_conductance_co2 * env%atm_co2))                  &
                      / (env%air_molar_capacity + dt * env%atm_conductance_co2)
    end subroutine cas_box_step_implicit
+
+   !----- The smooth condensation sink (dew, fog): supersaturated canopy air relaxes to saturation   !
+   !      over TAU_COND. The condensate leaves as liquid at the air's temperature, taking only its  !
+   !      liquid enthalpy; the latent heat stays in the air, as in real condensation. -------------!
+   elemental subroutine cas_condensation(air_mass_capacity, shv, qsat, temp, cond, cond_enth)
+      real(wp), intent(in)  :: air_mass_capacity   !< [kg/m2]   the canopy air's mass
+      real(wp), intent(in)  :: shv                 !< [kg/kg]   its specific humidity
+      real(wp), intent(in)  :: qsat                !< [kg/kg]   saturation at its temperature
+      real(wp), intent(in)  :: temp                !< [K]       its temperature
+      real(wp), intent(out) :: cond                !< [kg/m2/s] condensation rate
+      real(wp), intent(out) :: cond_enth           !< [W/m2]    the condensate's liquid enthalpy
+      cond      = (air_mass_capacity / TAU_COND) * max(0.0_wp, shv - qsat)
+      cond_enth = cond * internal_energy_liquid(temp)
+   end subroutine cas_condensation
 
 end module meds_canopy_air_space

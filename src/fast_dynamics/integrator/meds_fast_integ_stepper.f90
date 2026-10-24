@@ -85,7 +85,7 @@ contains
       !      time-mean flows are constants of the march (operator splitting; docs/science/            !
       !      numerical_scheme.md §2). ---------------------------------------------------------------!
       associate (frozen => work%frozen)
-      call build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work%aenv, work%water, frozen, y)
+      call build_frozen(dt_fast, cfg, site, static, forcing, dynamic, out, work%water, frozen, y)
       call water_step(dt_fast, static, site%soil_profile, site%soil, cfg%pft%hydraulics, frozen%water_drive,     &
                       ec%tols, work%water, out%report%work)
       call record_water_flows(dt_fast, cfg, site, static, dynamic, work%water, out, frozen)

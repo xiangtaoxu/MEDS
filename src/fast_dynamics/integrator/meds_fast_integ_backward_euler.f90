@@ -195,7 +195,7 @@ contains
             bf%snow_enth_in = surf_tend%snow_enth_in
             bf%snow_vap_out = surf_tend%snow_vap_out
             !----- The reported H, against theta_atm (T at zref), the ledger's basis. ----------------------!
-            bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)
+            bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%env%theta_atm)
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%box%atm_specific_humidity)
       end if
    end subroutine backward_euler_stage

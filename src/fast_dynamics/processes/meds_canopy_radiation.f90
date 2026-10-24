@@ -17,7 +17,7 @@ module meds_canopy_radiation
    private
 
    public :: ground_optics
-   public :: canopy_radiation
+   public :: canopy_radiation, radiative_temperature
    public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
 
    !----- Per-band incident forcing and ground boundary [W/m2]. In the thermal band the diffuse is   !
@@ -446,5 +446,18 @@ contains
       flux%dn_ground = 0.0_wp
       flux%up_ground = 0.0_wp
    end subroutine alloc_rad_out
+
+   !----- A cohort's longwave emission temperature [K], the fourth-power mean of its leaf and wood  !
+   !      temperatures over their areas: T_rad = (f_l T_leaf^4 + (1-f_l) T_wood^4)^(1/4),        !
+   !      f_l = LAI/(LAI+WAI) (docs/science/canopy_radiation_transfer.md §3). The absorbed        !
+   !      longwave is net of the emission at it (vegetation_energy_dynamics.md, "The emission    !
+   !      base"). ------------------------------------------------------------------------------!
+   elemental real(wp) function radiative_temperature(lai, wai, leaf_temp, wood_temp) result(t_rad)
+      real(wp), intent(in) :: lai, wai             !< [m2/m2] the cohort's leaf and wood area indices
+      real(wp), intent(in) :: leaf_temp, wood_temp !< [K]
+      real(wp) :: lf
+      lf    = lai / max(lai + wai, tiny_num)
+      t_rad = (lf * leaf_temp ** 4 + (1.0_wp - lf) * wood_temp ** 4) ** 0.25_wp
+   end function radiative_temperature
 
 end module meds_canopy_radiation

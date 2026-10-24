@@ -422,7 +422,7 @@ program test_fast_loop
    !    wind (=> higher boundary-layer gb) than the shaded understory below it, so with the leaf's     !
    !    hydraulic water-stress NEUTRALIZED (below) its GPP per leaf area is higher. A cohort order     !
    !    fed to the RT or the aerodynamics the wrong way round (top<->bottom inverted) flips this, so   !
-   !    it guards BOTH the apply_rt_forcing reversal AND the aero_bottom_to_top reversal.             !
+   !    it guards BOTH the apply_rt_forcing reversal AND canopy_aerodynamics' reordering.             !
    !    (Left hydraulically limited, the taller cohort's more negative psi_leaf would legitimately     !
    !    close its stomata and INVERT the GPP ranking -- correct physics, but it masks the wiring.) ===!
    block
