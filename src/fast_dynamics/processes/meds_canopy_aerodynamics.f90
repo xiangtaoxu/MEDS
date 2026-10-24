@@ -45,6 +45,10 @@ module meds_canopy_aerodynamics
    !----- ED2's cap on the canopy's snow burial fraction (canopy_struct_dynamics), so a buried     !
    !      canopy keeps a trace of its own roughness. ----------------------------------------------!
    real(wp), parameter :: BURIAL_MAX = 0.99_wp              !< [-]
+   !----- The bare soil's transfer coefficient from the ground to its roughness height, a (z0 u*/nu)^b  !
+   !      (Zeng & Dickinson 1998, J. Climate 11, 2628-2644; CLM5's soil coefficient). ---------------!
+   real(wp), parameter :: SOIL_TRANSFER_A   = 0.13_wp       !< [-]
+   real(wp), parameter :: SOIL_TRANSFER_EXP = 0.45_wp       !< [-]
 
    public :: canopy_aerodynamics             !< the per-patch entry point: winds, conductances, boundary layers
    public :: canopy_roughness                !< roughness length + displacement height of a patch
@@ -227,7 +231,7 @@ contains
       !      one, blended by the open fraction W. The under-canopy stability stab = g h (T_cas -   !
       !      T_ground) / (T_mean ustar^2), kept in [0, GROUND_STAB_MAX], lowers the dense-canopy   !
       !      value when the ground is colder than the canopy air. ---------------------------------!
-      out%ggbare = out%ustar * out%heat_transfer_factor                           ! [m/s] bare-ground scalar conductance
+      out%ggbare = soil_conductance(cfg, out%ustar, env%can_temp)                 ! [m/s] bare-ground scalar conductance
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
       if (denom > tiny_num) then
@@ -420,7 +424,7 @@ contains
       real(wp),            intent(in) :: wind, elem_temp, can_temp, lchar   !< [m/s], [K], [K], [m]
       logical,             intent(in) :: is_leaf !< true: a leaf (flat plate); false: wood (cylinder)
       real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free   !< [m/s] the result; [m2/s] nu_v, al_th
-      nu_v  = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (can_temp - cfg%t_ref_air))
+      nu_v  = air_kinematic_viscosity(cfg, can_temp)
       al_th = cfg%th_diff0  * (1.0_wp + cfg%dth_diff  * (can_temp - cfg%t_ref_air))
       re    = max(wind * lchar / nu_v, tiny_num)
       gr    = max(grav / (can_temp * nu_v * nu_v) * abs(elem_temp - can_temp) * lchar ** 3, 0.0_wp)
@@ -434,6 +438,27 @@ contains
       end if
       gbh_mos = max(cfg%gbhmos_min, (nu_forced + nu_free) * al_th / lchar)
    end function boundary_layer_conductance
+
+   !----- The air's kinematic viscosity [m2/s], linear in temperature about t_ref_air. -----------!
+   elemental real(wp) function air_kinematic_viscosity(cfg, temp) result(nu)
+      type(aero_params_t), intent(in) :: cfg    !< aerodynamic parameters
+      real(wp),            intent(in) :: temp   !< [K] the air's temperature
+      nu = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (temp - cfg%t_ref_air))
+   end function air_kinematic_viscosity
+
+   !----- The bare soil's conductance to the canopy air [m/s] (docs/science/canopy_aerodynamics.md !
+   !      eq. (6)): u* times CLM5's soil coefficient, the thin layer between the soil and its      !
+   !      roughness height only, kappa / (a (z0 u*/nu)^b). The turbulent layer above it is the     !
+   !      canopy air's own exchange with the atmosphere, so the two in series are CLM5's bare-soil !
+   !      resistance from the soil to zref. -------------------------------------------------------!
+   pure real(wp) function soil_conductance(cfg, ustar, air_temp) result(g)
+      type(aero_params_t), intent(in) :: cfg        !< aerodynamic parameters
+      real(wp),            intent(in) :: ustar      !< [m/s] friction velocity
+      real(wp),            intent(in) :: air_temp   !< [K] canopy-air temperature, for the viscosity
+      real(wp) :: roughness_re   !< [-] the soil's roughness Reynolds number
+      roughness_re = cfg%soil_rough * ustar / air_kinematic_viscosity(cfg, air_temp)
+      g = von_karman * ustar / (SOIL_TRANSFER_A * roughness_re ** SOIL_TRANSFER_EXP)
+   end function soil_conductance
 
    !----- Allocate the per-cohort output arrays of an aero_out_t (the kernel writes in place). !
    subroutine alloc_aero_out(out, n_coh)

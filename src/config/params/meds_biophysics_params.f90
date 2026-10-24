@@ -34,6 +34,7 @@ module meds_biophysics_params
       real(wp) :: z0m_ratio = 0.13_wp               !< z0m / canopy height
       real(wp) :: d_ratio   = 0.63_wp               !< displacement / canopy height
       real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
+      real(wp) :: soil_rough = 0.01_wp              !< [m] bare soil's roughness length (CLM's zlnd)
       !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
       real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
       real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable zeta, the first guess's and each sweep's

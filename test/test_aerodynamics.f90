@@ -19,7 +19,8 @@
 !      in the open-canopy limit.                                                                 !
 !   6. OPEN CANOPY: the ground conductance is the bare-ground value at an open fraction W = 1    !
 !      (a patch with no leaf or wood area), the dense-canopy value at W = 0, and rises            !
-!      monotonically between; W = exp(-(LAI + WAI)).                                             !
+!      monotonically between; W = exp(-(LAI + WAI)). On a bare patch the soil's conductance and   !
+!      the canopy air's exchange in series are CLM5's neutral bare-soil resistance.               !
 !   7. TIED cohorts (one height) are one wind layer: a crown split into two cohorts of half the    !
 !      leaf area meets the wind the whole crown does, and so does the cohort below.               !
 ! The equations are docs/science/canopy_aerodynamics.md §2-§4 (eqs. (3), (6)-(10)).        !
@@ -182,7 +183,7 @@ contains
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik, NW = 11_ik
       integer(ik), parameter :: ORDER(N) = [1_ik, 2_ik]   ! the arrays are bottom to top already
-      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW)
+      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW), r_meds, r_clm, nu
       integer(ik) :: k
       height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
       tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
@@ -216,6 +217,17 @@ contains
                  geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg, 1.0e-15_wp)
       call check_true('LAI 6: the ground couples nearly as under the dense form alone',                &
                       out%ggnet - out%ggveg < 0.01_wp * (out%ggbare - out%ggveg), out%ggnet / out%ggveg)
+      !----- A bare patch at the soil's roughness, neutral: 1/(u* temp1) + 1/ggbare is CLM5's        !
+      !      (ln(zldis/z0m) + 0.13 (z0m u*/nu)^0.45) / (kappa u*), the resistance from the soil to zref. !
+      geom%veg_height = cfg%soil_rough / cfg%z0m_ratio ; geom%opencan_frac = 1.0_wp
+      env%can_temp = 298.15_wp ; env%theta_atm = 298.15_wp ; env%t_ground = 298.15_wp
+      env%can_shv = env%shv_atm
+      call canopy_aerodynamics(cfg, env, geom, 0_ik, ORDER, height, lai, tl, tw, lw, bd, out)
+      r_meds = 1.0_wp / (out%ustar * out%heat_transfer_factor) + 1.0_wp / out%ggnet
+      nu     = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (298.15_wp - cfg%t_ref_air))
+      r_clm  = (log((env%zref - out%displace) / out%rough)                                        &
+                + 0.13_wp * (out%rough * out%ustar / nu) ** 0.45_wp) / (von_karman * out%ustar)
+      call check('a bare patch is coupled as CLM5 couples bare soil', r_meds, r_clm, 1.0e-10_wp * r_clm)
    end subroutine test_open_canopy
 
    !----- 7. Tied cohorts share one wind layer (docs/science/canopy_aerodynamics.md eq. (8)), as they  !

@@ -107,6 +107,7 @@ ny07_m             = 1.0      # [-]     snow-cover fraction exponent
 z0m_ratio        = 0.13       # [-]   roughness length / canopy height, eq. (1)
 d_ratio          = 0.63       # [-]   displacement height / canopy height, eq. (1)
 snow_rough       = 0.001      # [m]   snow-surface roughness: the z0m floor and the snow-cover length scale
+soil_rough       = 0.01       # [m]   bare soil's roughness length: a bare patch's z0m and the ground's coupling, eq. (6)
 zeta_m           = 1.574      # [-]   Monin-Obukhov momentum-range transition (CLM5)
 zeta_t           = 0.465      # [-]   Monin-Obukhov scalar-range transition (CLM5)
 zeta_max_stable  = 0.5        # [-]   cap on the stable zeta of the guess and each sweep (CLM5)

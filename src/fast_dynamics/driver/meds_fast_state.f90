@@ -38,8 +38,6 @@ module meds_fast_state
    public :: derive_cohort_terms
    public :: static_state_fixture   ! used only by the tests
 
-   !----- [m] The canopy height of a patch without cohorts: the aerodynamics' bare-ground top. -------!
-   real(wp), parameter :: BARE_CANOPY_HEIGHT = 1.0_wp
    !----- [K] round-off allowed between a cohort's stored tissue temperatures and those its energy gives. !
    real(wp), parameter :: TISSUE_TEMP_TOL    = 1.0e-6_wp
 
@@ -111,14 +109,15 @@ contains
       !----- Canopy geometry. The open fraction exp(-(LAI + WAI)) weighs bare ground in the ground  !
       !      conductance (docs/science/canopy_aerodynamics.md eq. (6)), so a patch without cohorts  !
       !      couples as bare soil; the pack at the window's start buries the canopy's roughness,    !
-      !      eq. (1). ------------------------------------------------------------------------------!
+      !      eq. (1). The canopy is at least the height whose roughness is the bare soil's, so a    !
+      !      patch without cohorts, or with only shorter ones, has the soil's roughness. -----------!
       sum_lai = 0.0_wp
       sum_wai = 0.0_wp
       do j = 1_ik, ncoh
          sum_lai = sum_lai + static%lai(j)
          sum_wai = sum_wai + static%wai(j)
       end do
-      static%geom%veg_height = BARE_CANOPY_HEIGHT
+      static%geom%veg_height = cfg%aero%soil_rough / cfg%aero%z0m_ratio
       do j = 1_ik, ncoh
          static%geom%veg_height = max(static%geom%veg_height, static%height(j))
       end do
