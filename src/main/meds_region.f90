@@ -23,7 +23,7 @@ module meds_region
    use meds_constants,              only : day_sec, yr_day
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, INIT_RESTART,                                &
-                                           RUN_MODE_REGION, soil_maps_on, site_config, apply_map_inputs
+                                           RUN_MODE_REGION, soil_maps_on, site_configs, apply_map_inputs
    use meds_config_check,           only : validate_config
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_time,                   only : meds_time_t, calendar_step_t, calendar_step, time_lt,       &
@@ -228,7 +228,7 @@ contains
             end if
             !----- Its sites: [[sites]]'s, each with its configuration and share, or one site. ----!
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
-            if (allocated(pcfg%sites)) call polygon_sites(pcfg, site_cfg, site_area)
+            if (allocated(pcfg%sites)) call site_configs(pcfg, site_cfg, site_area)
             call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
                               started, site_cfg=site_cfg, site_area=site_area)
             if (.not. started) return
@@ -300,21 +300,6 @@ contains
       end associate
       ok = .true.
    end subroutine open_run
-
-   !----- A polygon's sites from its configuration's [[sites]]: each one's configuration (the      !
-   !      polygon's, with the site's own ground when it has one) and its share of the polygon, the !
-   !      shares made to sum to exactly 1. --------------------------------------------------------!
-   subroutine polygon_sites(pcfg, site_cfg, site_area)
-      type(meds_config_t),              intent(in)  :: pcfg
-      type(meds_config_t), allocatable, intent(out) :: site_cfg(:)
-      real(wp),            allocatable, intent(out) :: site_area(:)
-      integer(ik) :: is
-      allocate(site_cfg(size(pcfg%sites)))
-      do is = 1_ik, size(pcfg%sites, kind=ik)
-         site_cfg(is) = site_config(pcfg, is)
-      end do
-      site_area = pcfg%sites%area_fraction / sum(pcfg%sites%area_fraction)
-   end subroutine polygon_sites
 
    !----- Each site's terrain: the polygon's elevation, flat, unless its [[sites]] table gives its own. !
    subroutine set_site_terrain(poly, pcfg)
