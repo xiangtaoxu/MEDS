@@ -108,7 +108,12 @@ their own formulas, the ground surface's surroundings are one record, and the so
 soil's potential in MPa (#500). One module holds the plants' maintenance respiration and the soil's
 heterotrophic respiration, and the fast half no longer links the slow kernels (#501). The process
 modules' comments say what each kernel computes, and every bare number in them has a name, with no
-change to any result (#502).
+change to any result (#502). Eleven physics fixes from the process-kernel review: ground evaporation
+takes the air's pressure, the leaf boundary layer its air properties at the right reference, every
+Monin-Obukhov sweep CLM5's stability bounds, snow and bare soil the ground's radiation at their own
+optics, a snow pack buries the canopy's roughness, the drought limb reaches C4 leaves, Katul's solve
+brackets behind a boundary layer and at the dew point, the configuration refuses impossible traits and
+NaN soil layers, and the reported net radiation includes the wood (#503).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -701,9 +706,39 @@ change to any result (#502).
   `heterotrophic_respiration_matrix` are its `decomposition_env_scalar`, `decomposition_transfer_matrix`
   and `heterotrophic_respiration`, their parameter argument `params`. `pack_pool_vector` and
   `unpack_pool_vector` are `meds_patch_state_vars`'.
+- **`[leaf_physiology].medlyn_vpd_min` is `vpd_min`** (#503): the VPD floor now serves Katul as well.
+- **`[aerodynamics].t_ref_air` is 273.15 K** (#503). A configuration copied from the old main config
+  keeps 293.15 K, and with it air viscosity and diffusivity 12 % low: remove the key or set 273.15.
+- **Fortran: the ground surface's radiation is per tile** (#503). `surface_env_t`'s `abs_sw` and
+  `abs_lw` are `rnet_soil`, `sw_snow` and `lw_down`; `fast_forcing_t` adds `rnet_soil`, `sw_snow` and
+  `lw_down_ground` beside its ground totals. `ground_evap_env_t` adds `press`, `patch_diag_row` takes
+  the pressure, and `meds_canopy_aerodynamics` drops `psim` and adds `canopy_burial_fraction`.
 
 ### Changed
 
+- **Physics fixes from the fast process-kernel review** (#503), each measured against the one before
+  on the harness:
+  - **Ground evaporation and the canopy-air VPD at the air's pressure,** not 1 atm: at 3,050 m (Niwot,
+    July) ET 16.7 → 28.6 W/m² of LE, the reported VPD +40 %; the region's LE +0.7 %, BCI's +1.4 %.
+  - **The leaf boundary layer:** the air's viscosity and diffusivity are referenced at 0 °C (they are
+    0 °C values; they were 12 % low), and Re = uℓ/ν (ED2 uses the diffusivity; `ed2_comparison.md`
+    §4.9): a 5 cm leaf at 1 m/s conducts 21 % more. BCI GPP +0.6 %, the region's +1.4 %.
+  - **Every Monin-Obukhov sweep holds ζ in [−100, `zeta_max_stable`],** as CLM5: a stable night no
+    longer runs to `ustmin` (a 30 m forest 3 K colder than the air coupled at 0.0038 m/s at both 1 and
+    2 m/s, now 0.0115 and 0.0231). Ithaca's spring thaw: H −4.2 %, LE +2.4 %.
+  - **The canopy-top wind profile shares u*'s stability ranges**; **the leaf-angle distribution sums
+    to one however narrow it is** (a spread ≤ 3° left the beam uncaught); both round-off on the
+    harness.
+  - **The drought limb scales a C4 leaf's light rate and PEP slope:** the census cases' GPP −0.2 %.
+  - **Snow and bare soil take the ground's radiation at their own albedo and temperature:** half cover
+    under 300 W/m² gave each tile 77 W/m², now about 38 to the snow and 117 to the soil.
+  - **A pack buries the canopy's roughness** by ED2's burial fraction: Ithaca January LE −1.5 %.
+  - **Katul** brackets its Ci to where Ci = Cs (behind a thin boundary layer it fell back to g0) and
+    floors D at `vpd_min` (gs jumped three orders at the dew point).
+  - **The configuration refuses** impossible pressure-volume and vulnerability traits and NaN soil
+    layers; **the soil column's bottom face** is one expression for the solve and the ledger.
+  - **The reported net radiation includes the wood:** ex04's `mean_rnet_py` 105.3 → 116.9 W/m², with no
+    prognostic change.
 - **The process modules' comments and named constants** (#502). Every kernel in
   `fast_dynamics/processes` says what it computes and why, with units on each argument, and not which
   integrator routine calls it; internal jargon goes from the comments and the science pages. The canopy
