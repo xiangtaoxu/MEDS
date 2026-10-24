@@ -788,8 +788,12 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_driver test/test_met_driver.f90)
    target_link_libraries(test_met_driver PRIVATE meds_met meds_testassert)
    meds_fortran_flags(test_met_driver)
+   #      The three met tests write their files in a directory of their own in the build tree.
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land
+                       ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
    add_test(NAME met_driver COMMAND test_met_driver
-            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt)
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver)
    #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
    add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
    target_link_libraries(meds_testarchive PUBLIC meds_met)
@@ -797,7 +801,8 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_era5land test/test_met_era5land.f90)
    target_link_libraries(test_met_era5land PRIVATE meds_met meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
-   add_test(NAME met_era5land COMMAND test_met_era5land)
+   add_test(NAME met_era5land COMMAND test_met_era5land
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
    #----- The static-map reader and the cell mask, on the synthetic archive's grid. ----------#
    add_executable(test_surface_maps test/test_surface_maps.f90)
    target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
@@ -807,7 +812,7 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
    meds_fortran_flags(test_met_tower)
-   add_test(NAME met_tower COMMAND test_met_tower)
+   add_test(NAME met_tower COMMAND test_met_tower WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
    #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
    #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
    find_package(Python3 COMPONENTS Interpreter QUIET)
