@@ -63,17 +63,20 @@ contains
 
    !=====================================================================================!
    subroutine test_snow_cover()
-      real(wp), parameter :: SNOW_ROUGH = 0.001_wp   !< [m] the [aerodynamics] default
+      real(wp), parameter :: GROUND_ROUGH = 0.01_wp   !< [m] the [aerodynamics] soil_rough default
       type(snow_params_t) :: p
       real(wp) :: f0, f1, f2
       print '(a)', 'test_snow_cover:'
       call default_params(p)
-      f0 = snow_cover_fraction(0.0_wp,  0.0_wp,  p, SNOW_ROUGH)
-      f1 = snow_cover_fraction(1.0_wp,  1.0_wp/p%rho_snow,  p, SNOW_ROUGH)
-      f2 = snow_cover_fraction(50.0_wp, 50.0_wp/p%rho_snow, p, SNOW_ROUGH)
+      f0 = snow_cover_fraction(0.0_wp,  0.0_wp,  p, GROUND_ROUGH)
+      f1 = snow_cover_fraction(1.0_wp,  1.0_wp/p%rho_snow,  p, GROUND_ROUGH)
+      f2 = snow_cover_fraction(50.0_wp, 50.0_wp/p%rho_snow, p, GROUND_ROUGH)
       call check('snowfac(0)=0', f0, 0.0_wp, 1.0e-12_wp)
       call check_true('snowfac monotone 0<f1<f2<=1', f1 > 0.0_wp .and. f1 < f2 .and. f2 <= 1.0_wp, f2)
       call check_true('deep pack fully covered (~1)', f2 > 0.99_wp, f2)
+      !----- 1 cm of snow on ground of 1 cm roughness covers about a sixth of it (Niu & Yang 2007). --!
+      f1 = snow_cover_fraction(2.5_wp, 2.5_wp/p%rho_snow, p, GROUND_ROUGH)
+      call check('1 cm of snow covers tanh(0.16) of the ground', f1, tanh(0.16_wp), 1.0e-12_wp)
    end subroutine test_snow_cover
 
    subroutine test_datum_roundtrip()
@@ -315,11 +318,11 @@ contains
       print '(a)', 'test_tile_radiation:'
       call default_params(p)
       snow = snow_state_t()
-      snow%nlayer = 1_ik ; snow%swe(1) = 0.8_wp                        ! 3.2 mm deep: cover ~0.47
-      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 0.8_wp, 263.0_wp, 0.0_wp)
-      snow%snow_depth(1)  = 0.8_wp / p%rho_snow
+      snow%nlayer = 1_ik ; snow%swe(1) = 8.0_wp                        ! 3.2 cm deep: cover ~0.47
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 8.0_wp, 263.0_wp, 0.0_wp)
+      snow%snow_depth(1)  = 8.0_wp / p%rho_snow
       call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
-      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), p, 0.001_wp)
+      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), p, 0.01_wp)
       call check_true('a patchy pack', fc > 0.05_wp .and. fc < 0.95_wp, fc)
       call ground_tile_radiation(DN_VIS, DN_NIR, DN_LW, SOIL_VIS, SOIL_NIR, SOIL_EMISS, T_SOIL, snow, p,          &
                                  rnet_soil, sw_snow)
@@ -327,7 +330,7 @@ contains
                  DN_VIS * (1.0_wp - p%albedo_vis_fresh) + DN_NIR * (1.0_wp - p%albedo_nir_fresh), 1.0e-12_wp)
       rnet_snow = sw_snow + p%snow_emiss * (DN_LW - stefan_boltzmann * snow%snow_temp(1) ** 4)
       a_vis = SOIL_VIS ; a_nir = SOIL_NIR ; emiss = SOIL_EMISS ; temp = T_SOIL
-      call snow_blend_ground_optics(snow, p, 0.001_wp, a_vis, a_nir, emiss, temp)
+      call snow_blend_ground_optics(snow, p, 0.01_wp, a_vis, a_nir, emiss, temp)
       blended = DN_VIS * (1.0_wp - a_vis) + DN_NIR * (1.0_wp - a_nir) + emiss * DN_LW                        &
                 - emiss * stefan_boltzmann * temp ** 4
       call check('the tiles sum to the blended ground', fc * rnet_snow + (1.0_wp - fc) * rnet_soil, blended,   &

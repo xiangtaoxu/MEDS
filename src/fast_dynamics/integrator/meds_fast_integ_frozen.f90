@@ -133,7 +133,7 @@ contains
       frozen%ground%pack   = dynamic%snow
       frozen%ground%params = cfg%snow
       frozen%ground%dt     = dt_fast
-      call prepare_snow_stage(forcing%snowfall, forcing%rainfall, forcing%air_temp, cfg%aero%snow_rough,          &
+      call prepare_snow_stage(forcing%snowfall, forcing%rainfall, forcing%air_temp, cfg%aero%soil_rough,          &
                               frozen%ground, frozen%snow)
       !----- The top soil node the ground surface conducts to, under the snow's base. -----------------!
       associate (prof => site%soil_profile)

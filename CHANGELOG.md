@@ -117,7 +117,8 @@ NaN soil layers, and the reported net radiation includes the wood (#503). The tw
 layer's scattered beam through its depth, so a canopy's light no longer depends on how it is cut into
 cohorts (#504). The Monin-Obukhov surface layer sweeps until the canopy air's coupling settles, and
 the transpiration demand stops re-solving it at the state the pre-pass already solved (#505). Bare
-ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506).
+ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506). The
+snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -724,6 +725,10 @@ ground couples to the canopy air through CLM5's soil coefficient, at its own rou
 
 ### Changed
 
+- **The snow-cover length scale is the ground's roughness** (#507). The Niu-Yang scale took the snow
+  surface's 1 mm roughness, so 1 cm of snow covered 92 % of the ground; with `soil_rough` (0.01 m), as
+  Niu & Yang (2007) and CLM4, it covers 16 %, and 10 cm 92 %. Ithaca: SWE +7 % in January, +23 % in
+  the spring thaw.
 - **Bare ground couples through CLM5's soil coefficient** (#506). The bare-ground conductance was the
   canopy air's own factor u*·temp1, so bare ground crossed the surface layer twice, and a patch without
   cohorts was a 1 m canopy (z0 0.13 m): bare ground was coupled at 1.8–2.1 times CLM5's rate. It is now
