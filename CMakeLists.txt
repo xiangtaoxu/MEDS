@@ -825,13 +825,6 @@ if(MEDS_BUILD_TESTS)
                   COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_flux_tower/tests)
          set_tests_properties(prepare_flux_tower PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
-         #----- A restart continues exactly, and re-acclimates its traits on request                #
-         #      (test/python/test_restart_exact.py; meds_main on the constant reference climate).  #
-         add_test(NAME restart_exact
-                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
-                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
-         set_tests_properties(restart_exact PROPERTIES
-                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
          #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests,  #
          #      a smoke test that runs a chain, a trial and a Jacobian column through meds_main (and, #
          #      when libmeds.so is built, through the Python API), and a short end-to-end fit.        #
@@ -868,6 +861,21 @@ if(MEDS_BUILD_TESTS)
       else()
          message(STATUS "MEDS: prepare_census tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "pytest or tomli)")
+      endif()
+      #----- A restart continues exactly, and re-acclimates its traits on request                   #
+      #      (test/python/test_restart_exact.py; meds_main on the constant reference climate). It   #
+      #      needs only numpy, netCDF4 and pytest, so it does not wait on the tools' pandas.        #
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, netCDF4, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_restart_test_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_restart_test_deps EQUAL 0)
+         add_test(NAME restart_exact
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
+         set_tests_properties(restart_exact PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+      else()
+         message(STATUS "MEDS: restart_exact skipped (${Python3_EXECUTABLE} lacks numpy, netCDF4, pytest or tomli)")
       endif()
    endif()
 
