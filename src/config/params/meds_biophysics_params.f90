@@ -36,7 +36,7 @@ module meds_biophysics_params
       real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
       !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
       real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
-      real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable first guess of zeta
+      real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable zeta, the first guess's and each sweep's
       integer(ik) :: n_iter_mo = 4_ik               !< fixed MO sweeps, with no convergence test
       real(wp)    :: wc = 0.5_wp                     !< [m/s] convective velocity of the first stability guess
       !----- Floors. ----------------------------------------------------------------------!

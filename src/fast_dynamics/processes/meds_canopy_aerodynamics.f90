@@ -17,12 +17,12 @@ module meds_canopy_aerodynamics
    implicit none
    private
 
-   !----- Bounds of the Monin-Obukhov initial guess, from CLM5's MoninObukIni (Zeng et al. 1998,   !
-   !      J. Climate 11, 2628-2644): |zeta| starts at least 0.01 from neutral, a stable guess uses !
-   !      Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and an unstable one is at least -100. ----!
-   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp      !< [-]
-   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp      !< [-]
-   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp    !< [-]
+   !----- Bounds of the Monin-Obukhov stability, from CLM5 (Zeng et al. 1998, J. Climate 11,       !
+   !      2628-2644): the first guess uses Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and      !
+   !      starts at least 0.01 from neutral; the guess and every sweep stay at least -100. --------!
+   real(wp), parameter :: RIB_GUESS_MAX      = 0.19_wp      !< [-]
+   real(wp), parameter :: ZETA_GUESS_NEUTRAL = 0.01_wp      !< [-]
+   real(wp), parameter :: ZETA_UNSTABLE_MIN  = -100.0_wp    !< [-]
    !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the      !
    !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own  !
    !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). ---------------------------!
@@ -255,9 +255,9 @@ contains
    ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)):  !
    ! n_iter_mo sweeps of the four-range denominators from the bulk-Richardson guess.       !
    ! Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's       !
-   ! temp1) and the stability diagnostics. Only the first guess of zeta is bounded, not    !
-   ! the sweeps. zeta divides only in the very-unstable and very-stable branches, so the   !
-   ! solve is safe under -fpe0.                                                            !
+   ! temp1) and the stability diagnostics. Every sweep's zeta is held in                   !
+   ! [-100, zeta_max_stable], as CLM5 holds it. zeta divides only in the very-unstable     !
+   ! and very-stable branches, so the solve is safe under -fpe0.                           !
    !---------------------------------------------------------------------------------------!
    pure subroutine mo_surface_layer(cfg, u_ref, zref, displace, rough, theta_atm, shv_atm,     &
                                     can_theta, can_shv, ustar, heat_transfer_factor, zeta, rib, obu)
@@ -290,7 +290,7 @@ contains
          zeta = min(cfg%zeta_max_stable, max(zeta, ZETA_GUESS_NEUTRAL))
       else
          zeta = rib * log(zldis / z0m)
-         zeta = max(ZETA_GUESS_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
+         zeta = max(ZETA_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
       !----- n_iter_mo sweeps, no convergence test: every patch does the same work, and the result !
@@ -303,6 +303,11 @@ contains
          thvstar = (heat_transfer_factor * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
                  + virtual_temp_factor * theta_atm * (heat_transfer_factor * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
+         !----- CLM5's bounds on each sweep. Unbounded, a stable night runs past zeta = 1, where   !
+         !      u* falls to ustmin and the canopy air loses its coupling to the air above,         !
+         !      whatever the wind. CLM5 also holds |zeta| >= 0.01; that bound is left out, since   !
+         !      nothing here divides by zeta near neutral and it would put a jump in u* there. ----!
+         zeta    = min(cfg%zeta_max_stable, max(zeta, ZETA_UNSTABLE_MIN))
          !----- The convective velocity follows this sweep's buoyancy flux, so it fades to zero as !
          !      the air turns neutral and the wind has no jump there. -----------------------------!
          if (zeta >= 0.0_wp) then

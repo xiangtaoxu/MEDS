@@ -73,7 +73,11 @@ u_m = \begin{cases}\bar u & \zeta\ge0\\[2pt]
 \qquad(3b)
 ```
 
-with $\beta = 1$ and the mixed layer $`z_i`$ = 1000 m (CLM5's constants). The buoyancy flux
+with $\beta = 1$ and the mixed layer $`z_i`$ = 1000 m (CLM5's constants). As in CLM5, each sweep's
+$\zeta$ is held in $`[-100,\ \zeta_{max,stable}]`$ (`zeta_max_stable`, 0.5): unbounded, a stable night
+runs past $\zeta = 1$, where $`u_*`$ falls to $`u_{*,min}`$ and the coupling no longer depends on the
+wind. CLM5 also keeps $|\zeta| \ge 0.01$ at each sweep; MEDS keeps it only in the first guess, since
+nothing divides by $\zeta$ near neutral and the bound would put a jump in $`u_*`$ there. The buoyancy flux
 $`-u_*\theta_{v*}`$ vanishes as the air turns neutral, so $w_c$ does too: the wind, and with it $`u_*`$
 and the conductances, pass through neutral without a jump. Only the first guess, eq. (2), uses the fixed
 `wc`, and the sweeps forget it.
@@ -241,7 +245,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
 | — | `n_iter_mo` | fixed Monin-Obukhov iterations (4; no convergence test) |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
-| — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
+| — | `zeta_max_stable` | cap on the stable $\zeta$, of the first guess and of each sweep (CLM5) |
 | $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |
 | $`u_{*,min}`$ | `ustmin` | friction-velocity floor (0.10 m s⁻¹) |
 | $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) (0.65 m s⁻¹) |

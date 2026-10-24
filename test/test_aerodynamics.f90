@@ -6,7 +6,8 @@
 !      (theta, q), and the same                                                                  !
 !      ustar a hair either side of neutral.                                                       !
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
-!      (warm air aloft) a SMALLER one, at the same wind.                                          !
+!      (warm air aloft) a SMALLER one, at the same wind. A stable night over a 30 m forest       !
+!      keeps zeta within zeta_max_stable, and its coupling rises with the wind.                   !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
 !   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
 !      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
@@ -69,7 +70,7 @@ contains
    !----- 2. Stability ordering: unstable > neutral > stable ustar. --------------------------!
    subroutine test_stability_order()
       type(aero_params_t) :: cfg
-      real(wp) :: us_u, us_n, us_s, t1, z, r, o
+      real(wp) :: us_u, us_n, us_s, t1, z, r, o, g_1
       call mo_surface_layer(cfg, 3.0_wp, 10.0_wp, 0.0_wp, 0.1_wp, 298.15_wp, 0.010_wp,          &
                             298.15_wp, 0.010_wp, us_n, t1, z, r, o)                 ! neutral
       call mo_surface_layer(cfg, 3.0_wp, 10.0_wp, 0.0_wp, 0.1_wp, 296.15_wp, 0.010_wp,          &
@@ -78,6 +79,14 @@ contains
                             296.15_wp, 0.010_wp, us_s, t1, z, r, o)                 ! air warmer -> stable
       call check_true('unstable ustar > neutral', us_u > us_n, us_u - us_n)
       call check_true('stable ustar < neutral',   us_s < us_n, us_n - us_s)
+      !----- Canopy air 3 K colder than the air at zref over a 30 m forest (d 18.9 m, z0 3.9 m). ---!
+      call mo_surface_layer(cfg, 1.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            287.15_wp, 0.008_wp, us_s, t1, z, r, o)
+      g_1 = us_s * t1
+      call check_true('stable sweeps within zeta_max_stable', z <= cfg%zeta_max_stable, z)
+      call mo_surface_layer(cfg, 2.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            287.15_wp, 0.008_wp, us_s, t1, z, r, o)
+      call check_true('stable coupling rises with wind', us_s * t1 > 1.5_wp * g_1, us_s * t1 - g_1)
    end subroutine test_stability_order
 
    !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!

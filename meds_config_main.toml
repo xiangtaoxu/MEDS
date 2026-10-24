@@ -109,7 +109,7 @@ d_ratio          = 0.63       # [-]   displacement height / canopy height, eq. (
 snow_rough       = 0.001      # [m]   snow-surface roughness: the z0m floor and the snow-cover length scale
 zeta_m           = 1.574      # [-]   Monin-Obukhov momentum-range transition (CLM5)
 zeta_t           = 0.465      # [-]   Monin-Obukhov scalar-range transition (CLM5)
-zeta_max_stable  = 0.5        # [-]   cap on the first stability guess (CLM5)
+zeta_max_stable  = 0.5        # [-]   cap on the stable zeta of the guess and each sweep (CLM5)
 n_iter_mo        = 4          # [-]   Monin-Obukhov iterations, a fixed number
 wc               = 0.5        # [m/s] convective velocity of the first stability guess, eq. (2); the
                               #   sweeps take it from the buoyancy flux, eq. (3b)
