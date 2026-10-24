@@ -46,6 +46,7 @@ module meds_soil_water
       real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
+      real(wp) :: press    = p_std                        !< [Pa] air pressure, for the saturation humidity
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the bare-soil tile
                                                           !<       (1/ggnet), not inflated for snow
       real(wp) :: snow_free_frac = 1.0_wp                 !< [-] snow-free area fraction (1-snowfac) that evaporates,
@@ -116,7 +117,7 @@ contains
 
    !----- The terms of ground_evaporation_rate that depend only on its boundary and the top layer's  !
    !      curve, so they are computed once for a boundary: R_v T and the saturation humidity at the  !
-   !      ground skin (over ice when frozen, at standard pressure), and the dry surface layer's      !
+   !      ground skin (over ice when frozen, at the air's pressure), and the dry surface layer's     !
    !      water-content span and vapour diffusivity (docs/science/soil_plant_water.md §3). ----------!
    pure subroutine ground_evaporation_setup(profile, soil, forcing)
       type(soil_profile_t),    intent(in)    :: profile
@@ -124,7 +125,7 @@ contains
       type(ground_evap_env_t), intent(inout) :: forcing   !< its boundary in, its derived terms set
       real(wp) :: theta_air, dvap, phi, phi_air, tau
       forcing%rv_t  = r_wv * forcing%t_ground
-      forcing%q_sat = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
+      forcing%q_sat = sat_specific_humidity(forcing%t_ground, forcing%press, forcing%ground_fliq)
       !----- The dry surface layer, referenced to the air-dry water content. ------------------------!
       theta_air = soil_head_to_theta(profile%retention, PSI_AIR_DRY, profile%theta_sat(1), profile%theta_res(1),  &
                                      profile%curve_par_a(1), profile%curve_par_n(1))

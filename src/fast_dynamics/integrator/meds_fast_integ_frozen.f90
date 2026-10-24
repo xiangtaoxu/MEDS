@@ -676,6 +676,7 @@ contains
          drive%ground%t_ground        = t_ground
          drive%ground%q_air           = qcas
          drive%ground%rho_air         = rho
+         drive%ground%press           = forcing%press
          !----- Phase of the evaporating surface, for the ice saturation branch                             !
          !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
          drive%ground%ground_fliq     = dynamic%soil_energy%soil_fliq(1)

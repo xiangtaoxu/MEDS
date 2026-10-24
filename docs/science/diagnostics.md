@@ -318,8 +318,9 @@ numbers the physics used in that sub-step, none recomputed. Every entry is a rat
 patch accumulator weights the whole row by the sub-step and the FAST tier stages it as it is. A few
 entries are formed there for a reason:
 
-- **The canopy-air VPD** is formed from each sub-step's temperature and humidity. It is nonlinear in
-  temperature, so the VPD of the mean state is not the mean VPD (as for the skin temperature above).
+- **The canopy-air VPD** is formed from each sub-step's temperature, humidity and air pressure. It is
+  nonlinear in temperature, so the VPD of the mean state is not the mean VPD (as for the skin
+  temperature above).
 - **NEE** is the flux that drives the canopy air's CO₂ box, positive to the atmosphere, so the
   reported flux and the CO₂ it changes cannot disagree. Ecosystem respiration is formed from it,
   $`R_{eco} = \mathrm{NEE} + \mathrm{GPP}`$, not summed a second way.
