@@ -32,9 +32,8 @@ region (`"region"`). Both go through the same stages.
    final, its cohorts' tissues are settled in step with their patches, and the initial snow laid
    (`init_fast_state`), with the fast loop on or off; a restart read all of these instead. The fast
    loop's first window then puts the canopy air at the first forcing sample.
-3. Open the forcing source. Prepare each polygon: the fast context, the forcing cursor, the
-   canopy-air depth, from the stand; the steady-state soil carbon (unless restored); and the slow
-   ledger.
+3. Open the forcing source. Prepare each polygon: the forcing cursor, the canopy-air depth from the
+   stand, the steady-state soil carbon (unless restored), and the slow ledger.
 4. Open the state (restart) stream and the output files.
 
 **The loop.** Until `end_time`, the executable steps a month at a time (`region_step_month`) and
