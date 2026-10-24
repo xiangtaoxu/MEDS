@@ -216,6 +216,18 @@ program test_leaf_physiology
    call check(an0 > an1 .and. an1 > an2, 'A_net must decrease as the leaf dries')
    call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta_nonstomata = 0)')
 
+   !=== 7a. The fast limb on a C4 leaf (PFT 3): it scales Vcmax, the light slope and kp, so a      !
+   !     light-limited leaf at beta_nonstomata = 0.5 keeps about half its gross rate. =============!
+   block
+      real(wp) :: psi_tlp_c4, ag_wet
+      psi_tlp_c4 = pft_leaf_psi_tlp(cfg%pft, 3_ik)
+      env = std_env() ; env%par = 200.0_wp ; call leaf_solve(env, 3_ik, flux) ; ag_wet = flux%A_gross
+      env%psi_leaf = 1.5_wp * psi_tlp_c4 ; call leaf_solve(env, 3_ik, flux)
+      call check_close(flux%beta_nonstomata, 0.5_wp, 1.0e-12_wp, 'C4 fast limb: 0.5 half way')
+      call check(abs(flux%A_gross / ag_wet - 0.5_wp) < 0.05_wp,                                        &
+                 'a light-limited C4 leaf at beta_nonstomata 0.5 keeps about half its gross rate')
+   end block
+
    !=== 7b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
    cfg%stomatal_model = SM_KATUL
    call derive_parameters(cfg)

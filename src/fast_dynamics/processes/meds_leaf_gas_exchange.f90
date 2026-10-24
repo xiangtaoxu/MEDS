@@ -89,7 +89,7 @@ module meds_leaf_gas_exchange
       !----- The two water-stress controls the solve applied, reported so an inert control shows   !
       !      in the output (env%psi left at 0 makes beta_stomata identically 1). ------------------!
       real(wp)    :: beta_stomata    = 1.0_wp  !< [-] the slow, stomatal control, eq. (10) (1 = unstressed)
-      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] the fast control, the psi_leaf ramp on Vcmax/Jmax/TPU, eq. (9)
+      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] the fast control, the psi_leaf ramp on the potential rates, eq. (9)
    end type leaf_out_t
 
    !----- Everything the Ci residual reads, passed explicitly so the residual is a module function !
@@ -328,11 +328,10 @@ contains
       tpu   = temp_response(temp_response_form, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       rd    = temp_response(temp_response_form, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
-      !----- Water stress, two controls on two time scales (§4): the fast one, eq. (9), ramps      !
-      !      Vcmax, Jmax and TPU on the leaf's current potential (Rd is not scaled); the slow one, !
-      !      eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. A   !
-      !      C4 leaf uses only Vcmax of the three, so its light-limited rate and PEPcase slope are !
-      !      not scaled. --------------------------------------------------------------------------!
+      !----- Water stress, two controls on two time scales (§4): the fast one, eq. (9), ramps the  !
+      !      potential rates on the leaf's current potential, Vcmax, Jmax and TPU here and a C4    !
+      !      leaf's light-limited rate and PEPcase slope below (Rd is not scaled); the slow one,   !
+      !      eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. ----!
       beta_nonstomata = capacity_stress_factor(env%psi_leaf, p%psi_close, p%psi_open)
       vcmax = vcmax * beta_nonstomata
       jmax  = jmax  * beta_nonstomata
@@ -344,12 +343,12 @@ contains
       !----- Light: C3 non-rectangular hyperbola J; C4 linear light-limited slope. --------!
       if (p%pathway == PATH_C4) then
          gstar_ppm = 0.0_wp
-         Aj_light  = p%quantum_yield * p%absorptance * env%par
-         !----- The PEPcase slope kp takes Vcmax's temperature response, as tpu does (§2). It is   !
-         !      stated at the standard pressure p_std, so kp*Ci follows the CO2 partial            !
-         !      pressure. -------------------------------------------------------------------------!
+         Aj_light  = p%quantum_yield * p%absorptance * env%par * beta_nonstomata
+         !----- The PEPcase slope kp takes Vcmax's temperature response, as tpu does (§2), and its   !
+         !      water stress. It is stated at the standard pressure p_std, so kp*Ci follows the CO2  !
+         !      partial pressure. -------------------------------------------------------------------!
          kp_eff    = temp_response(temp_response_form, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
-                     * pressure / p_std
+                     * pressure / p_std * beta_nonstomata
          jrate     = 0.0_wp
       else
          jrate     = electron_transport_j(env%par, p%absorptance, p%phi_psii, jmax, p%theta_j)

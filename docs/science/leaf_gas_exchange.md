@@ -236,12 +236,13 @@ potential, the aperture on the previous day's predawn potential.
 ### 4.1 The fast control: capacity, on the current leaf potential — $\beta_{ns}$
 
 A linear ramp in the **current leaf** water potential (the step-start $`\psi_{leaf}`$ the plant-water
-solver holds), applied to $V_{cmax}$, $J_{max}$ and TPU for **all** stomatal models (capacity
-downregulation is a biochemistry effect, scheme-independent). $R_d$ is not scaled.
+solver holds), applied to the potential rates for **all** stomatal models (capacity
+downregulation is a biochemistry effect, scheme-independent): $V_{cmax}$, $J_{max}$ and TPU for C3,
+and $V_{cmax}$, the light-limited slope $A_j$ and $k_p$ for C4. $R_d$ is not scaled.
 
 ```math
 \beta_{ns} = \mathrm{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
-\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns} \qquad(9)
+\qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\}_{C3},\ \{V_{cmax}, A_j, k_p\}_{C4} \mathrel{*}= \beta_{ns} \qquad(9)
 ```
 
 $`\psi_{open}`$ is the PFT's leaf turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$
