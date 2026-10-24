@@ -560,6 +560,17 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_pedotransfer)
    add_test(NAME pedotransfer COMMAND test_pedotransfer)
 
+   #----- The share/functions libraries, one test each, named after its module. Each links meds_share #
+   #      alone; test_optics_lib also the config layer, whose meds_pft_derive turns a PFT's leaf-angle #
+   #      moments into the LIDF's Beta parameters.                                                    #
+   foreach(t optics_lib)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_share meds_testassert)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
+   target_link_libraries(test_optics_lib PRIVATE meds_config)
+
    #----- No procedure is passed as an argument anywhere in src/: the ifx cost of doing        #
    #      so serialises threads. The script explains the rule it checks.                       #
    add_test(NAME no_procedure_arguments
