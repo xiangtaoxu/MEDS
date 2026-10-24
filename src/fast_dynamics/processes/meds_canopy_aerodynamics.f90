@@ -17,12 +17,12 @@ module meds_canopy_aerodynamics
    implicit none
    private
 
-   !----- Bounds of the Monin-Obukhov initial guess, from CLM5's MoninObukIni (Zeng et al. 1998,   !
-   !      J. Climate 11, 2628-2644): |zeta| starts at least 0.01 from neutral, a stable guess uses !
-   !      Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and an unstable one is at least -100. ----!
-   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp      !< [-]
-   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp      !< [-]
-   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp    !< [-]
+   !----- Bounds of the Monin-Obukhov stability, from CLM5 (Zeng et al. 1998, J. Climate 11,       !
+   !      2628-2644): the first guess uses Ri_b <= 0.19, where 1 - 5 Ri_b stays positive, and      !
+   !      starts at least 0.01 from neutral; the guess and every sweep stay at least -100. --------!
+   real(wp), parameter :: RIB_GUESS_MAX      = 0.19_wp      !< [-]
+   real(wp), parameter :: ZETA_GUESS_NEUTRAL = 0.01_wp      !< [-]
+   real(wp), parameter :: ZETA_UNSTABLE_MIN  = -100.0_wp    !< [-]
    !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the      !
    !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own  !
    !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). ---------------------------!
@@ -39,6 +39,9 @@ module meds_canopy_aerodynamics
    !----- The least ratio of the height above the displacement to the roughness length in the wind !
    !      profile, so its logarithm stays positive. -----------------------------------------------!
    real(wp), parameter :: WIND_HEIGHT_ROUGH_MIN = 1.001_wp  !< [-]
+   !----- ED2's cap on the canopy's snow burial fraction (canopy_struct_dynamics), so a buried     !
+   !      canopy keeps a trace of its own roughness. ----------------------------------------------!
+   real(wp), parameter :: BURIAL_MAX = 0.99_wp              !< [-]
 
    public :: canopy_aerodynamics             !< the per-patch entry point: winds, conductances, boundary layers
    public :: canopy_roughness                !< roughness length + displacement height of a patch
@@ -46,6 +49,7 @@ module meds_canopy_aerodynamics
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
    public :: canopy_air_conductances         !< the same, the surface layer re-solved at a canopy-air state
    public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
+   public :: canopy_burial_fraction          !< the share of a patch's canopy height a snow pack buries
    public :: aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
    public :: reduced_wind, boundary_layer_conductance, alloc_aero_out  ! used only by the tests
@@ -107,6 +111,14 @@ contains
       real(wp), intent(in) :: lai, wai   !< [m2/m2] the patch's total leaf and wood area indices
       w = safe_exp(-(lai + wai))
    end function open_canopy_fraction
+
+   !----- The canopy's snow burial fraction: the pack's depth over the canopy height, capped at    !
+   !      BURIAL_MAX (ED2's snowfac_can; docs/science/canopy_aerodynamics.md eq. (1)). ------------!
+   elemental real(wp) function canopy_burial_fraction(snow_depth, veg_height) result(f)
+      real(wp), intent(in) :: snow_depth   !< [m] the pack's depth
+      real(wp), intent(in) :: veg_height   !< [m] the canopy height, positive
+      f = min(BURIAL_MAX, snow_depth / veg_height)
+   end function canopy_burial_fraction
 
    !----- Roughness length and displacement height of a patch from its canopy height               !
    !      (docs/science/canopy_aerodynamics.md eq. (1)). ------------------------------------------!
@@ -255,9 +267,9 @@ contains
    ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)):  !
    ! n_iter_mo sweeps of the four-range denominators from the bulk-Richardson guess.       !
    ! Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's       !
-   ! temp1) and the stability diagnostics. Only the first guess of zeta is bounded, not    !
-   ! the sweeps. zeta divides only in the very-unstable and very-stable branches, so the   !
-   ! solve is safe under -fpe0.                                                            !
+   ! temp1) and the stability diagnostics. Every sweep's zeta is held in                   !
+   ! [-100, zeta_max_stable], as CLM5 holds it. zeta divides only in the very-unstable     !
+   ! and very-stable branches, so the solve is safe under -fpe0.                           !
    !---------------------------------------------------------------------------------------!
    pure subroutine mo_surface_layer(cfg, u_ref, zref, displace, rough, theta_atm, shv_atm,     &
                                     can_theta, can_shv, ustar, heat_transfer_factor, zeta, rib, obu)
@@ -290,7 +302,7 @@ contains
          zeta = min(cfg%zeta_max_stable, max(zeta, ZETA_GUESS_NEUTRAL))
       else
          zeta = rib * log(zldis / z0m)
-         zeta = max(ZETA_GUESS_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
+         zeta = max(ZETA_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
       !----- n_iter_mo sweeps, no convergence test: every patch does the same work, and the result !
@@ -303,6 +315,11 @@ contains
          thvstar = (heat_transfer_factor * dth) * (1.0_wp + virtual_temp_factor * shv_atm)                         &
                  + virtual_temp_factor * theta_atm * (heat_transfer_factor * dqh)
          zeta    = zldis * von_karman * grav * thvstar / (ustar * ustar * thv_atm)
+         !----- CLM5's bounds on each sweep. Unbounded, a stable night runs past zeta = 1, where   !
+         !      u* falls to ustmin and the canopy air loses its coupling to the air above,         !
+         !      whatever the wind. CLM5 also holds |zeta| >= 0.01; that bound is left out, since   !
+         !      nothing here divides by zeta near neutral and it would put a jump in u* there. ----!
+         zeta    = min(cfg%zeta_max_stable, max(zeta, ZETA_UNSTABLE_MIN))
          !----- The convective velocity follows this sweep's buoyancy flux, so it fades to zero as !
          !      the air turns neutral and the wind has no jump there. -----------------------------!
          if (zeta >= 0.0_wp) then
@@ -371,29 +388,18 @@ contains
       psi = 2.0_wp * log((1.0_wp + x2) * 0.5_wp)
    end function stabfunc2
 
-   !----- Integrated momentum stability function for the wind profile (both signs). ----------!
-   pure function psim(zeta) result(p)
-      real(wp), intent(in) :: zeta     !< [-] stability
-      real(wp) :: p                    !< [-] psi_m
-      if (zeta < 0.0_wp) then
-         p = stabfunc1(zeta)
-      else
-         p = -5.0_wp * zeta                                        ! Businger-Dyer stable (profile use)
-      end if
-   end function psim
-
    !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind                 !
-   !      (docs/science/canopy_aerodynamics.md eq. (7)). height - displace is held just above the  !
-   !      roughness length, so the log stays positive. --------------------------------------------!
+   !      (docs/science/canopy_aerodynamics.md eq. (7)). It is u*/kappa times the momentum         !
+   !      denominator d_mom from the roughness up to height - displace, at the surface layer's     !
+   !      Obukhov length, so the profile and u* share CLM5's four ranges. height - displace is     !
+   !      held just above the roughness length, so the log stays positive. ------------------------!
    pure function reduced_wind(cfg, ustar, zeta, height, displace, rough, zldis) result(u)
       type(aero_params_t), intent(in) :: cfg   !< aerodynamic parameters
       real(wp),            intent(in) :: ustar, zeta, height, displace, rough, zldis   !< [m/s], [-], [m], [m], [m], [m]
-      real(wp) :: u, hd, zeta_h, zeta_0        !< [m/s] the wind (the result); [m] height - displace
-      hd     = max(height - displace, rough * WIND_HEIGHT_ROUGH_MIN)
-      zeta_h = zeta * hd    / zldis
-      zeta_0 = zeta * rough / zldis
-      u      = (ustar / von_karman) * (log(hd / rough) - psim(zeta_h) + psim(zeta_0))
-      u      = max(u, cfg%ugbmin)
+      real(wp) :: u, hd                        !< [m/s] the wind (the result); [m] height - displace
+      hd = max(height - displace, rough * WIND_HEIGHT_ROUGH_MIN)
+      u  = (ustar / von_karman) * d_mom(zeta * hd / zldis, hd, rough, cfg)
+      u  = max(u, cfg%ugbmin)
    end function reduced_wind
 
    !---------------------------------------------------------------------------------------!
@@ -408,7 +414,7 @@ contains
       real(wp) :: gbh_mos, nu_v, al_th, re, gr, nu_forced, nu_free   !< [m/s] the result; [m2/s] nu_v, al_th
       nu_v  = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (can_temp - cfg%t_ref_air))
       al_th = cfg%th_diff0  * (1.0_wp + cfg%dth_diff  * (can_temp - cfg%t_ref_air))
-      re    = max(wind * lchar / al_th, tiny_num)
+      re    = max(wind * lchar / nu_v, tiny_num)
       gr    = max(grav / (can_temp * nu_v * nu_v) * abs(elem_temp - can_temp) * lchar ** 3, 0.0_wp)
       if (is_leaf) then                                            ! flat plate
          nu_forced = max(cfg%aflat_lami * re ** cfg%nflat_lami, cfg%aflat_turb * re ** cfg%nflat_turb)

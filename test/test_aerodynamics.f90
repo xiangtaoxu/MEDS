@@ -6,10 +6,13 @@
 !      (theta, q), and the same                                                                  !
 !      ustar a hair either side of neutral.                                                       !
 !   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
-!      (warm air aloft) a SMALLER one, at the same wind.                                          !
-!   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
+!      (warm air aloft) a SMALLER one, at the same wind. A stable night over a 30 m forest       !
+!      keeps zeta within zeta_max_stable, and its coupling rises with the wind.                   !
+!   3. reduced_wind is positive and monotonically INCREASING with height (neutral); in the very   !
+!      stable range the profile through the surface layer's u* passes through the wind at zref.  !
 !   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
-!      (forced convection).                                                                      !
+!      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
+!      flat-plate value 0.6 Re^0.5 alpha/l, Re = u l/nu, with the air's 20 C nu and alpha.       !
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
 !      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
 !      in the open-canopy limit.                                                                 !
@@ -68,7 +71,7 @@ contains
    !----- 2. Stability ordering: unstable > neutral > stable ustar. --------------------------!
    subroutine test_stability_order()
       type(aero_params_t) :: cfg
-      real(wp) :: us_u, us_n, us_s, t1, z, r, o
+      real(wp) :: us_u, us_n, us_s, t1, z, r, o, g_1
       call mo_surface_layer(cfg, 3.0_wp, 10.0_wp, 0.0_wp, 0.1_wp, 298.15_wp, 0.010_wp,          &
                             298.15_wp, 0.010_wp, us_n, t1, z, r, o)                 ! neutral
       call mo_surface_layer(cfg, 3.0_wp, 10.0_wp, 0.0_wp, 0.1_wp, 296.15_wp, 0.010_wp,          &
@@ -77,26 +80,47 @@ contains
                             296.15_wp, 0.010_wp, us_s, t1, z, r, o)                 ! air warmer -> stable
       call check_true('unstable ustar > neutral', us_u > us_n, us_u - us_n)
       call check_true('stable ustar < neutral',   us_s < us_n, us_n - us_s)
+      !----- Canopy air 3 K colder than the air at zref over a 30 m forest (d 18.9 m, z0 3.9 m). ---!
+      call mo_surface_layer(cfg, 1.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            287.15_wp, 0.008_wp, us_s, t1, z, r, o)
+      g_1 = us_s * t1
+      call check_true('stable sweeps within zeta_max_stable', z <= cfg%zeta_max_stable, z)
+      call mo_surface_layer(cfg, 2.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            287.15_wp, 0.008_wp, us_s, t1, z, r, o)
+      call check_true('stable coupling rises with wind', us_s * t1 > 1.5_wp * g_1, us_s * t1 - g_1)
    end subroutine test_stability_order
 
    !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!
    subroutine test_wind_profile()
       type(aero_params_t) :: cfg
-      real(wp) :: u_lo, u_hi
+      real(wp) :: u_lo, u_hi, ustar, t1, zeta, r, o
       u_lo = reduced_wind(cfg, 0.4_wp, 0.0_wp,  3.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
       u_hi = reduced_wind(cfg, 0.4_wp, 0.0_wp, 12.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
       call check_true('wind positive', u_lo > 0.0_wp, u_lo)
       call check_true('wind increases with height', u_hi > u_lo, u_hi - u_lo)
+      !----- A 4 K inversion under 3 m/s over a 30 m forest, the stable cap raised to 5: zeta 3.5, !
+      !      u* above its floor. ------------------------------------------------------------------!
+      cfg%zeta_max_stable = 5.0_wp
+      call mo_surface_layer(cfg, 3.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
+                            286.15_wp, 0.008_wp, ustar, t1, zeta, r, o)
+      call check_true('very stable case', zeta > 1.0_wp .and. ustar > cfg%ustmin, zeta)
+      call check('very stable profile through the wind at zref',                                &
+                 reduced_wind(cfg, ustar, zeta, 40.0_wp, 18.9_wp, 3.9_wp, 21.1_wp), 3.0_wp, 1.0e-9_wp)
    end subroutine test_wind_profile
 
    !----- 4. Boundary-layer conductance positive + increases with wind. ----------------------!
    subroutine test_boundary_layer()
       type(aero_params_t) :: cfg
-      real(wp) :: g_lo, g_hi
+      real(wp) :: g_lo, g_hi, g_20, nu_20, alpha_20
       g_lo = boundary_layer_conductance(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       g_hi = boundary_layer_conductance(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
       call check_true('gbh positive above floor', g_lo > cfg%gbhmos_min, g_lo)
       call check_true('gbh increases with wind',  g_hi > g_lo, g_hi - g_lo)
+      nu_20    = 1.33e-5_wp * 1.14_wp                    ! [m2/s] air at 20 C
+      alpha_20 = 1.89e-5_wp * 1.14_wp
+      g_20 = boundary_layer_conductance(cfg, 1.0_wp, 293.15_wp, 293.15_wp, 0.05_wp, .true.)
+      call check('gbh laminar flat plate at 20 C', g_20,                                         &
+                 0.6_wp * sqrt(1.0_wp * 0.05_wp / nu_20) * alpha_20 / 0.05_wp, 1.0e-12_wp)
    end subroutine test_boundary_layer
 
    !----- 5. Master kernel on a 2-cohort patch. ----------------------------------------------!

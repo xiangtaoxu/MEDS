@@ -38,8 +38,10 @@ grid, renormalized to sum to one (the normalizing constant cancels):
 w_c \;\propto\; \int_{t_{c-1}}^{t_c} t^{\,p-1}(1-t)^{\,q-1}\,dt , \qquad \sum_c w_c = 1 \qquad(1)
 ```
 
-evaluated by a 64-panel midpoint rule (`beta_lidf` over `beta_pdf_kernel`) — compiler-robust, no
-special function, and it never touches the integrable endpoint singularities at $t=0,1$. An
+evaluated by a 64-panel midpoint rule (`beta_lidf` over `beta_log_kernel`) — compiler-robust, no
+special function, and it never touches the integrable endpoint singularities at $t=0,1$. The kernel
+is summed relative to its largest value on the grid, so a narrow distribution, whose unnormalized
+density underflows (a spread of a few degrees, or 0), still sums to one. An
 interpretable $`(\overline{\theta},\,\sigma_\theta)`$ maps to $(p,q)$ by moment matching
 (`moments_to_beta_params`).
 
@@ -177,11 +179,13 @@ $`u_{ground}`$, and the patch **albedo** = upward flux leaving the top / total i
 band the ground reflectance is the (per-band) soil albedo and its emission is zero; for the thermal
 band the reflectance is $1-\varepsilon_{soil}$ and the emission is $`\varepsilon_{soil}\,\sigma\,
 T_{soil}^4`$. Its input (`ground_optics_env_t`) is **bare soil plus snow**: the per-band soil albedo,
-the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo,
-emissivity and temperature by the Niu-Yang snow-cover fraction, so a partial pack changes the ground
-continuously; the snow's own albedo moves from its fresh to its aged value with the liquid fraction of
-the pack's surface layer. Litter, standing water and soil moisture do not change the ground optics (see
-docs/ROADMAP.md).
+the emissivity and the skin temperature, which the driver blends toward the snowpack's albedo and
+emissivity by the Niu-Yang snow-cover fraction, so a partial pack changes the ground continuously; the
+snow's own albedo moves from its fresh to its aged value with the liquid fraction of the pack's surface
+layer. The blend's temperature is the one at which the blended emissivity emits what the soil and the
+pack emit at their own temperatures. What reaches the ground in each band is then shared between the
+two at their own optics ([snow_biophysics](snow_biophysics.md), "The ground's radiation"). Litter,
+standing water and soil moisture do not change the ground optics (see docs/ROADMAP.md).
 
 `canopy_radiation` (the per-patch entry point, `meds_canopy_radiation`) loops the configured bands,
 blends optics per cohort, and dispatches each band to `solve_band`.
@@ -277,7 +281,7 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 
 | Concept | Routine |
 |---|---|
-| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_pdf_kernel`; `meds_pft_derive`: `moments_to_beta_params` |
+| Beta LIDF + params | `meds_optics_lib`: `beta_lidf`, `beta_log_kernel`; `meds_pft_derive`: `moments_to_beta_params` |
 | moments $`\mathrm{bf}`$, $G(\mu)$ | `meds_optics_lib`: `leaf_bf`, `gfun_direct` |
 | $\omega, g$ single-scatter pair (per PFT) | `meds_optics_lib`: `scatter_pair` |
 | per-PFT optics table ($\omega, g$), eq. (4) | `meds_pft_derive`: `derive_rad_optics`, once at load onto the PFT table (`cfg%pft%optics`) |
@@ -288,4 +292,4 @@ with $`\sigma T^4`$ across the annual surface-temperature range.
 | types | `meds_pft_params`: `rad_pft_optics_t`, the bands `RAD_*`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR renorm, the cohorts bottom to top) | `meds_fast_forcing`: `apply_rt_forcing` |
 | LW emission temperature | `meds_canopy_radiation`: `radiative_temperature` |
-| the ground's optics under snow | `meds_surface`: `snow_blend_ground_optics` |
+| the ground's optics under snow, and each tile's radiation | `meds_surface`: `snow_blend_ground_optics`, `ground_tile_radiation` |

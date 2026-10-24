@@ -135,9 +135,9 @@ with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
 What drives the network is held over the step: the rain, each cohort's transpiration demand, and the
 ground evaporation's boundary (the ground skin's temperature and phase, the canopy air over it). The
 evaporation's terms that depend only on that boundary and the top layer's curve, $`R_vT`$ and the
-saturation humidity at the ground skin, and the dry surface layer's water-content span and vapour
-diffusivity, are set once per step (`ground_evaporation_setup`); an evaluation computes only what moves
-with the top layer's water.
+saturation humidity at the ground skin (at the air's pressure), and the dry surface layer's
+water-content span and vapour diffusivity, are set once per step (`ground_evaporation_setup`); an
+evaluation computes only what moves with the top layer's water.
 
 **Error and sub-steps.** A sub-step's error is implicit Euler's local error, half the change in the
 inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last Newton

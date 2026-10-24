@@ -8,7 +8,7 @@
 !==========================================================================================!
 module meds_fast_diag
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : latent_heat_vap, p_std, stefan_boltzmann, n_soil_layer_max
+   use meds_constants,          only : latent_heat_vap, stefan_boltzmann, n_soil_layer_max
    use meds_therm_lib,          only : specific_humidity_to_vpd
    use meds_time,               only : meds_time_t, time_advance_seconds
    use meds_output_types,       only : output_buffers_t
@@ -119,8 +119,10 @@ contains
       nl   = n_soil_layer_max
       if (do_pdiag .or. do_fast) then
          gpp_patch = sum(out%gpp_coh(1:ncoh) * static%nplant(1:ncoh))    ! [umol/m2/s]
+         !----- The net radiation the ground, the leaves and the wood absorb. ----------------------!
          rnet      = forcing%abs_sw_ground + forcing%abs_lw_ground                                    &
-                     + sum(forcing%abs_sw(1:ncoh)) + sum(forcing%abs_lw(1:ncoh))
+                     + sum(forcing%abs_sw(1:ncoh)) + sum(forcing%abs_lw(1:ncoh))                      &
+                     + sum(forcing%abs_sw_wood(1:ncoh)) + sum(forcing%abs_lw_wood(1:ncoh))
          npp_patch = gpp_patch - sum((out%leaf_resp_coh(1:ncoh) + out%stem_resp_coh(1:ncoh)              &
                                       + out%root_resp_coh(1:ncoh)) * static%nplant(1:ncoh))
          call patch_diag_row(prow, dt_fast, out%le_flux, out%h_flux, rnet,                              &
@@ -131,7 +133,8 @@ contains
                              dynamic%soil_energy%soil_temp(1), out%report%ledgers%whole_energy%resid,   &
                              out%report%ledgers%whole_water%resid, forcing%wind, forcing%air_temp,      &
                              static%z_top, forcing%sw_in_vis, forcing%sw_in_nir, forcing%sw_up_vis,     &
-                             forcing%sw_up_nir, forcing%lw_up, dynamic%soil_water%w_surface)
+                             forcing%sw_up_nir, forcing%lw_up, dynamic%soil_water%w_surface,            &
+                             forcing%press)
       end if
       !----- FAST-tier staging in the patch's and its cohorts' own slots. ---------------------------!
       if (do_fast) then
@@ -216,7 +219,8 @@ contains
    pure subroutine patch_diag_row(row, dt, le_flux, h_flux, rnet, sw_ground, lw_ground,             &
                                   ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee, &
                                   npp, soil_temp_top, resid_energy, resid_water, wind_top, tair_top,  &
-                                  z_top, sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
+                                  z_top, sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface, &
+                                  press)
       real(wp), intent(out) :: row(N_PA_ROWS)
       real(wp), intent(in)  :: dt                        !< [s]        the sub-step
       real(wp), intent(in)  :: le_flux, h_flux           !< [W/m2]     CAS -> atmosphere
@@ -233,6 +237,7 @@ contains
       !----- Top-of-canopy radiative fluxes per band. -----------------------------------------!
       real(wp), intent(in)  :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
       real(wp), intent(in)  :: w_surface                 !< [kg/m2]   ponded surface water
+      real(wp), intent(in)  :: press                     !< [Pa]      air pressure
       row = 0.0_wp
       row(PA_LE)           = le_flux
       row(PA_H)            = h_flux
@@ -254,7 +259,7 @@ contains
       row(PA_CAS_SHV)      = cas_shv
       row(PA_CAS_CO2)      = cas_co2
       !----- VPD is nonlinear in temperature, so it is formed per sub-step, not from mean states. --!
-      row(PA_CAS_VPD)      = specific_humidity_to_vpd(cas_temp, cas_shv, p_std)
+      row(PA_CAS_VPD)      = specific_humidity_to_vpd(cas_temp, cas_shv, press)
       row(PA_W_SURFACE)    = w_surface
       !----- The patch's own forcing, at its canopy-air top (docs/science/forcing.md §8). ---------!
       row(PA_WIND_CAS_TOP) = wind_top

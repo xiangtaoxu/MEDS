@@ -179,8 +179,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! bottom_heat_face -- the bottom face's heat flux [W/m2, positive up], one expression   !
-   ! for the step and the tendency: conduction to the deep anchor, or the prescribed       !
-   ! geothermal flux (docs/science/soil_biophysics.md eq. (12)).                           !
+   ! for the step, the tendency and the solve's matrix: the prescribed geothermal flux     !
+   ! plus conduction to the deep anchor, whose conductance is zero for the geothermal      !
+   ! boundary (docs/science/soil_biophysics.md eq. (12)).                                  !
    !---------------------------------------------------------------------------------------!
    pure function bottom_heat_face(soil, forcing, g_deep, t_bot) result(hf_bot)
       type(soil_params_t),    intent(in) :: soil
@@ -188,11 +189,7 @@ contains
       real(wp),               intent(in) :: g_deep      !< [W/m2/K] from deep_conductance
       real(wp),               intent(in) :: t_bot       !< [K] bottom-layer temperature
       real(wp) :: hf_bot
-      if (soil%thermal_bottom_bc == ENERGY_BC_DIRICHLET) then
-         hf_bot = -g_deep * (t_bot - soil%deep_temp)
-      else
-         hf_bot = forcing%geothermal
-      end if
+      hf_bot = forcing%geothermal - g_deep * (t_bot - soil%deep_temp)
    end function bottom_heat_face
 
    !---------------------------------------------------------------------------------------!

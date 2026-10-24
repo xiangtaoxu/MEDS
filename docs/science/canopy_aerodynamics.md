@@ -31,9 +31,10 @@ d = c_d\,h\,(1-\mathrm{snowfac}) \qquad(1)
 ```
 
 with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`), $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`) and
-$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes an
-unburied canopy ($`\mathrm{snowfac}=0`$), so the snow blend is inactive in a run (see docs/ROADMAP.md);
-the open-canopy blend of §3 acts. The height above the displacement,
+$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The burial fraction is
+ED2's, the pack's depth over the canopy height, capped at 0.99 (`canopy_burial_fraction`), from the pack
+at the start of the forcing window, for which the roughness is fixed. It is distinct from the ground's
+snow-cover fraction ([snow_biophysics](snow_biophysics.md)). The height above the displacement,
 $`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$, is the surface-layer thickness the Monin-Obukhov solve integrates
 over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
 the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
@@ -73,7 +74,11 @@ u_m = \begin{cases}\bar u & \zeta\ge0\\[2pt]
 \qquad(3b)
 ```
 
-with $\beta = 1$ and the mixed layer $`z_i`$ = 1000 m (CLM5's constants). The buoyancy flux
+with $\beta = 1$ and the mixed layer $`z_i`$ = 1000 m (CLM5's constants). As in CLM5, each sweep's
+$\zeta$ is held in $`[-100,\ \zeta_{max,stable}]`$ (`zeta_max_stable`, 0.5): unbounded, a stable night
+runs past $\zeta = 1$, where $`u_*`$ falls to $`u_{*,min}`$ and the coupling no longer depends on the
+wind. CLM5 also keeps $|\zeta| \ge 0.01$ at each sweep; MEDS keeps it only in the first guess, since
+nothing divides by $\zeta$ near neutral and the bound would put a jump in $`u_*`$ there. The buoyancy flux
 $`-u_*\theta_{v*}`$ vanishes as the air turns neutral, so $w_c$ does too: the wind, and with it $`u_*`$
 and the conductances, pass through neutral without a jump. Only the first guess, eq. (2), uses the fixed
 `wc`, and the sweeps forget it.
@@ -179,13 +184,16 @@ $`g_{g,net}`$ is the ground sensible/latent conductance in the surface energy ba
 ## 4. In-canopy wind and the leaf/wood boundary layers
 
 **Canopy-top wind** comes from the log profile with the surface-layer stability correction
-(`reduced_wind`):
+(`reduced_wind`): the momentum denominator of eq. (3), taken from $`z_{0m}`$ up to the canopy top at
+the surface layer's Obukhov length, so the profile and $`u_*`$ share CLM5's four ranges,
 
 ```math
-u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\zeta_0)\big] \qquad(7)
+u_h = \frac{u_*}{\kappa}\,D_m\big(\zeta_h;\ h-d,\ z_{0m}\big), \qquad
+\zeta_h = \zeta\,\frac{h-d}{z_{ldis}} \qquad(7)
 ```
 
-floored at `ugbmin`. From the top cohort down, the wind attenuates through each cohort's crowns by
+floored at `ugbmin`. When $`u_*`$ is not on its floor the profile passes through $`u_m`$ at
+$`z_{ldis}`$, so $`u_h<u_m`$; on a calm night with $`u_*=u_{*,min}`$ it lies above that profile. From the top cohort down, the wind attenuates through each cohort's crowns by
 ED2's per-cohort extinction, here with **closed crowns**: every cohort's crowns cover its patch (crown
 area 1, as in the two-stream radiation, `canopy_radiation_transfer.md` §3), so the wind meets all of the
 cohort's leaf area. Cohorts of one height are one layer, as they are in the radiation
@@ -205,7 +213,7 @@ the permutation is the identity for $n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
 Nusselt kernel `boundary_layer_conductance`, the parallel sum of forced (Reynolds) and free (Grashof) convection
-— the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
+— the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\nu`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
 (leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
 temperature for the wood layer. For the cylinder each forced term carries an offset,
@@ -224,7 +232,9 @@ g_{bh} = \max\!\Big(g_{bh,min},\ \big(\mathrm{Nu}_{forced}+\mathrm{Nu}_{free}\bi
 ```
 
 The kinematic viscosity $\nu$ and thermal diffusivity $\alpha_{th}$ are linear-in-temperature about a
-20 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`), and
+0 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`): 1.52×10⁻⁵ and
+2.15×10⁻⁵ m² s⁻¹ at 20 °C. ED2 forms the Reynolds number with $\alpha_{th}$; MEDS uses $\nu$, its
+definition ([ED2 comparison](../ed2_comparison.md) §4.9). The floor is
 $`g_{bh,min}=`$ `gbhmos_min`. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$ (`gbh_2_gbw`).
 $g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas exchange
 forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{leaf})`$ the molar density of air at the leaf temperature [mol m⁻³].
@@ -239,7 +249,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor and the snow-cover fraction's length scale ([snow_biophysics](snow_biophysics.md)) [m] |
 | — | `n_iter_mo` | fixed Monin-Obukhov iterations (4; no convergence test) |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
-| — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
+| — | `zeta_max_stable` | cap on the stable $\zeta$, of the first guess and of each sweep (CLM5) |
 | $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (MoninObukIni); the sweeps take $w_c$ from eq. (3b) |
 | $`u_{*,min}`$ | `ustmin` | friction-velocity floor (0.10 m s⁻¹) |
 | $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) (0.65 m s⁻¹) |

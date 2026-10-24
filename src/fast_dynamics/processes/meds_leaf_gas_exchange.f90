@@ -50,6 +50,7 @@ module meds_leaf_gas_exchange
    !----- Which stomatal conductance a pass of the Ci solve uses (solve_leaf_gas_exchange). -----!
    integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
    integer(ik), parameter :: GS_CUTICULAR  = 2_ik      !< the cuticular floor g0 (the fallback)
+   integer(ik), parameter :: GS_OPEN       = 3_ik      !< stomata fully open, Ci = Cs (Katul's bracket)
 
    !----- Limitation-regime flag of the binding term at the solution. ---------------------!
    integer(ik), parameter :: LIM_NONE    = 0_ik     !< no positive net assimilation (night, or net A <= 0)
@@ -89,7 +90,7 @@ module meds_leaf_gas_exchange
       !----- The two water-stress controls the solve applied, reported so an inert control shows   !
       !      in the output (env%psi left at 0 makes beta_stomata identically 1). ------------------!
       real(wp)    :: beta_stomata    = 1.0_wp  !< [-] the slow, stomatal control, eq. (10) (1 = unstressed)
-      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] the fast control, the psi_leaf ramp on Vcmax/Jmax/TPU, eq. (9)
+      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] the fast control, the psi_leaf ramp on the potential rates, eq. (9)
    end type leaf_out_t
 
    !----- Everything the Ci residual reads, passed explicitly so the residual is a module function !
@@ -108,7 +109,7 @@ module meds_leaf_gas_exchange
       !----- The stomatal models' g0, g1 (Leuning [-], Medlyn [kPa^0.5]) and d0, and the Katul     !
       !      lambda, with g1 and lambda after the slow water-stress control. ----------------------!
       real(wp)    :: g0, g1, d0, lambda                       !< [mol H2O/m2 leaf/s], [-] or [kPa^0.5], [Pa], [umol CO2/mol H2O]
-      real(wp)    :: vpd_min                                  !< [kPa] the Medlyn model's least VPD
+      real(wp)    :: vpd_min                                  !< [kPa] the least VPD the Medlyn and Katul models use
    end type ci_problem_t
 
 
@@ -319,7 +320,9 @@ contains
       t_leaf   = env%leaf_temp
       pressure = env%pressure
       ca_ppm   = env%ca
-      ddef     = env%vpd / pressure                       ! mole-fraction water deficit D
+      !----- Katul's mole-fraction deficit D, floored at vpd_min as Medlyn's is: water costs       !
+      !      nothing at D = 0, so the optimum would open the stomata without bound. ---------------!
+      ddef     = max(env%vpd, 1.0e3_wp * p%vpd_min) / pressure   ! vpd_min [kPa] -> [Pa]
       do_boundary_layer    = use_boundary_layer .and. env%gb > 0.0_wp
 
       call rubisco_kinetics(p, t_leaf, pressure, kc_ppm, ko_ppm, gstar_ppm, o2_ppm)
@@ -328,11 +331,10 @@ contains
       tpu   = temp_response(temp_response_form, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       rd    = temp_response(temp_response_form, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
-      !----- Water stress, two controls on two time scales (§4): the fast one, eq. (9), ramps      !
-      !      Vcmax, Jmax and TPU on the leaf's current potential (Rd is not scaled); the slow one, !
-      !      eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. A   !
-      !      C4 leaf uses only Vcmax of the three, so its light-limited rate and PEPcase slope are !
-      !      not scaled. --------------------------------------------------------------------------!
+      !----- Water stress, two controls on two time scales (§4): the fast one, eq. (9), ramps the  !
+      !      potential rates on the leaf's current potential, Vcmax, Jmax and TPU here and a C4    !
+      !      leaf's light-limited rate and PEPcase slope below (Rd is not scaled); the slow one,   !
+      !      eq. (10), scales g1 and the Katul lambda on the previous day's predawn potential. ----!
       beta_nonstomata = capacity_stress_factor(env%psi_leaf, p%psi_close, p%psi_open)
       vcmax = vcmax * beta_nonstomata
       jmax  = jmax  * beta_nonstomata
@@ -344,12 +346,12 @@ contains
       !----- Light: C3 non-rectangular hyperbola J; C4 linear light-limited slope. --------!
       if (p%pathway == PATH_C4) then
          gstar_ppm = 0.0_wp
-         Aj_light  = p%quantum_yield * p%absorptance * env%par
-         !----- The PEPcase slope kp takes Vcmax's temperature response, as tpu does (§2). It is   !
-         !      stated at the standard pressure p_std, so kp*Ci follows the CO2 partial            !
-         !      pressure. -------------------------------------------------------------------------!
+         Aj_light  = p%quantum_yield * p%absorptance * env%par * beta_nonstomata
+         !----- The PEPcase slope kp takes Vcmax's temperature response, as tpu does (§2), and its   !
+         !      water stress. It is stated at the standard pressure p_std, so kp*Ci follows the CO2  !
+         !      partial pressure. -------------------------------------------------------------------!
          kp_eff    = temp_response(temp_response_form, p%kp25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)       &
-                     * pressure / p_std
+                     * pressure / p_std * beta_nonstomata
          jrate     = 0.0_wp
       else
          jrate     = electron_transport_j(env%par, p%absorptance, p%phi_psii, jmax, p%theta_j)
@@ -365,7 +367,7 @@ contains
                           theta_cj_c4 = p%theta_cj_c4, theta_ic_c4 = p%theta_ic_c4,                   &
                           ca = ca_ppm, gb = env%gb, boundary_layer = do_boundary_layer,               &
                           vpd = env%vpd, ddef = ddef, g0 = p%g0, g1 = g1_eff, d0 = p%d0,              &
-                          vpd_min = p%medlyn_vpd_min,                                                 &
+                          vpd_min = p%vpd_min,                                                        &
                           lambda = lambda_eff)
 
       !----- Night or closed stomata: if net A at Ci = Ca, the best case, is <= 0 there is no      !
@@ -385,11 +387,18 @@ contains
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca], the lower end LO_EPS_PPM above Gamma*, and find the root. !
-      !      With no sign change (Katul under strong stress) fall back to the cuticular g0, which  !
-      !      always brackets when net A(Ca) > 0. --------------------------------------------------!
+      !----- Bracket Ci in (Gamma*, Ci_open], the lower end LO_EPS_PPM above Gamma*, and find the  !
+      !      root. Ci_open is Ci with the stomata fully open, where Ci = Cs: Ca without a boundary !
+      !      layer, and below it with one. Katul's residual is negative there, so it brackets; the !
+      !      explicit models' roots lie below it as well, and bracket to Ca, so only Katul pays    !
+      !      for the extra solve. With no sign change (Katul under strong stress) fall back to the !
+      !      cuticular g0, which always brackets when net A(Ca) > 0. ------------------------------!
       lo0 = gstar_ppm + LO_EPS_PPM
       hi0 = ca_ppm
+      if (do_boundary_layer .and. sm == SM_KATUL) then
+         prob%gs_rule = GS_OPEN
+         call root_ci(prob, lo0, ca_ppm, hi0, converged)
+      end if
       prob%gs_rule = GS_FROM_MODEL
       do                                                 ! at most two passes: model, then g0-pinned
          call root_ci(prob, lo0, hi0, ci_sol, converged)
@@ -521,6 +530,9 @@ contains
       if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
       !----- Stomatal conductance from the current rule. ---------------------------------------!
       select case (prob%gs_rule)
+      case (GS_OPEN)
+         r = ci - cs_surf                                ! fully open stomata: Ci = Cs
+         return
       case (GS_CUTICULAR)
          gs = prob%g0                                    ! closed-stomata fallback: gs pinned to g0
       case default

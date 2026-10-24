@@ -36,7 +36,7 @@ module meds_biophysics_params
       real(wp) :: snow_rough = 0.001_wp             !< [m] snow-surface roughness (blend floor)
       !----- Monin-Obukhov (CLM5). --------------------------------------------------------!
       real(wp)    :: zeta_m = 1.574_wp, zeta_t = 0.465_wp   !< momentum / scalar range transitions
-      real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable first guess of zeta
+      real(wp)    :: zeta_max_stable = 0.5_wp       !< cap on the stable zeta, the first guess's and each sweep's
       integer(ik) :: n_iter_mo = 4_ik               !< fixed MO sweeps, with no convergence test
       real(wp)    :: wc = 0.5_wp                     !< [m/s] convective velocity of the first stability guess
       !----- Floors. ----------------------------------------------------------------------!
@@ -50,7 +50,7 @@ module meds_biophysics_params
       real(wp) :: gbh_2_gbw = 1.075_wp
       real(wp) :: kin_visc0 = 1.33e-5_wp, dkin_visc = 0.007_wp   !< kinematic viscosity [m2/s] @ t_ref_air
       real(wp) :: th_diff0  = 1.89e-5_wp, dth_diff  = 0.007_wp   !< thermal diffusivity [m2/s] @ t_ref_air
-      real(wp) :: t_ref_air = 293.15_wp             !< [K] 20 C reference for the linear-in-T props
+      real(wp) :: t_ref_air = 273.15_wp             !< [K] 0 C reference for the linear-in-T props
       !----- Nusselt coefficients -- flat plate (leaf). -----------------------------------!
       real(wp) :: aflat_lami = 0.60_wp, nflat_lami = 0.50_wp
       real(wp) :: aflat_turb = 0.032_wp, nflat_turb = 0.80_wp

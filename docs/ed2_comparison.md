@@ -482,6 +482,11 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
   per-kgC baseline times the layer-summed temperature scale times the fine-root carbon. ED2 references
   both at 15 °C and MEDS at 25 °C, so a value taken from ED2 or Chambers is converted once, when the PFT
   parameters are set.
+- **Leaf and wood boundary layers** (`meds_canopy_aerodynamics`). The Nusselt kernel and its
+  coefficients are ED2's, as are the air's viscosity and thermal diffusivity, linear in temperature
+  about 0 °C. ED2 forms the Reynolds number with the thermal diffusivity, $`u\ell/\alpha`$; MEDS
+  uses the kinematic viscosity, $`u\ell/\nu`$, so its Re is 1.42 times ED2's and a laminar leaf's
+  forced conductance 1.19 times.
 - **Tissue and soil energy** (`meds_fast_integ_derivs`, `meds_fast_integ_frozen`, `meds_soil_heat`). The leaf
   pays the full vapour enthalpy of what it transpires and the soil the liquid internal energy of what
   the roots draw, each once, as ED2's `rk4_derivs` charges `tq2enthalpy(T_leaf)` and `uint_water`. The

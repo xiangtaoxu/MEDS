@@ -612,9 +612,10 @@ contains
       cas%box%atm_co2 = forcing%co2_atm
       cas%rho   = rho
       cas%press = press
-      ground%abs_sw = forcing%abs_sw_ground
-      ground%abs_lw = forcing%abs_lw_ground
-      ground%ggnet  = aero%ggnet
+      ground%rnet_soil = forcing%rnet_soil
+      ground%sw_snow   = forcing%sw_snow
+      ground%lw_down   = forcing%lw_down_ground
+      ground%ggnet     = aero%ggnet
    end subroutine canopy_air_boundary
 
    !---------------------------------------------------------------------------------------!
@@ -676,6 +677,7 @@ contains
          drive%ground%t_ground        = t_ground
          drive%ground%q_air           = qcas
          drive%ground%rho_air         = rho
+         drive%ground%press           = forcing%press
          !----- Phase of the evaporating surface, for the ice saturation branch                             !
          !      (docs/science/snow_biophysics.md eq. (1)). -------------------------------------------------!
          drive%ground%ground_fliq     = dynamic%soil_energy%soil_fliq(1)

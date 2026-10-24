@@ -141,7 +141,7 @@ program test_leaf_physiology
                     'A_net must satisfy the CO2 diffusion identity')
    !----- The converged gs reproduces the Medlyn law (root really solved the coupled system). -!
    call check_close(flux%gs, stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd,                   &
-                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%medlyn_vpd_min), 1.0e-4_wp, &
+                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%vpd_min), 1.0e-4_wp, &
                     'back-computed gs must match the Medlyn model at the solution')
 
    !=== 5. All three stomatal models converge; gs decreases as VPD rises. ===================!
@@ -216,6 +216,18 @@ program test_leaf_physiology
    call check(an0 > an1 .and. an1 > an2, 'A_net must decrease as the leaf dries')
    call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta_nonstomata = 0)')
 
+   !=== 7a. The fast limb on a C4 leaf (PFT 3): it scales Vcmax, the light slope and kp, so a      !
+   !     light-limited leaf at beta_nonstomata = 0.5 keeps about half its gross rate. =============!
+   block
+      real(wp) :: psi_tlp_c4, ag_wet
+      psi_tlp_c4 = pft_leaf_psi_tlp(cfg%pft, 3_ik)
+      env = std_env() ; env%par = 200.0_wp ; call leaf_solve(env, 3_ik, flux) ; ag_wet = flux%A_gross
+      env%psi_leaf = 1.5_wp * psi_tlp_c4 ; call leaf_solve(env, 3_ik, flux)
+      call check_close(flux%beta_nonstomata, 0.5_wp, 1.0e-12_wp, 'C4 fast limb: 0.5 half way')
+      call check(abs(flux%A_gross / ag_wet - 0.5_wp) < 0.05_wp,                                        &
+                 'a light-limited C4 leaf at beta_nonstomata 0.5 keeps about half its gross rate')
+   end block
+
    !=== 7b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
    cfg%stomatal_model = SM_KATUL
    call derive_parameters(cfg)
@@ -237,6 +249,28 @@ program test_leaf_physiology
                           'Katul open solve is diffusion-consistent (gs, cs, ci, A match)')
       end if
    end do
+   !=== 7c2. Katul behind a thin boundary layer and at the dew point. With gb = 0.2 mol/m2/s the    !
+   !     bracket ends where Ci = Cs, so a lit leaf keeps an open, diffusion-consistent solve instead  !
+   !     of the cuticular fallback; at VPD = 0 the conductance is the floored VPD's, as at 1 Pa. ======!
+   block
+      logical  :: bl_saved
+      real(wp) :: gs_dew
+      bl_saved = cfg%use_boundary_layer
+      cfg%use_boundary_layer = .true.
+      call derive_parameters(cfg)
+      env = std_env() ; env%gb = 0.2_wp ; call leaf_solve(env, 1_ik, flux)
+      call check(flux%converged .and. flux%gs > 2.0_wp * cfg%pft%stomatal_g0(1),                        &
+                 'Katul behind a thin boundary layer keeps its stomata open')
+      call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,                  &
+                       'Katul behind a thin boundary layer is diffusion-consistent')
+      cfg%use_boundary_layer = bl_saved
+      call derive_parameters(cfg)
+      env = std_env() ; env%vpd = 0.0_wp ; call leaf_solve(env, 1_ik, flux) ; gs_dew = flux%gs
+      env%vpd = 1.0_wp ; call leaf_solve(env, 1_ik, flux)
+      call check(flux%A_net > 0.0_wp .and. gs_dew > 2.0_wp * cfg%pft%stomatal_g0(1),                    &
+                 'Katul at the dew point keeps its stomata open')
+      call check_close(gs_dew, flux%gs, 1.0e-12_wp, 'Katul gs is continuous at the dew point')
+   end block
    cfg%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 

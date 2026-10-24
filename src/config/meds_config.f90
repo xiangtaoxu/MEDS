@@ -146,7 +146,7 @@ module meds_config
       real(wp)    :: o2_mol_frac                          !< [mol/mol]
       real(wp)    :: leaf_absorptance                     !< [-]
       real(wp)    :: phi_psii                             !< [-]
-      real(wp)    :: medlyn_vpd_min = 0.05_wp             !< [kPa]
+      real(wp)    :: vpd_min = 0.05_wp                    !< [kPa]
       logical     :: thermal_acclimation = .false.        !< Kattge & Knorr (2007), peaked form only
       real(wp)    :: acclim_ds_vcmax_a = 668.39_wp, acclim_ds_vcmax_b = 1.07_wp   !< [J/mol/K], [J/mol/K2]
       real(wp)    :: acclim_ds_jmax_a  = 659.70_wp, acclim_ds_jmax_b  = 0.75_wp   !< [J/mol/K], [J/mol/K2]
@@ -234,7 +234,7 @@ contains
       p%o2_mol_frac = cfg%o2_mol_frac
       p%absorptance = cfg%leaf_absorptance
       p%phi_psii = cfg%phi_psii
-      p%medlyn_vpd_min = cfg%medlyn_vpd_min
+      p%vpd_min = cfg%vpd_min
    end function leaf_photo_shared
 
    !----- The steps the growth-memory window spans (at least 1): the length of each cohort's   !

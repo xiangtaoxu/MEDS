@@ -14,18 +14,22 @@
 !      balance without overshooting it: a cold pack under warm air warms but stays below t_3ple, a  !
 !      melting pack under cold dry air freezes through the plateau and stops near the air, over a  !
 !      day of steps as well; both ledgers close.                                                    !
+!   8. TILE RADIATION: half-covered ground, the snow and the soil each absorb at their own albedo   !
+!      and emit at their own temperature, and weighted by the cover they sum to what the blended    !
+!      ground absorbs.                                                                               !
 !==========================================================================================!
 program test_snow
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,              only : wp, ik
-   use meds_constants,          only : t_3ple
+   use meds_constants,          only : t_3ple, stefan_boltzmann
    use meds_therm_lib,             only : temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                        internal_energy_liquid, sat_specific_humidity
    use meds_patch_state_vars,   only : snow_state_t
    use meds_surface, only : surface_env_t, snow_out_t
    use meds_biophysics_params,  only : snow_params_t
    use meds_surface,   only : snow_cover_fraction, snow_accumulate, snow_drain_meltwater, &
-                                       snow_energy_step, snow_surface_fluxes
+                                       snow_energy_step, snow_surface_fluxes, snow_blend_ground_optics, &
+                                       ground_tile_radiation
    implicit none
 
    call test_snow_cover()
@@ -35,6 +39,7 @@ program test_snow
    call test_isothermal()
    call test_rain_on_snow()
    call test_stiff_coupling()
+   call test_tile_radiation()
 
    call test_report('test_snow')
 
@@ -45,7 +50,7 @@ contains
    !----- Cold-night forcing (accumulation): no SW, net LW loss, cold dry CAS, warmer soil below. -!
    subroutine cold_env(env)
       type(surface_env_t), intent(out) :: env
-      env%abs_sw = 0.0_wp ; env%abs_lw = -40.0_wp
+      env%sw_snow = 0.0_wp ; env%lw_down = stefan_boltzmann * 265.0_wp ** 4 - 40.0_wp
       env%can_temp = 265.0_wp ; env%can_shv = 1.0e-3_wp
       env%ggnet = 0.01_wp ; env%rho_air = 1.3_wp ; env%press = 101325.0_wp
       env%t_soil_top = 273.0_wp ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.05_wp
@@ -139,7 +144,7 @@ contains
       snow%snow_depth(1)  = 20.0_wp / p%rho_snow
       swe0 = snow%swe(1)
       ! strong warm radiative + warm CAS forcing to drive melt
-      env%abs_sw = 400.0_wp ; env%abs_lw = 20.0_wp
+      env%sw_snow = 400.0_wp ; env%lw_down = stefan_boltzmann * 270.0_wp ** 4 + 20.0_wp
       env%can_temp = 280.0_wp ; env%can_shv = 5.0e-3_wp ; env%t_soil_top = 275.0_wp
       dt = 900.0_wp
       mass_in = 0.0_wp ; mass_out = 0.0_wp ; e_in = 0.0_wp ; e_out = 0.0_wp ; tot_melt = 0.0_wp
@@ -182,7 +187,7 @@ contains
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 15.0_wp, 268.0_wp, 0.0_wp)
       snow%snow_depth(1)  = 15.0_wp / p%rho_snow
       ! forcing that exactly matches the snow surface (no gradients): CAS at snow temp + saturated, soil at snow temp
-      env%abs_sw = 0.0_wp ; env%abs_lw = 0.0_wp
+      env%sw_snow = 0.0_wp ; env%lw_down = stefan_boltzmann * 268.0_wp ** 4   ! the sky emits what the pack does
       env%can_temp = 268.0_wp ; env%ggnet = 0.01_wp ; env%rho_air = 1.3_wp ; env%press = 101325.0_wp
       env%t_soil_top = 268.0_wp ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.05_wp
       !----- SATURATED CAS -> no vapour gradient -> no sublimation. Saturation must be taken OVER    !
@@ -260,7 +265,8 @@ contains
       snow%nlayer = 1_ik ; snow%swe(1) = SWE
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, 243.0_wp, 0.0_wp)
       snow%snow_depth(1)  = SWE / p%rho_snow
-      env%abs_sw = 0.0_wp ; env%abs_lw = 20.0_wp ; env%can_temp = 268.8_wp ; env%can_shv = 1.79e-3_wp
+      env%sw_snow = 0.0_wp ; env%lw_down = stefan_boltzmann * 243.0_wp ** 4 + 20.0_wp
+      env%can_temp = 268.8_wp ; env%can_shv = 1.79e-3_wp
       e0 = snow%snow_energy(1)
       call snow_energy_step(snow, env, p, DT, AF, fx)
       call check_true('a cold pack under warm air and on warm soil warms, and stays frozen',             &
@@ -275,7 +281,7 @@ contains
       snow%nlayer = 1_ik ; snow%swe(1) = SWE
       snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, t_3ple, 0.1_wp)
       snow%snow_depth(1)  = SWE / p%rho_snow
-      env%abs_lw = -60.0_wp ; env%can_temp = 255.0_wp ; env%can_shv = 3.0e-4_wp
+      env%lw_down = stefan_boltzmann * t_3ple ** 4 - 60.0_wp ; env%can_temp = 255.0_wp ; env%can_shv = 3.0e-4_wp
       m_in = SWE ; m_out = 0.0_wp ; e_in = snow%snow_energy(1) ; e_out = 0.0_wp
       worst_resid = 0.0_wp ; t_min = t_3ple
       do k = 1_ik, 96_ik
@@ -298,5 +304,34 @@ contains
       call check('ENERGY closure', snow%snow_energy(1), e_in - e_out, 1.0e-6_wp * abs(e0))
       call check('per-step energy_resid = 0', worst_resid, 0.0_wp, 1.0e-6_wp)
    end subroutine test_stiff_coupling
+
+   !----- 8. Each tile's radiation at its own optics; the cover-weighted sum is the blended ground's. --!
+   subroutine test_tile_radiation()
+      type(snow_state_t)  :: snow
+      type(snow_params_t) :: p
+      real(wp), parameter :: DN_VIS = 150.0_wp, DN_NIR = 150.0_wp, DN_LW = 280.0_wp   ! [W/m2] reaching the ground
+      real(wp), parameter :: SOIL_VIS = 0.10_wp, SOIL_NIR = 0.20_wp, SOIL_EMISS = 0.95_wp, T_SOIL = 275.0_wp
+      real(wp) :: fc, a_vis, a_nir, emiss, temp, rnet_soil, sw_snow, rnet_snow, blended
+      print '(a)', 'test_tile_radiation:'
+      call default_params(p)
+      snow = snow_state_t()
+      snow%nlayer = 1_ik ; snow%swe(1) = 0.8_wp                        ! 3.2 mm deep: cover ~0.47
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, 0.8_wp, 263.0_wp, 0.0_wp)
+      snow%snow_depth(1)  = 0.8_wp / p%rho_snow
+      call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, snow%snow_temp(1), snow%snow_fliq(1))
+      fc = snow_cover_fraction(snow%swe(1), snow%snow_depth(1), p, 0.001_wp)
+      call check_true('a patchy pack', fc > 0.05_wp .and. fc < 0.95_wp, fc)
+      call ground_tile_radiation(DN_VIS, DN_NIR, DN_LW, SOIL_VIS, SOIL_NIR, SOIL_EMISS, T_SOIL, snow, p,          &
+                                 rnet_soil, sw_snow)
+      call check('the snow absorbs at its own albedo', sw_snow,                                               &
+                 DN_VIS * (1.0_wp - p%albedo_vis_fresh) + DN_NIR * (1.0_wp - p%albedo_nir_fresh), 1.0e-12_wp)
+      rnet_snow = sw_snow + p%snow_emiss * (DN_LW - stefan_boltzmann * snow%snow_temp(1) ** 4)
+      a_vis = SOIL_VIS ; a_nir = SOIL_NIR ; emiss = SOIL_EMISS ; temp = T_SOIL
+      call snow_blend_ground_optics(snow, p, 0.001_wp, a_vis, a_nir, emiss, temp)
+      blended = DN_VIS * (1.0_wp - a_vis) + DN_NIR * (1.0_wp - a_nir) + emiss * DN_LW                        &
+                - emiss * stefan_boltzmann * temp ** 4
+      call check('the tiles sum to the blended ground', fc * rnet_snow + (1.0_wp - fc) * rnet_soil, blended,   &
+                 1.0e-9_wp)
+   end subroutine test_tile_radiation
 
 end program test_snow

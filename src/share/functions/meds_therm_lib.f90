@@ -384,7 +384,8 @@ contains
 
    !----- The thermal properties of one soil layer by CLM5's mineral-soil formulas         !
    !      (docs/science/soil_biophysics.md eq. (9)). The heat capacity holds the solids    !
-   !      only, since the model counts the water and ice itself. --------------------------!
+   !      only, since the model counts the water and ice itself. The formulas weigh sand   !
+   !      and clay alone, so a layer needs some of either: check_soil refuses one without. !
    elemental subroutine soil_texture_to_thermal(sand, clay, theta_sat, k_solid, k_dry, dry_cvol)
       real(wp), intent(in)  :: sand       !< [%]      sand share of the fine earth
       real(wp), intent(in)  :: clay       !< [%]      clay share of the fine earth

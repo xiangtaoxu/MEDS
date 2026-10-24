@@ -129,6 +129,15 @@ contains
       else
          call check_true('bf(erectophile) < 0.10', .false., bf)
       end if
+      !----- Narrow distributions, whose unnormalized density underflows, still sum to one; a  !
+      !      spread of 0 at 45 deg puts the leaf area in the 40-50 deg class. -----------------!
+      call moments_to_beta_params(64.0_wp, 3.0_wp, p, q)
+      lidf = beta_lidf(p, q)
+      call check('LIDF sums to one (64 +- 3 deg)', sum(lidf), 1.0_wp, 1.0e-12_wp)
+      call moments_to_beta_params(45.0_wp, 0.0_wp, p, q)
+      lidf = beta_lidf(p, q)
+      call check('LIDF sums to one (45 +- 0 deg)', sum(lidf), 1.0_wp, 1.0e-12_wp)
+      call check_true('45 +- 0 deg in its class', lidf(5) > 0.99_wp, lidf(5))
    end subroutine test_leaf_angle_limits
 
    !=======================================================================================!

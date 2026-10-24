@@ -61,7 +61,7 @@ module meds_pft_params
       real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
       real(wp) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
       real(wp) :: o2_mol_frac, absorptance, phi_psii
-      real(wp) :: medlyn_vpd_min = 0.05_wp   !< [kPa] the VPD the Medlyn model uses at least ([leaf_physiology])
+      real(wp) :: vpd_min = 0.05_wp   !< [kPa] the VPD the Medlyn and Katul models use at least ([leaf_physiology])
    end type leaf_photo_pft_t
 
    !----- Every PFT's leaf parameters. A cohort's plastic capacities override the table's, Jmax25 and !

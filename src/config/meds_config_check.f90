@@ -339,32 +339,34 @@ contains
          if (sc%n_layer_values > 0_ik .and. sc%n_layer_values /= n)                                     &
             error stop TAG//'soil: the per-layer texture does not match the column''s layers'
          call soil_layer_textures(sc, tex)
-         if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop TAG//'soil.theta_sat <= theta_res'
-         if (any(tex%theta_res(1:n) < 0.0_wp))              error stop TAG//'soil.theta_res < 0'
+         !----- Each layer check states what must hold, so a NaN fails it: a map layer with no sand !
+         !      or clay (pure silt, or zero-filled) gives NaN thermal properties. ------------------!
+         if (.not. all(tex%theta_sat(1:n) > tex%theta_res(1:n))) error stop TAG//'soil.theta_sat <= theta_res'
+         if (.not. all(tex%theta_res(1:n) >= 0.0_wp))            error stop TAG//'soil.theta_res < 0'
          !----- With a texture per layer each layer starts at its field capacity, so init.soil_theta !
          !      does not apply. ----------------------------------------------------------------------!
          if (sc%n_layer_values == 0_ik) then
             if (cfg%init%soil_theta <= sc%theta_res .or. cfg%init%soil_theta > sc%theta_sat)            &
                error stop TAG//'init.soil_theta must lie in (soil.theta_res, theta_sat]'
          end if
-         if (any(tex%ksat(1:n) <= 0.0_wp)) error stop TAG//'soil.ksat <= 0'
+         if (.not. all(tex%ksat(1:n) > 0.0_wp)) error stop TAG//'soil.ksat <= 0'
          !----- curve_par_a and curve_par_n are van Genuchten's alpha [1/m] > 0 and n > 1, or        !
          !      Campbell's air-entry head psi_sat [m] < 0 and exponent b > 0. -----------------------!
          if (sc%retention == SOIL_RETENTION_VG) then
-            if (any(tex%par_a(1:n) <= 0.0_wp))                                                          &
+            if (.not. all(tex%par_a(1:n) > 0.0_wp))                                                     &
                error stop TAG//'soil.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
-            if (any(tex%par_n(1:n) <= 1.0_wp))                                                          &
+            if (.not. all(tex%par_n(1:n) > 1.0_wp))                                                     &
                error stop TAG//'soil.curve_par_n must exceed 1 for van Genuchten'
          else
-            if (any(tex%par_a(1:n) >= 0.0_wp))                                                          &
+            if (.not. all(tex%par_a(1:n) < 0.0_wp))                                                     &
                error stop TAG//'soil.curve_par_a (Campbell psi_sat, m) must be < 0'
-            if (any(tex%par_n(1:n) <= 0.0_wp))                                                          &
+            if (.not. all(tex%par_n(1:n) > 0.0_wp))                                                     &
                error stop TAG//'soil.curve_par_n (Campbell b) must be > 0'
          end if
          if (sc%psi_fc >= 0.0_wp) error stop TAG//'soil.psi_fc must be negative (a suction head)'
-         if (any(tex%k_solid(1:n) <= 0.0_wp) .or. any(tex%k_dry(1:n) <= 0.0_wp))                        &
-            error stop TAG//'soil conductivities must be positive'
-         if (any(tex%dry_cvol(1:n) <= 0.0_wp)) error stop TAG//'soil.dry_heat_capacity <= 0'
+         if (.not. (all(tex%k_solid(1:n) > 0.0_wp) .and. all(tex%k_dry(1:n) > 0.0_wp)))                &
+            error stop TAG//'soil conductivities must be positive (a map layer needs sand or clay)'
+         if (.not. all(tex%dry_cvol(1:n) > 0.0_wp)) error stop TAG//'soil.dry_heat_capacity <= 0'
       end associate
       !----- The Dirichlet thermal bottom needs the site's deep temperature and an anchor below the  !
       !      bottom node (docs/science/soil_biophysics.md, "The bottom thermal boundary"). With the    !
@@ -449,7 +451,7 @@ contains
       if (cfg%o2_mol_frac <= 0.0_wp)      error stop TAG//'o2_mol_frac <= 0'
       if (cfg%leaf_absorptance <= 0.0_wp) error stop TAG//'leaf_absorptance <= 0'
       if (cfg%phi_psii <= 0.0_wp)         error stop TAG//'phi_psii <= 0'
-      if (cfg%medlyn_vpd_min <= 0.0_wp)   error stop TAG//'medlyn_vpd_min <= 0 [kPa]'
+      if (cfg%vpd_min <= 0.0_wp)   error stop TAG//'vpd_min <= 0 [kPa]'
       if (cfg%thermal_acclimation .and. cfg%temp_response_form /= TEMP_RESPONSE_PEAKED)          &
          error stop TAG//'leaf_physiology.thermal_acclimation requires temp_response_form = '//        &
                     '"peaked" (the Arrhenius form has no entropy term to shift)'
@@ -712,8 +714,11 @@ contains
       end associate
    end subroutine check_phenology
 
-   !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the       !
-   !      sapwood conductance needs a positive conductivity and path factor. -------------------------!
+   !----- [hydraulics]: the rooting traits set the root profile over the soil column, the sapwood   !
+   !      conductance needs a positive conductivity and path factor, and each tissue's              !
+   !      pressure-volume curve and the xylem's vulnerability curve need their signs: with          !
+   !      elastic_mod <= |pi0| the turgor-loss point pi0 eps / (pi0 + eps) is not negative          !
+   !      (docs/science/plant_hydraulics.md). ------------------------------------------------------!
    subroutine check_hydraulics(cfg)
       type(meds_config_t), intent(in) :: cfg
       associate (hydro => cfg%pft%hydro(1:cfg%pft%n))
@@ -726,6 +731,19 @@ contains
          if (any(hydro%fine_root_radius <= 0.0_wp)) error stop TAG//'hydraulics.fine_root_radius must be > 0'
          if (any(hydro%vessel_curl <= 0.0_wp))      error stop TAG//'hydraulics.vessel_curl must be > 0'
          if (any(hydro%wood_kmax <= 0.0_wp))        error stop TAG//'hydraulics.wood_kmax must be > 0'
+         associate (leaf => hydro%leaf_curve, wood => hydro%wood_curve)
+            if (.not. (all(leaf%pi0 < 0.0_wp) .and. all(wood%pi0 < 0.0_wp)))                           &
+               error stop TAG//'hydraulics.leaf_pi0 and wood_pi0 must be < 0'
+            if (.not. (all(leaf%elastic_mod > -leaf%pi0) .and. all(wood%elastic_mod > -wood%pi0)))      &
+               error stop TAG//'hydraulics.leaf_elastic_mod and wood_elastic_mod must exceed |pi0|'
+            if (.not. (all(leaf%apoplast_frac >= 0.0_wp .and. leaf%apoplast_frac < 1.0_wp) .and.         &
+                       all(wood%apoplast_frac >= 0.0_wp .and. wood%apoplast_frac < 1.0_wp)))             &
+               error stop TAG//'hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)'
+            if (.not. (all(leaf%water_sat > 0.0_wp) .and. all(wood%water_sat > 0.0_wp)))               &
+               error stop TAG//'hydraulics.leaf_water_sat and wood_water_sat must be > 0'
+         end associate
+         if (.not. all(hydro%wood_psi50 < 0.0_wp)) error stop TAG//'hydraulics.wood_psi50 must be < 0'
+         if (.not. all(hydro%wood_kexp > 0.0_wp))  error stop TAG//'hydraulics.wood_kexp must be > 0'
       end associate
    end subroutine check_hydraulics
 

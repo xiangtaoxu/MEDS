@@ -32,37 +32,46 @@ contains
 
    !----- The Beta LIDF: the leaf-area share of each inclination class, for shape          !
    !      parameters (p, q) (docs/science/canopy_radiation_transfer.md eq. (1)), by a      !
-   !      midpoint rule: no special function, and the singular endpoints are never hit. ---!
+   !      midpoint rule: no special function, and the singular endpoints are never hit.    !
+   !      The density is summed relative to its largest value on the grid, so a narrow     !
+   !      distribution, whose unnormalized density underflows everywhere, still sums to    !
+   !      one; the Beta normalizing constant cancels. -------------------------------------!
    pure function beta_lidf(p, q) result(lidf)
       real(wp), intent(in) :: p, q
       real(wp)             :: lidf(N_LEAF_CLASS)
       integer(ik), parameter :: NSUB = 64_ik           ! midpoint panels per class
-      real(wp)    :: tlo, thi, dt, t, acc, tot
+      real(wp)    :: tlo, dt, acc, log_max
       integer(ik) :: k, j
+      log_max = -huge(1.0_wp)
+      tlo     = 0.0_wp
+      do k = 1_ik, N_LEAF_CLASS
+         dt = (LEAF_BND_DEG(k) / 90.0_wp - tlo) / real(NSUB, wp)
+         do j = 1_ik, NSUB
+            log_max = max(log_max, beta_log_kernel(tlo + (real(j, wp) - 0.5_wp) * dt, p, q))
+         end do
+         tlo = LEAF_BND_DEG(k) / 90.0_wp
+      end do
       tlo = 0.0_wp
       do k = 1_ik, N_LEAF_CLASS
-         thi = LEAF_BND_DEG(k) / 90.0_wp
-         dt  = (thi - tlo) / real(NSUB, wp)
+         dt  = (LEAF_BND_DEG(k) / 90.0_wp - tlo) / real(NSUB, wp)
          acc = 0.0_wp
          do j = 1_ik, NSUB
-            t   = tlo + (real(j, wp) - 0.5_wp) * dt
-            acc = acc + beta_pdf_kernel(t, p, q) * dt
+            acc = acc + exp(beta_log_kernel(tlo + (real(j, wp) - 0.5_wp) * dt, p, q) - log_max) * dt
          end do
          lidf(k) = acc
-         tlo     = thi
+         tlo     = LEAF_BND_DEG(k) / 90.0_wp
       end do
-      tot = sum(lidf)
-      if (tot > tiny_num) lidf = lidf / tot             ! the Beta normalizing constant cancels
+      lidf = lidf / sum(lidf)                           ! the largest panel adds its whole dt
    end function beta_lidf
 
-   !----- The unnormalized Beta density t^(p-1) (1-t)^(q-1), with t kept off 0 and 1 so an !
-   !      integrable endpoint singularity stays finite. -----------------------------------!
-   pure function beta_pdf_kernel(t, p, q) result(f)
+   !----- The log of the unnormalized Beta density, (p-1) ln t + (q-1) ln(1-t), with t     !
+   !      kept off 0 and 1 so an integrable endpoint singularity stays finite. ------------!
+   pure function beta_log_kernel(t, p, q) result(f)
       real(wp), intent(in) :: t, p, q
       real(wp)             :: f, tt
       tt = min(max(t, 1.0e-9_wp), 1.0_wp - 1.0e-9_wp)   ! clamp-ok: the beta density's domain (0, 1)
-      f  = exp((p - 1.0_wp) * log(tt) + (q - 1.0_wp) * log(1.0_wp - tt))
-   end function beta_pdf_kernel
+      f  = (p - 1.0_wp) * log(tt) + (q - 1.0_wp) * log(1.0_wp - tt)
+   end function beta_log_kernel
 
    !----- The midpoint inclination of class k [rad]. --------------------------------------!
    pure function leaf_class_angle(k) result(theta)
