@@ -109,7 +109,7 @@ contains
       logical,                    intent(in)              :: do_fast
       type(output_buffers_t),     intent(inout), optional :: out_bufs   !< present when do_fast
       real(wp)    :: prow(N_PA_ROWS)                !< the patch block's row for this (patch, sub-step)
-      real(wp)    :: gpp_patch, npp_patch, rnet
+      real(wp)    :: gpp_patch, npp_patch, rnet, rnet_ts, lw_up
       integer(ik) :: ncoh, i0, i, j, kb, nl
       logical     :: do_cdiag, do_pdiag
       do_cdiag = poly%cohort%diag%active
@@ -119,10 +119,16 @@ contains
       nl   = n_soil_layer_max
       if (do_pdiag .or. do_fast) then
          gpp_patch = sum(out%gpp_coh(1:ncoh) * static%nplant(1:ncoh))    ! [umol/m2/s]
-         !----- The net radiation the ground, the leaves and the wood absorb. ----------------------!
-         rnet      = forcing%abs_sw_ground + forcing%abs_lw_ground                                    &
+         !----- The net radiation the ground, the leaves and the wood absorbed, as their balances      !
+         !      booked it over the step. The two-stream's, at the start-of-step temperatures, differs  !
+         !      by the change in their emission within the step, which leaves to the sky: the          !
+         !      upwelling longwave carries it, so the reported budget closes on the booked net         !
+         !      radiation (docs/science/vegetation_energy_dynamics.md, "The emission base"). ----------!
+         rnet_ts   = forcing%abs_sw_ground + forcing%abs_lw_ground                                    &
                      + sum(forcing%abs_sw(1:ncoh)) + sum(forcing%abs_lw(1:ncoh))                      &
                      + sum(forcing%abs_sw_wood(1:ncoh)) + sum(forcing%abs_lw_wood(1:ncoh))
+         rnet      = out%rnet
+         lw_up     = forcing%lw_up + (rnet_ts - rnet)
          npp_patch = gpp_patch - sum((out%leaf_resp_coh(1:ncoh) + out%stem_resp_coh(1:ncoh)              &
                                       + out%root_resp_coh(1:ncoh)) * static%nplant(1:ncoh))
          call patch_diag_row(prow, dt_fast, out%le_flux, out%h_flux, rnet,                              &
@@ -133,7 +139,7 @@ contains
                              dynamic%soil_energy%soil_temp(1), out%report%ledgers%whole_energy%resid,   &
                              out%report%ledgers%whole_water%resid, forcing%wind, forcing%air_temp,      &
                              static%z_top, forcing%sw_in_vis, forcing%sw_in_nir, forcing%sw_up_vis,     &
-                             forcing%sw_up_nir, forcing%lw_up, dynamic%soil_water%w_surface,            &
+                             forcing%sw_up_nir, lw_up, dynamic%soil_water%w_surface,                    &
                              forcing%press)
       end if
       !----- FAST-tier staging in the patch's and its cohorts' own slots. ---------------------------!

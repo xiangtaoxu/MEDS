@@ -140,6 +140,7 @@ contains
       call update_dynamic_state(dt_fast, cfg, site, static, frozen, acc, dt_warm, y_out, dynamic, out, moved)
       call close_ledgers(dt_fast, site, forcing, static, frozen, y, y_out, acc, moved, ec%debug_error, out%report)
       call atm_fluxes(out%report%exports, dt_fast, out%le_flux, out%h_flux)
+      out%rnet = acc%rad_net / dt_fast
       end associate
    end subroutine fast_step
 

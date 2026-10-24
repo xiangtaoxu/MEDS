@@ -12,6 +12,7 @@ module meds_plant_energy
    use meds_constants,        only : tiny_num, stefan_boltzmann, latent_heat_vap, cp_liq
    use meds_therm_lib,        only : enthalpy_vapor, tissue_energy_to_temp, internal_energy_liquid
    use meds_canopy_water,     only : canopy_water_out_t
+   use meds_canopy_radiation, only : radiative_temperature
    implicit none
    private
 
@@ -95,7 +96,7 @@ contains
                                                    t_cas, t_parent, store_hcap_per_dt, t_store0,             &
                                                    dt_temp, t_store, transp, film_evap, dh, drnet)
       real(wp), intent(in)  :: abs_sw     !< [W/m2]   absorbed shortwave
-      real(wp), intent(in)  :: abs_lw     !< [W/m2]   net longwave at the emission base
+      real(wp), intent(in)  :: abs_lw     !< [W/m2]   net longwave with the tissue at t_cas, the linearization base
       !----- The sapflow's advected enthalpy, Q_adv of eq. (1): it shifts the balance like abs_sw  !
       !      but stays out of drnet, being an internal soil-to-plant transfer (eq. (6)). ----------!
       real(wp), intent(in)  :: q_extra    !< [W/m2]
@@ -204,6 +205,7 @@ contains
       type(latent_pathway_t) :: leaf_dry, leaf_wet, wood_dry, wood_wet
       real(wp)    :: q_def, h_evap, lw_slope, lw_slope_w, u_leaf0, u_wood0, q_film_leaf, q_film_wood
       real(wp)    :: dtl, transp_i, dh, drnet, dtw, transp_w, dh_w, drnet_w
+      real(wp)    :: t_rad   !< [K] the cohort's start-of-step emission temperature
       integer(ik) :: i
       q_def  = qsat_cas - q_cas
       h_evap = enthalpy_vapor(t_cas)
@@ -238,15 +240,23 @@ contains
          leaf_wet = latent_pathway(h_evap - u_leaf0, rho, film%g_film_leaf(i), dqsat_dt, q_def)
          wood_dry = latent_pathway_t(h_vap=h_evap)                ! wood does not transpire
          wood_wet = latent_pathway(h_evap - u_wood0, rho, film%g_film_w(i), dqsat_dt, q_def)
-         lw_slope   = lw_emission_slope(env%leaf_emiss(i), t_cas, env%lai(i))
-         lw_slope_w = lw_emission_slope(env%wood_emiss(i), t_cas, env%wai(i))
+         !----- The longwave about the emission the two-stream's abs_lw is net of, the cohort's        !
+         !      start-of-step radiative temperature t_rad: slopes at t_rad, and each tissue's net      !
+         !      longwave abs_lw - slope*(T - t_rad), passed to the balance (linearized about t_cas) as !
+         !      abs_lw + slope*(t_rad - t_cas) (vegetation_energy_dynamics.md, "The emission base").   !
+         !      ---------------------------------------------------------------------------------------!
+         t_rad      = radiative_temperature(env%lai(i), env%wai(i), env%t_leaf0(i), env%t_wood0(i))
+         lw_slope   = lw_emission_slope(env%leaf_emiss(i), t_rad, env%lai(i))
+         lw_slope_w = lw_emission_slope(env%wood_emiss(i), t_rad, env%wai(i))
          !----- Wood: q_wood_net enters as q_extra, as qwflux_wl does for the leaf. ----------------!
-         call tissue_energy_balance(env%abs_sw_wood(i), env%abs_lw_wood(i), env%q_wood_net(i) + q_film_wood,      &
+         call tissue_energy_balance(env%abs_sw_wood(i), env%abs_lw_wood(i) + lw_slope_w * (t_rad - t_cas),         &
+                                    env%q_wood_net(i) + q_film_wood,                                             &
                                     env%h_coeff_w(i),                                                            &
                                     lw_slope_w, wood_dry, wood_wet, film%f_wet_c(i), t_cas, t_cas,              &
                                     env%wood_hcap_per_dt(i), env%t_wood0(i), dtw, wood_temp(i), transp_w,       &
                                     film_evap_wood(i), dh_w, drnet_w)
-         call tissue_energy_balance(env%abs_sw(i), env%abs_lw(i), env%qwflux_wl(i) + q_film_leaf,                 &
+         call tissue_energy_balance(env%abs_sw(i), env%abs_lw(i) + lw_slope * (t_rad - t_cas),                    &
+                                    env%qwflux_wl(i) + q_film_leaf,                                              &
                                     env%h_coeff_leaf(i),                                                         &
                                     lw_slope, leaf_dry, leaf_wet, film%f_wet_c(i), t_cas, wood_temp(i),          &
                                     env%leaf_hcap_per_dt(i), env%t_leaf0(i), dtl, leaf_temp(i), transp_i,       &

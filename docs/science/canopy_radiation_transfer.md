@@ -276,7 +276,7 @@ it:
 |---|---|
 | `mean_sw_in_vis_py`, `mean_sw_in_nir_py` | incident shortwave at canopy top, per band |
 | `mean_sw_up_vis_py`, `mean_sw_up_nir_py` | upwelling shortwave leaving the canopy top |
-| `mean_lw_up_py` | upwelling longwave, **surface emission included** |
+| `mean_lw_up_py` | upwelling longwave, **surface emission included**, with the change in emission within the step that the tissues' and the ground's balances booked, so the reported budget closes on the booked net radiation ([vegetation_energy_dynamics](vegetation_energy_dynamics.md), "What the output reports") |
 
 **These are fluxes, not a time-averaged albedo, deliberately.** A period-mean albedo is the mean of
 a *ratio*, which is not the ratio of the means — and at night the shortwave ratio is 0/0. The albedo
