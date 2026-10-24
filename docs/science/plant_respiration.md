@@ -171,7 +171,10 @@ day — so the allocator commits the per-patch total as `slow_co2_rate`, a froze
 emits, exactly the handoff the shed-tissue water uses. The storage maintenance of
 `plant_carbon_allocation.md` eq. (2) rides the same rate. That rate carries an opposite-signed starvation
 correction (`growth_resp - deficit`): when storage could not fund the maintenance the fast loop had already
-reported, the over-report is netted back here rather than by rewriting the previous step.
+reported, the over-report is netted back here rather than by rewriting the previous step. Real maintenance
+respiration is limited by the substrate the plant has, so a maintenance flux no pool could pay is read as
+an over-report of the fast loop, which respires without that limit (§7); an operator-split model corrects
+it on the next step, in one channel with one sign convention.
 
 $`R_h`$ is the heterotrophic limb from the CENTURY pools — see `docs/science/soil_carbon.md`; the
 canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophysics.md`.

@@ -1,32 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_slow_ledger -- the SITE conservation ledger across a slow step. Its design record is       !
-! MEDS_SLOW_LOOP_CONSERVATION_LEDGER.md §10.2 (docs/dev_plans/archive/).                          !
-!                                                                                          !
-! WHY A SECOND LEDGER EXISTS AT ALL. `budget_t` already gives every fast store a closure test, !
-! and fast_dynamics merges those into the run-level energy/water ledgers. But those accumulate  !
-! per-fast-step FLUX RESIDUALS: each check asks whether the change over one dt_fast matches the !
-! fluxes that crossed the store's boundary during it. Nothing anywhere compares a STORE across   !
-! the SLOW step. A discontinuous jump between the end of one fast window and the start of the    !
-! next -- a cull discarding tissue water, a fusion mixing canopy air on the wrong weights, a      !
-! recruit endowed with carbon nobody paid for -- is therefore invisible BY CONSTRUCTION, not by   !
-! oversight.                                                                                      !
-!                                                                                          !
-! So this ledger is the fast one turned inside out: a SNAPSHOT ledger. Store before, declared     !
-! boundary terms, store after; whatever is left is the imbalance. It is SITE-LEVEL and AREA-       !
-! WEIGHTED because patch identity does not survive the step -- apply_patch_disturbance creates a    !
-! patch, fuse_2_patches destroys one, terminate_patches renormalizes every area -- so a per-patch   !
-! ledger would have nothing to compare against.                                                     !
-!                                                                                          !
-! WHAT THIS MODULE DELIBERATELY DOES NOT DO: fix anything. The point is to make each term           !
-! MEASURABLE, attributed to the phase that produced it, before deciding what it deserves --         !
-! measurement has more than once inverted the expected ranking of the terms. Terms that are         !
-! honest boundary crossings are DECLARED (see slow_ledger_declare); everything else lands in        !
-! the phase's residual, which is the model's own admission of what it cannot account for.           !
-!                                                                                          !
-! PHASE ATTRIBUTION is the whole value. A single number for the step would say "carbon does not     !
-! close" and leave the search to the reader. Marking at each operator boundary says WHICH operator, !
-! in WHICH currency, and by how much -- which is a bug report rather than a symptom.                 !
+! meds_slow_ledger -- the site conservation ledger across a slow step                      !
+! (docs/science/conservation.md). At each operator boundary it snapshots the site's        !
+! carbon, water and energy store and attributes what the operator did not declare to its   !
+! phase (§3, eq. (1)); a breach of eq. (2) is reported at the end of the run (§5). It      !
+! measures; it corrects nothing. Routines: slow_ledger_open, _rebase, _declare, _mark,     !
+! _report; slow_site_store (§2); slow_fast_carbon_handover (§3); check_plausible (§6).     !
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
@@ -49,10 +28,10 @@ module meds_slow_ledger
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
              SLOW_PHASE_TISSUE_WATER
 
-   !----- The phases a slow step is divided into. Each is marked at the boundary of the operator  !
-   !      group that owns it, so a residual names the operator that produced it. -----------------!
+   !----- The phases of a slow step (conservation.md §3), each marked at the end of the    !
+   !      operators that own it, so a residual names the operator that produced it. -------!
    integer(ik), parameter :: SLOW_PHASE_ALLOCATE = 1_ik  !< phenology, traits, carbon allocation, turnover shed
-   integer(ik), parameter :: SLOW_PHASE_GROW     = 2_ik  !< tendency build + state commit (growth AND mortality)
+   integer(ik), parameter :: SLOW_PHASE_GROW     = 2_ik  !< tendency build + state commit (growth and mortality)
    integer(ik), parameter :: SLOW_PHASE_RECRUIT  = 3_ik  !< apply_recruitment
    integer(ik), parameter :: SLOW_PHASE_COHORT   = 4_ik  !< cohort fuse / terminate / split
    integer(ik), parameter :: SLOW_PHASE_DISTURB  = 5_ik  !< apply_patch_disturbance
@@ -62,64 +41,47 @@ module meds_slow_ledger
    integer(ik), parameter :: SLOW_PHASE_TISSUE_WATER = 9_ik  !< tissue water above capacity shed, before the fast loop
    integer(ik), parameter :: N_SLOW_PHASE        = 9_ik
 
-   !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
-   !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
+   !----- Carbon of one micromole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. It puts the !
+   !      canopy air's CO2 in the currency of the plant and soil pools. -------------------!
    real(wp), parameter :: KGC_PER_UMOL_C = 1.2e-8_wp
-   !----- Absolute floors PER MARK, so the tolerance grows with the number of checks rather than  !
-   !      demanding that a thousand round-off errors cancel. Judged alongside a relative test on  !
-   !      the declared flux -- the same policy budget_check uses, and for the same reason: a      !
-   !      residual means nothing measured against a store, only against what crossed the boundary.!
+   !----- The tolerance, eq. (2) of conservation.md §5: an absolute floor per mark, plus   !
+   !      the relative test on the declared flux that the fast budgets use. ---------------!
    real(wp), parameter :: SLOW_ATOL_CARBON = 1.0e-12_wp   !< [kgC/m2] per mark
    real(wp), parameter :: SLOW_ATOL_WATER  = 1.0e-9_wp    !< [kg/m2]  per mark
    real(wp), parameter :: SLOW_ATOL_ENERGY = 1.0e-3_wp    !< [J/m2]   per mark
-   !----- ...plus a ROUND-OFF allowance proportional to the store. Those floors alone are wrong   !
-   !      for a phase that DECLARES nothing but rearranges a large store: the structural          !
-   !      operators permute, merge and renormalise ~25 kgC/m2 of live carbon, and the arithmetic  !
-   !      cost of that is ~1e-11 kgC/m2 -- above a 3e-12 floor and utterly below anything the     !
-   !      ledger exists to find (the smallest REAL term it has found is 2.96e-6). This is NOT the !
-   !      store-relative tolerance budget_check's header warns against: 1e-11 is a round-off      !
-   !      bound, five orders tighter than the 1e-6 store-relative tolerance that can hide a       !
-   !      sustained leak. ------------------------------------------------------------------------!
+   !----- ...plus a round-off allowance on the store (§5): a phase that declares nothing   !
+   !      still rearranges a large store. -------------------------------------------------!
    real(wp), parameter :: SLOW_ROUNDOFF_FRAC = 1.0e-11_wp !< [-] of the store, per mark
 
-   !----- One site total per currency, per m2 of SITE (already area-weighted over patches). -------!
+   !----- One total per currency, per m2 of site, area-weighted over the patches (§2). ----!
    type :: slow_store_t
-      real(wp) :: carbon = 0.0_wp   !< [kgC/m2] live pools + necromass + canopy air + recruit transit
-      real(wp) :: water  = 0.0_wp   !< [kg/m2]  soil + pond + snow + canopy vapour + tissue + film + shed transit
+      real(wp) :: carbon = 0.0_wp   !< [kgC/m2] live pools + necromass + canopy air + recruit pool
+      real(wp) :: water  = 0.0_wp   !< [kg/m2]  soil + pond + snow + canopy vapour + tissue + film
       real(wp) :: energy = 0.0_wp   !< [J/m2]   soil + pond + snow + canopy air + tissue heat
    end type slow_store_t
 
-   !----- The accumulator. Lives for the run and is threaded from meds_main exactly like the fast   !
-   !      loop's run_energy_budget / run_water_budget, so its lifetime is visible at the top level  !
-   !      rather than hidden in site state.  ------------------------------------------------------!
+   !----- The run's accumulator, held in the polygon's run record (polygon_run_t). --------!
    type :: slow_ledger_t
       logical             :: active = .false.       !< off => every entry point is a no-op
-      !----- The air density the canopy-air store is valued at. Supplied by the caller from the    !
-      !      fast context (site-uniform, from the forcing). Held CONSTANT across the step, which   !
-      !      is exact: no fast sub-step runs during a slow step, so rho cannot change inside the   !
-      !      window, and the before/after difference is the true change in canopy-air content.     !
+      !----- The air density the canopy-air store is valued at: the constant rho_air_ref   !
+      !      the stepper passes (conservation.md §2). -------------------------------------!
       real(wp)            :: rho_air = 0.0_wp
-      !----- Rolling state within the current step. --------------------------------------------!
+      !----- Rolling state within the current step. ---------------------------------------!
       type(slow_store_t)  :: at_mark                !< store when the current phase opened
-      type(slow_store_t)  :: decl_in, decl_out      !< declared boundary terms for the CURRENT phase
-      !----- Per-phase attribution over the run. A SIGNED sum as well as an absolute one, because  !
-      !      a one-signed bias below any per-step threshold is invisible to a running maximum and  !
-      !      only shows up as a drift over a season (the lesson budget_t's header records).        !
+      type(slow_store_t)  :: decl_in, decl_out      !< declared boundary terms for the current phase
+      !----- Per-phase sums over the run; the signed sum shows a one-signed drift that a   !
+      !      running maximum misses (§5). -------------------------------------------------!
       type(slow_store_t)  :: resid_sum(N_SLOW_PHASE)
       type(slow_store_t)  :: resid_abs(N_SLOW_PHASE)
       type(slow_store_t)  :: resid_worst(N_SLOW_PHASE)
       type(slow_store_t)  :: decl_gross(N_SLOW_PHASE)
       integer(ik)         :: n_mark(N_SLOW_PHASE) = 0_ik
       integer(ik)         :: n_step = 0_ik
-      !----- Whole-run endpoints, for the drift line of the report. -----------------------------!
+      !----- Whole-run endpoints, for the drift line of the report. -----------------------!
       type(slow_store_t)  :: store_first, store_last
       logical             :: has_first = .false.
-      !----- PLAUSIBILITY, which is a different question from conservation (see the predicate's   !
-      !      header in meds_soil_biogeochem). The residual columns above answer "did this phase   !
-      !      move something it did not declare"; these answer "did it leave a state that cannot   !
-      !      exist". A runaway that conserves carbon perfectly is invisible to the former and      !
-      !      caught by the latter. Only the FIRST occurrence is kept: it names the operator, and   !
-      !      everything after it is downstream of a state that was already impossible.             !
+      !----- Plausibility (§6): the first phase that left a CENTURY pool that cannot       !
+      !      exist, and where; everything after it is downstream of that state. -----------!
       integer(ik)         :: bad_phase = 0_ik      !< phase that first left an impossible store
       integer(ik)         :: bad_patch = 0_ik      !< which patch
       integer(ik)         :: bad_pool  = 0_ik      !< which CENTURY pool (index)
@@ -130,9 +92,8 @@ module meds_slow_ledger
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Open a slow step: snapshot the store as the first phase's baseline and clear the declared  !
-   ! terms. `rho_air` values the canopy-air store (see the type's comment on why holding it       !
-   ! constant across the step is exact rather than an approximation).                             !
+   ! Open a slow step: snapshot the store as the first phase's baseline and clear the      !
+   ! declared terms. `rho_air` values the canopy air for the step (conservation.md §2).    !
    !---------------------------------------------------------------------------------------!
    subroutine slow_ledger_open(ledger, poly, cfg, rho_air)
       type(slow_ledger_t), intent(inout) :: ledger
@@ -151,10 +112,9 @@ contains
       end if
    end subroutine slow_ledger_open
 
-   !----- Take the site's store as the reference for the next mark without opening a step: for       !
-   !      operators that run between two slow steps before any step has opened the ledger -- the     !
-   !      restructuring a resumed run owes its checkpoint's boundary. It declares nothing and        !
-   !      counts no step; the canopy air keeps whatever density the ledger already holds. -----------!
+   !----- Take the site's store as the next mark's reference without opening a step, for   !
+   !      what runs before any step has opened the ledger (a resumed run's owed            !
+   !      restructuring). It declares nothing and counts no step. -------------------------!
    subroutine slow_ledger_rebase(ledger, poly, cfg)
       type(slow_ledger_t), intent(inout) :: ledger
       type(polygon_t),     intent(in)    :: poly
@@ -170,11 +130,9 @@ contains
    end subroutine slow_ledger_rebase
 
    !---------------------------------------------------------------------------------------!
-   ! Declare a boundary term for the phase now open. A term belongs here ONLY if the quantity   !
-   ! genuinely crosses the site boundary and the model means it to: external seed rain arriving,  !
-   ! necromass leaving a run that models no soil carbon, canopy air entrained as the control      !
-   ! volume grows. Anything declared here is subtracted from the phase's residual, so declaring    !
-   ! a defect would hide it -- which is exactly what this module exists to prevent.                !
+   ! Declare a boundary term for the phase now open: a quantity that genuinely crosses the !
+   ! ledger's boundary and that the model means to (conservation.md §3). It is subtracted  !
+   ! from the phase's residual, so declaring a defect would hide it.                       !
    !---------------------------------------------------------------------------------------!
    pure subroutine slow_ledger_declare(ledger, carbon_in, carbon_out, water_in, water_out,         &
                                        energy_in, energy_out)
@@ -191,13 +149,9 @@ contains
    end subroutine slow_ledger_declare
 
    !---------------------------------------------------------------------------------------!
-   ! Close the phase now open and attribute its imbalance:                                     !
-   !                                                                                          !
-   !     resid = (store_now - store_at_mark) - (declared_in - declared_out)                     !
-   !                                                                                          !
-   ! then reopen at the new store with the declared terms cleared, so the next phase starts from !
-   ! what this one actually left behind. Marking with no intervening operator is harmless (a zero !
-   ! residual), which is what lets a caller mark defensively around a conditional block.          !
+   ! Close the phase now open: add its residual (conservation.md eq. (1)) to the phase's   !
+   ! sums and reopen at the new store. A mark with no operator since the last adds zero,   !
+   ! so a caller may mark around a conditional block.                                      !
    !---------------------------------------------------------------------------------------!
    subroutine slow_ledger_mark(ledger, poly, cfg, phase)
       type(slow_ledger_t), intent(inout) :: ledger
@@ -232,18 +186,14 @@ contains
       ledger%decl_in    = slow_store_t()
       ledger%decl_out   = slow_store_t()
 
-      !----- ...and ask the OTHER question: is what this phase left behind possible at all? ------!
+      !----- ...then the plausibility test (§6): can what this phase left exist? ----------!
       call check_plausible(ledger, poly, phase)
    end subroutine slow_ledger_mark
 
    !---------------------------------------------------------------------------------------!
-   ! check_plausible -- does any patch now hold a CENTURY pool that cannot exist? Records only the !
-   ! FIRST occurrence, because the phase that produced the first impossible state is the one that   !
-   ! is wrong; every later report is downstream of it.                                              !
-   !                                                                                          !
-   ! This runs at every operator boundary the ledger already marks, which is what turns "some       !
-   ! patch's soil carbon is 7e7 kgC/m2" into "the phase that did it was X" -- the same reason the   !
-   ! residuals are attributed per phase rather than summed over the step.                            !
+   ! check_plausible -- does any patch now hold a CENTURY pool that cannot exist           !
+   ! (soil_carbon_bad_pool, soil_carbon.md §9)? Counts the marks that see one and records  !
+   ! the first, whose phase is the one at fault (conservation.md §6).                      !
    !---------------------------------------------------------------------------------------!
    subroutine check_plausible(ledger, poly, phase)
       type(slow_ledger_t), intent(inout) :: ledger
@@ -267,26 +217,10 @@ contains
    end subroutine check_plausible
 
    !=======================================================================================!
-   !  THE STORE. Every conserved quantity the site holds, area-weighted to one m2 of site.     !
-   !                                                                                          !
-   !  The water and energy store lists mirror meds_fast_integ_esdirk2's whole_water / whole_energy check  !
-   !  term for term, so the two tiers cannot disagree about what exists; carbon is added here,   !
-   !  since the fast whole-column ledger does not track it. One entry is a store only this   !
-   !  tier can see, and omitting it would report a real carry-forward as a leak:                !
-   !                                                                                          !
-   !    * `recruit_pool * carbon_min` -- reproduction carbon converted to recruit density and     !
-   !      carried forward until a pool crosses the spawn threshold. Valued at carbon_min because  !
-   !      that is the conversion the model itself used; the rest of what init_cohort endows is    !
-   !      the recruit's external draw, which apply_recruitment reports and the RECRUIT phase      !
-   !      declares, so a gap between the two lands in the RECRUIT phase's residual instead of     !
-   !      being absorbed silently.                                                                !
-   !                                                                                          !
-   !  `shed_water_rate` is deliberately NOT a store, though it looks like one. It is a HANDOFF    !
-   !  to the fast tier, live across the FAST window rather than across the slow step: by the      !
-   !  time the next slow step opens, that water is already in the soil and the rate variable      !
-   !  still holds it. Carrying it as a store would double-count it at every open, a steady        !
-   !  one-signed water leak in the allocate phase. It is DECLARED instead, the exact mirror of    !
-   !  the fast->slow carbon handover.                                                             !
+   !  The store: every conserved quantity the site holds, per m2 of site (conservation.md  !
+   !  §2). Water and energy use the fast budgets' own store functions, so the two tiers    !
+   !  agree on what exists; carbon is added here. The recruit pool is valued at c_min per  !
+   !  plant; the shed water is a handoff, declared, not stored (§3).                       !
    !=======================================================================================!
    pure function slow_site_store(poly, cfg, rho_air) result(store)
       type(polygon_t),     intent(in) :: poly
@@ -297,7 +231,7 @@ contains
       real(wp)    :: c_min(cfg%pft%n)
       integer(ik) :: ip, i, i0, i1, pf
 
-      !----- Recruit-pool valuation, one per PFT (the same conversion compute_vital_rates used). -!
+      !----- Each PFT's recruit value per plant, c_min, as the vital rates use it. --------!
       do pf = 1_ik, cfg%pft%n
          c_min(pf) = min_cohort_carbon(poly%cohort%pft_table%allom(pf), cfg%pft%min_cohort_height,          &
                                        cfg%pft%wood_density(pf))
@@ -307,8 +241,7 @@ contains
          a = patch_polygon_area(poly, ip)
          if (a <= 0.0_wp) cycle
 
-         !----- Soil column: the totals the fast step's ledgers take, over the layer thicknesses of  !
-         !      the patch's site. -------------------------------------------------------------------!
+         !----- Soil column: the fast budgets' totals over the patch's site's layers. -----!
          associate (soil => poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
             w_soil = soil_water_store(poly%patch%soil_water(ip)%theta, soil%dz, soil%n_active)
             e_soil = soil_energy_store(poly%patch%soil_energy(ip)%soil_energy, soil%dz, soil%n_active)
@@ -316,15 +249,14 @@ contains
          store%water  = store%water  + a * w_soil
          store%energy = store%energy + a * e_soil
 
-         !----- Pond and snow: both already extensive per m2 of patch ground. --------------------!
+         !----- Pond and snow: both already extensive per m2 of patch ground. -------------!
          store%water  = store%water  + a * poly%patch%soil_water(ip)%w_surface
          store%energy = store%energy + a * poly%patch%soil_water(ip)%w_surface_energy
          store%water  = store%water  + a * sum(poly%patch%snow(ip)%swe)
          store%energy = store%energy + a * sum(poly%patch%snow(ip)%snow_energy)
 
-         !----- Canopy air. The capacities are the fast step's own (cas_capacities), so a depth     !
-         !      change moves the store by the amount the open control volume entrained or          !
-         !      detrained (refresh_canopy_depth declares it). ------------------------------------!
+         !----- Canopy air at the fast step's capacities; a depth change is the            !
+         !      open-volume exchange refresh_canopy_depth declares. -----------------------!
          associate (cas => poly%patch%cas(ip))
             call cas_capacities(rho_air, cas%can_shv, cas%can_depth, dmol, cap_mass, cap_mol)
             store%water  = store%water  + a * cap_mass * cas%can_shv
@@ -332,8 +264,7 @@ contains
             store%carbon = store%carbon + a * cap_mol  * cas%can_co2 * KGC_PER_UMOL_C
          end associate
 
-         !----- Necromass: the seven CENTURY pools (lignin is a sub-state of the structural pools, !
-         !      not carbon of its own, so it is deliberately NOT summed here). -------------------!
+         !----- The seven CENTURY pools; the lignin is part of the structural pools. ------!
          associate (sc => poly%patch%soil_carbon(ip))
             store%carbon = store%carbon + a * (sc%fast_grnd_carbon + sc%fast_soil_carbon           &
                                              + sc%struct_grnd_carbon + sc%struct_soil_carbon       &
@@ -341,13 +272,12 @@ contains
                                              + sc%passive_carbon)
          end associate
 
-         !----- Carbon in transit: the recruit carry-forward pool. -------------------------------!
+         !----- Carbon in transit: the recruit carry-forward pool. ------------------------!
          do pf = 1_ik, cfg%pft%n
             store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip) * c_min(pf)
          end do
 
-         !----- Cohorts of this patch. nplant is per m2 of PATCH ground, so the patch area weight  !
-         !      converts to site.                                                                 !
+         !----- Cohorts: nplant is per m2 of patch; the area weight converts to site. -----!
          i0 = poly%patch%cohort_offset(ip)
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (c => poly%cohort)
@@ -356,7 +286,7 @@ contains
                             + c%fineroot_carbon(i) + c%wood_carbon(i) + c%nonstructural_carbon(i))
                store%water  = store%water  + a * c%nplant(i) * (c%leaf_water_mass(i) + c%wood_water_mass(i))
                store%water  = store%water  + a * cohort_film_water(c, i)
-               !----- Tissue energy [J/plant], the cohort's state. --------------------------------!
+               !----- Tissue energy [J/plant], the cohort's state. ------------------------!
                store%energy = store%energy + a * c%nplant(i) * (c%leaf_energy(i) + c%wood_energy(i))
             end do
          end associate
@@ -365,8 +295,8 @@ contains
    end function slow_site_store
 
    !---------------------------------------------------------------------------------------!
-   ! The site's TISSUE ENERGY alone [J/m2 site] -- the same slice slow_site_store folds into the !
-   ! energy total, exposed so the driver can measure how much of it moved when biomass changed.   !
+   ! The site's tissue energy [J/m2 site], the slice of slow_site_store's energy a driver  !
+   ! needs to declare a thermal-mass change (conservation.md §4).                          !
    !---------------------------------------------------------------------------------------!
    pure function slow_tissue_energy(poly) result(e)
       type(polygon_t), intent(in) :: poly
@@ -384,14 +314,11 @@ contains
    end function slow_tissue_energy
 
    !---------------------------------------------------------------------------------------!
-   ! The carbon the FAST tier handed to the slow tier this step [kgC/m2 site]: gross GPP minus   !
-   ! the maintenance respiration it has already paid back into the canopy air. That net sits in   !
-   ! the per-cohort accumulators between the two tiers -- not in any store this ledger snapshots  !
-   ! -- so without declaring it the day's photosynthate reads as carbon appearing from nowhere.   !
-   !                                                                                          !
-   ! It mirrors cohort_carbon_demand's own branch exactly, including the fast_biophysics_on=off   !
-   ! stub, because the ledger has to declare what the allocator actually consumed rather than     !
-   ! what the model would consume if the fast loop were running.                                  !
+   ! The day's net carbon from the fast loop [kgC/m2 site]: GPP less the maintenance       !
+   ! respiration already paid back to the canopy air. It sits in the cohorts'              !
+   ! accumulators, not a store, so it is declared (conservation.md §3). It takes           !
+   ! cohort_carbon_demand's branch, the fast-off stub included, to declare what the        !
+   ! allocator consumes.                                                                   !
    !---------------------------------------------------------------------------------------!
    pure function slow_fast_carbon_handover(poly, cfg) result(net_c)
       type(polygon_t),     intent(in) :: poly
@@ -417,7 +344,7 @@ contains
       end do
    end function slow_fast_carbon_handover
 
-   !----- Phase labels for the report. ---------------------------------------------------------!
+   !----- Phase labels for the report. ----------------------------------------------------!
    pure function slow_phase_name(phase) result(nm)
       integer(ik), intent(in) :: phase
       character(len=16)       :: nm
@@ -436,9 +363,8 @@ contains
    end function slow_phase_name
 
    !---------------------------------------------------------------------------------------!
-   ! End-of-run report: one row per phase per currency that actually moved. Reports the SIGNED  !
-   ! cumulative residual first, because that is the quantity a leak shows up in -- an unsigned    !
-   ! maximum cannot distinguish round-off that cancels from a bias that accumulates.              !
+   ! End-of-run report (conservation.md §5): a row per phase and currency that moved, the  !
+   ! signed sum first, since a leak shows in it and not in an unsigned maximum.            !
    !---------------------------------------------------------------------------------------!
    subroutine slow_ledger_report(ledger)
       type(slow_ledger_t), intent(in) :: ledger
@@ -448,9 +374,8 @@ contains
       print '(a)', '=== slow-loop conservation ledger (site totals, per m2) ==================='
       print '(a,i0,a)', 'slow steps: ', ledger%n_step,                                             &
                         '   [residual = store change - declared boundary terms]'
-      !----- `declared` is the gross boundary flux the phase DID account for. It is the scale the   !
-      !      residual has to be read against: -3e-3 beside a declared 0.5 is a 0.6% loss, and the   !
-      !      same -3e-3 beside a declared 0 is carbon with no provenance at all. -------------------!
+      !----- `declared`, the phase's gross declared flux, is the scale its residual is     !
+      !      read against (§5). -----------------------------------------------------------!
       print '(a)', 'phase              currency    signed sum      sum |r|       worst     declared   marks'
       do p = 1_ik, N_SLOW_PHASE
          if (ledger%n_mark(p) == 0_ik) cycle
@@ -466,11 +391,8 @@ contains
             ledger%store_last%carbon - ledger%store_first%carbon, '   water ',                     &
             ledger%store_last%water  - ledger%store_first%water,  '   energy ',                    &
             ledger%store_last%energy - ledger%store_first%energy
-      !----- The verdict. Every phase/currency is judged against the flux it declared, plus a     !
-      !      per-mark absolute floor -- a residual measured against a STORE means nothing, which  !
-      !      is the policy budget_check's header argues for at length. Reported rather than       !
-      !      fatal, matching the fast loop's whole-column ledgers: a run that breaches this is    !
-      !      telling you something, and stopping it mid-way tells you less than finishing it. ----!
+      !----- The verdict, eq. (2): each phase and currency against its declared flux and   !
+      !      the per-mark floors; a breach is reported, not fatal (§5). -------------------!
       nbad = 0_ik
       do p = 1_ik, N_SLOW_PHASE
          if (ledger%n_mark(p) == 0_ik) cycle
@@ -487,10 +409,8 @@ contains
          print '(a,i0,a)', 'WARNING: ', nbad, ' phase/currency residual(s) exceed tolerance --'
          print '(a)', '         a slow-step operator is moving something it does not declare.'
       end if
-      !----- ...and the OTHER verdict. This one is not a tolerance question: a negative carbon      !
-      !      mass or a pool past the divergence ceiling is impossible, however well it balances.    !
-      !      It is reported SEPARATELY and after, because a run can close perfectly on all three    !
-      !      currencies while holding a state that cannot exist (a runaway soil-carbon pool).       !
+      !----- ...and the plausibility verdict (§6), reported apart: a run can close on all  !
+      !      three currencies while holding a state that cannot exist. --------------------!
       if (ledger%bad_phase /= 0_ik) then
          print '(a)', '--------------------------------------------------------------------------'
          print '(a)', 'IMPOSSIBLE STORE: a phase left a CENTURY pool that cannot exist.'
@@ -503,7 +423,7 @@ contains
       end if
       print '(a)', '=========================================================================='
    contains
-      !----- 1 if this residual breaches the mixed relative/absolute tolerance, else 0. ---------!
+      !----- 1 if this residual breaches the mixed relative/absolute tolerance, else 0. ---!
       pure integer(ik) function fails(resid, gross, atol_per_mark, store, nmark)
          real(wp),    intent(in) :: resid, gross, atol_per_mark, store
          integer(ik), intent(in) :: nmark

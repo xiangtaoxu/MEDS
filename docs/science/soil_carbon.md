@@ -193,12 +193,15 @@ Heterotrophic respiration must reach the canopy air **sub-daily**, but the pools
 **daily** — the classic double-counting hazard. MEDS resolves it by having both ends read the same
 object: once per day the fast driver copies the patch's pools into the fast state, and that **frozen**
 copy is what every sub-step respires, through the very kernel the daily step's bookkeeping uses. Each
-sub-step, `heterotrophic_respiration` evaluates eq. (2) on it, and the fast pre-pass converts
+sub-step, `heterotrophic_respiration` evaluates eq. (2) on it, and the frozen build converts
 $`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the canopy air's CO₂;
 the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\xi^{\mathrm{int}}`$ of
 eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
-like, into `decomp_xi%rh_fast`, both reset once per slow step; and the daily `soil_carbon_step` is the **sole
-writer** of the real pools, debiting them with exactly that $`\xi^{\mathrm{int}}`$.
+like, into `decomp_xi%rh_fast`, both reset once per slow step. Within a step the daily
+`soil_carbon_step` is the **only writer** of the real pools, debiting them with exactly that
+$`\xi^{\mathrm{int}}`$; at a calendar boundary the demography's operators also add the culled and
+killed plants' litter to them, and patch fusion and the treefall gaps blend them on area
+([demography](demography.md) §3–§4).
 
 The day's total fast Rh therefore equals the daily pool debit **by construction**, and
 $`\texttt{rh\_seam\_gap} = R_h^{\mathrm{day}} - \sum_k R_h(t_k)\Delta t_k \approx 0`$ is an
@@ -260,7 +263,9 @@ Conservation is not plausibility: a runaway that conserves carbon closes every b
 absurd amounts of it. `soil_carbon_bad_pool` answers what a budget cannot — 0 when every pool is
 physically possible, else the **index** of the first that is not (NaN, negative beyond a round-off
 tolerance of $`10^{-9}\,\mathrm{kgC\,m^{-2}}`$, or above a divergence ceiling of
-$`10^{4}\,\mathrm{kgC\,m^{-2}}`$, ~500× the richest real soil). Round-off negatives must pass — a daily
+$`10^{4}\,\mathrm{kgC\,m^{-2}}`$, ~500× the richest real soil; a temperate forest's holds 20–40). It
+returns an index, not a flag, so the caller's message can name the pool, and which pool went bad is
+the first clue to which operator did it. Round-off negatives must pass — a daily
 Euler step produces them routinely — and the ceiling catches divergence, not implausible science.
 
 ## 10. What is not here

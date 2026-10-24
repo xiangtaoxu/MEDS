@@ -1,25 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_phenology -- the leaf-phenology kernel.                                               !
-!                                                                                          !
-! A signal generator: daily cues + per-PFT traits -> two smoothed tendencies in [0,1]       !
-! (leaf_flush_tendency, leaf_shed_tendency). It touches no carbon; leaf_turnover_step, here  !
-! too, is the one place the tendencies become leaf growth and leaf loss, for the carbon      !
-! layer and for the Python mirror alike.                                                    !
-!                                                                                          !
-! One daily update (docs/science/plant_phenology.md):                                        !
-!   (1) ACCUMULATE the cue memory: warmth above flush_base_temp from midwinter, cold below        !
-!       shed_base_temp from midsummer, predawn leaf psi above and below the turgor-loss point,    !
-!       and the running-mean hours of light (PAR at the cohort's top above par_min).              !
-!       Eqs. (3)-(5).                                                                             !
-!   (2) SWITCH each cue through sigma(s (x - x*)), one centre and one signed sharpness each       !
-!       (eq. (2)).                                                                                !
-!   (3) COMBINE: flush = the product of its cues' switches (every cue must permit flushing);      !
-!       shed = the larger of the seasonal trigger (temperature x light) and the water             !
-!       trigger; eqs. (6)-(7).                                                                    !
-!   (4) SMOOTH each signal into its tendency over a timescale (eq. (8)); the potential relative   !
-!       rates are rate_max * tendency (eq. (1)).                                                  !
-! Pure, scalar, arithmetic only: device- and SIMD-friendly, and reentrant.                     !
+! meds_phenology -- leaf phenology. Daily cues and per-PFT traits become two smoothed      !
+! tendencies in [0,1], leaf_flush_tendency and leaf_shed_tendency; the carbon layer turns  !
+! them into leaf growth and leaf loss through leaf_turnover_step.                          !
+!   * phenology_kernel   -- one daily update: accumulate the cue memory, switch each cue,  !
+!                           combine the switches, smooth (docs/science/plant_phenology.md  !
+!                           §1-§4, eqs. (1)-(8)).                                          !
+!   * leaf_turnover_step -- one step of leaf loss and the flush cap (§5, eq. (9)), also    !
+!                           exposed through the C-API; turnover_gate gives the share of its !
+!                           background turnover that acts.                                 !
 !==========================================================================================!
 module meds_phenology
    use meds_kinds,       only : wp, ik
@@ -33,20 +22,18 @@ module meds_phenology
 
    public :: phenology_kernel, leaf_turnover_step, turnover_gate
 
-   !----- Northern-equivalent day of the summer solstice: the cold sum counts from here, while !
-   !      days shorten (doy_effective shifts the southern hemisphere by half a year).          !
+   !----- Northern-equivalent day of the summer solstice, where the cold sum starts (§2). ---!
    integer(ik), parameter :: MIDSUMMER_DOY     = 172_ik
-   !----- A flush rate at or below this is dormant: a senescing canopy then snaps to bare     !
-   !      rather than leaving an exponential tail (a numerical "off", not a trait).            !
+   !----- At or below this flush rate a canopy is dormant and may snap to bare (§5): a numerical !
+   !      threshold, not a trait. ---------------------------------------------------------!
    real(wp),    parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp    !< [1/day]
-   !----- A shed tendency at or below this counts as no leaf drop. Background turnover runs only  !
-   !      then, so a drop is never counted twice: the leaves a drought takes are not also aged out. !
+   !----- At or below this shed tendency no leaves drop, so background turnover runs (§5). ---!
    real(wp),    parameter :: NO_DROP_SHED_TENDENCY = 0.01_wp   !< [-]
 
 contains
 
    !=======================================================================================!
-   !  Advance one cohort's phenology over one step of dt days.                               !
+   !  Advance one cohort's phenology over one step of dt days.                             !
    !=======================================================================================!
    pure subroutine phenology_kernel(env, params, dt, state, out)
       type(pheno_env_t),    intent(in)    :: env
@@ -62,9 +49,8 @@ contains
       dry_before = dry_water_switch(params, state)
       call accumulate(env, params, dt, both, state)
 
-      !----- Water has no calendar: each sum resets when the OTHER side's switch crosses 0.5  !
-      !      upward today (the event, not the level). A brief rain adds wet credit without     !
-      !      wiping a drought, and a long wet season cannot block the next drought.            !
+      !----- Water has no calendar: each sum restarts when the other side's switch crosses 0.5 !
+      !      upward today, the crossing and not the level (§2). ---------------------------!
       if (iand(both, CUE_WATER) /= 0_ik) then
          if (wet_before <= 0.5_wp .and. wet_water_switch(params, state) > 0.5_wp) state%dry_psi_sum = 0.0_wp
          if (dry_before <= 0.5_wp .and. dry_water_switch(params, state) > 0.5_wp) state%wet_psi_sum = 0.0_wp
@@ -80,9 +66,8 @@ contains
          logistic(params%flush_light_sharpness * (state%light_hours_mean - params%flush_light_hours))
       if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik) s_flush = s_flush * wet_switch
 
-      !----- (3b) Shed: the seasonal trigger needs all of its enabled cues (cold AND the     !
-      !      light condition); the water trigger acts on its own. An empty mask never         !
-      !      senesces.                                                                        !
+      !----- (3b) Shed: the larger of the seasonal trigger (cold and light, each if enabled) and !
+      !      the water trigger; an empty mask never senesces (eq. (7)). -------------------!
       seasonal = 0.0_wp
       if (iand(params%shed_cue_mask, CUE_TEMP + CUE_LIGHT) /= 0_ik) then
          seasonal = 1.0_wp
@@ -94,8 +79,7 @@ contains
       s_shed = seasonal
       if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik) s_shed = max(s_shed, dry_switch)
 
-      !----- (4) Smooth into the tendencies (the weight caps at 1 when dt exceeds the       !
-      !      timescale) and map to the potential rates.                                     !
+      !----- (4) Smooth into the tendencies (eq. (8)) and map to the potential rates (eq. (1)). !
       w = dt / max(params%flush_cue_timescale, dt)
       state%leaf_flush_tendency = clamp01(state%leaf_flush_tendency + w * (s_flush - state%leaf_flush_tendency))
       w = dt / max(params%shed_cue_timescale, dt)
@@ -118,7 +102,7 @@ contains
    end function dry_water_switch
 
    !=======================================================================================!
-   !  Accumulate the cue memory from today's drivers, for the cues either side uses.         !
+   !  Accumulate the cue memory from today's drivers, for the cues either side uses (§2).  !
    !=======================================================================================!
    pure subroutine accumulate(env, params, dt, both, state)
       type(pheno_env_t),    intent(in)    :: env
@@ -129,8 +113,8 @@ contains
       integer(ik) :: de
       real(wp)    :: w
 
-      !----- Temperature: both sums restart at midwinter (the first step of the northern-   !
-      !      equivalent year); warmth counts all year, cold only once days shorten.          !
+      !----- Temperature: both sums restart at midwinter (the first step of the northern-  !
+      !      equivalent year); warmth counts all year, cold only once days shorten (eq. (3)). !
       if (iand(both, CUE_TEMP) /= 0_ik) then
          de = doy_effective(env%doy, env%hemis_north)
          if (real(de, wp) < 1.0_wp + dt) then
@@ -142,15 +126,14 @@ contains
             state%cold_degree_days = state%cold_degree_days + max(0.0_wp, params%shed_base_temp - env%temp_day) * dt
       end if
 
-      !----- Water: predawn leaf psi above and below the turgor-loss point. ----------------!
+      !----- Water: predawn leaf psi above and below the turgor-loss point (eq. (5)). -----!
       if (iand(both, CUE_WATER) /= 0_ik) then
          state%wet_psi_sum = state%wet_psi_sum + max(0.0_wp, env%predawn_leaf_psi - params%leaf_psi_tlp) * dt
          state%dry_psi_sum = state%dry_psi_sum + max(0.0_wp, params%leaf_psi_tlp - env%predawn_leaf_psi) * dt
       end if
 
-      !----- Light: an exponential running mean of the daily hours of light. A cohort with  !
-      !      no light memory yet (a cold start or a recruit) starts from today's hours, so its  !
-      !      first days do not read as darkness.                                             !
+      !----- Light: a running mean of the daily hours of light (eq. (4)); a cohort with no light !
+      !      memory yet (a cold start or a recruit) starts from today's hours. ------------!
       if (iand(both, CUE_LIGHT) /= 0_ik) then
          if (is_unset_positive(state%light_hours_mean)) then
             state%light_hours_mean = env%par_hours
@@ -162,18 +145,10 @@ contains
    end subroutine accumulate
 
    !=======================================================================================!
-   !  One step of leaf loss and the flush cap, in whatever carbon unit `leaf` is in. The      !
-   !  carbon layer calls it per cohort; the C-API exposes it so Python applies the same rule. !
-   !                                                                                         !
-   !    background = leaf_turnover_rate * turnover_gate * leaf * dt   (old leaves turned over    !
-   !                 while new ones grow; none in dormancy and none while leaves drop)          !
-   !    senescence = shed_rate_max * leaf_shed_tendency * leaf * dt, stopping where leaf_cover !
-   !                 (leaf / leaf_full) reaches min_leaf_cover                                 !
-   !    flush_cap  = flush_rate_max * leaf_flush_tendency * leaf_full * dt                     !
-   !                                                                                         !
-   !  A dormant canopy (flush ~ 0) that senescence would leave below bare_leaf_cover snaps to  !
-   !  bare, when its floor lies below that threshold (a deciduous PFT).                        !
-   !  docs/science/plant_phenology.md eq. (9) and §5.                                          !
+   !  One step of leaf loss and the flush cap, in whatever carbon unit `leaf` is in: the   !
+   !  background turnover (gated by turnover_gate), the senescence that stops at           !
+   !  min_leaf_cover, and the flush cap. A dormant canopy that senescence would leave      !
+   !  below bare_leaf_cover snaps to bare, when its floor lies below that cover (§5, eq. (9)). !
    !=======================================================================================!
    pure subroutine leaf_turnover_step(leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency,   &
                                       flush_rate_max, shed_rate_max, leaf_turnover_rate,          &
@@ -200,9 +175,8 @@ contains
       flush_cap  = max(flush_rate_max, 0.0_wp) * leaf_flush_tendency * leaf_full * dt
    end subroutine leaf_turnover_step
 
-   !----- The share of the background turnover rate that acts today: the flush tendency while no  !
-   !      leaves drop, nothing while they do (and nothing in dormancy, where the flush is 0). The   !
-   !      fine roots' background turnover runs on the same gate, so roots age with the leaves. ----!
+   !----- The share of the background turnover rate that acts today: the flush tendency while no !
+   !      leaves drop, nothing while they do; the fine roots turn over on the same gate (§5). ---!
    pure real(wp) function turnover_gate(leaf_flush_tendency, leaf_shed_tendency) result(gate)
       real(wp), intent(in) :: leaf_flush_tendency, leaf_shed_tendency   !< [-]
       gate = 0.0_wp

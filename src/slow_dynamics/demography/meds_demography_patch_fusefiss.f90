@@ -1,19 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_demography_patch_fusefiss -- PATCH numerical-resolution control for the adaptive patch          !
-! discretization (the patch half of the ED2 fuse_fiss_utils analogue) plus patch DISTURBANCE.    !
-! Driven by ARITHMETIC (fusion/termination) and by ECOLOGY (treefall disturbance), it keeps the  !
-! patch count bounded and conserves site-level plant number / area.                              !
-!                                                                                          !
-!   Sorting        -- patches oldest-first (age descending); remap cohort ownership.            !
-!   Patch fusion   -- patches with a similar vertical light structure (cumulative-LAI light     !
-!                     profile, see patch_light_profile) and the same disturbance type fuse,     !
-!                     conserving site-level plant number via area-fraction rescaling.           !
-!   Termination    -- drop patches below the area floor; renormalize areas to sum to 1.         !
-!   Disturbance    -- apply_patch_disturbance: treefall aggregates a fraction of every patch's   !
-!                     area into ONE new age-0 gap (canopy dies, understorey survives).          !
-! Depends on the cohort sibling meds_demography_cohort_fusefiss (patch fusion + disturbance re-sort    !
-! the cohorts they touch).                                                                       !
+! meds_demography_patch_fusefiss -- the patch operators (docs/science/demography.md §4).   !
+! sort_patches keeps the patches by site, then oldest first. apply_patch_disturbance opens !
+! one treefall gap per site; new_fuse_patches fuses patches of one site whose light        !
+! profiles (eq. (10)) are alike; terminate_patches merges a patch too small to track into  !
+! its site's largest. What each conserves and hands to the slow ledger is demography.md    !
+! §5. They re-sort the cohorts with meds_demography_cohort_fusefiss.                       !
 !==========================================================================================!
 module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
@@ -39,8 +31,7 @@ module meds_demography_patch_fusefiss
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Sort patches by site, then by age descending; remap cohort ownership and rebuild both !
-   ! maps.                                                                                  !
+   ! Sort by site, then oldest first; remap owner_patch and rebuild both maps.             !
    !---------------------------------------------------------------------------------------!
    subroutine sort_patches(poly)
       type(polygon_t), intent(inout) :: poly
@@ -81,12 +72,9 @@ contains
    end subroutine sort_patches
 
    !---------------------------------------------------------------------------------------!
-   ! Cumulative-LAI LIGHT profile for one patch (ED2 patch-fusion scheme): the light         !
-   ! fraction reaching the top of each height layer, light(ihgt) = exp(-k LAI_at-or-above), !
-   ! with k = [demography].light_ext_coeff_fusefiss. Layer 1 is the ground (most overlying   !
-   ! LAI -> darkest), layer n_height_layers is the canopy top. Two patches with a similar     !
-   ! light profile (and the same disturbance type) are fused. Mirrors ED2                     !
-   ! patch_pft_size_profile + new_fuse_patches.                                               !
+   ! A patch's light profile, eq. (10) of demography.md §4: the fraction of full sunlight  !
+   ! left at each height layer, exp(-k x the LAI at and above it), with k =                !
+   ! light_ext_coeff_fusefiss. Layer 1 is the ground, layer n_height_layers the top.       !
    !---------------------------------------------------------------------------------------!
    subroutine patch_light_profile(poly, cfg, ip, light)
       type(polygon_t),       intent(in)  :: poly
@@ -97,9 +85,8 @@ contains
                             poly%patch%cohort_offset(ip) + poly%patch%cohort_count(ip) - 1_ik, light)
    end subroutine patch_light_profile
 
-   !----- The light profile of patch ip's cohorts among positions i0..i1 of the cohort block: its     !
-   !      slice, or, inside a fusion pass, the slice widened to the patches already fused into it,    !
-   !      whose cohorts follow in block order. -------------------------------------------------------!
+   !----- The light profile of patch ip's cohorts among positions i0..i1 of the cohort block: its !
+   !      slice, or in a fusion pass the slice widened to the patches already fused into it. -----!
    subroutine light_profile_of(poly, cfg, ip, i0, i1, light)
       type(polygon_t),     intent(in)  :: poly
       type(meds_config_t), intent(in)  :: cfg
@@ -124,11 +111,10 @@ contains
    end subroutine light_profile_of
 
    !---------------------------------------------------------------------------------------!
-   ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to             !
-   ! patch_light_tol_max over n_patch_fusion_iter passes. It stops at the first pass that  !
-   ! brings every site's count to max_patch. The ceiling is hard: patches more different   !
-   ! than it stay apart even when the count is still above max_patch (forced fusion        !
-   ! aside). Two patches fuse only within one site: their areas are fractions of it.       !
+   ! Patch fusion (demography.md §4) in passes, the tolerance growing from                 !
+   ! patch_light_tol to patch_light_tol_max, until no site holds more than max_patch       !
+   ! patches. Patches less alike than the last tolerance stay apart even then, unless      !
+   ! max_patch < 0 forces fusion. Only patches of one site fuse.                           !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -149,11 +135,9 @@ contains
       end do
    end subroutine new_fuse_patches
 
-   !----- One patch-fusion sweep at a fixed tolerance, comparing light profiles. A receptor only    !
-   !      absorbs patches after it, in order, and an absorbed patch absorbs nothing, so the cohort    !
-   !      block is left as it is until the pass ends: a receptor's cohorts are the ones it owns       !
-   !      between its first and the last of its last donor's (last), in the order a regrouping by     !
-   !      patch would give them, and patch_compact regroups once, to the same block. -----------------!
+   !----- One fusion pass at a fixed tolerance: a receptor only absorbs patches after it, and an !
+   !      absorbed patch absorbs nothing, so the cohort block can stay as it is until the pass   !
+   !      ends. patch_compact then regroups it once. --------------------------------------------!
    subroutine patch_fuse_pass(poly, cfg, tol, force)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
@@ -215,7 +199,8 @@ contains
    end subroutine patch_fuse_pass
 
    !---------------------------------------------------------------------------------------!
-   ! Merge donor patch into receptor, conserving the polygon's plant number via area weights.  !
+   ! Merge patch donp into recp: the stores blend on area and the densities scale by each  !
+   ! patch's share of the fused area, which conserves plant number (demography.md §4).     !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_patches(poly, recp, donp)
       type(polygon_t), intent(inout) :: poly
@@ -224,9 +209,8 @@ contains
                            poly%patch%cohort_offset(recp) + poly%patch%cohort_count(recp) - 1_ik)
    end subroutine fuse_2_patches
 
-   !----- fuse_2_patches with the receptor's cohorts given as the ones it owns among positions       !
-   !      r0..r1 of the cohort block (its slice, or the widened slice of a fusion pass). The donor    !
-   !      has absorbed nothing, so its own slice holds its cohorts. --------------------------------!
+   !----- fuse_2_patches, with the receptor's cohorts those it owns among positions r0..r1 (its slice, or a  !
+   !      fusion pass's widened one); the donor has absorbed nothing, so its own slice holds its cohorts. ---!
    subroutine fuse_patch_into(poly, recp, donp, r0, r1)
       type(polygon_t), intent(inout) :: poly
       integer(ik),     intent(in)    :: recp, donp, r0, r1
@@ -243,43 +227,38 @@ contains
             return
          end if
          rawgt = ar / anew ; dawgt = ad / anew
-         !----- The patch's fields, in the patch file's section order. The area is set last,      !
-         !      below: it is the weight. ----------------------------------------------------------!
-         !----- 1. Identity and area: area-weighted age. -------------------------------------------!
+         !----- The fields in the patch file's section order; the area, the weight, is set last. ---!
+         !----- 1. The age, area-weighted. ---------------------------------------------------------!
          patch%age(recp)            = rawgt * patch%age(recp)            + dawgt * patch%age(donp)
-         !----- 3. Recruit bank. --------------------------------------------------------------------!
+         !----- 3. The recruit bank. ------------------------------------------------------!
          patch%recruit_pool(:,recp) = rawgt * patch%recruit_pool(:,recp) + dawgt * patch%recruit_pool(:,donp)
-         !----- 4-6. Area-weighted fast-biophysics reservoirs (conserves the area-extensive store);   !
-         !      temp/fliq are re-diagnosed in the fast loop. -------------------------------------------!
+         !----- 4-6. The canopy air, snow, soil water and soil heat, area-weighted, which conserves !
+         !      each store; temperatures and liquid fractions are re-diagnosed in the fast loop. ---!
          patch%cas(recp)    = blend_cas(rawgt,    patch%cas(recp),    dawgt, patch%cas(donp))
          patch%snow(recp)   = blend_snow(rawgt,   patch%snow(recp),   dawgt, patch%snow(donp))
          patch%soil_water(recp) = blend_soil_water(rawgt, patch%soil_water(recp), dawgt, patch%soil_water(donp))
          patch%soil_energy(recp) = blend_soil_energy(rawgt, patch%soil_energy(recp), dawgt, patch%soil_energy(donp))
-         !----- 7. Area-weighted slow soil-carbon reservoir (conserves site-wide soil carbon). -------!
+         !----- 7. The soil carbon, area-weighted. ----------------------------------------!
          patch%soil_carbon(recp) = blend_soil_carbon(rawgt, patch%soil_carbon(recp), dawgt, patch%soil_carbon(donp))
-         !----- 8. shed_water_rate is a per-area RATE (like age): area-weighted, not nplant-weighted. -!
+         !----- 8. The shed water, its enthalpy and the CO2 owed are per-area rates: area-weighted. ---!
          patch%shed_water_rate(recp) = rawgt*patch%shed_water_rate(recp) + dawgt*patch%shed_water_rate(donp)
          patch%shed_water_enth(recp) = rawgt*patch%shed_water_enth(recp) + dawgt*patch%shed_water_enth(donp)
          patch%slow_co2_rate(recp)   = rawgt*patch%slow_co2_rate(recp)   + dawgt*patch%slow_co2_rate(donp)
-         !----- 9. Today's litter is a per-area rate like the rest: area-weight it, or the fused patch !
-         !      loses whatever the donor's cohorts shed this step.  ---------------------------------!
+         !----- 9. The day's decomposition integral and litter are per-area amounts: area-weighted. ---!
          patch%decomp_xi(recp)    = blend_decomp_xi(rawgt, patch%decomp_xi(recp), dawgt, patch%decomp_xi(donp))
          patch%litter_in(recp)   = blend_litter_input(rawgt, patch%litter_in(recp), dawgt, patch%litter_in(donp))
-         !----- 10. adapt_dt_last is a controller SEED, not a conserved amount -- any value is valid and   !
-         !      the controller re-adapts within a step. Area-weight it like its neighbours purely so    !
-         !      the result is DETERMINISTIC and order-independent. ------------------------------------!
+         !----- 10. adapt_dt_last only seeds the step controller; area-weighted to be deterministic. ---!
          patch%adapt_dt_last(recp)   = rawgt*patch%adapt_dt_last(recp)   + dawgt*patch%adapt_dt_last(donp)
          !----- fast_cost orders the fast loop only: the fused patch carries both patches' work. --------!
          patch%fast_cost(recp)       = patch%fast_cost(recp) + patch%fast_cost(donp)
-         !----- 11. Diagnostic accumulators: every patch diagnostic is per m2 of ITS OWN ground, so!
-         !      they all area-weight, exactly like age and shed_water_rate above.  ---------------!
+         !----- 11. The diagnostic rows, each per m2 of its own patch's ground: area-weighted. ---!
          call blend_patch_diag(patch%diag, recp, donp, ar, ad)
-         !----- Rescale receptor cohort densities. Their per-plant amounts need nothing. -------------!
+         !----- Scale the receptor's densities by its share of the fused area (per-plant amounts stay). ---!
          do i = r0, r1
             if (cohort%owner_patch(i) /= recp) cycle
             cohort%nplant(i) = cohort%nplant(i) * rawgt
          end do
-         !----- Rescale and reassign donor cohorts to the receptor. -----------------------!
+         !----- Scale the donor's densities likewise and hand its cohorts to the receptor. ---!
          i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
          do i = i0, i1
             cohort%nplant(i)      = cohort%nplant(i) * dawgt
@@ -291,8 +270,8 @@ contains
    end subroutine fuse_patch_into
 
    !---------------------------------------------------------------------------------------!
-   ! Remove patches with area below the floor, site by site; renormalize each site's areas !
-   ! to sum to 1.                                                                          !
+   ! Termination: merge each patch below min_patch_area into its site's largest surviving  !
+   ! patch, then renormalize each site's areas to sum to 1 (demography.md §4).             !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_patches(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -317,19 +296,9 @@ contains
       end do
 
       if (.not. all(pkeep)) then
-         !----- A patch too small to track is MERGED INTO the largest survivor, not deleted.    !
-         !                                                                                     !
-         !      Dropping it and renormalizing the survivors' areas back to 1 would silently     !
-         !      redistribute the whole site: every conserved quantity would change by           !
-         !      (a/(1-a)).sum_kept(a_i.X_i) - a.X_dropped, which vanishes only if the doomed    !
-         !      patch held the survivors' mean -- and a doomed patch is atypical by             !
-         !      construction, usually a fresh disturbance gap.                                  !
-         !                                                                                     !
-         !      Fusing instead conserves exactly, reuses the operator patch fusion already      !
-         !      relies on, and says something defensible: a sliver of ground joins its biggest  !
-         !      neighbour rather than evaporating. fuse_2_patches zeroes the donor's area, so   !
-         !      the renormalisation below becomes a round-off no-op instead of a redistribution.!
-         !      The neighbour is in the sliver's own site: the areas are fractions of it.       !
+         !----- Merged, not deleted: dropping a sliver and renormalizing would redistribute every conserved !
+         !      quantity across the site, while merging conserves exactly, so the renormalization below     !
+         !      corrects round-off only (demography.md §4). The survivor is in the sliver's own site. ------!
          do is = 1_ik, poly%site%n
             p0 = poly%site%patch_offset(is)
             p1 = p0 + poly%site%patch_count(is) - 1_ik
@@ -340,14 +309,13 @@ contains
             do ip = p0, p1
                if (pkeep(ip) .or. ip == imax) cycle
                call fuse_2_patches(poly, imax, ip)
-               call rebuild_cohort_map(poly) ! the survivor's CSR slice now holds the merged cohorts,
-            end do                        ! and the NEXT fusion reads that slice -- as patch_fuse_pass does
+               call rebuild_cohort_map(poly) ! regroup after each merge: the next one reads the survivor's slice
+            end do
          end do
          call patch_compact(poly, pkeep)
       end if
 
-      !----- Renormalize each site's areas to sum to 1. After the merge above this corrects      !
-      !      round-off only. --------------------------------------------------------------------!
+      !----- Renormalize each site's areas to sum to 1; after the merges, round-off only. ---!
       do is = 1_ik, poly%site%n
          p0 = poly%site%patch_offset(is)
          p1 = p0 + poly%site%patch_count(is) - 1_ik
@@ -362,8 +330,8 @@ contains
    end subroutine terminate_patches
 
    !---------------------------------------------------------------------------------------!
-   ! Compact the patch list by keep-mask: drop dropped patches AND their cohorts, remap      !
-   ! owner_patch to the new patch indices, and rebuild both maps.                            !
+   ! Drop the patches pkeep leaves out, with their cohorts; remap owner_patch to the new   !
+   ! patch indices and rebuild both maps.                                                  !
    !---------------------------------------------------------------------------------------!
    subroutine patch_compact(poly, pkeep)
       type(polygon_t), intent(inout) :: poly
@@ -394,29 +362,23 @@ contains
       end do
       call compact_cohort_block(poly%cohort, ckeep)
 
-      !----- Patches: keep the survivors, in order. The surviving-index list is the permutation   !
-      !      reorder_patch_block takes, exactly as compact_cohort_block builds it for the cohort axis. --------!
+      !----- Patches: keep the survivors, in order; their indices are reorder_patch_block's permutation. ---!
       call reorder_patch_block(poly%patch, keep_idx, k)
       call rebuild_patch_map(poly)
       call rebuild_cohort_map(poly)
    end subroutine patch_compact
 
    !---------------------------------------------------------------------------------------!
-   ! Treefall patch disturbance (ED2 analogue). A fraction f = 1 - exp(-rate*dt) of EVERY     !
-   ! patch's area is disturbed and aggregated into one new age-0 gap patch per site           !
-   ! (DIST_TREEFALL), cut from that site's patches: their areas are fractions of it.          !
-   ! Survivorship follows ED2 treefall: tall canopy cohorts (height >= survive_height) die in !
-   ! the gap; the short understory (height < threshold) survives into it. Each donor keeps    !
-   ! area (1-f)*area with ALL its cohorts intact. Site area is conserved; plant number is     !
-   ! conserved for survivors and reduced by f for the killed canopy -- that loss IS the        !
-   ! disturbance. The gap is later consolidated by patch and cohort fusion.                   !
+   ! Treefall gaps (demography.md §4): a share f = 1 - exp(-rate x dt) of every patch's    !
+   ! area becomes one age-0 gap per site. Cohorts at least disturbance_survive_height tall !
+   ! die in it, shorter ones survive into it, and each donor keeps (1-f) of its area. Site !
+   ! area is conserved; plant number is not, since the killed canopy is the disturbance.   !
    !---------------------------------------------------------------------------------------!
    subroutine apply_patch_disturbance(poly, cfg, dt_yr, water_shed)
       type(polygon_t),       intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       real(wp),            intent(in)    :: dt_yr
-      !----- What the KILLED CANOPY handed on, for the caller to declare to the slow ledger. The   !
-      !      engine applies and reports; the driver accounts. -------------------------------------!
+      !----- What the killed canopy handed on, for the caller to declare to the slow ledger. ---!
       real(wp), optional,  intent(out)   :: water_shed  !< [kg/m2 polygon] tissue + film water -> the gaps' ground
       integer(ik) :: np0, newp, d, i, i0, i1, m, m0, nsurv, pf, is, p0, p1
       real(wp)    :: frac, new_area, atot, wd
@@ -436,16 +398,9 @@ contains
       new_area = frac * sum(poly%patch%area(1:np0))
       if (new_area <= tiny_num) return
 
-      !----- Report the disturbed-area flux, WRITTEN ON THE DONORS and written HERE, before          !
-      !      patch%n grows: every patch loses the same fraction `frac`, and at this point the diag   !
-      !      block's slots still line up with the donor patches. The gap then inherits the           !
-      !      donors' blended slot (inherit_patch_diag, at the end of this routine), so               !
-      !      Sum(area * value) counts the rate on all of the ground it was disturbed on.             !
-      !      UNITS: the block's weight is Sum(dt) in SECONDS, so the contribution is the             !
-      !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
-      !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is               !
-      !      dt_yr*yr_sec -- their product is frac*yr_sec, with dt_yr cancelling (the bare `frac`    !
-      !      would be a per-SECOND rate under the per-year label).                                   !
+      !----- The disturbed area, written on the donors before the gaps are added; each gap inherits !
+      !      its donors' rows (inherit_patch_diag, below). The rate frac/dt_yr [1/yr] times the     !
+      !      weight dt_yr x yr_sec [s] is frac x yr_sec (diagnostics.md §4, "The slow rows"). ------!
       if (poly%patch%diag%active) then
          do i = 1_ik, np0
             poly%patch%diag%v(PA_DISTURB_AREA, i) = poly%patch%diag%v(PA_DISTURB_AREA, i)          &
@@ -453,20 +408,9 @@ contains
          end do
       end if
 
-      !----- Count understorey survivors (all current cohorts live in donor patches). ------!
-      !                                                                                          !
-      !      The same sweep records the DISTURBANCE pathway's mortality carbon off the other         !
-      !      branch of the same test, so the split and the kill can never drift apart. Written on   !
-      !      the DONORS and written HERE, before patch%n grows -- the same rule PA_DISTURB_AREA     !
-      !      above follows.                                                                        !
-      !                                                                                          !
-      !      Valued on the donor's ORIGINAL ground. Every patch diagnostic is per m2 of its OWN      !
-      !      ground and is aggregated to the site as Sum(area * value) at READ time. The donors are  !
-      !      shrunk to (1-frac)*area by then, and the gap -- the frac part the carbon stood on --    !
-      !      inherits the donors' slot, so together they weigh the value by the donors' original     !
-      !      area and the site total is exact.                                                       !
-      !      Rate [kgC/m2/yr] x weight in seconds is the block's contract; dt_yr cancels             !
-      !      against the weight dt_yr*yr_sec, as it does for PA_DISTURB_AREA.                        !
+      !----- Count the survivors. The other branch writes the disturbance's mortality carbon on the    !
+      !      donors, per m2 of their original ground: the shrunk donors and the gap that inherits      !
+      !      their rows weigh it by that area, so the site total is exact (dt_yr cancels as above). ---!
       nsurv = 0_ik
       do i = 1_ik, poly%cohort%n
          if (poly%cohort%height(i) < cfg%disturbance_survive_height) then
@@ -497,13 +441,12 @@ contains
          newp = newp + 1_ik
 
          associate (cohort => poly%cohort, patch => poly%patch)
-            !----- New age-0 gap patch (treefall). --------------------------------------------!
+            !----- A new age-0 treefall gap. ----------------------------------------------!
             patch%area(newp)           = new_area
             patch%age(newp)            = 0.0_wp
             patch%dist_type(newp)      = DIST_TREEFALL
             patch%owner_site(newp)     = is
-            !----- Fresh gap, like age: it has no cohorts of its own that contributed to today's shed  !
-            !      rate (unlike soil_carbon/decomp_xi, which are genuine inherited material). ----------!
+            !----- A fresh gap has no cohorts of its own yet, so none of its own rates (demography.md §4). ---!
             patch%shed_water_rate(newp) = 0.0_wp
             patch%shed_water_enth(newp) = 0.0_wp
             patch%slow_co2_rate(newp)   = 0.0_wp   ! fresh gap: no cohort of its own respired today
@@ -511,14 +454,10 @@ contains
             patch%fast_cost(newp)       = 0.0_wp   ! and is not yet measured
             patch%n = newp
 
-            !----- Seed the gap's fast reservoirs = area-weighted donor mean (the soil column and !
-            !      canopy air are INHERITED from the disturbed area, not created bare). ----------!
+            !----- The gap inherits the area-weighted mean of its donors' stores, the recruit pool among !
+            !      them: a gap does not sterilise the ground it opens (demography.md §4). ---------------!
             atot = sum(patch%area(p0:p1))                       ! donors still hold pre-disturbance area here
             if (atot > tiny_num) then
-               !----- The SEED BANK is inherited material too. A treefall gap does not sterilise      !
-               !      the ground it opens: the carry-forward recruit pool sits in the soil with the   !
-               !      litter and the CENTURY carbon, both of which the gap inherits. Zeroing it would !
-               !      destroy the pool's carbon on the disturbed fraction. ---------------------------!
                patch%recruit_pool(:,newp) = (patch%area(p0)/atot) * patch%recruit_pool(:,p0)
                patch%cas(newp)    = blend_cas(   patch%area(p0)/atot, patch%cas(p0),    0.0_wp, patch%cas(p0))
                patch%snow(newp)   = blend_snow(  patch%area(p0)/atot, patch%snow(p0),   0.0_wp, patch%snow(p0))
@@ -546,24 +485,18 @@ contains
                end do
             end if
 
-            !----- Move understorey survivors into the gap at area-weighted density; the killed           !
-            !      canopy's carbon becomes litter in the SAME gap patch when soil carbon is on            !
-            !      ([soil_carbon].soil_carbon_on, default on; docs/science/soil_carbon.md §5): the        !
-            !      density it would have carried into the gap had it survived (the conversion factor      !
-            !      the survivor branch below uses), times its per-plant carbon pools. Added directly onto !
-            !      soil_carbon(newp), since this module cannot link biogeochemistry (necromass_to_litter  !
-            !      takes plain scalars). -----------------------------------------------------------------!
+            !----- Survivors move in at the density the disturbed share of their patch gives over the gap's !
+            !      area; the killed canopy, at that density, becomes litter in the gap when soil carbon is  !
+            !      on (soil_carbon.md §5). -----------------------------------------------------------------!
             m = cohort%n
             do d = p0, p1
                i0 = patch%cohort_offset(d) ; i1 = i0 + patch%cohort_count(d) - 1_ik
                do i = i0, i1
                   if (cohort%height(i) >= cfg%disturbance_survive_height) then   ! canopy dies in gap
-                     !----- The killed canopy's WATER goes to the gap's ground down the same channel   !
-                     !      turnover shedding uses; this is its largest single use -- a whole canopy   !
-                     !      dies at once. Its tissue HEAT is a thermal-mass change, declared with the  !
-                     !      rest of the phase's by the caller. `kill_frac` is the fraction of the      !
-                     !      cohort's area-density the gap takes -- the SAME factor the survivor branch !
-                     !      uses. ---------------------------------------------------------------------!
+                     !----- The killed canopy's water goes to the gap's ground down the channel turnover !
+                     !      shedding uses (conservation.md §3); its tissue heat is a thermal-mass change !
+                     !      the caller declares (conservation.md §4). kill_frac is the share of the      !
+                     !      cohort's area density the gap takes, the factor the survivor branch uses. ---!
                      kill_frac = frac * patch%area(d)
                      w_kill = kill_frac * (cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i))
                      patch%shed_water_rate(newp) = patch%shed_water_rate(newp)                         &
@@ -606,14 +539,9 @@ contains
             end do
          end associate
 
-         !----- Stamp the new gap patch with a fresh global id (the gap fragments are new            !
-         !      entities). Its diagnostics: it inherits its donors' slots blended by area, as its    !
-         !      reservoirs above inherit their state, so the stand total Sum(area * v) is unchanged  !
-         !      by the carving. At a calendar boundary the donors hold only that boundary's events   !
-         !      (the step's sums were read and reset), and the gap keeps its share of them; inside a !
-         !      step (the C API) they hold the step so far. Every donor lost the same fraction, so   !
-         !      their current areas give the same blend as their original ones. (expand_patch_block  !
-         !      above grew the block with the patch arrays.) ----------------------------------------!
+         !----- The gap takes a new id, and its donors' diagnostic rows blended on area, so the    !
+         !      stand's Sum(area x value) is unchanged by the carving (diagnostics.md §4). Every   !
+         !      donor lost the same share, so their current areas blend as their original ones. ---!
          call assign_patch_id(poly, newp)
          donor_area = 0.0_wp
          donor_area(p0:p1) = poly%patch%area(p0:p1)
@@ -622,7 +550,7 @@ contains
 
       if (present(water_shed)) water_shed = w_tot
 
-      !----- The moved-in survivor cohorts take fresh global ids (their donor cohorts keep their own). !
+      !----- The survivors copied into the gaps take new ids; the cohorts they came from keep theirs. ---!
       do i = m0 + 1_ik, poly%cohort%n
          call assign_cohort_id(poly, i)
       end do

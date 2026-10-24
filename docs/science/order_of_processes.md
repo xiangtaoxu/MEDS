@@ -145,7 +145,9 @@ After the sub-steps, the run's whole-column energy and water budgets fold in the
 
 1. **Leaf phenology**: one daily step of the flush and senescence tendencies, from the step's start
    day of year, the day's mean air temperature, and each cohort's daily PAR at its top and predawn
-   leaf water potential ([plant_phenology](plant_phenology.md)).
+   leaf water potential ([plant_phenology](plant_phenology.md)). A caller with no calendar (the C
+   API's carbon mode) passes no day of year, and the tendencies stay as they are; so does a step no
+   fast sub-step has supplied a daily air temperature for.
 2. **Leaf-trait plasticity** (opt-in, `trait_plasticity_on`): acclimate the traits toward their shaded
    targets ([plant_traits](plant_traits.md)).
 3. **Carbon allocation**:

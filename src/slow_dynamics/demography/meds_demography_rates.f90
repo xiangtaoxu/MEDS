@@ -1,20 +1,11 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_demography_rates -- the per-INDIVIDUAL vital-rate LAWS, as pure scalar functions:      !
-! a carbon-driven diameter growth rate, the Camac (2018) additive mortality hazard, and the    !
-! reproduction-carbon -> recruit conversion. Growth, survival and fecundity: the three rates    !
-! demography is made of, which is why they live in this folder and not with the physiology.     !
-!                                                                                          !
-! THE RULE THIS FOLDER KEEPS (src/README.md rule 4, "laws and operators do not touch"): the      !
-! rate LAWS are here, and the OPERATORS beside them (meds_demography_update, cohort/patch        !
-! fuse-fiss) take rate ARRAYS as arguments and never `use` this module. The engine does not      !
-! compute a rate -- it APPLIES one.                                                              !
-! The slow driver is the only place a rate meets its application. Python `apply_rates`, which    !
-! feeds externally computed rates through those same operators, is the standing test of it.      !
-!                                                                                          !
-! `elemental pure`, scalars + PFT traits only (NO polygon_t, NO cohort SoA), over the shared     !
-! allometry -- so this folder needs nothing from the plant kernels. The EMPIRICAL growth and     !
-! recruitment laws are not here; they live in the Python example. Camac mortality stays here.    !
+! meds_demography_rates -- the vital-rate laws (docs/science/demography.md §1), as         !
+! elemental pure functions of scalars and PFT traits: the prospective diameter growth      !
+! rate (eq. (1)), the Camac et al. (2018) mortality hazard (eq. (3)), the decline to the   !
+! density floor (eq. (4)) and a cohort's term of the recruitment rate (eq. (6)). The       !
+! operators that apply rates never use this module (src/README.md rule 4). The empirical   !
+! growth and recruitment laws live in the Python example.                                  !
 !==========================================================================================!
 module meds_demography_rates
    use meds_kinds,         only : wp
@@ -27,9 +18,9 @@ module meds_demography_rates
 
 contains
 
-   !----- Prospective carbon diameter-growth rate [cm/yr]: the dbh the cohort WOULD reach if    !
-   !       this step's wood NPP were added to its size-anchor wood_carbon (floored >= 0), minus   !
-   !       its current dbh, over the step. Feeds both the applied growth and the mortality hazard.!
+   !----- The prospective diameter growth rate [cm/yr], eq. (1): the diameter the cohort would !
+   !      reach if the step's wood growth were added to its wood carbon (at least 0), less its !
+   !      current diameter, over the step. The mortality hazard reads it (eq. (3)). -----------!
    elemental pure function npp_to_growth(allom, wood_carbon, npp_wood, dbh, dt_yr, rho) result(dbh_rate)
       type(allometry_t), intent(in) :: allom   !< the cohort's PFT's allometry
       real(wp), intent(in) :: wood_carbon, npp_wood, dbh, dt_yr, rho
@@ -38,10 +29,8 @@ contains
       dbh_rate = (dbh_new - dbh) / dt_yr
    end function npp_to_growth
 
-   !----- Camac et al. (2018) additive mortality hazard [1/yr] on the cohort's EFFECTIVE growth:  !
-   !       its tracked running-mean growth (growth_avg) once it has a sample, else the            !
-   !       instantaneous rate. `avg_is_set` is the caller's test (the cohort's growth_count > 0), !
-   !       kept out of this law, which sees no cohort state.                                      !
+   !----- The Camac et al. (2018) hazard [1/yr], eq. (3), on the growth average once the cohort !
+   !      has a sample (avg_is_set, the caller's test), else on the prospective rate. ----------!
    elemental pure function camac_mortality(growth_avg, growth_inst, avg_is_set,                 &
                                            mort_gamma, mort_alpha, mort_beta) result(mort)
       real(wp), intent(in) :: growth_avg, growth_inst, mort_gamma, mort_alpha, mort_beta
@@ -51,10 +40,9 @@ contains
       mort  = mort_gamma + mort_alpha * exp(-mort_beta * g_eff)
    end function camac_mortality
 
-   !----- The hazard [1/yr] that takes a cohort's density down to the density floor over `window`  !
-   !       [yr]: nplant * exp(-mort * window) ends exactly at nplant_floor. It is the death of a     !
-   !       cohort with no leaves and no storage (docs/science/plant_carbon_allocation.md §2), and    !
-   !       zero for a cohort already at the floor. ---------------------------------------------------!
+   !----- The hazard [1/yr] that takes a cohort's density to the floor over `window`, eq. (4): !
+   !      the death of a cohort with no leaves and no storage (plant_carbon_allocation.md §2), !
+   !      and zero for a cohort already at the floor. -----------------------------------------!
    elemental pure function decline_to_floor_mortality(nplant, nplant_floor, window) result(mort)
       real(wp), intent(in) :: nplant         !< [plant/m2] the cohort's density
       real(wp), intent(in) :: nplant_floor   !< [plant/m2] the density floor (> 0)
@@ -63,11 +51,10 @@ contains
       mort = log(max(nplant, nplant_floor) / max(nplant_floor, tiny_num)) / max(window, tiny_num)
    end function decline_to_floor_mortality
 
-   !----- One cohort's reproduction-carbon recruit contribution [plant/m2/yr]: the per-plant      !
-   !      reproduction NPP over the step, as an annual rate, times the density and the recruit    !
-   !      carbon efficiency, over the min-size recruit carbon (min_cohort_carbon, from            !
-   !      meds_allometry_lib). Caller reduces these into the (PFT, patch) array and gates by      !
-   !      include_pft. ---------------------------------------------------------------------------!
+   !----- One cohort's term of the recruitment rate [plant/m2/yr], eq. (6): its reproduction  !
+   !      carbon per plant as a yearly rate, times the density and the recruit efficiency     !
+   !      (eq. (5)), over carbon_min. The caller sums the terms per PFT and patch and applies !
+   !      include_pft. -----------------------------------------------------------------------!
    elemental pure function npp_to_recruitment(nplant, npp_repro, dt_yr,                         &
                                               recruit_carbon_efficiency, carbon_min) result(rec)
       real(wp), intent(in) :: nplant, npp_repro, dt_yr, recruit_carbon_efficiency, carbon_min

@@ -56,6 +56,8 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 | [`plant_respiration.md`](science/plant_respiration.md) | The autotrophic budget: leaf, stem and fine-root maintenance, and growth respiration on realized growth. |
 | [`plant_traits.md`](science/plant_traits.md) | Light-driven leaf-trait plasticity and its carbon consequences. |
 | [`soil_carbon.md`](science/soil_carbon.md) | The CENTURY decomposition network as a carbon matrix ODE, and the fast/slow respiration seam. |
+| [`demography.md`](science/demography.md) | Growth, mortality, recruitment and treefall disturbance as rates, and the operators that apply them: cohort and patch fusion, fission, the cull and termination. |
+| [`conservation.md`](science/conservation.md) | The slow ledger: the site's carbon, water and energy across each slow-step operator, what each declares, and plausibility. |
 
 **Output**
 
