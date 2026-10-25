@@ -13,19 +13,16 @@
 !   - the contract a flux-tower file relies on: the three humidity forms, UTC, the heights it   !
 !     states, rain and shortwave read from the interval that contains the instant on an end-   !
 !     and a begin-stamped file, and the model's relative humidity returning the file's RHair.   !
-! The moist-air laws it still checks here (humidity, precipitation phase, the lapse) belong   !
-! to meds_therm_lib, and move to that library's test.                                         !
+! The laws it reads with are the libraries' tests': test_therm_lib, test_radiation_lib.        !
 !==========================================================================================!
 program test_met_file
    use meds_test_assert,      only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : t_3ple, h2o_dry_ratio, grav, cp_air
    use meds_time,             only : meds_time_t, time_advance_seconds, solar_cosz_utc
-   use meds_therm_lib,        only : sat_vapor_pressure, air_density, sat_specific_humidity, rh_to_specific_humidity, &
-                                     precip_phase, lapse_air_temperature, lapse_pressure, lapse_specific_humidity, &
-                                     specific_humidity_to_vpd
-   use meds_radiation_lib,    only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_PASSTHROUGH, &
-                                     clearness_index, clear_sky_emissivity, lapse_longwave
+   use meds_therm_lib,        only : sat_vapor_pressure, air_density, sat_specific_humidity, &
+                                     rh_to_specific_humidity, precip_phase, specific_humidity_to_vpd
+   use meds_radiation_lib,    only : SWPART_CLEARIDX, SWPART_PASSTHROUGH, clearness_index
    use meds_forcing_params,   only : forcing_params_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN, CLAMP_HOLD, &
                                      CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, &
                                      HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, &
@@ -58,14 +55,10 @@ program test_met_file
    type(meds_time_t)      :: base
 
 
-   call test_humidity()
-   call test_precip_phase()
    call test_cosz_reconstruction()
    call test_netcdf_roundtrip()
    call test_sunrise_interval()
    call test_nearest_grid()
-   call test_lapse()
-   call test_terrain_lapse()
    call test_cas_top()
    call test_multiyear_cycling()
    call test_recycle_anchor_phase()
@@ -99,34 +92,6 @@ contains
 
 
 
-
-   !----- 2. humidity from dewpoint (matches independent Bolton). --------------------------!
-   subroutine test_humidity()
-      real(wp) :: q, e, td, p
-      print '(a)', '-- test 2: humidity --'
-      td = 285.0_wp ; p = 98000.0_wp
-      q  = sat_specific_humidity(td, p)
-      e  = sat_vapor_pressure(td)
-      call check('q from dewpoint == eps e/(p-(1-eps)e)', q, h2o_dry_ratio*e/(p-(1.0_wp-h2o_dry_ratio)*e), 1.0e-14_wp)
-      call check_true('q in physical range', q > 0.001_wp .and. q < 0.02_wp, q)
-      ! RH=100% at T=Td gives the same q as dewpoint=T
-      call check('rh=1 at T=Td matches dewpoint q', rh_to_specific_humidity(1.0_wp, td, p), q, 1.0e-14_wp)
-   end subroutine test_humidity
-
-   !----- 3. rainfall phase split (mass-conserving). -----------------------------------------!
-   subroutine test_precip_phase()
-      real(wp) :: rain, snow, tot
-      print '(a)', '-- test 3: precip phase --'
-      tot = 1.0e-4_wp
-      call precip_phase(tot, t_3ple + 5.0_wp, rain, snow)
-      call check('warm -> all rain', rain, tot, 1.0e-16_wp)
-      call check('warm -> no snow',  snow, 0.0_wp, 1.0e-16_wp)
-      call precip_phase(tot, t_3ple - 5.0_wp, rain, snow)
-      call check('cold -> all snow', snow, tot, 1.0e-16_wp)
-      call precip_phase(tot, t_3ple, rain, snow)
-      call check('at t_3ple mass conserved', rain + snow, tot, 1.0e-16_wp)
-      call check_true('partial snow at t_3ple', snow > 0.0_wp .and. snow < tot, snow)
-   end subroutine test_precip_phase
 
 
 
@@ -544,42 +509,6 @@ contains
       call check('reader resolves nearest -> grid_index 1', real(src%grid_index,wp), 1.0_wp, 0.5_wp)
       call met_close(src)
    end subroutine test_nearest_grid
-
-   !----- Elevation lapse (pure kernels). --------------------------------------------------------!
-   subroutine test_lapse()
-      real(wp) :: t, p
-      real(wp), parameter :: DZ = 500.0_wp, G = 0.0065_wp
-      print '(a)', '-- test: elevation lapse --'
-      t = lapse_air_temperature(290.0_wp, DZ, G)
-      call check('lapse cools a higher site', t, 290.0_wp - G*DZ, 1.0e-9_wp)
-      call check('lapse dz=0 -> T unchanged', lapse_air_temperature(290.0_wp,0.0_wp,G), 290.0_wp, 1.0e-30_wp)
-      p = lapse_pressure(101325.0_wp, 290.0_wp, DZ, G)
-      call check_true('pressure drops at a higher site', p < 101325.0_wp, 101325.0_wp - p)
-      call check('lapse dz=0 -> P unchanged', lapse_pressure(101325.0_wp,290.0_wp,0.0_wp,G), 101325.0_wp, 1.0e-6_wp)
-      call check('isothermal (gamma=0) = barometric', lapse_pressure(101325.0_wp,290.0_wp,DZ,0.0_wp), &
-                 101325.0_wp*exp(-9.80665_wp*DZ/(287.04_wp*290.0_wp)), 1.0e-2_wp)
-   end subroutine test_lapse
-
-   !----- The terrain lapse's humidity, longwave and monthly rate (docs/science/forcing.md §8). ---!
-   subroutine test_terrain_lapse()
-      real(wp), parameter :: T0 = 285.0_wp, P0 = 95000.0_wp, Q0 = 0.007_wp, DZ = -500.0_wp, G = 0.0065_wp
-      real(wp) :: t1, p1, q1, e0, e1, lw1
-      print '(a)', '-- test: terrain lapse (RH-held humidity, longwave) --'
-      t1 = lapse_air_temperature(T0, DZ, G) ; p1 = lapse_pressure(P0, T0, DZ, G)
-      q1 = lapse_specific_humidity(Q0, T0, P0, t1, p1)
-      e0 = Q0 * P0 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * Q0)
-      e1 = q1 * p1 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * q1)
-      call check('relative humidity is held', e1 / sat_vapor_pressure(t1), e0 / sat_vapor_pressure(T0), 1.0e-12_wp)
-      call check_true('a site 500 m below its cell is warmer and holds more vapour', q1 > Q0, q1 - Q0)
-      call check('dz = 0 leaves q unchanged', lapse_specific_humidity(Q0, T0, P0, T0, P0), Q0, 1.0e-15_wp)
-      lw1 = lapse_longwave(300.0_wp, LW_CLEAR_BRUTSAERT, T0, Q0, P0, t1, q1, p1)
-      call check('file longwave scales by eps*T^4', lw1,                                           &
-                 300.0_wp * clear_sky_emissivity(LW_CLEAR_BRUTSAERT, t1, q1, p1) * t1**4           &
-                          / (clear_sky_emissivity(LW_CLEAR_BRUTSAERT, T0, Q0, P0) * T0**4), 1.0e-9_wp)
-      call check_true('the warmer, moister site gets more longwave', lw1 > 300.0_wp, lw1 - 300.0_wp)
-      call check('dz = 0 leaves longwave unchanged',                                               &
-                 lapse_longwave(300.0_wp, LW_CLEAR_IDSO, T0, Q0, P0, T0, Q0, P0), 300.0_wp, 1.0e-9_wp)
-   end subroutine test_terrain_lapse
 
    !----- The move to a patch's canopy-air top (docs/science/forcing.md §8). A 25 m canopy:         !
    !      d = 15.75 m, z0 = 3.25 m, top z_c = 30 m.                                                !

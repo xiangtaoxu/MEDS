@@ -22,15 +22,24 @@
 !      form thawed and the linear form frozen.                                             !
 !   6. SOIL TEXTURE (soil_texture_to_thermal; soil_biophysics.md eq. (9)): CLM5's solids'  !
 !      and dry soil's conductivities and the solids' heat capacity, computed apart.        !
+!   7. MOIST AIR (sat_specific_humidity, rh_to_specific_humidity, precip_phase;             !
+!      docs/science/forcing.md): the humidity of a dewpoint is eps e / (p - (1 - eps) e)     !
+!      and RH = 1 at the dewpoint gives it again; the rain/snow split keeps the total, all   !
+!      rain when warm, all snow when cold, part of each at the triple point.                 !
+!   8. THE AIR AT ANOTHER HEIGHT (lapse_air_temperature, lapse_pressure,                     !
+!      lapse_specific_humidity; forcing.md §8): the temperature falls at the rate given, the !
+!      pressure drops, barometrically when isothermal, the humidity keeps its relative       !
+!      humidity, and nothing changes at dz = 0.                                              !
 !==========================================================================================!
 program test_therm_lib
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : t_kelvin, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice
+   use meds_constants,   only : t_kelvin, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, h2o_dry_ratio
    use meds_therm_lib,   only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,                    &
                                 temp_to_internal_energy, internal_energy_to_temp, internal_energy_ice,            &
                                 sat_vapor_pressure, sat_vapor_pressure_temp_deriv, sat_specific_humidity,         &
-                                soil_thermal_conductivity, soil_texture_to_thermal
+                                soil_thermal_conductivity, soil_texture_to_thermal, rh_to_specific_humidity,      &
+                                precip_phase, lapse_air_temperature, lapse_pressure, lapse_specific_humidity
    implicit none
 
    call test_temperature_response()
@@ -39,6 +48,8 @@ program test_therm_lib
    call test_ice_saturation()
    call test_soil_conductivity()
    call test_soil_texture()
+   call test_moist_air()
+   call test_lapse()
 
    call test_report('test_therm_lib')
 
@@ -236,5 +247,50 @@ contains
       call check('CLM5 dry conductivity', k_dry, 0.20802202_wp, 1.0e-7_wp)
       call check('CLM5 solids heat capacity', dry_cvol, 1.2578349e6_wp, 1.0_wp)
    end subroutine test_soil_texture
+
+   !----- 7. Moist air: the humidity of a dewpoint, and the rain/snow split. ---------------------!
+   subroutine test_moist_air()
+      real(wp), parameter :: TD = 285.0_wp, P = 98000.0_wp, TOT = 1.0e-4_wp
+      real(wp) :: q, e, rain, snow
+      print '(a)', '-- 7. moist air --'
+      q = sat_specific_humidity(TD, P)
+      e = sat_vapor_pressure(TD)
+      call check('q from dewpoint == eps e/(p-(1-eps)e)', q, h2o_dry_ratio*e/(P-(1.0_wp-h2o_dry_ratio)*e), 1.0e-14_wp)
+      call check_true('q in physical range', q > 0.001_wp .and. q < 0.02_wp, q)
+      call check('rh=1 at T=Td matches dewpoint q', rh_to_specific_humidity(1.0_wp, TD, P), q, 1.0e-14_wp)
+      call precip_phase(TOT, t_3ple + 5.0_wp, rain, snow)
+      call check('warm -> all rain', rain, TOT, 1.0e-16_wp)
+      call check('warm -> no snow',  snow, 0.0_wp, 1.0e-16_wp)
+      call precip_phase(TOT, t_3ple - 5.0_wp, rain, snow)
+      call check('cold -> all snow', snow, TOT, 1.0e-16_wp)
+      call precip_phase(TOT, t_3ple, rain, snow)
+      call check('at t_3ple mass conserved', rain + snow, TOT, 1.0e-16_wp)
+      call check_true('partial snow at t_3ple', snow > 0.0_wp .and. snow < TOT, snow)
+   end subroutine test_moist_air
+
+   !----- 8. The air at another height: a site 500 m above (dz > 0) or below (dz < 0) its cell. ---!
+   subroutine test_lapse()
+      real(wp), parameter :: DZ = 500.0_wp, G = 0.0065_wp
+      real(wp), parameter :: T0 = 285.0_wp, P0 = 95000.0_wp, Q0 = 0.007_wp
+      real(wp) :: t, p, t1, p1, q1, e0, e1
+      print '(a)', '-- 8. the air at another height --'
+      t = lapse_air_temperature(290.0_wp, DZ, G)
+      call check('lapse cools a higher site', t, 290.0_wp - G*DZ, 1.0e-9_wp)
+      call check('lapse dz=0 -> T unchanged', lapse_air_temperature(290.0_wp, 0.0_wp, G), 290.0_wp, 1.0e-30_wp)
+      p = lapse_pressure(101325.0_wp, 290.0_wp, DZ, G)
+      call check_true('pressure drops at a higher site', p < 101325.0_wp, 101325.0_wp - p)
+      call check('lapse dz=0 -> P unchanged', lapse_pressure(101325.0_wp, 290.0_wp, 0.0_wp, G), 101325.0_wp, 1.0e-6_wp)
+      call check('isothermal (gamma=0) = barometric', lapse_pressure(101325.0_wp, 290.0_wp, DZ, 0.0_wp),        &
+                 101325.0_wp*exp(-9.80665_wp*DZ/(287.04_wp*290.0_wp)), 1.0e-2_wp)
+      !----- A site 500 m below its cell keeps the cell's relative humidity. ------------------!
+      t1 = lapse_air_temperature(T0, -DZ, G)
+      p1 = lapse_pressure(P0, T0, -DZ, G)
+      q1 = lapse_specific_humidity(Q0, T0, P0, t1, p1)
+      e0 = Q0 * P0 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * Q0)
+      e1 = q1 * p1 / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * q1)
+      call check('relative humidity is held', e1 / sat_vapor_pressure(t1), e0 / sat_vapor_pressure(T0), 1.0e-12_wp)
+      call check_true('a site 500 m below its cell is warmer and holds more vapour', q1 > Q0, q1 - Q0)
+      call check('dz = 0 leaves q unchanged', lapse_specific_humidity(Q0, T0, P0, T0, P0), Q0, 1.0e-15_wp)
+   end subroutine test_lapse
 
 end program test_therm_lib
