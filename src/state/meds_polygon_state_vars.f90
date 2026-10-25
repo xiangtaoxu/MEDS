@@ -58,6 +58,10 @@ module meds_polygon_state_vars
       !      does. ----------------------------------------------------------------------------------!
       logical            :: restructure_pending  = .false.
       logical            :: restructure_new_year = .false.
+      !----- A bare-ground or census start owes its canopy air the first forcing sample: the fast    !
+      !      loop's first window seeds it and clears this flag. A restart's state file holds the     !
+      !      canopy air, so a restart owes nothing, and no state file is written before that window. !
+      logical            :: seed_canopy_air = .false.
       !==========================================================================================!
       ! 4. THE FORCING'S MEMORY                                                                  !
       !==========================================================================================!

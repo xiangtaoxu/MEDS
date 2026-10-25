@@ -14,13 +14,14 @@ program test_carbon_growth
    use meds_slow_state, only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
                                slow_step_data_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
-   use meds_stepper,                only : advance_one_step
+   use meds_stepper,                only : advance_one_step, run_ledgers_t
    use meds_test_support, only : banner, build_test_config, check, check_close
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    use meds_slow_ledger,  only : slow_ledger_t
    implicit none
    real(wp), allocatable :: leaf_new(:), storage_new(:)   !< the traits' leaf and storage carbon
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
+   type(run_ledgers_t) :: ledgers      !< never activated: the coupled steps book nothing
    real(wp)            :: shed_water   !< an operator's shed water, unread here
 
    type(meds_config_t) :: cfg
@@ -47,7 +48,7 @@ program test_carbon_growth
    call finalize_init(poly)
    wood0 = poly%cohort%wood_carbon(1) ; dbh0 = poly%cohort%dbh(1)
    do istep = 1_ik, 30_ik
-      call advance_one_step(poly, cfg)                           ! growth + mortality only
+      call advance_one_step(poly, cfg, ledgers)                           ! growth + mortality only
    end do
    call check(poly%cohort%wood_carbon(1) > wood0, 'carbon growth did not add wood_carbon')
    call check(poly%cohort%dbh(1) > dbh0,          'dbh did not increase with wood_carbon (the flip)')

@@ -30,7 +30,7 @@ module meds_soil_carbon
 
    public :: soil_carbon_out_t
    public :: necromass_to_litter, add_necromass, build_litter_input, soil_carbon_step
-   public :: solve_soil_carbon_steady_state
+   public :: solve_soil_carbon_steady_state, soil_carbon_steady_pools
    public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
 
    !----- One daily step's result: the new pools, which the caller commits, and its     !
@@ -241,6 +241,24 @@ contains
       pools_ss = soil_carbon_state_t()                       ! zero all (inert pools + lignin stay 0)
       call unpack_pool_vector(x_ss, pools_ss)
    end subroutine solve_soil_carbon_steady_state
+
+   !----- The spin-up's steady pools: SASU for the configured climatological xi and litter input  !
+   !      ([soil_carbon].spinup_*), with the transfer matrix of empty pools (lignin fraction 0). ---!
+   function soil_carbon_steady_pools(params) result(pools)
+      type(soil_carbon_params_t), intent(in) :: params
+      type(soil_carbon_state_t) :: pools
+      type(litter_input_t) :: lit
+      real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+      real(wp) :: xi_bar(N_SOIL_POOL), u_bar(N_SOIL_POOL), lignin_bar(2)
+      call decomposition_transfer_matrix(soil_carbon_state_t(), params, a_mat, k_diag, er)
+      xi_bar = params%spinup_xi
+      lit%labile_grnd = params%spinup_labile_grnd
+      lit%labile_soil = params%spinup_labile_soil
+      lit%struct_grnd = params%spinup_struct_grnd
+      lit%struct_soil = params%spinup_struct_soil
+      call build_litter_input(lit, u_bar, lignin_bar)
+      call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, pools)
+   end function soil_carbon_steady_pools
 
    !----- Solve M[active]*x = -u[active] on the active sub-block by LU with partial pivoting. ---!
    pure subroutine steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)

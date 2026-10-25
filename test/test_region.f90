@@ -41,8 +41,8 @@ program test_region
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, XTYPE_INT, &
                                           MISSING_INT
    use meds_region,                only : meds_region_t, region_open, region_step, region_step_month, &
-                                          region_done, region_finalize, region_free, DRIVER_OK,   &
-                                          DRIVER_ERR_BOUNDS
+                                          region_done, region_finalize, region_free, RUN_OK,   &
+                                          RUN_ERR_BOUNDS
    implicit none
 
    character(len=*), parameter :: TEMPLATE = 'meds_config_site.toml'
@@ -102,10 +102,10 @@ program test_region
                    reg%poly(2)%site%surface(1)%soil%drain_factor == f_leak_at(ROW(2), COL(2)))
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
-      if (st /= DRIVER_OK) error stop 'test_region: a region month failed'
+      if (st /= RUN_OK) error stop 'test_region: a region month failed'
    end do
    call region_finalize(reg, st)
-   call check_true('every polygon conserves area', st == DRIVER_OK)
+   call check_true('every polygon conserves area', st == RUN_OK)
    reg_region = reg%out_files%reg
    call region_free(reg)
 
@@ -118,7 +118,7 @@ program test_region
       call check_true('a site run is a region of one polygon', size(site_run%poly) == 1)
       do while (.not. region_done(site_run))
          call region_step(site_run, st)
-         if (st /= DRIVER_OK) error stop 'test_region: a site step failed'
+         if (st /= RUN_OK) error stop 'test_region: a site step failed'
       end do
       call region_finalize(site_run, st)
       if (p == 1_ik) reg_site = site_run%out_files%reg
@@ -165,7 +165,7 @@ program test_region
    if (.not. ok) error stop 'test_region: the threaded region did not open'
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
-      if (st /= DRIVER_OK) error stop 'test_region: a threaded region month failed'
+      if (st /= RUN_OK) error stop 'test_region: a threaded region month failed'
    end do
    call region_finalize(reg, st)
    call region_free(reg)
@@ -250,10 +250,10 @@ program test_region
    call region_open(trim(work)//'/fail.toml', reg, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the failing region did not open'
    call region_step_month(reg, st)
-   call check_true('the month before the failure steps', st == DRIVER_OK)
+   call check_true('the month before the failure steps', st == RUN_OK)
    reg%poly(2)%patch%soil_carbon(1)%slow_carbon = -1.0_wp
    call region_step_month(reg, st)
-   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_BOUNDS)
+   call check_true('the month a polygon fails in returns its status', st == RUN_ERR_BOUNDS)
    call check_true('the failed month is consumed: the region moves on', region_done(reg))
    call region_finalize(reg, st)
    call region_free(reg)
@@ -272,7 +272,7 @@ program test_region
    if (.not. ok) error stop 'test_region: the region failing at polygon 1 did not open'
    reg%poly(1)%patch%soil_carbon(1)%slow_carbon = -1.0_wp
    call region_step_month(reg, st)
-   call check_true('the month polygon 1 fails in returns its status', st == DRIVER_ERR_BOUNDS)
+   call check_true('the month polygon 1 fails in returns its status', st == RUN_ERR_BOUNDS)
    call region_finalize(reg, st)
    call region_free(reg)
    call check_true('the state file of that month owes its boundary''s restructuring',                  &
@@ -296,7 +296,7 @@ program test_region
    st = -1_ik
    if (ok) call region_step_month(reg, st)
    call check_true('a region freed without finalizing opens again in the same variable, and steps',   &
-                   ok .and. st == DRIVER_OK)
+                   ok .and. st == RUN_OK)
    call region_free(reg)
    call write_map(trim(work)//'/archive/offgrid.nc', 'keep', mask, -1.0_wp, lat_shift=0.05_wp)
 
@@ -314,7 +314,7 @@ program test_region
                    rows_resumed(trim(work)//'/state/half-S-20230101000000.nc', reg))
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
-      if (st /= DRIVER_OK) error stop 'test_region: the resumed masked region failed'
+      if (st /= RUN_OK) error stop 'test_region: the resumed masked region failed'
    end do
    call region_finalize(reg, st)
    call region_free(reg)
@@ -752,7 +752,7 @@ contains
       if (.not. opened) error stop 'test_region: a region did not open'
       do while (.not. region_done(r))
          call region_step_month(r, s)
-         if (s /= DRIVER_OK) error stop 'test_region: a region month failed'
+         if (s /= RUN_OK) error stop 'test_region: a region month failed'
       end do
       call region_finalize(r, s)
       call region_free(r)

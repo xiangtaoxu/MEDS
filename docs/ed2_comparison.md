@@ -536,6 +536,20 @@ pages. What it takes from ED2 is listed here.
 - **Light plasticity** (`meds_plant_traits`). It ports ED2's `update_cohort_plastic_trait`
   (Lloyd et al. 2010).
 
+### 4.11 Where the run loop's form comes from
+
+- **ED2.** `edmain` calls `ed_driver`, which initializes the run and calls `ed_model`, one time loop
+  at the integration step (`DTLSM`): each step the canopy radiation and the integrator advance every
+  site, a new day calls `veg_dynamics_driver`, a new month reads the meteorological drivers, and the
+  output is written at its intervals.
+- **MEDS.** `meds_main` drives `meds_region`: `region_open` builds the run, `region_step_month`
+  steps it a month at a time, and `region_finalize` closes it. Each slow step of each polygon is
+  `polygon_step`, and `meds_stepper`'s `advance_one_step` runs the fast loop's sub-steps inside it,
+  then the slow dynamics ([order_of_processes](science/order_of_processes.md) §1–§2). The loop is
+  the slow step, with the fast loop nested in it, where ED2's is the fast step with the dynamics
+  called on the calendar. The forcing is loaded, and the output written, between the steps of
+  every polygon rather than inside them.
+
 ---
 
 ## 5. Quick checklist: what an ED2 user will find missing

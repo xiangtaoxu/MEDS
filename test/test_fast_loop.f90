@@ -25,7 +25,7 @@ program test_fast_loop
    use meds_slow_dynamics, only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
-   use meds_stepper,             only : advance_one_step
+   use meds_stepper,             only : advance_one_step, run_ledgers_t
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
    use meds_forcing_params,      only : MET_BACKEND_DEFAULT, METAVG_END
@@ -41,6 +41,7 @@ program test_fast_loop
    use meds_slow_ledger,  only : slow_ledger_t
    implicit none
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
+   type(run_ledgers_t) :: ledgers      !< never activated: the coupled steps book nothing
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: NSL = 10_ik
@@ -117,14 +118,14 @@ program test_fast_loop
       cfg%fast_biophysics_on = .false.
       call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
-      call advance_one_step(poly, cfg)     ! gate off -> fast loop skipped
+      call advance_one_step(poly, cfg, ledgers)     ! gate off -> fast loop skipped
       call check_close(poly%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true.): the hook fires, reservoirs change. -----------!
       cfg%fast_biophysics_on = .true.
       call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
-      call advance_one_step(poly, cfg)
+      call advance_one_step(poly, cfg, ledgers)
       call check(abs(poly%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
 
@@ -159,7 +160,7 @@ program test_fast_loop
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
-   call advance_one_step(poly, cfg)
+   call advance_one_step(poly, cfg, ledgers)
    cbal0 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
 
@@ -169,7 +170,7 @@ program test_fast_loop
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
    call init_fast_state(poly, cfg)
-   call advance_one_step(poly, cfg)
+   call advance_one_step(poly, cfg, ledgers)
    cbal1 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
 
