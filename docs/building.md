@@ -64,8 +64,8 @@ compiler-specific.
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
 **A green ifx run is not sufficient.** Build new modules with nvfortran (the multicore back end) too,
-and with gfortran, which on most machines is the second compiler at hand. These seven portability
-traps are invisible to ifx:
+and with gfortran, which on most machines is the second compiler at hand. These eight traps are
+invisible to an ifx dev build:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
@@ -84,6 +84,12 @@ traps are invisible to ifx:
   copy-out leaves the originals' allocatable components dangling: a segfault a step later, with
   nothing reported by `-fcheck=all`. Keep such objects in a contiguous array of their own, as the
   region keeps its polygons' output buffers.
+- **Never write an array expression over a two-level component section `a(:)%b%c`**, directly or
+  through an `associate`. ifx's AVX-512 code (`MEDS_CPU_TARGET=cascadelake`, which the production
+  preset sets; IPO is not needed) reads such a section from the wrong offsets, while the dev build
+  reads it right: a check of every PFT's leaf apoplastic fraction saw other PFTs' elastic modulus
+  and osmotic potential instead, and refused every PFT file with more than one PFT. The stored
+  values were right. Read such values element by element.
 - **Never nest an implied-do inside a `pack` inside an array constructor**, as in
   `[pack([(i, i = 0, n - 1)], m1), pack([(i, i = 0, n - 1)], m2)]`. nvfortran 25.11 returns wrong
   elements at `-O2` and segfaults at `-O0`. Bind the implied-do to a named array and pack that.

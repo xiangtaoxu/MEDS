@@ -47,7 +47,7 @@ Science page: [`science/plant_phenology.md`](science/plant_phenology.md). Plan:
   The turnover is a rate (`leaf_turnover_rate_toc`). The new form is $`(1 + a \cdot \text{shed tendency})`$
   times the baseline, in place of the absolute `shed_rate_max`, with a light cue relative to the
   cohort's own light. It changes examples 02 and 06, so it waits for their next refit and rerun.
-- **Drought-driven fine-root dieback.** *Candidate; no issue yet.* Fine roots age with the leaves'
+- **Drought-driven fine-root dieback.** *Candidate.* [#546](https://github.com/xiangtaoxu/MEDS/issues/546) Fine roots age with the leaves'
   turnover but are not shed with them, because root length sets the root–soil conductance. A dieback
   would act per soil layer, on that layer's water.
 
@@ -66,6 +66,10 @@ Science page: [`science/soil_carbon.md`](science/soil_carbon.md).
   Treefall necromass enters the structural pools directly.
 - **Fire consumption of the ground pools.** *Candidate.* [#157](https://github.com/xiangtaoxu/MEDS/issues/157)
   There is no fire in MEDS.
+- **Soil carbon does not decompose when the fast loop is off.** *Candidate.* [#545](https://github.com/xiangtaoxu/MEDS/issues/545)
+  The soil step decays the pools by the environmental scalar the fast loop integrates, so with
+  `[fast].fast_biophysics_on = false` nothing decomposes, silently. Refuse the combination, give the
+  step a fixed scalar, or warn.
 
 ---
 
@@ -89,7 +93,7 @@ Science page: [`science/numerical_scheme.md`](science/numerical_scheme.md). Plan
 - **The water sub-step's error estimate.** *Candidate.* [#491](https://github.com/xiangtaoxu/MEDS/issues/491)
   It pairs the last factorisation with the latest coupling rows. The effect is at round-off level; the
   consistent form costs about 5 % of one factorisation.
-- **Water network leftovers.** *Candidate; no issue yet.* Newton iterations per sub-step (a warm start
+- **Water network leftovers.** *Candidate.* [#547](https://github.com/xiangtaoxu/MEDS/issues/547) Newton iterations per sub-step (a warm start
   or a nonlinear elimination of each cohort), a C API entry for a plant-only or soil-only solve, and
   an unattributed 0.8 W m⁻² sensible-heat difference on BCI's dry season against the earlier scheme.
 - **Adaptive freeze cadence** ([#158](https://github.com/xiangtaoxu/MEDS/issues/158)) **and soil water in
@@ -176,7 +180,7 @@ Science page: [`science/diagnostics.md`](science/diagnostics.md).
 - **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412)
   No maintenance respiration on reproductive tissue, and no substrate or moisture limitation
   (`science/plant_respiration.md` §7).
-- **Calibrated hydraulic traits.** *Candidate; no issue yet.* The shipped PFTs differ hydraulically
+- **Calibrated hydraulic traits.** *Candidate.* [#548](https://github.com/xiangtaoxu/MEDS/issues/548) The shipped PFTs differ hydraulically
   only in `wood_kmax` (Xu et al. 2016's fit to wood density); `wood_psi50` is the same for all. A
   wood-density fit for it belongs in `scripts/pft_traits`.
 
@@ -216,6 +220,9 @@ Science page: [`science/forcing.md`](science/forcing.md).
     cell;
   - lateral water from upslope to downslope sites, and seed dispersal between sites;
   - an optional `site` axis for the stand variables (`agb`, `lai`).
+- **The default forcing reader takes a numeric `_FillValue` as data.** *Candidate.* [#544](https://github.com/xiangtaoxu/MEDS/issues/544)
+  `read_series` does not turn a file's `_FillValue` or `missing_value` into NaN, so a gap marked
+  1e20 runs as data. The archive and map readers already refuse or mask fills.
 
 ---
 
@@ -239,6 +246,9 @@ Science page: [`science/snow_biophysics.md`](science/snow_biophysics.md).
 - **The `post_proc` readers use example 03's stand-layout names.** *Candidate.* [#423](https://github.com/xiangtaoxu/MEDS/issues/423)
   Four scripts read the layout example 03 writes, not `meds_main`'s names. Either teach them
   `meds_main`'s names or keep saying which script reads which layout in `post_proc/README.md`.
+- **A redistributable Python wheel.** *Candidate.* [#549](https://github.com/xiangtaoxu/MEDS/issues/549)
+  The wheel `python/pyproject.toml` builds is machine-local. A PyPI wheel needs a gfortran build,
+  `cibuildwheel` and `auditwheel`, and netCDF's dependency closure vendored.
 
 ---
 

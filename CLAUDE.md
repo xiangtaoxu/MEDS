@@ -68,7 +68,7 @@ CMake auto-resolves Fortran module dependencies. This is the deliberate fix for 
 six times" hack — **never reintroduce manual object lists or repeated builds.**
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
-and gfortran. Seven traps, each invisible to ifx and each of which has bitten at least once:
+and gfortran. Eight traps, each invisible to an ifx dev build and each of which has bitten at least once:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's optimizer
   miscompiles the temporary descriptor — silently wrong at `-O2`, segfault at `-O0`. Bind to a named
@@ -79,6 +79,9 @@ and gfortran. Seven traps, each invisible to ifx and each of which has bitten at
 - **Never pass a component section `a(:)%c` as an actual argument when `c`'s type has allocatable
   components.** gfortran copies it through a temporary whose copy-out dangles them. Keep such
   objects in a contiguous array of their own.
+- **Never write an array expression over a two-level component section `a(:)%b%c`** (directly or
+  through an `associate`). ifx's AVX-512 code, which the production preset builds, reads it from the
+  wrong offsets. Read such values element by element.
 - **Never nest an implied-do inside a `pack` inside an array constructor.** nvfortran returns wrong
   elements at `-O2` and segfaults at `-O0`. Pack a named array.
 - **Keep `findloc` off LOGICAL arrays and off shorter character values.** nvfortran aborts on the
