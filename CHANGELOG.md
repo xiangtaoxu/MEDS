@@ -836,6 +836,10 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The driver tests** (#537). `test_several_sites` and `test_site_definitions` are `test_sites`. `test_region`
+  keeps its 8 region rules, and its other refusals move to the tests of what they check: 13
+  `check_main_refuses` cases, `test_maps`, `test_sites`, `test_state_file`, `test_init`. Three duplicates go.
+  The tests' config writers share one support module, and each sets a key once.
 - **The soil-carbon state is the matrix's vector** (#529), with no change to any result. The kernels
   read and write `%carbon` as it is, without packing it into an array and back, and the pool names
   are one table beside the pool indices; the restart reads and writes the pools in one loop.
@@ -1896,6 +1900,8 @@ matrix's vector (#529).
 
 ### Fixed
 
+- **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
+  now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
 - **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
   water over 250 kg/m³, so at another density the first window's canopy burial and snow cover read the
   wrong depth: 0.160 m where 40 kg/m² at 350 kg/m³ is 0.114 m. The depth is now the water over `rho_snow`.
