@@ -9,6 +9,8 @@
 #                and a restart                                                               #
 #   lint         the source-tree rules and the tracked copies                                #
 #   python       the Python tools' and the package's own tests (pytest)                      #
+#   long         opt-in, -DMEDS_TEST_LONG=ON: example 05's Palo Verde inventory and its       #
+#                150-year regrowth                                                           #
 #                                                                                            #
 # Paths: CMAKE_CURRENT_SOURCE_DIR is this folder; PROJECT_SOURCE_DIR the repository and      #
 # PROJECT_BINARY_DIR the build tree's top, where every test runs unless it names another      #
@@ -29,9 +31,9 @@ function(meds_add_test name)
       message(FATAL_ERROR "meds_add_test(${name}): unknown arguments: ${arg_UNPARSED_ARGUMENTS}")
    endif()
    list(LENGTH arg_LABELS n_labels)
-   if(NOT n_labels EQUAL 1 OR NOT arg_LABELS MATCHES "^(unit|integration|lint|python)$")
-      message(FATAL_ERROR "meds_add_test(${name}): give exactly one label of unit, integration, lint and "
-                          "python")
+   if(NOT n_labels EQUAL 1 OR NOT arg_LABELS MATCHES "^(unit|integration|lint|python|long)$")
+      message(FATAL_ERROR "meds_add_test(${name}): give exactly one label of unit, integration, lint, python "
+                          "and long")
    endif()
    if(arg_SOURCES)
       add_executable(test_${name} ${arg_SOURCES})
@@ -384,6 +386,41 @@ if (Python3_Interpreter_FOUND)
 endif()
 
 #----- Every test stops at 10 minutes. The longest takes about 1.5 in a Debug build, so a test that #
-#      hangs, or slows by an order of magnitude, fails instead of holding the suite.                 #
+#      hangs, or slows by an order of magnitude, fails instead of holding the suite. The long runs, #
+#      registered after this, set their own.                                                         #
 get_property(meds_all_tests DIRECTORY PROPERTY TESTS)
 set_tests_properties(${meds_all_tests} PROPERTIES TIMEOUT 600)
+
+#==========================================================================================#
+#  long (opt-in, -DMEDS_TEST_LONG=ON): example 05's two Palo Verde runs through meds_main, the  #
+#  runs to make before a physics or tissue-energy change merges. Each runs a copy of the        #
+#  example's config in its own build-tree directory and passes when the run completes and its  #
+#  slow ledger closes; checks/check_long_run.cmake explains them. The inventory (about 2 min    #
+#  on the example's 12 threads) reads the ED_ERA5land archive; the regrowth (about 36 min)      #
+#  reads Palo Verde's cell cut from it, 2003-2022: MEDS_TEST_PV_FORCING names a cut file, and   #
+#  without one the test cuts it into its directory once (about 6 min).                          #
+#==========================================================================================#
+if (MEDS_TEST_LONG)
+   set(MEDS_ERA5LAND_ARCHIVE "$ENV{ERA5LAND_ARCHIVE}" CACHE PATH
+       "The processed ED_ERA5land archive the long tests read (default: the environment's ERA5LAND_ARCHIVE)")
+   set(MEDS_TEST_PV_FORCING "" CACHE FILEPATH
+       "Palo Verde's forcing file, 2003-2022, as run_palo_verde.py cuts it; empty: the test cuts it from the archive")
+   if (NOT IS_DIRECTORY "${MEDS_ERA5LAND_ARCHIVE}")
+      message(WARNING "MEDS: MEDS_TEST_LONG is on, but MEDS_ERA5LAND_ARCHIVE (\"${MEDS_ERA5LAND_ARCHIVE}\") is not a "
+                      "folder: the long tests will stop at their start. Configure with "
+                      "-DMEDS_ERA5LAND_ARCHIVE=<the ED_ERA5land folder>, or set ERA5LAND_ARCHIVE.")
+   endif()
+   foreach(case inventory regrowth)
+      meds_add_test(palo_verde_${case}
+                    COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main> -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+                            -DWORK_DIR=${PROJECT_BINARY_DIR}/long/palo_verde_${case} -DCASE=${case}
+                            -DARCHIVE=${MEDS_ERA5LAND_ARCHIVE} -DFORCING=${MEDS_TEST_PV_FORCING}
+                            -DPYTHON=${Python3_EXECUTABLE}
+                            -P ${CMAKE_CURRENT_SOURCE_DIR}/checks/check_long_run.cmake
+                    LABELS long)
+   endforeach()
+   #----- The runs' own thread count ([run].n_threads), so a parallel ctest books it; a generous    #
+   #      limit, a Debug build being many times slower than the times above.                       #
+   set_tests_properties(palo_verde_inventory PROPERTIES TIMEOUT 3600 PROCESSORS 12)
+   set_tests_properties(palo_verde_regrowth PROPERTIES TIMEOUT 21600 PROCESSORS 12)
+endif()
