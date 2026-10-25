@@ -256,7 +256,8 @@ contains
       idx = find_key(t, key)
       if (idx /= 0_ik) then
          s = adjustl(t%val(idx))
-         if (len_trim(s) >= 2 .and. s(1:1) == '"') then
+         if (s(1:1) == '"') then
+            if (index(s(2:), '"') == 0) call toml_parse_error(key, s, 'string (no closing quote)')
             v = s(2:index(s(2:), '"'))
          else
             v = trim(s)
