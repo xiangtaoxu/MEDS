@@ -136,7 +136,8 @@ worst values; the demographic laws make the founding and treefall decisions the 
 `meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). The
 cull's and the treefall's dead carbon reach the soil through the litter and the slow ledger declares
 them; the slow loop converts CO2 with the fast loop's constant; and patch termination merges and
-re-sorts as patch fusion does (#523).
+re-sorts as patch fusion does (#523). The stand's operators have one switch each, and the stand's keys
+are one `[demography]` block (#525).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -793,9 +794,23 @@ re-sorts as patch fusion does (#523).
   accumulator after the soil step, which no longer happens at the start of the allocation.
   `KGC_PER_UMOL_C` is gone: use `meds_constants`' `umol_2_kgc`. `check_kernel_state.py` takes the
   source tree and stops on any other directory.
+- **Config: the stand's keys** (#525). `[disturbance]` and `[recruitment]` are gone:
+  `patch_disturbance_rate`, `disturbance_survive_height` and `min_recruit_size` are `[demography]`
+  keys. `[carbon]` is gone: `gpp_ref` is `[fast].gpp_ref`. In `[demography]`, `do_cohort_fissfuse` is
+  `recruitment_on` and `cohort_fusion_on`, `enable_cohort_fission` is `cohort_fission_on`,
+  `do_patch_disturbance` is `patch_disturbance_on` and `do_patch_fissfuse` is `patch_fusion_on`, each
+  required. `max_cohort` and `max_patch` are at least 1: 0 no longer turns fusion off and a negative
+  value no longer forces it. With `patch_disturbance_on`, `patch_disturbance_rate` must be positive.
+  In Fortran the keys are `cfg%demography%<key>` (`demography_params_t`) and
+  `cfg%trait_dynamics%<key>` (`trait_dynamics_params_t`).
 
 ### Changed
 
+- **One switch per operator of the stand** (#525), with no change to any result. Recruitment, cohort
+  fusion, cohort fission, the treefall gaps and patch fusion each have a `[demography]` switch under
+  `demography_on`, in place of the two block switches and the numeric settings that also turned
+  fusion off or forced it. The cull and patch termination, which keep the stand bounded, run
+  whenever its structure does.
 - **The slow loop's routines are consolidated** (#520), with no change to any result on gfortran. One PFT
   table is read everywhere, and each derived value has one source (`recruit_carbon`, `leaf_psi_tlp`,
   `cohort_carbon_supply`); the patch stores blend in one place; the commit is a plain loop; the code
