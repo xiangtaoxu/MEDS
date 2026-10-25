@@ -559,7 +559,8 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME config_keys COMMAND test_config_keys)
    #----- meds_main refuses a run it cannot start and names the cause: unknown, moved or misplaced  #
    #      keys; RK45 at a loose tolerance; a value that is not a number or a string with no closing #
-   #      quote; impossible hydraulic traits; a NaN soil layer; a census or state                   #
+   #      quote; plastic fine roots without plastic traits; impossible hydraulic traits; a NaN soil #
+   #      layer; a census or state                                                                  #
    #      file that is missing or empty. Each case is a one-day run in its own build-tree           #
    #      directory; the script explains the cases. A Debug build traps the NaN at the comparison   #
    #      that refuses it, so that case runs in the other builds.                                    #
@@ -568,7 +569,7 @@ if(MEDS_BUILD_TESTS)
    if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
       list(APPEND refused_cases soil_nan_layer)
    endif()
-   list(APPEND refused_cases toml_unclosed_string)
+   list(APPEND refused_cases toml_unclosed_string config_fineroot_plastic)
    foreach(case IN LISTS refused_cases)
       add_test(NAME ${case}_refused
                COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>

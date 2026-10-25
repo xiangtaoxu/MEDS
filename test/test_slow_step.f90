@@ -397,7 +397,8 @@ end module test_slow_step_acclimation
 !==========================================================================================!
 ! The carbon step: a step without the fast loop grows wood and diameter, the driver's      !
 ! guards see the fast loop's states, the cached wood geometry follows the growth, a shaded !
-! cohort acclimates and resorbs, the turnover sheds its water, and a restart's re-         !
+! cohort acclimates and resorbs, its fine roots turn over with its leaves when             !
+! fineroot_turnover_plastic says so, the turnover sheds its water, and a restart's re-     !
 ! acclimation takes only the storage there is.                                             !
 !==========================================================================================!
 module test_slow_step_carbon
@@ -411,7 +412,7 @@ module test_slow_step_carbon
    use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives, commit_trait_carbon
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_slow_state, only : kill_report_t, advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
-                               slow_step_data_t
+                               slow_step_data_t, compute_carbon_allocation, clear_litter
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step, run_ledgers_t
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -517,6 +518,41 @@ contains
                           1.0e-9_wp, 'leaf_area stays leaf_carbon*sla after resorption')
       end block
 
+      !=== 3b. Plastic fine-root turnover (compute_carbon_allocation; docs/science/plant_traits.md   !
+      !    §4). With fineroot_turnover_plastic the fine roots turn over at the PFT's rate times the     !
+      !    cohort's leaf turnover over its top-of-canopy value; without it at the PFT's own rate,       !
+      !    whatever the leaves do. Read from the fine-root litter one carbon step sheds, for a cohort   !
+      !    at its top-of-canopy leaf turnover and at half of it. ====================================!
+      block
+         real(wp) :: gamma_toc, root_off_half, root_off_toc, root_on_half, root_on_toc
+         call init_bare_ground(poly, cfg, 1_ik)
+         call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
+         call finalize_init(poly)
+         gamma_toc = poly%cohort%pft_table%leaf_turnover_rate_toc(poly%cohort%pft(1))
+         cfg%trait_dynamics%trait_plasticity_on = .true.
+
+         cfg%trait_dynamics%fineroot_turnover_plastic = .false.
+         poly%cohort%leaf_turnover_rate(1) = gamma_toc
+         root_off_toc  = fineroot_litter(poly, cfg)
+         poly%cohort%leaf_turnover_rate(1) = 0.5_wp * gamma_toc
+         root_off_half = fineroot_litter(poly, cfg)
+
+         cfg%trait_dynamics%fineroot_turnover_plastic = .true.
+         poly%cohort%leaf_turnover_rate(1) = gamma_toc
+         root_on_toc  = fineroot_litter(poly, cfg)
+         poly%cohort%leaf_turnover_rate(1) = 0.5_wp * gamma_toc
+         root_on_half = fineroot_litter(poly, cfg)
+         cfg%trait_dynamics%fineroot_turnover_plastic = .false.
+
+         call check(root_off_toc > 0.0_wp, 'the fixture''s fine roots shed no litter')
+         call check_close(root_off_half, root_off_toc, 1.0e-14_wp,                                        &
+                          'not plastic: the fine roots turn over at the PFT''s rate, whatever the leaves do')
+         call check_close(root_on_toc, root_off_toc, 1.0e-14_wp,                                          &
+                          'plastic, at the top-of-canopy leaf turnover: the PFT''s own fine-root rate')
+         call check_close(root_on_half, 0.5_wp * root_off_toc, 1.0e-12_wp,                                &
+                          'plastic, at half the top-of-canopy leaf turnover: half the fine-root litter')
+      end block
+
       !=== 4. shed_turnover_water: a NET leaf/root LOSS sheds water in the SAME proportion as the    !
       !    carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate;   !
       !    a NET GAIN touches nothing (the tissue keeps its water mass; its capacity grows). ========!
@@ -610,6 +646,16 @@ contains
       end block
    end subroutine run_carbon_step
 
+   !----- The fine-root carbon [kgC/m2] one compute_carbon_allocation sheds to patch 1's litter,  !
+   !      from empty litter. The step moves no pool, so repeated calls see the same cohort. -----!
+   real(wp) function fineroot_litter(poly, cfg) result(shed)
+      type(polygon_t),     intent(inout) :: poly
+      type(meds_config_t), intent(in)    :: cfg
+      type(slow_step_data_t) :: step
+      call clear_litter(poly)
+      call compute_carbon_allocation(poly, cfg, step)
+      shed = poly%patch%litter_in(1)%fineroot_c
+   end function fineroot_litter
 
 end module test_slow_step_carbon
 
