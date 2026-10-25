@@ -190,7 +190,7 @@ def biomass_mortality(earlier, later):
 
 def litter_input(dbh_cm, plot_area, pp, wood_mortality):
     """The four steady-state litter streams [kgC m-2 day-1] of the stand, routed as
-    meds_litter_partition%necromass_to_litter routes necromass."""
+    meds_soil_carbon's necromass_to_litter routes necromass."""
     _, la, agb = allometry(dbh_cm, pp)
     leaf_c = la.sum() / pp["sla"] / plot_area
     root_c = pp["root_to_leaf"] * leaf_c

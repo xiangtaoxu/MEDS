@@ -26,7 +26,7 @@ module meds_init_restart
    use meds_polygon_state_vars,         only : polygon_t, alloc_polygon, rebuild_patch_map, rebuild_cohort_map
    use meds_site_state_vars,            only : make_site_surface
    use meds_cohort_state_vars,          only : set_cohort_size_from_carbon
-   use meds_demography_cohort_fusefiss, only : sort_cohorts
+   use meds_slow_update, only : sort_cohorts
    implicit none
    private
 

@@ -12,13 +12,13 @@
 !                                          decayed carbon and the respired fractions er;   !
 !   * heterotrophic_respiration         -- Rh = sum_j er_j xi_j K_j X_j.                   !
 ! Leaf Rd is the leaf solver's (meds_leaf_gas_exchange), growth respiration the daily      !
-! allocator's, and the pools' daily step meds_soil_biogeochem's.                           !
+! allocator's, and the pools' daily step meds_soil_carbon's.                               !
 !==========================================================================================!
 module meds_respiration
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : pi, tiny_num, yr_day
    use meds_therm_lib,         only : peaked_arrhenius_scale
-   use meds_patch_state_vars,  only : soil_carbon_t, pack_pool_vector
+   use meds_patch_state_vars,  only : soil_carbon_state_t, pack_pool_vector
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND,      &
                                       IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    implicit none
@@ -122,7 +122,7 @@ contains
                                        theta_sat, pools, params, xi)
       real(wp),                   intent(in)  :: soil_temp_surf, soil_temp_active     !< [K] ground surface, soil
       real(wp),                   intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
-      type(soil_carbon_t),        intent(in)  :: pools                               !< [kgC/m2] for f_lignin
+      type(soil_carbon_state_t),  intent(in)  :: pools                               !< [kgC/m2] for f_lignin
       type(soil_carbon_params_t), intent(in)  :: params                              !< the [soil_carbon] parameters
       real(wp),                   intent(out) :: xi(N_SOIL_POOL)                     !< [-] diagonal scalar, > 0
       real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
@@ -191,7 +191,7 @@ contains
    ! 5 (Bolker/Koven) routes by soil texture, with back-transfers.                         !
    !---------------------------------------------------------------------------------------!
    pure subroutine decomposition_transfer_matrix(pools, params, a_mat, k_diag, er)
-      type(soil_carbon_t),        intent(in)  :: pools                             !< [kgC/m2] for the lignin fractions
+      type(soil_carbon_state_t),  intent(in)  :: pools                             !< [kgC/m2] for the lignin fractions
       type(soil_carbon_params_t), intent(in)  :: params                            !< the [soil_carbon] parameters
       real(wp),                   intent(out) :: a_mat(N_SOIL_POOL, N_SOIL_POOL)   !< [-] a_ii=-1, a_ij transfer frac
       real(wp),                   intent(out) :: k_diag(N_SOIL_POOL)               !< [1/day] baseline decay rates
@@ -263,7 +263,7 @@ contains
    pure function heterotrophic_respiration(a_mat, k_diag, xi, pools) result(rh)
       real(wp),            intent(in) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL)   !< [-], [1/day]
       real(wp),            intent(in) :: xi(N_SOIL_POOL)                                       !< [-]
-      type(soil_carbon_t), intent(in) :: pools                                                 !< [kgC/m2]
+      type(soil_carbon_state_t), intent(in) :: pools                                                 !< [kgC/m2]
       real(wp) :: rh, x(N_SOIL_POOL), er_j                                                     !< [kgC/m2/day] Rh
       integer(ik) :: j
       call pack_pool_vector(pools, x)

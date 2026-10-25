@@ -22,6 +22,7 @@ module meds_pft_params
    private
 
    public :: pft_table_t, phenology_traits_t
+   public :: CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
    public :: leaf_photo_pft_t, leaf_photo_table_t, hydraulics_pft_t, hydraulics_table_t, rad_pft_optics_t
    public :: plant_hydraulics_t, kirchhoff_table_t, KIRCHHOFF_TABLE_NTAB, KIRCHHOFF_TABLE_RMAX
    public :: HYD_UNSET
@@ -141,12 +142,20 @@ module meds_pft_params
       logical,  allocatable :: has_emission(:)     !< (band) band has thermal emission (LW)
    end type rad_pft_optics_t
 
+   !----- Cue bits: flush_cue_mask and shed_cue_mask are sums of them, selecting the cues of !
+   !      each side (docs/science/plant_phenology.md §2-§3). ------------------------------!
+   integer(ik), parameter :: CUE_NONE  = 0_ik   !< no cues (always flushing / no senescence)
+   integer(ik), parameter :: CUE_TEMP  = 1_ik   !< temperature: warmth sum (flush), cold sum (shed)
+   integer(ik), parameter :: CUE_LIGHT = 2_ik   !< light: running-mean hours a day of PAR above par_min
+   integer(ik), parameter :: CUE_WATER = 4_ik   !< water: predawn leaf psi summed against the TLP
+   integer(ik), parameter :: CUE_ALL   = CUE_TEMP + CUE_LIGHT + CUE_WATER
+
    !----- A PFT's [phenology] block (docs/science/plant_phenology.md). The defaults equal  !
-   !      pheno_args_t's (meds_phenology_types), into which the slow-loop driver copies    !
-   !      them with the turgor-loss point. ------------------------------------------------!
+   !      pheno_args_t's (meds_plant_phenology), into which meds_slow_state copies them    !
+   !      with the turgor-loss point. -----------------------------------------------------!
    type :: phenology_traits_t
-      integer(ik) :: flush_cue_mask        = 0_ik        !< cues of the flush side (TEMP 1, LIGHT 2, WATER 4)
-      integer(ik) :: shed_cue_mask         = 0_ik        !< cues of the shed side
+      integer(ik) :: flush_cue_mask        = CUE_NONE    !< cues of the flush side (a sum of CUE_*)
+      integer(ik) :: shed_cue_mask         = CUE_NONE    !< cues of the shed side
       real(wp)    :: flush_cue_timescale   = 5.0_wp      !< [day] smoothing of the flush tendency
       real(wp)    :: shed_cue_timescale    = 5.0_wp      !< [day] smoothing of the shed tendency
       real(wp)    :: flush_rate_max        = 0.06667_wp  !< [1/day] leaf growth at full tendency

@@ -11,9 +11,8 @@ module meds_init_census
    use meds_config,     only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_init_bare_ground,   only : init_bare_ground, init_bare_sites, add_cohort, finalize_init
-   use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
-                                               split_cohorts
-   use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
+   use meds_slow_update, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts, split_cohorts,        &
+                                sort_patches, new_fuse_patches, terminate_patches
    implicit none
    private
 

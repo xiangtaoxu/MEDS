@@ -41,7 +41,7 @@ module meds_fast_integ_frozen
    use meds_fast_integ_derivs, only : surface_derivs, set_water_state
    use meds_state_defaults,   only : is_unset_negative
    use meds_biophysics_params, only : aero_params_t
-   use meds_patch_state_vars, only : cas_state_t, soil_carbon_t, cas_capacities
+   use meds_patch_state_vars, only : cas_state_t, soil_carbon_state_t, cas_capacities
    use meds_biogeochem_params, only : N_SOIL_POOL
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
    use meds_plant_energy, only : plant_energy_env_t, sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff, &
@@ -484,7 +484,7 @@ contains
                                               theta_mean, rh, exports)
       type(meds_config_t),  intent(in)    :: cfg
       type(soil_profile_t), intent(in)    :: soil          !< the surface layer's retention limits
-      type(soil_carbon_t),  intent(in)    :: soil_carbon
+      type(soil_carbon_state_t),  intent(in)    :: soil_carbon
       real(wp),             intent(in)    :: t_ground, soil_temp_root, theta_mean
       real(wp),             intent(out)   :: rh              !< [umol/m2/s]
       type(step_exports_t), intent(inout) :: exports

@@ -21,7 +21,7 @@ module meds_c_api_canopy
    use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t
    use meds_pft_params,           only : leaf_photo_pft_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_leaf_gas_exchange,    only : solve_leaf_gas_exchange, leaf_params_at_capacity
-   use meds_plant_trait_dynamics, only : light_plastic_traits
+   use meds_plant_traits,         only : light_plastic_traits
    use meds_canopy_radiation, only : rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env
    use meds_canopy_radiation,     only : canopy_radiation, ground_optics
    use meds_numerics,             only : ascending_order

@@ -9,11 +9,10 @@ program test_carbon_growth
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,  only : canopy_air_bad_field
    use meds_polygon_state_vars, only : polygon_t
-   use meds_demography_update, only : update_cohort_states
-   use meds_demography_cohort_fusefiss, only : terminate_cohorts
+   use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits, &
-                                           update_cohort_derivatives, pool_change_block
+   use meds_slow_state, only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
+                               slow_step_data_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -122,7 +121,7 @@ program test_carbon_growth
    !    carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate;   !
    !    a NET GAIN touches nothing (the tissue keeps its water mass; its capacity grows). ========!
    block
-      type(pool_change_block) :: dpool
+      type(slow_step_data_t) :: step
       real(wp) :: leaf_water0, wood_water0, leaf_carbon0, fineroot_carbon0, nplant0
       real(wp) :: expect_leaf_shed, expect_wood_shed
 
@@ -137,13 +136,13 @@ program test_carbon_growth
       leaf_water0      = poly%cohort%leaf_water_mass(1)
       wood_water0      = poly%cohort%wood_water_mass(1)
 
-      allocate(dpool%leaf(1), dpool%fineroot(1), dpool%wood(1), dpool%nonstructural(1))
-      dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
+      allocate(step%d_leaf(1), step%d_fineroot(1), step%d_wood(1), step%d_nonstructural(1))
+      step%d_wood = 0.0_wp ; step%d_nonstructural = 0.0_wp
 
       !----- (a) Net LOSS on both leaf and fine root: shed proportional to the carbon fraction lost. --!
-      dpool%leaf(1)     = -0.25_wp * leaf_carbon0        ! sheds 25% of the leaf pool this step
-      dpool%fineroot(1) = -0.10_wp * fineroot_carbon0    ! sheds 10% of the fine-root pool
-      call shed_turnover_water(poly, cfg, dpool)
+      step%d_leaf(1)     = -0.25_wp * leaf_carbon0        ! sheds 25% of the leaf pool this step
+      step%d_fineroot(1) = -0.10_wp * fineroot_carbon0    ! sheds 10% of the fine-root pool
+      call shed_turnover_water(poly, cfg, step)
       expect_leaf_shed = leaf_water0 * 0.25_wp
       !----- The fine roots hold their carbon's share of the store they share with the sapwood, and   !
       !      shed a tenth of that: the store's water per unit of its carbon is unchanged once the     !
@@ -170,9 +169,9 @@ program test_carbon_growth
       !----- (b) Net GAIN: touches nothing (mass conserved; the larger capacity reads a lower rwc). !
       poly%cohort%leaf_water_mass(1) = leaf_water0    ! reset
       poly%cohort%wood_water_mass(1) = wood_water0
-      dpool%leaf(1)     = 0.01_wp * leaf_carbon0
-      dpool%fineroot(1) = 0.01_wp * fineroot_carbon0
-      call shed_turnover_water(poly, cfg, dpool)
+      step%d_leaf(1)     = 0.01_wp * leaf_carbon0
+      step%d_fineroot(1) = 0.01_wp * fineroot_carbon0
+      call shed_turnover_water(poly, cfg, step)
       call check_close(poly%cohort%leaf_water_mass(1), leaf_water0, 1.0e-12_wp,                    &
                        'shed_turnover_water: net GAIN leaves leaf water mass untouched')
       call check_close(poly%cohort%wood_water_mass(1), wood_water0, 1.0e-12_wp,                    &
@@ -182,9 +181,9 @@ program test_carbon_growth
 
       !----- (c) Full snap-to-bare (net loss == the entire pool): sheds to EXACTLY 0. ---------------!
       poly%cohort%leaf_water_mass(1) = leaf_water0
-      dpool%leaf(1)     = -leaf_carbon0
-      dpool%fineroot(1) = 0.0_wp
-      call shed_turnover_water(poly, cfg, dpool)
+      step%d_leaf(1)     = -leaf_carbon0
+      step%d_fineroot(1) = 0.0_wp
+      call shed_turnover_water(poly, cfg, step)
       call check_close(poly%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
                        'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
    end block
@@ -236,19 +235,20 @@ program test_carbon_growth
    !    0, and an overdraw reaches the applier as an overdraw, which the bounds guard names. A     !
    !    floor on the driver's tentative pool would create the carbon before the guard could see it. =!
    block
-      type(pool_change_block) :: dpool
+      type(slow_step_data_t) :: step
       real(wp) :: dt
       dt = 1.0_wp / 365.0_wp
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
       call finalize_init(poly)
-      allocate(dpool%leaf(1), dpool%fineroot(1), dpool%wood(1), dpool%nonstructural(1))
-      dpool%leaf(1)          = -poly%cohort%leaf_carbon(1) * (1.0_wp + 1.0e-15_wp)   ! a rounded full shed
-      dpool%fineroot(1)      = 0.0_wp
-      dpool%wood(1)          = 0.0_wp
-      dpool%nonstructural(1) = -poly%cohort%nonstructural_carbon(1) * 1.01_wp        ! a 1 % overdraw
+      allocate(step%d_leaf(1), step%d_fineroot(1), step%d_wood(1), step%d_nonstructural(1))
+      step%d_leaf(1)          = -poly%cohort%leaf_carbon(1) * (1.0_wp + 1.0e-15_wp)   ! a rounded full shed
+      step%d_fineroot(1)      = 0.0_wp
+      step%d_wood(1)          = 0.0_wp
+      step%d_nonstructural(1) = -poly%cohort%nonstructural_carbon(1) * 1.01_wp        ! a 1 % overdraw
       call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
-      call update_cohort_derivatives(poly, dpool, [0.0_wp], dt, growth_window_steps(cfg), 1_ik)
+      step%mortality = [0.0_wp]
+      call update_cohort_derivatives(poly, step, dt, growth_window_steps(cfg), 1_ik)
       call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
       call check(poly%cohort%leaf_carbon(1) == 0.0_wp, 'driver + applier: a rounded full shed lands on 0')
       call check(poly%cohort%nonstructural_carbon(1) < 0.0_wp,                                     &

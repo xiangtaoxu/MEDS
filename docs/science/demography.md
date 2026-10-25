@@ -322,15 +322,15 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 
 | Concept | Routine |
 |---|---|
-| the vital-rate laws, eqs. (1), (3), (4), (6) | `meds_demography_rates`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `npp_to_recruitment` |
-| recruit efficiency, eq. (5); the rates per cohort and patch | `meds_vegetation_dynamics`: `cohort_recruit_efficiency`, `compute_vital_rates` |
-| the growth history, eq. (2) | `meds_demography_update`: `fill_cohort_deriv` |
-| applying growth and mortality, eq. (8) | `meds_demography_update`: `update_cohort_states`, `advance_pool`, `advance_density` |
-| mortality's litter and water, eq. (9); the recruit pool | `meds_vegetation_dynamics`: `accumulate_mortality_litter`, `shed_mortality_water`, `accumulate_recruit_pool` |
-| sort, fusion, fission, the cull, recruitment | `meds_demography_cohort_fusefiss`: `sort_cohorts`, `new_fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
-| treefall gaps, patch fusion, termination, eq. (10) | `meds_demography_patch_fusefiss`: `apply_patch_disturbance`, `new_fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
-| the overtopping LAI, eq. (11) | `meds_demography_update`: `update_overtopping_lai`; `meds_numerics`: `equal_height_layers` |
-| the order of the operators | `meds_vegetation_dynamics`: `vegetation_dynamics`, `restructure_stand` |
+| the vital-rate laws, eqs. (1), (3), (4), (6) | `meds_demography`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `npp_to_recruitment` |
+| recruit efficiency, eq. (5); the rates per cohort and patch | `meds_slow_state`: `cohort_recruit_efficiency`, `compute_vital_rates` |
+| the growth history, eq. (2) | `meds_slow_update`: `fill_cohort_deriv` |
+| applying growth and mortality, eq. (8) | `meds_slow_update`: `commit_vegetation_step`, `update_cohort_states`, `advance_pool`, `advance_density` |
+| mortality's litter and water, eq. (9); the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`; `meds_slow_update`: `accumulate_recruit_pool` |
+| sort, fusion, fission, the cull, recruitment | `meds_slow_update`: `sort_cohorts`, `new_fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
+| treefall gaps, patch fusion, termination, eq. (10) | `meds_slow_update`: `apply_patch_disturbance`, `new_fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
+| the overtopping LAI, eq. (11) | `meds_slow_update`: `update_overtopping_lai`; `meds_numerics`: `equal_height_layers` |
+| the order of the operators | `meds_slow_dynamics`: `vegetation_dynamics`, `restructure_stand` |
 | tests | `test/test_fusion_cohort.f90`, `test/test_patch.f90`, `test/test_disturbance.f90`, `test/test_mortality_pathways.f90`, `test/test_carbon_growth.f90` |
 
 ## References

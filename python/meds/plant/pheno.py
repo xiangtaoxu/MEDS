@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """meds.plant.pheno — the leaf-phenology kernel (part of the plant-ecophysiology package).
 
-A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
+A Pythonic front end to the MEDS Fortran phenology kernel (meds_plant_phenology.f90, exposed through the
 same libmeds.so as meds.plant's gas exchange -- one C-API for the whole model). Each day it takes
 the cues (air temperature, hours of light, predawn leaf water potential) and per-PFT traits, and
 advances two smoothed tendencies in [0,1]: leaf_flush_tendency and leaf_shed_tendency. The hours
@@ -107,7 +107,7 @@ def _make(struct_cls, src):
 
 
 class Cue(IntFlag):
-    """Cue-enable bits (mirror meds_phenology_types). flush_cue_mask and shed_cue_mask pick the
+    """Cue-enable bits (mirror meds_pft_params). flush_cue_mask and shed_cue_mask pick the
     cues of each side: the flush signal is the PRODUCT of its cues' switches, the shed signal the
     larger of the seasonal trigger (TEMP x LIGHT) and the water trigger."""
     NONE = 0

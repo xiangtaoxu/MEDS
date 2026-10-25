@@ -26,19 +26,17 @@ program test_slow_ledger
    use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
                                        soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_set_depth, patch_physical_state
+   use meds_patch_state_vars, only : cas_set_depth, patch_physical_state, litter_input_t
    use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
-   use meds_demography_cohort_fusefiss, only : terminate_cohorts
-   use meds_demography_patch_fusefiss,  only : fuse_2_patches
-   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water, pool_change_block
-   use meds_biogeochem_types,           only : litter_input_t
+   use meds_slow_update, only : terminate_cohorts, fuse_2_patches, refresh_canopy_depth
+   use meds_slow_dynamics, only : vegetation_dynamics, restructure_stand, settle_tissue_water
+   use meds_slow_state, only : shed_turnover_water, slow_step_data_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
                                        slow_fast_carbon_handover, slow_tissue_energy, SLOW_PHASE_GROW, &
                                        SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
-   use meds_slow_dynamics,      only : settle_tissue_water, refresh_canopy_depth
    use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
    use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -405,7 +403,7 @@ contains
    ! THE LITTER ACCUMULATOR MUST RIDE THE PATCH ARRAY.                                           !
    !                                                                                          !
    ! restructure_stand (apply_patch_disturbance) CREATES patches after vegetation_dynamics has   !
-   ! filled the step's litter, and the consumer (advance_biogeochem_dynamics) loops to the NEW   !
+   ! filled the step's litter, and the consumer (advance_soil_carbon) loops to the NEW           !
    ! patch count. An accumulator sized to the patch count when it was filled is read past its    !
    ! end, feeding undefined memory into the CENTURY litter input (1.8e9 kgC/m2 on a gap patch    !
    ! born that step, over a 50-year spin-up).                                                    !
@@ -538,15 +536,15 @@ contains
    end subroutine check_mortality_water
 
    subroutine check_shed_heat()
-      type(pool_change_block) :: dpool
+      type(slow_step_data_t) :: step
       type(slow_ledger_t)     :: lg
       integer(ik) :: nc, i, ip
       real(wp)    :: fast_in
       nc = poly%cohort%n
-      allocate(dpool%leaf(nc), dpool%fineroot(nc), dpool%wood(nc), dpool%nonstructural(nc))
-      dpool%wood = 0.0_wp ; dpool%nonstructural = 0.0_wp
-      dpool%leaf     = -0.25_wp * poly%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
-      dpool%fineroot = -0.10_wp * poly%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
+      allocate(step%d_leaf(nc), step%d_fineroot(nc), step%d_wood(nc), step%d_nonstructural(nc))
+      step%d_wood = 0.0_wp ; step%d_nonstructural = 0.0_wp
+      step%d_leaf     = -0.25_wp * poly%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
+      step%d_fineroot = -0.10_wp * poly%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
       poly%cohort%leaf_water_mass(1:nc) = 0.7_wp
       poly%cohort%wood_water_mass(1:nc) = 2.3_wp
       do i = 1_ik, nc
@@ -554,7 +552,7 @@ contains
       end do
       lg%active = .true.
       call slow_ledger_open(lg, poly, cfg, RHO)
-      call shed_turnover_water(poly, cfg, dpool, lg)
+      call shed_turnover_water(poly, cfg, step, lg)
       call slow_ledger_mark(lg, poly, cfg, SLOW_PHASE_ALLOCATE)
       call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
       call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &

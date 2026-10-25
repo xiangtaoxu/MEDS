@@ -195,8 +195,8 @@ All three are in soil_carbon.md §6–§7, §9.
 |---|---|
 | the ledger, its phases and report, eqs. (1)–(2) | `meds_slow_ledger`: `slow_ledger_open`, `slow_ledger_mark`, `slow_ledger_declare`, `slow_ledger_report` |
 | the store | `meds_slow_ledger`: `slow_site_store`, `slow_tissue_energy`; `meds_patch_state_vars`: `soil_water_store`, `soil_energy_store`, `cas_capacities` |
-| the fast loop's net carbon, the CO₂ owed, the litter | `meds_slow_ledger`: `slow_fast_carbon_handover`; `meds_vegetation_dynamics`: `slow_co2_handoff`, `litter_carbon_total` |
-| plausibility | `meds_slow_ledger`: `check_plausible`; `meds_soil_biogeochem`: `soil_carbon_bad_pool` |
-| the soil-carbon seam's worst values | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
-| where the phases are marked | `meds_slow_dynamics`; `meds_vegetation_dynamics`: `vegetation_dynamics`, `restructure_stand` |
+| the fast loop's net carbon, the CO₂ owed, the litter | `meds_slow_ledger`: `slow_fast_carbon_handover`, `slow_co2_handoff`, `litter_carbon_total` |
+| plausibility | `meds_slow_ledger`: `check_plausible`; `meds_soil_carbon`: `soil_carbon_bad_pool` |
+| the soil-carbon seam's worst values | `meds_slow_ledger`: `soilc_seam_t`, filled by `meds_slow_state`: `advance_soil_carbon` |
+| where the phases are marked | `meds_slow_dynamics`: `advance_slow_dynamics`, `vegetation_dynamics`, `restructure_stand` |
 | tests | `test/test_slow_ledger.f90` |

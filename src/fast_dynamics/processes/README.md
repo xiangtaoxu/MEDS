@@ -23,8 +23,8 @@ use (the tissue and soil water curves, the thermal properties, the optics) are i
 
 The per-PFT tables these modules read (the leaf parameters, the hydraulics with each PFT's Kirchhoff
 lookup, the optics) are derived from the configuration once, at load, onto the PFT table
-(`config/meds_pft_derive`). The daily plant kernels — phenology, carbon allocation, trait plasticity
-— are in `src/slow_dynamics/plant/`, and the vital-rate laws in `src/slow_dynamics/demography/`.
+(`config/meds_pft_derive`). The daily process modules — phenology, carbon allocation, trait
+plasticity, the soil carbon pools and the vital-rate laws — are in `src/slow_dynamics/processes/`.
 
 ## Python
 
@@ -37,7 +37,8 @@ Exposed through process-oriented packages in `python/meds/`:
 
 - `meds.plant.leaf` — leaf gas exchange. Reproduces Slot & Winter (2017) in
   [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/).
-- `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is in `slow_dynamics/plant/`).
+- `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is
+  `slow_dynamics/processes/meds_plant_phenology`).
   The four phenology strategies are in
   [`examples/example02_canopy_phenology/`](../../../examples/example02_canopy_phenology/).
 - `meds.canopy` — the leaf solve over many leaves and the two-stream over a frozen stand

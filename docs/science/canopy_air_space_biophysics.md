@@ -117,7 +117,7 @@ wrote it.
 | conductances, eq. (5) of canopy_aerodynamics | `meds_canopy_aerodynamics`: `cas_atm_conductances`, `canopy_air_conductances` |
 | condensation sink | `meds_canopy_air_space`: `cas_condensation` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_integ_frozen`: `build_frozen` |
-| CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_dynamics`), `cas_set_depth` (`meds_patch_state_vars`) |
+| CAS depth + open-volume exchange | `refresh_canopy_depth` (`meds_slow_update`), `cas_set_depth` (`meds_patch_state_vars`) |
 | the start's canopy air | `seed_patch_stores` (`meds_init_bare_ground`, the placeholder); `seed_start_canopy_air` (`meds_fast_state`), called by `fast_dynamics` at the first window |
 | $`u_*`$ conductance (temp1/temp2) | `meds_canopy_aerodynamics` (see [canopy_aerodynamics](canopy_aerodynamics.md)) |
 

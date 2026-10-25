@@ -14,7 +14,7 @@
 program test_plant_trait_dynamics
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,                only : wp, ik
-   use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
+   use meds_plant_traits, only : light_plastic_traits, update_plastic_trait
    implicit none
 
    real(wp)    :: sla_t, vc_t, rd_t, turnover_t

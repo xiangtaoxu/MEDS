@@ -7,7 +7,7 @@
 !                                                                                          !
 ! nvfortran note: the slab test mutates the site's agb through the OPAQUE setter below (a          !
 ! separate module scope) between steps -- mirroring production, where state changes happen deep    !
-! inside vegetation_dynamics/update_demography. Mutating an allocatable component INLINE between    !
+! inside commit_vegetation_step. Mutating an allocatable component INLINE between                  !
 ! two extract_variable() calls lets nvfortran -O2 wrongly CSE the reads (an allocatable-component   !
 ! aliasing blind spot); an opaque mutation defeats it, as production does.                           !
 !==========================================================================================!

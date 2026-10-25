@@ -26,7 +26,7 @@ taken out upstream, in the plant carbon budget.
 
 ## 2. The seven pools and the lignin sub-tracer
 
-The state is `soil_carbon_t`, ordered litter → SOM → passive. The seven-pool ceiling matches ED2's
+The state is `soil_carbon_state_t`, ordered litter → SOM → passive. The seven-pool ceiling matches ED2's
 CENTURY set exactly, and the litter half is a **metabolic/structural × above/below** cross — chemistry
 on one axis, position on the other (above/below is carried so a future fire class can burn the top).
 
@@ -118,7 +118,7 @@ formula. The tests assert it: the correct form's total loss equals $`R_h`$ of eq
 
 ## 5. Litter input
 
-Dead plant carbon becomes litter in one place — `necromass_to_litter` (`meds_litter_partition`), whose
+Dead plant carbon becomes litter in one place — `necromass_to_litter` (`meds_soil_carbon`), whose
 arguments are plain carbon amounts and plain PFT traits, which is what lets both the slow driver and the
 demographic operators call it. Each tissue goes where it is:
 
@@ -140,8 +140,9 @@ two lignin fluxes alongside — and does **no** chemistry of its own, since the 
 decisions made before summing to the patch. So **only pools 1–4 ever receive litter**; microbial, slow
 and passive are fed by transfers alone. Carbon arrives by two routes: turnover/shed and continuous
 background mortality accumulate into `patch%litter_in` and enter through $u$, while **cull-termination
-and disturbance kills** add necromass *directly* onto `patch%soil_carbon` (the demographic operators
-cannot link biogeochemistry). Hence the audit field `litter_in_matrix` — it is $`\sum_i u_i`$ only.
+and disturbance kills** add necromass *directly* onto `patch%soil_carbon`, through the same
+`necromass_to_litter` split, so the boundary's dead carbon reaches the pools at once rather than with the
+next day's step. Hence the audit field `litter_in_matrix` — it is $`\sum_i u_i`$ only.
 
 ## 6. The daily step, and why it consumes an accumulated integral
 
@@ -252,7 +253,7 @@ $`A\,\xi K`$, making the trio a decomposition of *why* two runs store different 
 
 ## 9. Audits, and the difference between conservation and plausibility
 
-Every step fills a `soilc_audit_t`: `litter_in_matrix`, `dC_pool`, `rh_out`, `rh_seam_gap` (§7),
+Every step fills a `soil_carbon_out_t`: `litter_in_matrix`, `dC_pool`, `rh_out`, `rh_seam_gap` (§7),
 $\lambda$ with the pool that attained it, and the lignin passive-tracer residual
 $`\max_s|\Delta L_s-(\ell_s-(1-\sigma_s)L_s)|`$, zero by construction for either solver. The carbon
 check that can actually fail is the *independent* one, in the tests: recompute $`R_h`$ from
@@ -316,15 +317,15 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | Concept | Routine |
 |---|---|
 | $\xi$; and $A$, $K$, $`e_r`$ | `meds_respiration`: `decomposition_env_scalar`, `decomposition_transfer_matrix` |
-| litter → source term $u$; necromass → destinations | `meds_soil_biogeochem`: `build_litter_input`; `meds_litter_partition`: `necromass_to_litter` |
-| daily pool advance (Euler / EXPM) + audits | `meds_soil_biogeochem`: `soil_carbon_step` |
+| litter → source term $u$; necromass → destinations | `meds_soil_carbon`: `build_litter_input`, `necromass_to_litter`, `add_necromass` |
+| daily pool advance (Euler / EXPM) + audits | `meds_soil_carbon`: `soil_carbon_step` |
 | instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_respiration`: `heterotrophic_respiration` |
-| steady state; capacity / potential / residence time | `meds_soil_biogeochem`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
-| pool plausibility | `meds_soil_biogeochem`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_biogeochem_types`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
+| steady state; capacity / potential / residence time | `meds_soil_carbon`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
+| pool plausibility | `meds_soil_carbon`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
+| pools, indices, audit/diagnostic records | `meds_soil_carbon`: `soil_carbon_out_t`, `soilc_diag_t`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_state_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
-| daily driver, seam guard, ledger | `meds_biogeochem_dynamics`: `advance_biogeochem_dynamics` |
-| litter accumulation | `meds_vegetation_dynamics`; kills in `meds_demography_{cohort,patch}_fusefiss` |
+| daily driver, seam guard, ledger | `meds_slow_state`: `advance_soil_carbon`; the run's worst seam checks in `meds_slow_ledger`: `soilc_seam_t` |
+| litter accumulation | `meds_slow_state`: `compute_carbon_allocation`, `accumulate_mortality_litter`; kills in `meds_slow_update`: `terminate_cohorts`, `apply_patch_disturbance` |
 | sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_integ_frozen`: `patch_heterotrophic_respiration`; `meds_fast_state`: `accumulate_fast_to_slow` |
 | output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/test_soil_biogeochem.f90`, `test/test_biogeochem_dynamics.f90`, `test/test_column_co2.f90` |
 

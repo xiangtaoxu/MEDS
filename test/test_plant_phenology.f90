@@ -26,9 +26,9 @@ program test_plant_phenology
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : yr_day
    use meds_time,            only : daylength
-   use meds_phenology_types, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,       &
-                                    CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
-   use meds_phenology,       only : phenology_kernel, leaf_turnover_step, turnover_gate
+   use meds_plant_phenology, only : pheno_env_t, pheno_args_t, pheno_state_t, pheno_out_t,               &
+                                    phenology_kernel, leaf_turnover_step, turnover_gate
+   use meds_pft_params, only : CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
    implicit none
 
    real(wp), parameter :: TWOPI = 6.283185307179586_wp

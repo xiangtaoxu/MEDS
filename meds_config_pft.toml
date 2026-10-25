@@ -121,7 +121,7 @@ kplastic_rd            = [-0.1459341188305866, -0.11760191025318557, -0.10943768
 kplastic_sla           = [0.15654750929099287, 0.12615477645341722, 0.11739678683665906]    # > 0: SLA rises in shade
 kplastic_leaf_turnover = [-0.058535787713143994, -0.015560662518427415, 0.0]                # <= 0: turnover slows in shade
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
-# Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter). aboveground_frac
+# Necromass -> litter-destination split (meds_soil_carbon's necromass_to_litter). aboveground_frac
 # (above) doubles as the litter above/below-ground split for leaf/storage and wood streams.
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass

@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_soil_biogeochem -- unit tests for the SLOW soil-carbon matrix kernels                              !
-! (meds_soil_biogeochem; docs/science/soil_carbon.md):                                                    !
+! (meds_soil_carbon; docs/science/soil_carbon.md):                                                        !
 !   1. MASS CLOSURE  : dC == litter_in - Rh for one soil_carbon_step (EULER and EXPM), with Rh       !
 !                      recomputed INDEPENDENTLY from er*xi_int*K*X0. rh_today is DEFINED as               !
 !                      litter_in - dC, so a residual built from it is identically zero for any            !
@@ -24,18 +24,16 @@ program test_soil_biogeochem
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgcday_2_umols
-   use meds_biogeochem_types, only : litter_input_t, soilc_audit_t, soilc_diag_t
-   use meds_patch_state_vars,   only : soil_carbon_t, pack_pool_vector
+   use meds_patch_state_vars, only : litter_input_t, soil_carbon_state_t, pack_pool_vector
+   use meds_soil_carbon, only : soil_carbon_out_t, soilc_diag_t, soil_carbon_bad_pool,                   &
+                                soil_carbon_pool_name, SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,               &
+                                build_litter_input, soil_carbon_step, solve_soil_carbon_steady_state,    &
+                                soil_carbon_diagnostics, necromass_to_litter, add_necromass
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2,         &
                                       DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL,                      &
                                       IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_soil_biogeochem,  only : soil_carbon_bad_pool, soil_carbon_pool_name,                   &
-                                     SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE, build_litter_input,         &
-                                     soil_carbon_step, solve_soil_carbon_steady_state,              &
-                                     soil_carbon_diagnostics
    use meds_respiration,      only : decomposition_env_scalar, decomposition_transfer_matrix,      &
                                      heterotrophic_respiration
-   use meds_litter_partition, only : necromass_to_litter, add_necromass
    implicit none
 
    call test_mass_closure()
@@ -68,9 +66,9 @@ contains
    !    independently of the closure definition.                                                     !
    !=======================================================================================!
    subroutine test_mass_closure()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: opts
-      type(soilc_audit_t)        :: audit
+      type(soil_carbon_out_t)    :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh, x(N_SOIL_POOL), sx
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), x1(N_SOIL_POOL)
       integer(ik) :: i, j
@@ -95,7 +93,7 @@ contains
       opts%step_solver = DECOMP_STEP_EULER
       call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
       block
-         type(soil_carbon_t) :: p
+         type(soil_carbon_state_t) :: p
          real(wp) :: rh_indep, dc
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
@@ -124,7 +122,7 @@ contains
 
       opts%step_solver = DECOMP_STEP_EXPM
       block
-         type(soil_carbon_t) :: p
+         type(soil_carbon_state_t) :: p
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
          call check_true('EXPM  rh_today >= 0', rh >= -1.0e-12_wp, rh)
@@ -135,7 +133,7 @@ contains
    ! 2. Rh respired complement + column-sum identity.                                              !
    !=======================================================================================!
    subroutine test_rh_complement()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL), rh_fun, rh_hand, colsum, worst
@@ -172,7 +170,7 @@ contains
    ! 3. Scalar placement -- A*(xi*K*X) conserves to Rh; xi*(A*K*X) (receiver-scalar) does NOT.      !
    !=======================================================================================!
    subroutine test_scalar_placement()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL)
@@ -205,7 +203,7 @@ contains
    ! 4. Scheme topology -- hand-checked A/er for scheme 0 (default) and scheme 5 (CENTURY).         !
    !=======================================================================================!
    subroutine test_scheme_topology()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), offsum
       real(wp) :: er_micr, ex_mp, ex_sp
@@ -264,9 +262,9 @@ contains
    subroutine spinup_one_scheme(scheme, tag)
       integer(ik),      intent(in) :: scheme
       character(len=*), intent(in) :: tag
-      type(soil_carbon_t)        :: pools, pss, p
+      type(soil_carbon_state_t)  :: pools, pss, p
       type(soil_carbon_params_t) :: opts
-      type(soilc_audit_t)        :: audit
+      type(soil_carbon_out_t)    :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL), x1(N_SOIL_POOL)
       real(wp) :: rh, worst, relerr
@@ -319,7 +317,7 @@ contains
       ! tolerance is looser BY DESIGN: its passive pool (k=0.012/yr => ~170 yr residence at xi~0.5) is
       ! millennial, so 400k days (~1100 yr) leaves an O(1e-3) tail -- brute-forcing that pool to round-off
       ! is exactly the multi-millennium integration SASU (the exact fixed point above, dX~0) replaces.
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       do it = 1_ik, 400000_ik
          call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
       end do
@@ -336,10 +334,10 @@ contains
    ! 6. Residence/capacity: X_c = X_ss at equilibrium, X_p = 0; perturbed pool relaxes toward X_c.  !
    !=======================================================================================!
    subroutine test_residence_capacity()
-      type(soil_carbon_t)        :: pss, pert, p
+      type(soil_carbon_state_t)  :: pss, pert, p
       type(soil_carbon_params_t) :: opts
       type(soilc_diag_t)         :: diag
-      type(soilc_audit_t)        :: audit
+      type(soil_carbon_out_t)    :: audit
       real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL)
       real(wp) :: x_before, x_after, rh
@@ -372,10 +370,10 @@ contains
    ! 7. Litter mapping + lignin passive tracer.                                                    !
    !=======================================================================================!
    subroutine test_litter_and_lignin()
-      type(soil_carbon_t)        :: pools, p
+      type(soil_carbon_state_t)  :: pools, p
       type(soil_carbon_params_t) :: opts
       type(litter_input_t)       :: lit
-      type(soilc_audit_t)        :: audit
+      type(soil_carbon_out_t)    :: audit
       real(wp) :: u(N_SOIL_POOL), lignin_in(2), xi_int(N_SOIL_POOL), rh
       real(wp) :: f_lig_before, f_lig_after, c_before, l_before, d_s
       ! (a) driver-side per-cohort split demo (two PFTs) summed into a pool-destined litter_input_t:
@@ -410,7 +408,7 @@ contains
 
       ! (b) lignin tracer: proportional decay conserves f_lignin under pure decomposition (no input).
       opts = soil_carbon_params_t()
-      pools = soil_carbon_t()
+      pools = soil_carbon_state_t()
       pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp   ! f_lignin = 0.4
       c_before = pools%struct_grnd_carbon ; l_before = pools%struct_grnd_lignin
       f_lig_before = l_before / c_before
@@ -426,7 +424,7 @@ contains
                       p%struct_grnd_lignin <= p%struct_grnd_carbon, p%struct_grnd_lignin)
       call check_true('lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-14_wp, audit%lignin_resid)
       ! fresh lignin input raises f_lignin:
-      pools = soil_carbon_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.4_wp
+      pools = soil_carbon_state_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.4_wp
       xi_int = 0.0_wp
       u = 0.0_wp ; u(IP_STRUCT_GRND) = 0.5_wp ; lignin_in = [0.4_wp, 0.0_wp]     ! high-lignin input
       p = pools
@@ -438,7 +436,7 @@ contains
       ! carbon (exp(-d_s)), so f_lignin stays conserved and 0 <= L <= C. The linear survival (1 - d_s)
       ! would drive L NEGATIVE here (d_s = 3.0 => L = 0.8*(1-3) = -1.6; docs/science/soil_carbon.md §6).
       opts = soil_carbon_params_t() ; opts%step_solver = DECOMP_STEP_EXPM
-      pools = soil_carbon_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp  ! f_lignin=0.4
+      pools = soil_carbon_state_t() ; pools%struct_grnd_carbon = 2.0_wp ; pools%struct_grnd_lignin = 0.8_wp  ! f_lignin=0.4
       c_before = pools%struct_grnd_carbon ; l_before = pools%struct_grnd_lignin ; f_lig_before = l_before/c_before
       xi_int = 0.0_wp ; xi_int(IP_STRUCT_GRND) = 3.0_wp / (opts%k_struct/yr_day)   ! force d_s = xi_int*K = 3.0
       u = 0.0_wp ; lignin_in = 0.0_wp
@@ -453,7 +451,7 @@ contains
    end subroutine test_litter_and_lignin
 
    !=======================================================================================!
-   ! 10. NECROMASS_TO_LITTER (meds_litter_partition; docs/science/soil_carbon.md §5):               !
+   ! 10. NECROMASS_TO_LITTER (meds_soil_carbon; docs/science/soil_carbon.md §5):                    !
    !     the driver-side (and core-side termination/disturbance) necromass -> litter-destination !
    !     split. (a) reproduces test_litter_and_lignin's own two-cohort hand formula EXACTLY when   !
    !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !
@@ -542,12 +540,12 @@ contains
    ! 8. Temperature/moisture response + N-off inertness.                                           !
    !=======================================================================================!
    subroutine test_temperature_moisture()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: opts
       real(wp) :: xi_a(N_SOIL_POOL), xi_b(N_SOIL_POOL), xi_lo(N_SOIL_POOL), xi_hi(N_SOIL_POOL)
       real(wp) :: xi_opt(N_SOIL_POOL), xi_dry(N_SOIL_POOL)
       print '(a)', '-- test 8: temperature / moisture response --'
-      pools = soil_carbon_t()
+      pools = soil_carbon_state_t()
       ! Q10 = 2 doubling per 10 K (scheme 5, uncapped):
       opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
       opts%rh_q10 = 2.0_wp ; opts%rh_t_ref = 288.15_wp
@@ -578,7 +576,7 @@ contains
    !    path does NOT (Jensen; docs/science/soil_carbon.md §6).                                     !
    !=======================================================================================!
    subroutine test_fast_slow_seam()
-      type(soil_carbon_t)        :: pools
+      type(soil_carbon_state_t)  :: pools
       type(soil_carbon_params_t) :: dopts
       real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
       real(wp) :: theta, theta_dry, theta_sat, xpool
@@ -586,7 +584,7 @@ contains
       real(wp) :: rh_today, rh_meanpath, xi_meanpath
       integer(ik) :: is, nsub
       print '(a)', '-- test 9: fast/slow seam (Rh reconciliation + Jensen) --'
-      pools = soil_carbon_t() ; pools%fast_soil_carbon = 4.0_wp ; xpool = 4.0_wp
+      pools = soil_carbon_state_t() ; pools%fast_soil_carbon = 4.0_wp ; xpool = 4.0_wp
       theta = 0.45_wp ; theta_dry = 0.1_wp ; theta_sat = 0.6_wp
 
       ! ---- There is one production Rh authority, the matrix, so the fast/slow seam that exists is
@@ -636,11 +634,11 @@ contains
    ! negatives must fail, and the ceiling must sit far above any real soil.                          !
    !---------------------------------------------------------------------------------------!
    subroutine test_pool_plausibility()
-      type(soil_carbon_t) :: p
+      type(soil_carbon_state_t) :: p
       integer(ik)         :: k
 
       !----- A realistic temperate-forest profile is PLAUSIBLE. -------------------------------!
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       p%fast_grnd_carbon   = 1.5_wp  ; p%fast_soil_carbon   = 1.8_wp
       p%struct_grnd_carbon = 7.2_wp  ; p%struct_soil_carbon = 6.3_wp
       p%slow_carbon        = 5.4_wp
@@ -648,20 +646,20 @@ contains
                       soil_carbon_bad_pool(p) == 0_ik, real(soil_carbon_bad_pool(p), wp))
 
       !----- All-zero (bare ground, cold start) is PLAUSIBLE. It has to be: every run starts here. !
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       call check_true('an all-zero cold start passes', soil_carbon_bad_pool(p) == 0_ik,             &
                       real(soil_carbon_bad_pool(p), wp))
 
       !----- ROUND-OFF negatives must PASS. The daily Euler step subtracts a computed loss from a  !
       !      pool and lands a few ulp below zero routinely; a guard that fired on that would be     !
       !      turned off within a day, which is worse than no guard.  --------------------------------!
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       p%slow_carbon = -0.1_wp * SOILC_NEG_TOL
       call check_true('a round-off negative is tolerated', soil_carbon_bad_pool(p) == 0_ik,         &
                       p%slow_carbon)
 
       !----- A REAL negative must FAIL, and name the right pool. --------------------------------!
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       p%struct_grnd_carbon = -5.6e3_wp                       ! the size of a runaway's negative pool
       k = soil_carbon_bad_pool(p)
       call check_true('a genuinely negative pool is caught', k == IP_STRUCT_GRND, real(k, wp))
@@ -669,7 +667,7 @@ contains
                       real(k, wp))
 
       !----- Above the divergence CEILING must fail. --------------------------------------------!
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       p%fast_grnd_carbon = 7.15e7_wp                         ! the size of a runaway's litter pool
       k = soil_carbon_bad_pool(p)
       call check_true('a diverged pool is caught by the ceiling', k == IP_FAST_GRND, real(k, wp))
@@ -680,7 +678,7 @@ contains
                       SOILC_MAX_PLAUSIBLE)
 
       !----- A NaN must fail. It is the other way a pool stops being a number. -------------------!
-      p = soil_carbon_t()
+      p = soil_carbon_state_t()
       p%microbial_carbon = ieee_value(1.0_wp, ieee_quiet_nan)
       call check_true('a NaN pool is caught', soil_carbon_bad_pool(p) == IP_MICR,                   &
                       real(soil_carbon_bad_pool(p), wp))

@@ -16,13 +16,12 @@ module meds_stepper
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
-   use meds_biogeochem_types,     only : soilc_seam_t
+   use meds_slow_ledger,          only : soilc_seam_t, slow_ledger_t
    use meds_fast_dynamics,        only : fast_dynamics
    use meds_time,                 only : meds_time_t
    use meds_met_types,        only : met_source_t, met_cursor_t
    use meds_output_types,         only : output_buffers_t
    use meds_budget_check,         only : budget_t
-   use meds_slow_ledger,          only : slow_ledger_t
    implicit none
    private
 

@@ -16,9 +16,8 @@ module meds_init
    use meds_therm_lib,           only : temp_to_internal_energy, internal_energy_to_temp
    use meds_cohort_state_vars,   only : set_cohort_tissue_water, hold_cohort_tissue_temps
    use meds_polygon_state_vars,  only : polygon_t
-   use meds_demography_update,   only : update_overtopping_lai
-   use meds_demography_cohort_fusefiss, only : max_cohort_count
-   use meds_vegetation_dynamics, only : advance_plant_traits, reacclimate_plant_traits
+   use meds_slow_update,         only : update_overtopping_lai, max_cohort_count
+   use meds_slow_state,          only : advance_plant_traits, reacclimate_plant_traits
    use meds_init_bare_ground,    only : init_bare_ground, init_bare_sites, seed_bare_ground, seed_patch_stores, &
                                          N_PATCH_INIT
    use meds_init_census,         only : init_from_census, restructure_census_stand

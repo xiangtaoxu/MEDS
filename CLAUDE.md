@@ -92,13 +92,13 @@ Four rules, applied in order. The long form, with the library graph and a lookup
    needs `polygon_t` is driver code. The integrator also takes the patch's site (`site_surface_t`) and
    nothing past it; ctest `integrator_boundary` checks it.
 2. **A kernel goes where its caller's timescale is**, then in its process module (fast:
-   `fast_dynamics/processes/`; slow: its domain folder). A kernel called
+   `fast_dynamics/processes/`; slow: `slow_dynamics/processes/`). A kernel called
    from both tiers is a documented seam, never a folder — there is exactly one.
 3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
    of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,
    `meds_site_state_vars`, `meds_polygon_state_vars`). Parameters are not state.
-4. **Laws and operators do not touch.** The appliers take rate arrays and never import the rate
-   laws. The slow driver is the one place they meet.
+4. **Laws and operators do not touch.** The appliers (`meds_slow_update`) take rate arrays and
+   never import the rate laws (`meds_demography`). `meds_slow_dynamics` is the one place they meet.
 
 ## Invariants that break quietly
 
