@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_canopy_aerodynamics -- the canopy's turbulent exchange (meds_canopy_aerodynamics;   !
-! docs/science/canopy_aerodynamics.md §2-§4, eqs. (3), (6)-(10)).                          !
+! docs/science/canopy_aerodynamics.md §2-§4, eqs. (3), (7)-(11)).                          !
 !   1. NEUTRAL (mo_surface_layer): with the air and the canopy air alike, u* and the       !
 !      scalar factor are the log law's, kappa u / ln(zldis/z0m) and kappa / ln(zldis/z0m), !
 !      and the same a hair either side of neutral.                                         !
@@ -9,19 +9,19 @@
 !      smaller one; a stable night over a 30 m forest keeps zeta within zeta_max_stable    !
 !      and its coupling rises with the wind; under a weak wind and hot canopy air the      !
 !      sweeps settle on the root a 200-sweep solve finds.                                  !
-!   3. CANOPY-TOP WIND (canopy_aerodynamics, eq. (7)): neutral, it is the log law's share  !
+!   3. CANOPY-TOP WIND (canopy_aerodynamics, eq. (8)): neutral, it is the log law's share  !
 !      of the wind at zref, ln((h - d)/z0) / ln((zref - d)/z0).                            !
-!   4. BOUNDARY LAYER (canopy_aerodynamics, eqs. (9)-(10)): a leaf's conductance is above  !
+!   4. BOUNDARY LAYER (canopy_aerodynamics, eqs. (10)-(11)): a leaf's conductance is above !
 !      its floor and rises with the wind; an isothermal 5 cm leaf at 20 C has Monteith &   !
 !      Unsworth's laminar flat-plate value with the air's tabulated viscosity and          !
 !      diffusivity.                                                                        !
-!   5. TWO COHORTS (canopy_aerodynamics, eq. (8)): u* and the ground conductance are       !
+!   5. TWO COHORTS (canopy_aerodynamics, eq. (9)): u* and the ground conductance are       !
 !      positive, a closed canopy couples the ground less than bare soil, and the wind      !
 !      falls top to bottom by each closed crown's extinction.                              !
-!   6. OPEN CANOPY (canopy_aerodynamics, eq. (6)): the ground conductance is the bare      !
+!   6. OPEN CANOPY (canopy_aerodynamics, eq. (7)): the ground conductance is the bare      !
 !      value at W = 1, the dense-canopy value at W = 0, and rises monotonically between;   !
 !      W = exp(-(LAI + WAI)); a bare patch couples as CLM5 couples bare soil.              !
-!   7. TIED COHORTS (canopy_aerodynamics, eq. (8)): a crown split into two cohorts of half !
+!   7. TIED COHORTS (canopy_aerodynamics, eq. (9)): a crown split into two cohorts of half !
 !      the leaf area meets the wind the whole crown does, and so does the cohort below.    !
 !   8. CALLER ORDER (canopy_aerodynamics): cohorts handed over tallest first, with the     !
 !      order the gather forms, the tall one meets the top's wind and the larger boundary   !
@@ -34,7 +34,7 @@
 !      rises with the pack's depth, continuously, to ED2's cap for a pack as deep as the   !
 !      canopy or deeper; as burial goes to 1 the roughness and displacement go to the      !
 !      snow surface's, continuously; a canopy below the snow's roughness takes the snow's. !
-!  11. CANOPY-AIR CONDUCTANCES (canopy_air_conductances, cas_atm_conductances, eq. (5)):   !
+!  11. CANOPY-AIR CONDUCTANCES (canopy_air_conductances, cas_atm_conductances, eq. (6)):   !
 !      neutral, the log law's rho kappa^2 u / ln^2((zref - d)/z0) for enthalpy and vapour, !
 !      and the dry air's moles for CO2; more wind or a rougher canopy conducts more, a     !
 !      buried canopy less, stable canopy air less and unstable more; at the patch kernel's !
@@ -153,7 +153,7 @@ contains
                                [293.15_wp], [0.05_wp], [0.02_wp], out)
    end subroutine one_leaf_cohort
 
-   !----- 3. The canopy-top wind (eq. (7)): neutral, u* and the profile are the log law's, so the  !
+   !----- 3. The canopy-top wind (eq. (8)): neutral, u* and the profile are the log law's, so the  !
    !      wind at the canopy top is the wind at zref scaled by ln((h - d)/z0) / ln((zref - d)/z0). !
    subroutine test_canopy_top_wind()
       type(aero_params_t) :: cfg
@@ -169,7 +169,7 @@ contains
                       out%uh > 0.0_wp .and. out%uh < U_REF, out%uh)
    end subroutine test_canopy_top_wind
 
-   !----- 4. The leaf boundary layer (eqs. (9)-(10)), through the kernel. An isothermal leaf has no   !
+   !----- 4. The leaf boundary layer (eqs. (10)-(11)), through the kernel. An isothermal leaf has no  !
    !      free convection, so at the low Reynolds number of a 5 cm leaf in ~1.5 m/s its conductance is !
    !      the laminar flat plate's, Nu = 0.60 Re^0.5 (Monteith & Unsworth 2013, Principles of        !
    !      Environmental Physics, ch. 10), g = Nu kappa_T / l, with the air's viscosity 1.51e-5 and   !
@@ -213,14 +213,14 @@ contains
       call check_true('ggnet <= ggbare (closed canopy)', out%ggnet <= out%ggbare + 1.0e-12_wp, out%ggbare - out%ggnet)
       call check_true('wind decreases top->bottom', out%wind(2) > out%wind(1), out%wind(2) - out%wind(1))
       !----- Each closed crown takes the wind down by exp(-LAI/4) to its mid-depth and exp(-LAI/2)  !
-      !      to its base (docs/science/canopy_aerodynamics.md eq. (8)). ---------------------------!
+      !      to its base (docs/science/canopy_aerodynamics.md eq. (9)). ---------------------------!
       call check('top cohort: mid-crown wind = uh exp(-LAI/4)', out%wind(2),                        &
                  max(cfg%ugbmin, out%uh * exp(-0.25_wp * 2.0_wp)), 1.0e-12_wp)
       call check('bottom cohort: under the top crown, then to its own mid-depth', out%wind(1),       &
                  max(cfg%ugbmin, out%uh * exp(-0.50_wp * 2.0_wp) * exp(-0.25_wp * 1.5_wp)), 1.0e-12_wp)
    end subroutine test_two_cohorts
 
-   !----- 6. The open-canopy blend of the ground conductance (eq. (6)). ----------------------!
+   !----- 6. The open-canopy blend of the ground conductance (eq. (7)). ----------------------!
    subroutine test_open_canopy()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
@@ -279,7 +279,7 @@ contains
       call check('a bare patch is coupled as CLM5 couples bare soil', r_meds, r_clm, 1.0e-10_wp * r_clm)
    end subroutine test_open_canopy
 
-   !----- 7. Tied cohorts share one wind layer (docs/science/canopy_aerodynamics.md eq. (8)), as they  !
+   !----- 7. Tied cohorts share one wind layer (docs/science/canopy_aerodynamics.md eq. (9)), as they  !
    !      share one radiation layer: test_two_cohorts' stand with its top crown split into two cohorts !
    !      of half the leaf area each must give every cohort the wind the unsplit stand gives it. -----!
    subroutine test_tied_layer()
@@ -443,7 +443,7 @@ contains
       call check('a canopy below the snow''s roughness takes the snow''s', z0(1), cfg%snow_rough, 0.0_wp)
    end subroutine test_snow_burial
 
-   !----- 11. The canopy-air <-> atmosphere conductances (docs/science/canopy_aerodynamics.md eq. (5)), !
+   !----- 11. The canopy-air <-> atmosphere conductances (docs/science/canopy_aerodynamics.md eq. (6)), !
    !      re-solved at a canopy-air state (canopy_air_conductances) from the surface layer and the     !
    !      roughness, under a wind u at zref = 30 m (neutral_env). Neutral, u* = kappa u / ln and the    !
    !      profile factor is kappa / ln, ln = ln((zref - d)/z0), so g = rho kappa^2 u / ln^2; vapour    !

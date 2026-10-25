@@ -16,7 +16,7 @@ module meds_forcing_params
    public :: forcing_params_t
    public :: MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND
    public :: MET_PATH_LEN, ARCHIVE_DT_SEC, MAX_RECYCLE_YEARS
-   public :: METAVG_END, METAVG_BEGIN, METAVG_CENTER
+   public :: METAVG_END, METAVG_BEGIN
    public :: LW_FILE, LW_SYNTHESIZE
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
@@ -36,7 +36,6 @@ module meds_forcing_params
    !----- Timestamp of a forcing record, avg_convention (docs/science/forcing.md §5). -----!
    integer(ik), parameter :: METAVG_END     = 1_ik   !< flux mean over the interval ending at the stamp (ERA5-Land)
    integer(ik), parameter :: METAVG_BEGIN   = 2_ik   !< mean over the interval beginning at the stamp
-   integer(ik), parameter :: METAVG_CENTER  = 3_ik   !< mean over the interval centred on the stamp
 
    !----- Downwelling longwave source (docs/science/forcing.md §11). ----------------------!
    integer(ik), parameter :: LW_FILE       = 0_ik   !< read from file (ERA5-Land has strd)

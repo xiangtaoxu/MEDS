@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_allometry_lib -- meds_allometry_lib, the size allometry (docs/science/plant_traits.md). !
+! test_allometry_lib -- meds_allometry_lib, the size allometry (docs/science/plant_carbon_allocation.md §2). !
 !   1. THE LAWS: dbh <-> height in both regimes (below and at the cap), AGB and leaf area     !
 !      increasing with size and wood density, agb_to_dbh and wood_to_dbh inverting their      !
 !      forward laws, the carbon targets as re-expressions of the size allometry, Chave et al.  !

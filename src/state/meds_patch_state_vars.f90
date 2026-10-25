@@ -194,7 +194,7 @@ contains
    !  and w2 are area fractions, w1 = a1/(a1+a2), so a quantity per ground area keeps its  !
    !  site total; the canopy air is weighted by air mass instead. Diagnosed fields are     !
    !  mixed only for a provisional value: the caller re-diagnoses them                     !
-   !  (docs/science/column_biophysics.md, "Mixing two patches").                           !
+   !  (docs/science/coupled_biophysics.md, "Mixing two patches").                          !
    !=======================================================================================!
 
    !----- Mix two canopy airs on their air mass, area x depth: enthalpy, humidity and CO2  !
@@ -227,7 +227,7 @@ contains
    !      deeper canopy entrains air from above at the canopy-air state, so the intensive  !
    !      state stays and the content changes. The optional *_open outputs, which need     !
    !      rho_air, report that exchange for a caller to book                               !
-   !      (docs/science/canopy_air_space_biophysics.md, "The three CAS twins"). -----------!
+   !      (docs/science/canopy_air_space_biophysics.md, the canopy air's three variables). !
    pure subroutine cas_set_depth(cas, depth_new, rho_air, de_open, dw_open, dc_open)
       type(cas_state_t),  intent(inout) :: cas
       real(wp),           intent(in)    :: depth_new  !< [m] new CAS depth

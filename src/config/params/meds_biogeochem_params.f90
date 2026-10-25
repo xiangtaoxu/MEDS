@@ -85,7 +85,8 @@ module meds_biogeochem_params
       real(wp)    :: resp_water_above_opt = 4.5139_wp     !< [-] and above it
       !----- Cold start: zero, or the steady state (docs/science/soil_carbon.md §8). ------!
       logical     :: spinup_steady      = .false.         !< .true.: start from the steady state
-      real(wp)    :: spinup_xi          = 1.0_wp          !< [-] its environmental scalar, every pool
+      real(wp)    :: spinup_xi          = 1.0_wp          !< [-] its environmental scalar, every pool; also a
+                                                          !<     run's without the fast loop (soil_carbon.md §7)
       real(wp)    :: spinup_labile_grnd = 0.0_wp          !< [kgC/m2/day] its litter input, per pool
       real(wp)    :: spinup_labile_soil = 0.0_wp
       real(wp)    :: spinup_struct_grnd = 0.0_wp

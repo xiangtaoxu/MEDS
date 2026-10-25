@@ -1,3 +1,13 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Superseded by the cross-site protocol.
+>
+> **What shipped:** R1–R5 (user-defined filters and keys, priors, the staged fit) in #345. The
+> protocol of `MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` replaced the staged fit with one joint fit and
+> was implemented in #357–#362 and #364, then cleaned up in #365. R6's findings (§13) are folded into
+> that protocol.
+>
+> **The live description** is `MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` and
+> `scripts/calibrate_fast/README.md`. Cohort-level sunlit/shaded leaves stay on `docs/ROADMAP.md` §7.
+
 # MEDS fast calibration, revision 2: user-defined filters and keys, and a staged fit
 
 **Status:** approved by the owner on 2026-10-02 (rev 3, after two rounds of decisions, §0).

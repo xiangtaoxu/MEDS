@@ -656,7 +656,7 @@ contains
                         ior(FAST, DAY_MON_YR), FLD_P_DIAG0 + PA_RNET, flux=.true.)
       !----- Top-of-canopy radiative fluxes, for a radiometer or satellite comparison: fluxes, not  !
       !      a mean albedo, which is a mean of ratios (docs/science/canopy_radiation_transfer.md      !
-      !      eq. (15)). ---------------------------------------------------------------------------!
+      !      eq. (16)). ---------------------------------------------------------------------------!
       call add_variable(reg, 'mean_sw_in_vis_py', 'incident VIS shortwave at canopy top', 'W/m2', DIM_SCALAR, AGG_TMEAN,        &
                         GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PA_SW_IN_VIS, flux=.true.)
       call add_variable(reg, 'mean_sw_in_nir_py', 'incident NIR shortwave at canopy top', 'W/m2', DIM_SCALAR, AGG_TMEAN,        &

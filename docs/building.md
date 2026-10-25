@@ -1,38 +1,54 @@
 # Building MEDS
 
-**Requirements:** a Fortran 2018 compiler, CMake ≥ 3.20, and the netCDF **C** library.
+How to build MEDS, choose a build kind, run the tests and run in parallel. The first two sections
+are all a first build needs; the rest is reference: the compiler traps, the build kinds and what
+each costs, and the test suite.
 
-`meds_main` is the single entry point: it reads a config, runs the simulation, writes netCDF output,
-and exits.
+## What you need
+
+- A Fortran 2018 compiler: Intel `ifx` (the everyday compiler), GNU `gfortran`, or NVIDIA
+  `nvfortran` ([Compilers](#compilers)).
+- CMake 3.20 or later (3.21 or later to use the presets below).
+- The netCDF **C** library, with its CMake config. conda-forge ships it, and
+  [`environment.yml`](../environment.yml) is a conda environment that holds it and the Python tools
+  ([Installing dependencies](#installing-dependencies)).
 
 ## Quick start
 
-```bash
-./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix to use
+`meds_main` is the single entry point: it reads a config, runs the simulation, writes netCDF output
+and exits. Three commands build it and check it:
 
-cmake -S . -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX            # the dev kind, as `cmake --preset dev` makes it
-cmake --build build-dev -j
-ctest --test-dir build-dev --output-on-failure
+```bash
+mamba env create -f environment.yml    # once: netCDF and the Python tools (or conda env create)
+conda activate meds
+source /opt/intel/oneapi/setvars.sh    # so CMake finds ifx
+
+FC=ifx cmake --preset dev              # 1. configure the dev kind, in build-dev/
+cmake --build build-dev -j             # 2. build meds_main, libmeds.so and the tests
+ctest --test-dir build-dev --output-on-failure   # 3. run the suite
 
 ./build-dev/meds_main examples/example03_demography/example_config_main.toml
 ```
 
-With no build type a configure builds dev, the everyday kind; the others, and the presets that name
-all four, are under [Build kinds](#build-kinds). `build-dev` is where the example scripts look for
-`meds_main` and the Python package for `libmeds.so`, which `-DMEDS_BUILD_PYLIB=ON` adds.
+Run these from the repository root. The preset takes netCDF from the active conda environment
+(`$CONDA_PREFIX`); with netCDF elsewhere, add `-DCMAKE_PREFIX_PATH=<prefix>`. Without presets, the
+same kind is
+`cmake -S . -B build-dev -DCMAKE_Fortran_COMPILER=ifx -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=<prefix>`.
+
+`build-dev` is where the example scripts look for `meds_main` and the Python package for
+`libmeds.so`. The other kinds and the presets that name them are under [Build kinds](#build-kinds).
 
 If the run cannot find `libnetcdf` or the compiler runtime, put both on the loader path:
-`LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH`. Note the `:$LD_LIBRARY_PATH` — replacing the
-variable rather than extending it drops the Fortran runtime and every test fails to load.
+`LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH`. Keep the `:$LD_LIBRARY_PATH`: replacing the
+variable instead of extending it drops the Fortran runtime, and every test fails to load.
 
 ## netCDF is a hard dependency
 
-There is no netCDF-free build. Every configure needs `-DCMAKE_PREFIX_PATH=<prefix>` pointing at the
-netCDF-C install, and because the netCDF CMake config pulls in HDF5, the build enables the C
-language too.
+There is no netCDF-free build. Every configure needs `CMAKE_PREFIX_PATH` (the presets set it to
+`$CONDA_PREFIX`) to point at the netCDF-C install, and because the netCDF CMake config pulls in HDF5,
+the build enables the C language too.
 
-**netCDF-Fortran is deliberately not used.** MEDS writes netCDF through the C API via
+**MEDS does not use netCDF-Fortran.** It writes netCDF through the C API via
 `iso_c_binding`, because netCDF-Fortran's compiled module format is gfortran-only and would not
 load under ifx or nvfortran. The C ABI is compiler-agnostic, so the same `libnetcdf` links
 identically under all three compilers. For the same reason MEDS reads TOML with its own minimal
@@ -47,15 +63,15 @@ compiler-specific.
 | NVIDIA `nvfortran` | The second back end, and the host-multicore path. (There is no GPU build — see [Parallel builds](#parallel-builds).) | put the HPC SDK `compilers/bin` on `PATH` |
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
-**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
-and gfortran, which on most machines is the second compiler at hand. Seven portability traps have
-each bitten at least once, and each was invisible to ifx:
+**A green ifx run is not sufficient.** Build new modules with nvfortran (the multicore back end) too,
+and with gfortran, which on most machines is the second compiler at hand. These eight traps are
+invisible to an ifx dev build:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
   `-O0` — while `ifx -stand f18 -check all` emits only a remark. Bind to a named array first. The
   same optimizer returned 0 for a flux the fast driver formed from fields it read back after the
-  call that filled them, which is why `fast_step` returns the sensible flux `h_flux` itself.
+  call that filled them, so `fast_step` returns the sensible heat flux `h_flux` itself.
 - **nvfortran rejects a `BLOCK` construct** anywhere inside a parallel region.
 - **ifx builds `private` and `firstprivate` copies of a derived type through a compiler-generated
   static mold** that every thread writes. Nor does ifx default-initialise a derived type declared
@@ -68,6 +84,12 @@ each bitten at least once, and each was invisible to ifx:
   copy-out leaves the originals' allocatable components dangling: a segfault a step later, with
   nothing reported by `-fcheck=all`. Keep such objects in a contiguous array of their own, as the
   region keeps its polygons' output buffers.
+- **Never write an array expression over a two-level component section `a(:)%b%c`**, directly or
+  through an `associate`. ifx's AVX-512 code (`MEDS_CPU_TARGET=cascadelake`, which the production
+  preset sets; IPO is not needed) reads such a section from the wrong offsets, while the dev build
+  reads it right: a check of every PFT's leaf apoplastic fraction saw other PFTs' elastic modulus
+  and osmotic potential instead, and refused every PFT file with more than one PFT. The stored
+  values were right. Read such values element by element.
 - **Never nest an implied-do inside a `pack` inside an array constructor**, as in
   `[pack([(i, i = 0, n - 1)], m1), pack([(i, i = 0, n - 1)], m2)]`. nvfortran 25.11 returns wrong
   elements at `-O2` and segfaults at `-O0`. Bind the implied-do to a named array and pack that.
@@ -84,29 +106,25 @@ each bitten at least once, and each was invisible to ifx:
 
 ## Build kinds
 
-| Kind | Use it for | Configure |
-|---|---|---|
-| `debug` | writing or fixing engine code: every bounds, uninitialised-value and floating-point check is on | `cmake --preset debug` |
-| `dev` | everyday work: the tests, short runs, the Python package, comparing outputs between commits | `cmake --preset dev` |
-| `profile` | finding where the time goes (VTune, perf) | `cmake --preset profile` |
-| `production` | long runs: the examples, calibration, regional runs | `cmake --preset production` |
+| Kind | Use it for | Build type and flags | Builds | Configure |
+|---|---|---|---|---|
+| `debug` | writing or fixing engine code: every bounds, uninitialised-value and floating-point check is on | `Debug`: `-O0 -g` and the compiler's runtime checks | `meds_main`, tests | `cmake --preset debug` |
+| `dev` | everyday work: the tests, short runs, the Python package, comparing outputs between commits | `Release`: `-O2`, any x86-64 CPU | `meds_main`, `libmeds.so`, tests | `cmake --preset dev` |
+| `profile` | finding where the time goes (VTune, perf) | dev plus `-g` | as dev | `cmake --preset profile` |
+| `production` | long runs: the examples, calibration, regional runs | dev plus `MEDS_IPO=ON` and `MEDS_CPU_TARGET=cascadelake` | `meds_main`, `libmeds.so` | `cmake --preset production` |
 
 Each preset builds in `build-<kind>` and takes netCDF from the active conda environment
 (`$CONDA_PREFIX`). Run it from the repository root, and choose the compiler with `FC=ifx` (or
-`gfortran`) before `cmake --preset`; presets need CMake ≥ 3.21.
-
-```bash
-FC=ifx cmake --preset dev
-cmake --build build-dev -j
-ctest --test-dir build-dev --output-on-failure
-```
+`gfortran`) before `cmake --preset`; presets need CMake 3.21 or later. Then build and test as in the
+[quick start](#quick-start), with `build-<kind>` for `build-dev`.
 
 A `-D` after `--preset` overrides the preset, and `-B` its directory:
 `cmake --preset dev -DCMAKE_PREFIX_PATH=<netCDF prefix>`. Without presets, the same kinds are
 `-DCMAKE_BUILD_TYPE=Debug|Release`, plus `-DCMAKE_Fortran_FLAGS=-g` for profile and
-`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production, and `-DMEDS_BUILD_PYLIB=ON` for every
-kind but debug. **A configure that names no build type builds dev**, without `libmeds.so` unless it
-adds `-DMEDS_BUILD_PYLIB=ON`. The per-compiler flags live in the `meds_fortran_flags()` function in
+`-DMEDS_IPO=ON -DMEDS_CPU_TARGET=cascadelake` for production, and `-DMEDS_BUILD_PYLIB=ON` (which adds
+`libmeds.so`) for every kind but debug. **A configure that names no build type builds Release (dev)**,
+without `libmeds.so` unless it adds `-DMEDS_BUILD_PYLIB=ON`. `-DMEDS_BUILD_TESTS=OFF` skips the tests
+(the production preset does). The per-compiler flags live in the `meds_fortran_flags()` function in
 `CMakeLists.txt`.
 
 **`build-dev` is the default build.** dev builds `meds_main`, `libmeds.so` and the tests, and the
@@ -116,7 +134,7 @@ measurable build time, because the tests compile its sources anyway and it adds 
 without it, a clean configure and build at `-j 16` takes 44–50 s with ifx and 52–56 s with gfortran,
 and the rebuild after an edit 3–4 s. It compiles every library position-independent (`-fPIC`),
 which leaves every output value of `meds_main` as it is, on ifx and gfortran, and its run time
-within noise. The suite gains the Python package's tests: 86 tests.
+within noise. The suite includes the Python package's tests: 86 tests.
 
 **dev is the reference.** It is the project's `-O2`, for any x86-64 CPU. Outputs are compared between
 commits on dev builds; gfortran dev builds of two commits that change no arithmetic give
@@ -135,7 +153,7 @@ target are offered for ifx and gfortran; nvfortran builds debug and dev.
 
 **production builds `meds_main` and `libmeds.so`, not the tests.** Under IPO each of the 47 test
 programs is a whole-program link of its own, and several tests assert results to the last bit, which
-a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 4 tests fail with ifx and 2 with
+a production build moves at round-off. With `-DMEDS_BUILD_TESTS=ON`, 4 tests fail with ifx and 2 with
 gfortran ([The suite runs on dev](#the-suite-runs-on-dev)). Run the suite on dev. For the same
 reason `meds.model` and `meds_main` agree to round-off on a production build, not bit for bit: each
 is optimised as a whole program of its own.
@@ -180,7 +198,7 @@ Output is **byte-identical at any thread count**, and the test suite asserts it.
 parallel region changes its rounding. On the BCI census example the two builds agree for 62 hours,
 then differ in the 13th significant digit, and the drift reaches about 2% of the largest hourly flux
 after five years. The tower statistics and the stand agree to every printed digit. The stack flag
-below is not the cause: a serial build with only `-auto` reproduces the serial build exactly.
+described next is not the cause: a serial build with only `-auto` reproduces the serial build exactly.
 
 `MEDS_OPENMP` does two things, and the second is load-bearing: it puts the OpenMP flag on the
 fast-loop target, **and it adds the per-compiler "all locals on the stack" flag** (`-auto`,
@@ -208,11 +226,16 @@ of two runs:
   (41.5 s and 56.7 s on the 60-day case). The `no_procedure_arguments` test keeps every MEDS source free of
   them.
 
+**Large runs need a big stack.** The fast loop keeps automatic arrays on the stack, and a threaded
+run takes each thread's stack from `OMP_STACKSIZE`, whose small default overflows on a large region:
+`export OMP_STACKSIZE=512M` before it (and `ulimit -s unlimited` for a serial run with very many
+cohorts). `-DMEDS_HEAP_ARRAYS=ON` moves large automatic arrays to the heap instead, but trips an ifx
+fault in a debug build, so prefer the runtime setting.
+
 **There is no GPU build.** OpenMP `target` offload under nvfortran measured 1.4× slower than the
-CPU (49.8 s against 36.2 s), with one kernel at 0.4 % occupancy, so its build option is removed.
-The measurement and what to do instead are in
-[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md). nvfortran
-threads the host through `MEDS_OPENMP`, as the other compilers do.
+CPU (49.8 s against 36.2 s), with one kernel at 0.4 % occupancy. The measurement and what to do
+instead are in [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md).
+nvfortran threads the host through `MEDS_OPENMP`, as the other compilers do.
 
 ## Installing dependencies
 
@@ -220,7 +243,7 @@ Helper scripts check whether a dependency is already present and prompt before c
 (`-y` to skip the prompt, `-h` for help). They target Debian, Ubuntu and WSL.
 
 ```bash
-./scripts/install_netcdf.sh            # netCDF C library, via conda-forge or apt
+./scripts/install_netcdf.sh            # netCDF C library, via conda-forge or apt (--conda or --apt forces one)
 ./scripts/install_ifx.sh               # Intel ifx via the oneAPI APT repository
 ./scripts/install_gfortran.sh          # GNU gfortran
 ./scripts/install_gfortran.sh --hdf5   # ... plus HDF5 dev files
@@ -231,8 +254,9 @@ Helper scripts check whether a dependency is already present and prompt before c
 
 ## Python and post-processing
 
-The post-processing scripts need Python with **numpy**, **matplotlib**, **netCDF4** and **pillow**.
-The conda environment in [`../environment.yml`](../environment.yml) provides them:
+The post-processing scripts need Python with numpy, matplotlib, netCDF4 and pillow. The tools'
+tests also need pandas and pytest. The conda environment in [`../environment.yml`](../environment.yml)
+provides all of them:
 
 ```bash
 mamba env create -f environment.yml    # or: conda env create -f environment.yml
@@ -254,10 +278,9 @@ ctest --test-dir build-debug -R slow_update --output-on-failure   # one, by rege
 ```
 
 The suite covers allometry round-trips, carbon and area conservation, container integrity, the
-individual physical kernels, the coupled column on both integrators, the output round-trip, the
-conservation ledgers, and a full spin-up. Every C-API shim is compiled by a mandatory test target,
-so an ABI change is a build failure in a default build rather than a silent break in an optional
-one.
+individual physical kernels, the fast step on both integrators, the output round-trip, the
+conservation ledgers, whole runs and restarts. Every C-API shim is compiled by a default test
+target, so an ABI change fails the build instead of breaking the optional Python library unseen.
 
 **One test per `src` module, laid out as `src` is.** ctest `slow_update` is
 `test/slow/test_slow_update.f90`, the test of `src/slow_dynamics/driver/meds_slow_update.f90`; the
@@ -286,10 +309,15 @@ FC=ifx cmake --preset dev -DMEDS_TEST_LONG=ON -DMEDS_ERA5LAND_ARCHIVE=/path/to/E
 ctest --test-dir build-dev -L long --output-on-failure
 ```
 
-`palo_verde_inventory` runs the 2009 inventory (`meds_config_inventory.toml`; 85 s on the example's
-12 threads, ifx dev), reading the archive; `palo_verde_regrowth` the 150 years from bare ground
-(`meds_config_regrowth.toml`; 31 minutes) on Palo Verde's cell, 2003-2022, which it cuts from the
-archive into its directory once (under 2 minutes) unless `-DMEDS_TEST_PV_FORCING=` names a cut file. Each runs a copy of the example's config in `<build>/long/palo_verde_<case>/`, which holds its
+Both runs are in `examples/example05_forest_regeneration/palo_verde/`:
+
+- `palo_verde_inventory` runs the 2009 inventory (`meds_config_inventory.toml`; 85 s on the
+  example's 12 threads, ifx dev), reading the archive.
+- `palo_verde_regrowth` runs 150 years from bare ground (`meds_config_regrowth.toml`; 31 minutes) on
+  Palo Verde's cell, 2003–2022. It cuts that cell from the archive into its directory once (under
+  2 minutes) unless `-DMEDS_TEST_PV_FORCING=` names a cut file.
+
+Each runs a copy of the example's config in `<build>/long/palo_verde_<case>/`, which holds its
 output and its log, and passes when the run completes and its slow ledger closes
 (`test/checks/check_long_run.cmake`). `MEDS_ERA5LAND_ARCHIVE` defaults to `ERA5LAND_ARCHIVE` from the
 environment.
@@ -305,7 +333,7 @@ so the two sides of such a check can be compiled differently and part in the las
 
 | Test | Compiler | The check that fails | Production's value | Tolerance | Cause |
 |---|---|---|---|---|---|
-| `fast_driver` | ifx | the fast tier stages each sub-step's forcing sample exactly | the test's own recomputation of a sample does not equal the staged one; recomputed in a routine of its own, all eight fields match exactly, and printing the difference in place makes the check pass | exact | IPO |
+| `fast_driver` | ifx | the fast loop stages each sub-step's forcing sample exactly | the test's own recomputation of a sample does not equal the staged one; recomputed in a routine of its own, all eight fields match exactly, and printing the difference in place makes the check pass | exact | IPO |
 | `plant_hydraulics` | ifx | a leaf above its closing water content transpires its demand | 1.9999999999999998e-5 against 2e-5: one unit in the last place (3e-21, 2e-16 relative); dev gives 2e-5 exactly | exact | IPO |
 | `plant_hydraulics` | ifx | transpiration's derivative matches finite differences | where the derivative is 0, the finite difference is 2.6e-14, from round-off in the two transpirations it differences 2e-7 apart; dev's is 0 | 1e-15 | IPO |
 | `plant_hydraulics` | gfortran | transpiration's derivative matches finite differences | the same, 5.8e-15 | 1e-15 | FMA under LTO |

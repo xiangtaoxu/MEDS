@@ -99,7 +99,7 @@ contains
       cosz      = max(cosz, 0.0_wp)
    end function solar_cosz
 
-   !----- The equation of time [s], Spencer (1971) (docs/science/forcing.md eq. (2)). -----!
+   !----- The equation of time [s], Spencer (1971) (docs/science/forcing.md eq. (3)). -----!
    pure function equation_of_time(t) result(eot_sec)
       type(meds_time_t), intent(in) :: t
       real(wp) :: eot_sec, b

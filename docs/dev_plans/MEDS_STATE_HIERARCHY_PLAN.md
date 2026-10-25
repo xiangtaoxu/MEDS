@@ -206,7 +206,7 @@ That is 17 per-patch arrays, the same as today: nothing is added or removed.
 **One rename: `soil_column_t` becomes `soil_water_column_t`.** It holds only water (layer moisture and
 the ponded surface water), and the new name pairs it with `soil_energy_column_t`. The type name
 appears 12 times in 4 source files (the two state modules, `meds_fast_types`,
-`meds_biogeochem_types`) and in two science pages (`soil_biophysics.md`, `column_biophysics.md`). The
+`meds_biogeochem_types`) and in two science pages (`soil_biophysics.md`, `coupled_biophysics.md`). The
 field names `soil_w` and `soil_e` stay: they appear 242 times.
 
 ### 3.3 `meds_cohort_state_vars.f90` — the cohort block and everything that lists its fields
@@ -820,7 +820,7 @@ each file's own alignment.
 | `.claude/rules/fast-loop.md` | line 49: "canopy/, plant/ and soil/ link state_column and config only" |
 | `CMakeLists.txt` | the state-layer comment block |
 | `src/fast_dynamics/README.md` | line 24 (the stores live in `state/column`) |
-| `docs/science/` code tables | `canopy_air_space_biophysics.md:101`, `snow_biophysics.md:89`, `soil_biophysics.md:400`, `column_biophysics.md:104` and `:150`, `soil_carbon.md:304`, `order_of_processes.md:244`, `plant_traits.md:105` and `:152`, `diagnostics.md:8` and its other two mentions of the diagnostics module; `soil_column_t` in `soil_biophysics.md` and `column_biophysics.md` |
+| `docs/science/` code tables | `canopy_air_space_biophysics.md:101`, `snow_biophysics.md:89`, `soil_biophysics.md:400`, `coupled_biophysics.md:104` and `:150`, `soil_carbon.md:304`, `order_of_processes.md:244`, `plant_traits.md:105` and `:152`, `diagnostics.md:8` and its other two mentions of the diagnostics module; `soil_column_t` in `soil_biophysics.md` and `coupled_biophysics.md` |
 | `docs/science/plant_carbon_allocation.md` | `carbon_flux_block` becomes `pool_change_block` (with step 5) |
 | `docs/ed2_comparison.md:439` | the state files' paths, now named after `ed_state_vars` |
 | `CHANGELOG.md` | one entry; no user-visible effect |
@@ -903,7 +903,7 @@ demand; where it lives is part of the tissue-energy plan (§9). Bit-identical.
 **Patch-file review (2026-10-18).** The header says why the patch block keeps an array of each store
 rather than an array per field: a store is used whole and one patch at a time, and nothing hot reads a
 field across patches. The annotations are one line each; the mixing rules, with the canopy air's
-air-mass weights, are in `docs/science/column_biophysics.md` ("Mixing two patches", eq. (1)), the
+air-mass weights, are in `docs/science/coupled_biophysics.md` ("Mixing two patches", eq. (1)), the
 per-patch warm start and the pond's energy in `numerical_scheme.md`. `soil_w`, `soil_e` and their
 blends are `soil_water`, `soil_energy`, `blend_soil_water`, `blend_soil_energy` everywhere, the fast
 loop's working column included. The pond's heat is `w_surface_energy`, after the code's convention that

@@ -188,7 +188,7 @@ program test_fast_driver
                  'advance_one_step ran the fast loop when gated on')
 
       !----- CAS DEPTH tracks the stand: refresh_canopy_depth sets it to the tallest cohort plus a   !
-      !      freeboard (docs/science/canopy_air_space_biophysics.md, The three CAS twins).           !
+      !      freeboard (docs/science/canopy_air_space_biophysics.md, the first section).             !
       !      cas_mass_capacity IS the canopy air's heat capacity, so a fixed depth would give a 1 m  !
       !      gap and a 35 m canopy the same response time. Asserted end-to-end through the stepper,  !
       !      because the slow loop owns it. ---------------------------------------------------------!

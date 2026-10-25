@@ -17,9 +17,11 @@ module meds_met_default
                                   FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE, FLD_NIR_BEAM,        &
                                   FLD_NIR_DIFFUSE
    use meds_met_grid, only : nearest_grid_index
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_netcdf_c, only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f,       &
                              nc_get_vara_double, nc_close, nc_inq_var_chunking, nc_error_text,    &
-                             NC_NOERR, NC_NOWRITE, NC_CHUNKED
+                             nc_packing_t, nc_packing_of, nc_unpacked, NC_NOERR, NC_NOWRITE,      &
+                             NC_CHUNKED
    use meds_met_share, only : MET_OK, MET_ERR_HUMIDITY, MET_ERR_FILE, validate_recycle_window,    &
                               first_record_after, validate_file_against_config, humidity_field,   &
                               add_line
@@ -148,13 +150,16 @@ contains
       end block
 
       !----- RHair is a fraction. Written as a percentage it would clip every record to saturation, !
-      !      a silent 100 % sky, so a value no fraction can reach stops the run here. ---------------!
+      !      a silent 100 % sky, so a value no fraction can reach stops the run here. A gap is left  !
+      !      to the step that reads it, which names its record. --------------------------------------!
       if (src%humidity == HUMIDITY_RHAIR) then
          block
             integer(ik) :: j
+            real(wp)    :: rh_max
             j = src%series_col(FLD_RHAIR)
-            if (maxval(src%series(:, j)) > RH_FRACTION_MAX) then
-               write(buf,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),            &
+            rh_max = maxval(src%series(:, j), mask=.not. ieee_is_nan(src%series(:, j)))
+            if (rh_max > RH_FRACTION_MAX) then
+               write(buf,'(a,f0.2,a)') ' met_open: RHair reaches ', rh_max,                                &
                                        ', but it is a fraction (units "1"), not a percentage.'
                call add_line(why, trim(buf))
                stat = MET_ERR_HUMIDITY
@@ -292,7 +297,9 @@ contains
    end subroutine detect_humidity
 
    !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. Each field's    !
-   !      column in the series is found here, once (series_col, 0 for a field the file lacks). -----!
+   !      column in the series is found here, once (series_col, 0 for a field the file lacks). A    !
+   !      value equal to the variable's _FillValue or missing_value is a gap, NaN, which stops the  !
+   !      step that reads it (docs/science/forcing.md §10); a packed variable is unpacked. ---------!
    subroutine read_series(src, ncid, r0, r1, stat, why)
       type(met_source_t),            intent(inout) :: src
       integer(c_int),                intent(in)    :: ncid
@@ -301,6 +308,7 @@ contains
       character(len=:), allocatable, intent(inout) :: why
       integer(c_int)    :: st, vid(N_MEDS_FIELD)
       integer(c_size_t) :: start2(2), count2(2)
+      type(nc_packing_t) :: packing
       logical     :: present_(N_MEDS_FIELD)
       integer(ik) :: j, n
       do j = 1_ik, N_MEDS_FIELD
@@ -320,6 +328,8 @@ contains
          st = nc_get_vara_double(ncid, vid(j), start2, count2, src%series(:, n))
          call check_read(st, 'its '//trim(MEDS_FIELD(j)), src, stat, why)
          if (stat /= MET_OK) return
+         packing = nc_packing_of(ncid, vid(j))
+         src%series(:, n) = nc_unpacked(packing, src%series(:, n))
       end do
    end subroutine read_series
 

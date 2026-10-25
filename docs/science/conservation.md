@@ -1,13 +1,15 @@
 # Conservation checks
 
-MEDS checks that it conserves carbon, water and energy in two ways, one per timescale.
+MEDS checks that it conserves carbon, water and energy in two ways, one per timescale. This page
+describes the second, the slow ledger: what it stores, what each operator may declare, how a verdict is
+reached, and how to read the report.
 
 - **The fast budgets.** Every store of the fast loop closes a budget over every `dt_fast` step: the
   change of the store against the fluxes that crossed its boundary during the step
   ([numerical_scheme](numerical_scheme.md) §5b).
-- **The slow ledger** (`[run].slow_ledger_on`, default on) snapshots the whole site's store before
-  and after each operator of the slow step, and attributes what the operator could not account for
-  to that operator. This page is about the slow ledger.
+- **The slow ledger** (`[run].slow_ledger_on`, default on) snapshots the polygon's store before and
+  after each operator of the slow step, and attributes what the operator could not account for to that
+  operator.
 
 Both are checks of bookkeeping, not of plausibility. Several real leaks have sat behind budgets that
 balanced, because the budget declared the same quantity it consumed (§6).
@@ -26,7 +28,8 @@ by construction:
 The slow ledger is the fast one turned inside out: store before, declared boundary terms, store
 after, and whatever is left is the imbalance.
 
-It is **site-level and area-weighted** because patch identity does not survive the slow step:
+It works on polygon totals, area-weighted over the patches, because patch identity does not survive
+the slow step:
 - the treefall creates a patch;
 - patch fusion destroys one;
 - termination renormalizes every area.
@@ -35,18 +38,19 @@ A per-patch ledger would have nothing to compare against.
 
 ## 2. The store
 
-One total per currency, per m² of the polygon, each patch weighted by its share of it:
+One total per currency, per m² of the polygon (the code's `slow_site_store`), each patch weighted by
+its share of it:
 
 | Currency | Summed over |
 |---|---|
-| carbon [kgC m⁻²] | the cohorts' four pools; the seven CENTURY pools; the canopy air's CO₂; the recruit pools, each plant valued at $`c_{\min}`$ (demography.md §2) |
+| carbon [kgC m⁻²] | the cohorts' four pools; the seven CENTURY pools; the canopy air's CO₂; the recruit pools, each plant valued at $`c_{\min}`$ ([demography](demography.md) §2) |
 | water [kg m⁻²] | the soil layers; the pond; the snow; the canopy air's vapour; the tissues' water and their surface films |
 | energy [J m⁻²] | the soil layers; the pond; the snow; the canopy air; the tissues |
 
 - **The water and energy lists are the fast budgets' own**, through the same store functions, so the
-  two tiers cannot disagree about what exists. Carbon is added here; the fast budgets do not track
-  it.
-- **The recruit pool is a store only this tier sees.** Leaving it out would report a real
+  fast loop and the slow step cannot disagree about what exists. Carbon is added here; the fast budgets
+  do not track it.
+- **The recruit pool is a store only this ledger sees.** Leaving it out would report a real
   carry-forward as a leak.
 - **The lignin is not summed.** It is a sub-state of the structural pools, not carbon of its own.
 - **The canopy air is valued at one air density**, `rho_air_ref`. No fast step runs inside the
@@ -55,7 +59,11 @@ One total per currency, per m² of the polygon, each patch weighted by its share
 
 ## 3. Phases, residuals and declared terms
 
-The slow step is cut into nine phases, each marked at the end of the operators that own it:
+The slow step is cut into nine phases, each marked at the end of the operators that own it. The table
+lists them in the code's order. In a run the stand's restructuring (recruit to patch fuse/term, then
+canopy depth) comes first, at the start of a step that follows a calendar boundary, then tissue water,
+then allocate, grow+mortality, canopy depth and soil carbon
+([order_of_processes](order_of_processes.md) §2, §5).
 
 | Phase | Operators |
 |---|---|
@@ -89,20 +97,20 @@ would hide it. The declared terms:
   (the fixed `gpp_ref` of a run without the fast loop included), so it declares what the allocator
   consumed rather than what a fast loop would have supplied.
 - **The CO₂ owed to the canopy air** (grow+mortality, out): the growth respiration,
-  less the starvation deficit (plant_respiration.md §6). It leaves the plants in this window and
-  reaches the canopy air in the next fast window.
+  less the starvation deficit ([plant_respiration](plant_respiration.md) §6). It leaves the plants in
+  this window and reaches the canopy air in the next fast window.
 - **The litter** (grow+mortality, cohort fuse/fiss, disturbance and patch fuse/term, out; soil carbon,
   in). Declared at both ends, the seam between the live and the dead pools is **tested**, not assumed.
   The cull and the treefall report the carbon they kill, which is declared where they run and arrives
   with the next soil step; grow+mortality declares only the litter its own step adds. With soil carbon
   off, the litter leaves the model as a declared outflow and nothing arrives.
 - **The heterotrophic respiration** (soil carbon, out). The fast loop has already credited it to the
-  canopy air, against the frozen pool. The daily step debits it, and the ledger declares the step's
+  canopy air, against the frozen pool. The soil step debits it, and the ledger declares the step's
   own debit, so what is left in the residual is exactly the seam gap the soil-carbon contract asserts
-  on (soil_carbon.md §7).
+  on ([soil_carbon](soil_carbon.md) §7).
 - **The seed rain** (grow+mortality, in): recruits no parent at the site paid for.
 - **A recruit's draw from outside the model** (recruit, in): its carbon beyond $`c_{\min}`$ per plant,
-  its tissues' heat and its water (demography.md §3). Recruitment is marked in a phase of its own
+  its tissues' heat and its water ([demography](demography.md) §3). Recruitment is marked in a phase of its own
   because it is the one operator that creates matter: what it reports drawing from outside is
   checkable only if nothing else shares the phase. Fusion and fission, which must be exact, share
   theirs.
@@ -157,18 +165,18 @@ The terms:
 - $a$ is an absolute floor per mark: $`10^{-12}`$ kgC, $`10^{-9}`$ kg of water, $`10^{-3}`$ J per m². It
   is per mark so that the tolerance grows with the number of checks, rather than asking a thousand
   round-off errors to cancel.
-- $`10^{-11}|S|`$ is a round-off allowance on the store. A phase that declares nothing can still
-  rearrange about 25 kgC m⁻² of live carbon, at a round-off cost near $`10^{-11}`$, above the floor
-  and far below anything the ledger exists to find. It is a round-off bound, five orders tighter than
-  a store-relative tolerance, which can hide a sustained leak.
+- $`10^{-11}|S|`$ is a round-off allowance on the store $S$. A phase that declares nothing can still
+  rearrange tens of kgC m⁻² of live carbon, at a round-off cost near $`10^{-11}`$ of it, above the
+  floor and far below anything the ledger exists to find. It is a round-off bound, five orders tighter
+  than a store-relative tolerance, which can hide a sustained leak.
 
 How the report works:
 - **The signed sum is reported first.** A one-signed bias below any per-step threshold is invisible
   to a running maximum, and shows up only as a drift over a season.
 - **A residual is read against what the phase declared.** −3e-3 beside a declared 0.5 is a 0.6 %
   loss; the same beside a declared 0 is carbon with no provenance at all.
-- **A breach is reported at the end of the run, not fatal**, as with the fast loop's whole-column
-  budgets: a run that breaches it is telling you something, and stopping it midway tells you less.
+- **A breach is reported at the end of the run, not fatal**, as with the fast loop's budgets: a run
+  that breaches it is telling you something, and stopping it midway tells you less.
 
 ## 6. Plausibility
 
@@ -181,15 +189,17 @@ left behind can exist.
   downstream of a state that was already impossible.
 - It is reported apart from the conservation verdict, because a run can close on all three currencies
   while holding a state that cannot exist.
+- The per-step bounds check stops the run on the same condition ([order_of_processes](order_of_processes.md)
+  §2); the ledger's copy records the phase where it first appeared.
 
 The soil-carbon seam has checks of its own, kept as the run's worst values and reported with the
 ledger:
 - the gap between the daily debit and the fast loop's heterotrophic respiration;
 - the lignin tracer's residual;
 - the largest fraction of a pool one step withdraws, which says whether freezing the pool across the
-  step is sound.
+  step is sound (the report warns above 0.1).
 
-All three are in soil_carbon.md §6–§7, §9.
+All three are in [soil_carbon](soil_carbon.md) §6–§7, §9.
 
 ## Code map
 
@@ -198,8 +208,9 @@ All three are in soil_carbon.md §6–§7, §9.
 | the ledger, its phases and report, eqs. (1)–(2) | `meds_slow_ledger`: `slow_ledger_open`, `slow_ledger_mark`, `slow_ledger_declare`, `slow_ledger_report` |
 | an operator's thermal-mass exchange, §4 | `meds_slow_ledger`: `slow_ledger_heat_open`, `slow_ledger_heat_close` |
 | the store | `meds_slow_ledger`: `slow_site_store`, `slow_tissue_energy`; `meds_patch_state_vars`: `soil_water_store`, `soil_energy_store`, `cas_capacities` |
+| the tolerance's flux scale, $`\epsilon_{\mathrm{flux}}`$ | `meds_budget_check`: `BUDGET_RTOL_FLUX` |
 | the fast loop's net carbon, the CO₂ owed, the litter | `meds_slow_ledger`: `slow_fast_carbon_handover`, `slow_co2_handoff`, `litter_carbon_total` |
 | plausibility | `meds_slow_ledger`: `check_plausible`; `meds_soil_carbon`: `soil_carbon_bad_pool` |
 | the soil-carbon seam's worst values | `meds_slow_ledger`: `slow_ledger_soil_check`, called by `meds_slow_state`: `advance_soil_carbon` |
-| where the phases are marked | `meds_slow_dynamics`: `advance_slow_dynamics`, `vegetation_dynamics`, `restructure_stand` |
+| where the phases are marked | `meds_slow_dynamics`: `advance_slow_dynamics`, `vegetation_dynamics`, `advance_boundary_dynamics`, `restructure_stand`, `settle_tissue_water` |
 | tests | `test/slow/test_slow_ledger.f90` |

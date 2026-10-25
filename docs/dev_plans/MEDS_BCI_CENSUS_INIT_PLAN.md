@@ -1,5 +1,10 @@
 # MEDS BCI census initialization plan
 
+> **Status, 2026-10-25.** The census start of the BCI example is built and ships with example 04
+> ([`examples/example04_column_biophysics/`](../../examples/example04_column_biophysics/)). Open: the
+> census-plot figure (`plot_census.py`) and the validation gates of §8 that need model runs. The
+> status below is from 2026-09-29.
+
 **Status:** written 2026-09-28 against `beta` at `73ab654`, revised the same day after review.
 **First trial implemented 2026-09-29** on `feat/bci-census-init`: P0a–P0c, P1 and the P2 example,
 with the five-year run from the census finishing within the flux period and compared with the tower
