@@ -926,10 +926,141 @@ contains
 end module test_slow_update_birth
 
 !==========================================================================================!
+! The restructuring through the slow ledger, with soil carbon on: one month-and-year       !
+! boundary and the step after it. Every phase runs and closes on all three currencies by   !
+! the report's own test (slow_ledger_failures), each operator declares the carbon it       !
+! moves, ids stay distinct and a new id is never an old one, and the boundary's dead       !
+! carbon reaches the soil with the next step (docs/science/conservation.md §3, §5).        !
+!==========================================================================================!
+module test_slow_update_ledger
+   use meds_kinds,              only : wp, ik
+   use meds_config,             only : meds_config_t
+   use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
+   use meds_patch_state_vars,   only : pack_pool_vector
+   use meds_biogeochem_params,  only : N_SOIL_POOL
+   use meds_init_bare_ground,   only : init_bare_ground, add_cohort, finalize_init
+   use meds_slow_dynamics,      only : advance_boundary_dynamics, advance_slow_dynamics
+   use meds_slow_ledger,        only : slow_ledger_t, slow_ledger_open, slow_ledger_failures,             &
+                                       litter_carbon_total, SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW,         &
+                                       SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT, SLOW_PHASE_DISTURB,         &
+                                       SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC
+   use meds_test_support,       only : banner, build_test_config, check
+   implicit none
+   private
+
+   public :: run_restructure_ledger
+
+contains
+
+   subroutine run_restructure_ledger()
+      integer(ik), parameter :: AT_BOUNDARY(5) = [SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT, SLOW_PHASE_DISTURB,   &
+                                                  SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY]
+      integer(ik), parameter :: IN_STEP(4) = [SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_CANOPY,        &
+                                              SLOW_PHASE_SOILC]
+      character(len=8), parameter :: BOUNDARY_NAME(5) = [character(len=8) :: 'recruit', 'cohort', 'disturb',  &
+                                                         'patch', 'canopy']
+      character(len=8), parameter :: STEP_NAME(4) = [character(len=8) :: 'allocate', 'grow', 'canopy', 'soilc']
+      type(meds_config_t) :: cfg
+      type(polygon_t)     :: poly
+      type(slow_ledger_t) :: led
+      integer(ik), allocatable :: patch_id0(:), cohort_id0(:)
+      integer(ik) :: k, culled_id
+      real(wp)    :: soil0, litter0
+
+      call banner('the restructuring through the slow ledger, soil carbon on')
+      cfg = build_test_config()
+      cfg%soil_carbon%soil_carbon_on = .true.
+      cfg%demography%patch_disturbance_rate = 0.2_wp   ! a gap large enough to kill canopy trees
+
+      !----- Canopy trees the treefall kills, understory it spares, a cohort at the density   !
+      !      floor the cull removes, and a recruit pool that founds a cohort. ----------------!
+      call init_bare_ground(poly, cfg, 3_ik)
+      call add_cohort(poly, cfg, 1_ik, 2_ik, 0.05_wp, 40.0_wp)
+      call add_cohort(poly, cfg, 1_ik, 1_ik, 0.50_wp,  3.0_wp)
+      call add_cohort(poly, cfg, 2_ik, 2_ik, 0.05_wp, 35.0_wp)
+      call add_cohort(poly, cfg, 3_ik, 1_ik, 0.80_wp,  2.0_wp)
+      call finalize_init(poly)
+      poly%cohort%nplant(poly%patch%cohort_offset(3)) = cfg%demography%negligible_nplant
+      culled_id = poly%cohort%global_id(poly%patch%cohort_offset(3))
+      poly%patch%recruit_pool(:, 1) = 2.0_wp * cfg%demography%min_recruit_size
+      patch_id0  = poly%patch%global_id(1:poly%patch%n)
+      cohort_id0 = poly%cohort%global_id(1:poly%cohort%n)
+
+      !----- The boundary: every phase runs and closes, and each operator declared what it moved. !
+      led%active = .true.
+      call slow_ledger_open(led, poly, cfg)
+      call advance_boundary_dynamics(poly, cfg, .true., .true., led)
+      do k = 1_ik, size(AT_BOUNDARY, kind=ik)
+         call check(led%n_mark(AT_BOUNDARY(k)) > 0_ik, 'the boundary''s '//trim(BOUNDARY_NAME(k))//' phase ran')
+         call check(slow_ledger_failures(led, AT_BOUNDARY(k)) == 0_ik,                                     &
+                    'the boundary''s '//trim(BOUNDARY_NAME(k))//' phase closes on carbon, water and energy')
+      end do
+      call check(led%decl_gross(SLOW_PHASE_RECRUIT)%carbon > 0.0_wp, 'a recruit''s carbon is declared')
+      call check(led%decl_gross(SLOW_PHASE_COHORT)%carbon > 0.0_wp, 'the cull''s dead carbon is declared')
+      call check(led%decl_gross(SLOW_PHASE_DISTURB)%carbon > 0.0_wp, 'the treefall''s dead carbon is declared')
+
+      !----- Persistent ids: distinct, and a new one is never one used before. ----------------!
+      call check(all_distinct(poly%patch%global_id(1:poly%patch%n)), 'every patch has a distinct id')
+      call check(all_distinct(poly%cohort%global_id(1:poly%cohort%n)), 'every cohort has a distinct id')
+      call check(new_ids_are_new(poly%patch%global_id(1:poly%patch%n), patch_id0),                      &
+                 'a gap takes an id never used before')
+      call check(new_ids_are_new(poly%cohort%global_id(1:poly%cohort%n), cohort_id0),                   &
+                 'a recruit or a split takes an id never used before')
+      call check(.not. any(poly%cohort%global_id(1:poly%cohort%n) == culled_id), 'the culled cohort''s id is gone')
+
+      !----- The step after: the boundary's dead carbon reaches the soil, and its phases close. !
+      litter0 = litter_carbon_total(poly, poly%patch%litter_in)
+      call check(litter0 > 0.0_wp, 'the boundary''s dead carbon waits in the litter')
+      soil0 = soil_carbon_total(poly)
+      call advance_slow_dynamics(poly, cfg, led)
+      call check(soil_carbon_total(poly) - soil0 >= litter0 * (1.0_wp - 1.0e-12_wp),                    &
+                 'the next soil step takes the boundary''s dead carbon up')
+      call check(litter_carbon_total(poly, poly%patch%litter_in) == 0.0_wp,                             &
+                 'the litter accumulator ends the step empty')
+      do k = 1_ik, size(IN_STEP, kind=ik)
+         call check(slow_ledger_failures(led, IN_STEP(k)) == 0_ik,                                         &
+                    'the step''s '//trim(STEP_NAME(k))//' phase closes on carbon, water and energy')
+      end do
+   end subroutine run_restructure_ledger
+
+   logical function all_distinct(ids)
+      integer(ik), intent(in) :: ids(:)
+      integer(ik) :: i
+      all_distinct = .true.
+      do i = 2_ik, size(ids, kind=ik)
+         if (any(ids(1:i - 1) == ids(i))) all_distinct = .false.
+      end do
+   end function all_distinct
+
+   !----- Every id not in `old` exceeds all of them: ids are never reused. -----------------!
+   logical function new_ids_are_new(ids, old)
+      integer(ik), intent(in) :: ids(:), old(:)
+      integer(ik) :: i
+      new_ids_are_new = .true.
+      do i = 1_ik, size(ids, kind=ik)
+         if (.not. any(old == ids(i)) .and. ids(i) <= maxval(old)) new_ids_are_new = .false.
+      end do
+   end function new_ids_are_new
+
+   !----- The CENTURY pools over the polygon [kgC/m2]. --------------------------------------!
+   real(wp) function soil_carbon_total(poly)
+      type(polygon_t), intent(in) :: poly
+      real(wp)    :: x(N_SOIL_POOL)
+      integer(ik) :: ip
+      soil_carbon_total = 0.0_wp
+      do ip = 1_ik, poly%patch%n
+         call pack_pool_vector(poly%patch%soil_carbon(ip), x)
+         soil_carbon_total = soil_carbon_total + patch_polygon_area(poly, ip) * sum(x)
+      end do
+   end function soil_carbon_total
+
+end module test_slow_update_ledger
+
+!==========================================================================================!
 ! test_slow_update -- the operators of meds_slow_update, the one writer of the stand's     !
 ! carbon and structure (docs/science/demography.md §2-§4): the commit, cohort fusion and   !
-! fission, the treefall gaps, patch fusion and termination, and a recruit's birth state.   !
-! One module per section.                                                                  !
+! fission, the treefall gaps, patch fusion and termination, a recruit's birth state, and   !
+! the restructuring through the slow ledger with soil carbon on. One module per section.   !
 !==========================================================================================!
 program test_slow_update
    use test_slow_update_commit, only : run_commit
@@ -937,6 +1068,7 @@ program test_slow_update
    use test_slow_update_gaps, only : run_treefall_gaps
    use test_slow_update_patches, only : run_patch_operators
    use test_slow_update_birth, only : run_birth_state
+   use test_slow_update_ledger, only : run_restructure_ledger
    use meds_test_support, only : test_report
    implicit none
 
@@ -945,6 +1077,7 @@ program test_slow_update
    call run_treefall_gaps()
    call run_patch_operators()
    call run_birth_state()
+   call run_restructure_ledger()
 
    call test_report('test_slow_update')
 end program test_slow_update
