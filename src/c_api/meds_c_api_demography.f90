@@ -134,9 +134,9 @@ contains
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
       type(slow_ledger_t) :: no_ledger   !< inactive: this path books no ledger
-      !----- The litter this step accumulates lands in poly%patch%litter_in and is left there: no
-      !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
-      !      wired here either. The accumulator starts each step empty.
+      !----- The litter this step accumulates lands in poly%patch%litter_in and is left there: this
+      !      path steps the stand's demography alone and runs no soil step. The accumulator starts
+      !      each step empty.
       call clear_litter(g_poly(sh))
       call vegetation_dynamics(g_poly(sh), g_cfg(ch), no_ledger)
       call age_patches(g_poly(sh)%patch, g_cfg(ch)%dt_years)

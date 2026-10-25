@@ -1363,19 +1363,21 @@ end module test_slow_step_mortality
 
 !==========================================================================================!
 ! The soil-carbon seam through the real driver: the daily step's Rh is the fast loop's,    !
-! the pool moves and stays non-negative, and soil carbon off leaves it untouched.          !
+! the pool moves and stays non-negative, and soil carbon off leaves it untouched; without  !
+! the fast loop the pools decay at spinup_xi and there is no seam.                         !
 !==========================================================================================!
 module test_slow_step_seam
    use meds_kinds,               only : wp, ik
    use meds_biogeochem_params,   only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, &
-                                        IP_SLOW
+                                        IP_SLOW, N_SOIL_POOL
+   use meds_respiration,         only : decomposition_transfer_matrix
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_soil_params,         only : soil_profile_t
    use meds_polygon_state_vars,  only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_constants,     only : n_soil_layer_max
+   use meds_constants,     only : n_soil_layer_max, day_sec
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
@@ -1487,6 +1489,31 @@ contains
          call advance_slow_dynamics(poly2, cfg, no_ledger)
          totalB = sum(poly2%patch%soil_carbon(1)%carbon)
          call check_close(totalB, totalA, 1.0e-12_wp, 'soil_carbon_on=.false.: pool exactly untouched')
+      end block
+
+      !=== 3. WITHOUT THE FAST LOOP the pools decay at spinup_xi over the step and there is no seam  !
+      !    (soil_carbon.md §7). Lambda, the step's largest xi_int * k, is then spinup_xi times the   !
+      !    step's days times the largest decay rate; with xi_int left at zero it was 0. =============!
+      block
+         type(polygon_t)     :: poly3
+         type(slow_ledger_t) :: seam3
+         real(wp) :: a_mat(N_SOIL_POOL, N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
+         real(wp), parameter :: XI = 0.4_wp
+         cfg%soil_carbon%soil_carbon_on = .true.
+         cfg%fast_biophysics_on         = .false.
+         cfg%soil_carbon%spinup_xi      = XI
+         call init_bare_ground(poly3, cfg, 1_ik)
+         call use_test_column(poly3)
+         call add_cohort(poly3, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
+         call finalize_init(poly3)
+         call init_fast_state(poly3, cfg)
+         poly3%patch%soil_carbon(1)%carbon(IP_FAST_GRND) = 2.0_wp
+         poly3%patch%soil_carbon(1)%carbon(IP_SLOW)      = 500.0_wp
+         call decomposition_transfer_matrix(poly3%patch%soil_carbon(1), cfg%soil_carbon, a_mat, k_diag, er)
+         call advance_slow_dynamics(poly3, cfg, seam3)
+         call check_close(seam3%worst_lambda, XI * cfg%dt_slow / day_sec * maxval(k_diag), 1.0e-12_wp,  &
+                          'no fast loop: the pools decay at spinup_xi over the step')
+         call check_true('no fast loop: no seam gap', seam3%worst_rh_gap == 0.0_wp, seam3%worst_rh_gap)
       end block
    end subroutine run_soil_seam
 

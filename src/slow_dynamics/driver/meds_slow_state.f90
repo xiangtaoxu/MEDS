@@ -689,7 +689,9 @@ contains
    ! poly%patch%litter_in (turnover, mortality, and the kills of the boundary before it),  !
    ! into pools_new, which meds_slow_update's commit_soil_carbon   !
    ! writes. The ledger keeps the run's worst Rh gap, lignin residual and lambda           !
-   ! (soil_carbon.md §6-§7, §9).                                                           !
+   ! (soil_carbon.md §6-§7, §9). Without the fast loop there is no soil climate to         !
+   ! integrate: the pools decay at the fixed scalar spinup_xi, as GPP runs at gpp_ref, and !
+   ! there is no seam (soil_carbon.md §7).                                                 !
    !---------------------------------------------------------------------------------------!
    subroutine advance_soil_carbon(poly, cfg, ledger, pools_new)
       type(polygon_t),       intent(in)    :: poly
@@ -699,6 +701,7 @@ contains
       type(slow_ledger_t),   intent(inout) :: ledger
       type(soil_carbon_state_t), allocatable, intent(out) :: pools_new(:)   !< (patch) the pools after the step
       real(wp)             :: u(N_SOIL_POOL), lignin_in(2), rh_today
+      real(wp)             :: xi_int(N_SOIL_POOL)   !< [day] the scalar integrated over the step
       type(soil_carbon_out_t) :: out
       integer(ik)          :: ip
 
@@ -714,12 +717,18 @@ contains
       do ip = 1_ik, poly%patch%n
          call build_litter_input(poly%patch%litter_in(ip), u, lignin_in)
          associate (xa => poly%patch%decomp_xi(ip))
-            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xa%xi_days, cfg%soil_carbon, &
+            if (cfg%fast_biophysics_on) then
+               xi_int = xa%xi_days
+            else
+               xi_int = cfg%soil_carbon%spinup_xi * cfg%dt_slow / day_sec
+            end if
+            call soil_carbon_step(poly%patch%soil_carbon(ip), u, lignin_in, xi_int, cfg%soil_carbon,     &
                                   rh_today, out)
             pools_new(ip) = out%pools
             !----- The assertion guard (soil_carbon.md §7): rh_today, the matrix's own     !
             !      debit, should equal the fast loop's accumulated Rh. --------------------!
-            out%rh_seam_gap = rh_today - xa%rh_fast
+            out%rh_seam_gap = 0.0_wp
+            if (cfg%fast_biophysics_on) out%rh_seam_gap = rh_today - xa%rh_fast
             call slow_ledger_soil_check(ledger, out, poly%patch%n)
             !----- Declare the matrix's own Rh debit (conservation.md §3): what is left in !
             !      the residual is the fast/slow seam gap. --------------------------------!
