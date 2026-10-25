@@ -23,6 +23,12 @@
 !      W = exp(-(LAI + WAI)); a bare patch couples as CLM5 couples bare soil.              !
 !   7. TIED COHORTS (canopy_aerodynamics, eq. (8)): a crown split into two cohorts of half !
 !      the leaf area meets the wind the whole crown does, and so does the cohort below.    !
+!   8. CALLER ORDER (canopy_aerodynamics): cohorts handed over tallest first, with the     !
+!      order the gather forms, the tall one meets the top's wind and the larger boundary   !
+!      layer; the wood's boundary layer follows the wood's temperature, not the leaves'.   !
+!   9. THE REFERENCE LEVEL (canopy_aerodynamics, §2): canopy air at the temperature and    !
+!      humidity of the air at the canopy-air top is neutral, with no temperature scale,    !
+!      whatever the reference height.                                                      !
 !==========================================================================================!
 program test_canopy_aerodynamics
    use meds_test_assert,         only : check, check_true, test_report
@@ -30,7 +36,9 @@ program test_canopy_aerodynamics
    use meds_constants,           only : von_karman
    use meds_biophysics_params,   only : aero_params_t
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity,          &
-                                        canopy_aerodynamics, mo_surface_layer, open_canopy_fraction
+                                        canopy_aerodynamics, mo_surface_layer, open_canopy_fraction,             &
+                                        set_aero_env_atm, set_aero_env_canopy
+   use meds_numerics,            only : ascending_order
    implicit none
 
    call test_neutral()
@@ -40,6 +48,8 @@ program test_canopy_aerodynamics
    call test_two_cohorts()
    call test_open_canopy()
    call test_tied_layer()
+   call test_caller_order()
+   call test_reference_level()
 
    call test_report('test_canopy_aerodynamics')
 
@@ -283,5 +293,74 @@ contains
                  one%wind(1), 1.0e-14_wp)
       call check('tied: the same leaf boundary layer', split%leaf_gbh(3), one%leaf_gbh(2), 1.0e-14_wp)
    end subroutine test_tied_layer
+
+   !----- 8. The caller's cohort order. canopy_aerodynamics takes the cohorts bottom to top through   !
+   !      the order it is handed, from arrays the gather leaves tallest first, so the tall cohort      !
+   !      (index 1) meets the canopy top's wind and the larger boundary layer and the short one the    !
+   !      attenuated wind; handing the gather order straight to the kernel inverts this. The wood's    !
+   !      boundary layer follows the wood's own temperature (free convection is driven by the          !
+   !      surface-air difference), which catches one temperature array passed for both, letting a      !
+   !      warm leaf raise the wood's conductance. ---------------------------------------------------!
+   subroutine test_caller_order()
+      type(aero_params_t) :: cfg
+      type(aero_env_t)    :: env
+      type(aero_args_t)   :: geom
+      type(aero_out_t)    :: out, ref, warm_leaf, warm_wood
+      integer(ik), parameter :: N = 2_ik
+      real(wp), parameter :: HEIGHT(N) = [18.0_wp, 6.0_wp], LAI(N) = [2.0_wp, 2.0_wp]   ! tallest first
+      real(wp), parameter :: LW(N) = [0.04_wp, 0.04_wp], BD(N) = [0.02_wp, 0.02_wp]
+      integer(ik) :: order(N)
+      real(wp)    :: t_air(N), t_warm(N)
+      call ascending_order(HEIGHT, N, order)                 ! as the gather forms it
+      env%u_ref = 3.0_wp
+      geom%veg_height   = 18.0_wp
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
+      call ensure_aero_out_capacity(out, N)
+      call canopy_aerodynamics(cfg, env, geom, N, order, HEIGHT, LAI, [300.0_wp, 300.0_wp], [300.0_wp, 300.0_wp], &
+                               LW, BD, out)
+      call check_true('caller order: the tall cohort (index 1) meets more wind', out%wind(1) > out%wind(2),        &
+                      out%wind(1) - out%wind(2))
+      call check_true('caller order: the tall cohort has the larger leaf boundary layer',                          &
+                      out%leaf_gbw(1) > out%leaf_gbw(2), out%leaf_gbw(1) - out%leaf_gbw(2))
+      t_air  = env%can_temp
+      t_warm = env%can_temp + 8.0_wp
+      call ensure_aero_out_capacity(ref, N)
+      call ensure_aero_out_capacity(warm_leaf, N)
+      call ensure_aero_out_capacity(warm_wood, N)
+      call canopy_aerodynamics(cfg, env, geom, N, order, HEIGHT, LAI, t_air, t_air, LW, BD, ref)
+      call canopy_aerodynamics(cfg, env, geom, N, order, HEIGHT, LAI, t_warm, t_air, LW, BD, warm_leaf)
+      call canopy_aerodynamics(cfg, env, geom, N, order, HEIGHT, LAI, t_air, t_warm, LW, BD, warm_wood)
+      call check_true('the wood''s boundary layer ignores the leaf temperature',                                   &
+                      all(warm_leaf%wood_gbh(1:N) == ref%wood_gbh(1:N)), maxval(abs(warm_leaf%wood_gbh(1:N) - ref%wood_gbh(1:N))))
+      call check_true('warm leaves raise the leaf boundary layer (free convection)',                               &
+                      all(warm_leaf%leaf_gbh(1:N) > ref%leaf_gbh(1:N)), minval(warm_leaf%leaf_gbh(1:N) - ref%leaf_gbh(1:N)))
+      call check_true('warm wood raises the wood boundary layer (free convection)',                                &
+                      all(warm_wood%wood_gbh(1:N) > ref%wood_gbh(1:N)), minval(warm_wood%wood_gbh(1:N) - ref%wood_gbh(1:N)))
+   end subroutine test_caller_order
+
+   !----- 9. The reference level (docs/science/canopy_aerodynamics.md §2, "The reference level"): the !
+   !      surface layer compares the canopy air with the air at the canopy-air top, both referenced  !
+   !      to that level, so canopy air at the temperature and humidity of the air there is neutral,  !
+   !      with no temperature scale, whatever zref is. Referencing only the air to the ground would  !
+   !      solve it as stable, tstar = heat_transfer_factor*(g/cp)*zref. -------------------------!
+   subroutine test_reference_level()
+      type(aero_params_t) :: cfg
+      type(aero_env_t)    :: env
+      type(aero_args_t)   :: geom
+      type(aero_out_t)    :: out
+      integer(ik) :: order(1)
+      call ascending_order([38.0_wp], 1_ik, order)
+      geom%veg_height   = 38.0_wp
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
+      call set_aero_env_atm(env, 3.0_wp, 43.0_wp, 300.0_wp, 0.015_wp)
+      call set_aero_env_canopy(env, 300.0_wp, 0.015_wp, 300.0_wp)
+      call ensure_aero_out_capacity(out, 1_ik)
+      call canopy_aerodynamics(cfg, env, geom, 1_ik, order, [38.0_wp], [5.0_wp], [300.0_wp], [300.0_wp], [0.04_wp], &
+                               [0.02_wp], out)
+      call check('reference level: canopy air like the air above has no temperature scale', out%tstar, 0.0_wp, 0.0_wp)
+      call check('reference level: canopy air like the air above is neutral', out%zeta, 0.0_wp, 0.0_wp)
+   end subroutine test_reference_level
 
 end program test_canopy_aerodynamics

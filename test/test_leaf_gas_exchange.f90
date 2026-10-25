@@ -19,6 +19,8 @@
 !   8. O2 (eq. (3)): oxygen reaches Gamma* as well as the Michaelis term.                  !
 !   9. PRESSURE (rubisco_kinetics, eq. (3)): Gamma* as a mole fraction does not depend on  !
 !      pressure; Kc and Ko are partial pressures.                                          !
+!  10. A COHORT'S LEAF PAR (cohort_leaf_par): its absorbed PAR per unit of its own leaf    !
+!      area, the same for a thin cohort as a thick one, none for a leafless one.           !
 ! The temperature responses are test_therm_lib's.                                          !
 !==========================================================================================!
 program test_leaf_gas_exchange
@@ -31,7 +33,7 @@ program test_leaf_gas_exchange
    use meds_leaf_params,        only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_leaf_gas_exchange,  only : assimilation_demand_c3, rubisco_kinetics, stomata_gs_medlyn,          &
                                        solve_leaf_gas_exchange, leaf_env_t, leaf_out_t, LIM_NONE,         &
-                                       LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
+                                       LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP, cohort_leaf_par
    use meds_test_support,       only : banner, build_test_config, check, check_close
    implicit none
 
@@ -447,6 +449,16 @@ program test_leaf_gas_exchange
       call rubisco_kinetics(pp, t_kelvin + 35.0_wp, 70000.0_wp, kc_high, ko_high, gstar_high, o2_high)
       call check(gstar_high == gstar_low, 'Gamma* in umol/mol does not depend on pressure at 35 C')
    end block
+
+   !=== 10. A cohort's leaf PAR is its absorbed PAR per unit of its own leaf area: a thin cohort's  !
+   !        leaves see the same light as a thick one's when each absorbs in proportion to its leaf  !
+   !        area, and a leafless cohort sees none. 5 W/m2 absorbed by LAI 0.05 at 4.6 umol/J is     !
+   !        460 umol/m2 leaf/s. =================================================================!
+   call check_close(cohort_leaf_par(5.0_wp, 0.05_wp, 4.6_wp), 460.0_wp, 1.0e-12_wp,                    &
+                    'the leaf PAR of a thin cohort (LAI 0.05) is its own')
+   call check_close(cohort_leaf_par(5.0_wp, 0.05_wp, 4.6_wp), cohort_leaf_par(50.0_wp, 0.5_wp, 4.6_wp), 1.0e-12_wp, &
+                    'the leaf PAR does not depend on the cohort''s thickness')
+   call check(cohort_leaf_par(0.0_wp, 0.0_wp, 4.6_wp) == 0.0_wp, 'a leafless cohort absorbs nothing and sees no PAR')
 
    write(*,'(a)') '   PASS'
 
