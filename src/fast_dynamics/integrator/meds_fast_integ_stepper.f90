@@ -123,15 +123,8 @@ contains
          !      stays 0. -----------------------------------------------------------------------------!
          out%report%work(WORK_CLAMP_STAGE) = 0_ik
          out%report%theta_ood_max = 0.0_wp
-         if (cfg%esdirk2_adaptive) then
-            call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, work, nsteps, nrej,    &
-                                acc=acc, dt_warm_out=dt_warm, clamp_n=out%report%work(WORK_CLAMP_STAGE))
-         else
-            nsteps = max(1_ik, cfg%esdirk2_fixed_substep)
-            nrej   = 0_ik
-            call fixed_march(y, frozen, site, n, nsl, dt_fast, nsteps, ec, work, y_out, acc,                    &
-                             out%report%work(WORK_CLAMP_STAGE))
-         end if
+         call adaptive_march(INTEG_ESDIRK2, y, frozen, site, n, nsl, dt_fast, ec, dt0, y_out, work, nsteps, nrej,       &
+                             acc=acc, dt_warm_out=dt_warm, clamp_n=out%report%work(WORK_CLAMP_STAGE))
       end if
       !----- Work counters; the water network's own work is counted in water_step. -----------------!
       out%report%work(WORK_INTEG_STEPS)  = nsteps
@@ -179,7 +172,7 @@ contains
       real(wp),    optional, intent(inout) :: ood_max
 
       type(boundary_flux_t) :: bfsub
-      real(wp)             :: t, dt, err, err_prev, fac, dt_floor
+      real(wp)             :: t, dt, err, fac, dt_floor
       real(wp)             :: dt_try, dt_warm
       integer(ik)          :: trial_cap, k
       logical              :: clamped
@@ -198,7 +191,6 @@ contains
          dt = min(dt_init, t_end)
          nsteps = 0_ik
          nrej = 0_ik
-         err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
          dt_warm = dt                                                ! fallback if every step is end-clamped
          do
             if (t >= t_end - tiny_num) exit
@@ -238,13 +230,12 @@ contains
                dt = max(dt * ec%fmin, dt_floor)
                cycle
             end if
-            fac = step_control_factor(err, err_prev, ec)             ! I (default) or PI (Gustafsson) controller
+            fac = step_control_factor(err, ec)
             if (err <= 1.0_wp .or. dt <= dt_floor) then
                call state_init(y_new, n, nsl, y)
                if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate only accepted sub-steps
                t = t + dt
                nsteps = nsteps + 1_ik
-               err_prev = err                                        ! remember for the PI controller
                !----- The warm-start seed is the step just accepted, before the growth factor: a grown   !
                !      proposal over-estimates (docs/science/numerical_scheme.md §3 `esdirk2`). A step the    !
                !      interval's end cut short can only raise it, to the step the controller asked for     !
@@ -266,33 +257,6 @@ contains
          if (present(dt_warm_out)) dt_warm_out = dt_warm
       end associate
    end subroutine adaptive_march
-
-   !----- ESDIRK2 in nsub equal steps without error control, the fixed-sub-step path            !
-   !      ([fast].esdirk2_adaptive = false): acc sums their boundary-flux amounts. ---------------!
-   subroutine fixed_march(y0, frozen, site, n, nsl, t_end, nsub, ec, work, y_out, acc, clamp_n)
-      type(march_state_t),   intent(in)    :: y0
-      type(frozen_t),  intent(in)    :: frozen
-      type(site_surface_t),   intent(in)    :: site
-      integer(ik),            intent(in)    :: n, nsl, nsub
-      real(wp),               intent(in)    :: t_end
-      type(error_control_t),  intent(in)    :: ec
-      type(fast_workspace_t), intent(inout) :: work
-      type(march_state_t),   intent(inout) :: y_out
-      type(boundary_flux_t),   intent(out)   :: acc
-      integer(ik),            intent(inout) :: clamp_n
-      type(march_state_t) :: ycur, ytmp, yerr
-      type(boundary_flux_t) :: bfsub
-      integer(ik)          :: isub
-      ycur = y0
-      call bflux_zero(acc, n)
-      do isub = 1_ik, nsub
-         call esdirk2_step(ycur, frozen, site, ec, n, nsl, t_end/real(nsub, wp), ytmp, yerr, work%stages,     &
-                               bf=bfsub, clamp_n=clamp_n)
-         call bflux_add(acc, bfsub)
-         ycur = ytmp
-      end do
-      y_out = ycur
-   end subroutine fixed_march
 
    !---------------------------------------------------------------------------------------!
    ! atm_fluxes -- the canopy-air -> atmosphere fluxes the run reports, from the ledger's own  !

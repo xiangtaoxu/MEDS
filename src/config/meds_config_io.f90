@@ -13,7 +13,7 @@ module meds_config_io
    use meds_config,     only : meds_config_t, derive_parameters, alloc_pft_table, INIT_CENSUS,        &
                                INIT_RESTART
    use meds_pft_derive, only : pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, CTRL_I, CTRL_PI, RK45_RTOL
+   use meds_fast_params,   only : INTEG_ESDIRK2, INTEG_RK45, RK45_RTOL
    use meds_soil_params,   only : soil_params_t, ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET,           &
                                   SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_region_params, only : RUN_MODE_SITE, RUN_MODE_REGION
@@ -289,7 +289,6 @@ contains
       !      (docs/science/numerical_scheme.md §3). -----------------------------------------------------!
       call opt_choice(tm, 'fast.time_integrator', [character(len=NAME_LEN) :: 'esdirk2', 'rk45'],          &
                       [INTEG_ESDIRK2, INTEG_RK45], cfg%time_integrator, m)
-      cfg%esdirk2_adaptive  = toml_logical(tm, 'fast.esdirk2_adaptive',  .true.)
       !----- rtol's default is the integrator's: RK45 takes its own (meds_fast_params). ------------!
       cfg%rtol              = toml_real   (tm, 'fast.rtol',                                            &
                                            merge(RK45_RTOL, cfg%rtol, cfg%time_integrator == INTEG_RK45))
@@ -297,9 +296,6 @@ contains
       cfg%atol_scale        = toml_real   (tm, 'fast.atol_scale',        1.0_wp)
       cfg%water_atol        = toml_real   (tm, 'fast.water_atol',        cfg%water_atol)
       cfg%forcing_sample_frac = toml_real (tm, 'fast.forcing_sample_frac', 0.5_wp)
-      call opt_choice(tm, 'fast.step_controller', [character(len=NAME_LEN) :: 'i', 'pi'],                  &
-                      [CTRL_I, CTRL_PI], cfg%step_controller, m)
-      cfg%esdirk2_fixed_substep = toml_int    (tm, 'fast.esdirk2_fixed_substep', 4_ik)
       cfg%soil_energy_budget_atol = toml_real(tm, 'fast.soil_energy_budget_atol', cfg%soil_energy_budget_atol)
       !----- fast.debug_error: true stops the run on a budget that does not close (the               !
       !      integrators' budget checks and the soil heat's closure check), false reports the        !

@@ -200,18 +200,15 @@ Both schemes judge a sub-step by the same weighted root-mean-square of their err
 $`a_g`$ is the group's absolute tolerance, times `atol_scale` (soil moisture's is `[fast].water_atol`);
 $`r_g`$ is `[fast].rtol`, the same for every group. The canopy films and the
 pond carry no group. A sub-step with $`\lVert\varepsilon\rVert\le 1`$ is accepted, and the next one is
-scaled by the I controller or, with `step_controller = "pi"`, the PI controller:
+scaled by the integral controller:
 
 ```math
 \frac{h_{new}}{h} = \mathrm{clamp}\!\left(s\,\lVert\varepsilon\rVert^{-1/(p+1)},\ f_{min},\ f_{max}\right)
-\quad\text{or}\quad
-\frac{h_{new}}{h} = \mathrm{clamp}\!\left(s\,\lVert\varepsilon\rVert^{-\alpha}\,
-\lVert\varepsilon_{prev}\rVert^{\beta},\ f_{min},\ f_{max}\right)
 \qquad(4)
 ```
 
-with $p$ the order of the embedded estimate (1 for `esdirk2`, 4 for `rk45`), $s = 0.9$, $`f_{min} = 0.2`$,
-$`f_{max} = 5`$, $\alpha = 0.35$ and $\beta = 0.20$.
+with $p$ the order of the embedded estimate (1 for `esdirk2`, 4 for `rk45`), $s = 0.9$, $`f_{min} = 0.2`$
+and $`f_{max} = 5`$.
 
 ### `rk45` — adaptive explicit Cash–Karp 5(4), ED2-style
 
@@ -550,7 +547,6 @@ dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s
                                  # the timing of dry-season leaf habits.
 rtol                = 2.0e-3     # relative accuracy of every group (adaptive schemes only)
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
-step_controller     = "i"        # "pi" damps step oscillation on stiff transients
 forcing_sample_frac = 0.5        # where in the sub-step the meteorology is sampled
 debug_error         = false      # true = HALT on a non-closing budget. Use it when validating a
                                  # change to any flux seam; leave it off for production.

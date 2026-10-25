@@ -15,10 +15,9 @@
 !   4. ESDIRK2 AND RK45 AGREE on a forced day at the shipped 900 s: both close every       !
 !      ledger, and the day's sensible and latent heat, net radiation, GPP, NEE, ground     !
 !      heat and transpiration agree within what their error control allows.                 !
-!   5. THE LEDGERS ON EVERY PATH, on both schemes: a dry day (ESDIRK2's fixed sub-step     !
-!      too), steady rain, shed water, canopy films; a sealed column saturating and         !
-!      ponding; a free-draining one saturating under a storm (ESDIRK2); an aquifer wetting !
-!      a dry column from below.                                                            !
+!   5. THE LEDGERS ON EVERY PATH, on both schemes: a dry day, steady rain, shed water,     !
+!      canopy films; a sealed column saturating and ponding; a free-draining one          !
+!      saturating under a storm (ESDIRK2); an aquifer wetting a dry column from below.     !
 !   6. SNOW: a melting pack, shed water under a pack and snowfall each close the column's  !
 !      water and energy on both schemes; snowfall arrives in the column; snowfall too light !
 !      to start a pack reaches the ground as ice.                                           !
@@ -119,11 +118,10 @@ contains
    ! Helpers.                                                                              !
    !=======================================================================================!
 
-   !----- Run the column on a scheme, ESDIRK2 adaptively. -------------------------------------------!
+   !----- Run the column on a scheme. --------------------------------------------------------------!
    subroutine use_scheme(scheme)
       integer(ik), intent(in) :: scheme
       col%cfg%time_integrator = scheme
-      col%cfg%esdirk2_adaptive = .true.
    end subroutine use_scheme
 
    character(len=7) function scheme_name(scheme) result(nm)
@@ -415,10 +413,10 @@ contains
    ! 5. THE LEDGERS ON EVERY PATH.                                                            !
    !=======================================================================================!
 
-   !----- A dry day over moist free-draining soil, at RK45's shipped tolerance, on ESDIRK2         !
-   !      (adaptive and on four fixed sub-steps) and RK45: all seven ledgers close on every         !
-   !      dispatched step, the canopy air's energy and the whole column's to round-off, and the     !
-   !      state stays physical and the canopy air below saturation all day. ----------------------!
+   !----- A dry day over moist free-draining soil, at RK45's shipped tolerance, on ESDIRK2 and     !
+   !      RK45: all seven ledgers close on every dispatched step, the canopy air's energy and the   !
+   !      whole column's to round-off, and the state stays physical and the canopy air below       !
+   !      saturation all day. -------------------------------------------------------------------!
    subroutine test_dry_day()
       type(day_t) :: d
       character(len=16) :: tag
@@ -427,16 +425,11 @@ contains
       print '(a)', 'test_dry_day:'
       rtol0 = col%cfg%rtol
       col%cfg%rtol = RK45_RTOL
-      do ir = 1_ik, 3_ik
+      do ir = 1_ik, 2_ik
          select case (ir)
          case (1_ik)
             call use_scheme(INTEG_ESDIRK2)
-            tag = 'ESDIRK2 adaptive'
-         case (2_ik)
-            call use_scheme(INTEG_ESDIRK2)
-            col%cfg%esdirk2_adaptive = .false.
-            col%cfg%esdirk2_fixed_substep = 4_ik
-            tag = 'ESDIRK2 fixed'
+            tag = 'ESDIRK2'
          case default
             call use_scheme(INTEG_RK45)
             tag = 'RK45'

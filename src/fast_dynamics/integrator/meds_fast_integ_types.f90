@@ -26,7 +26,6 @@ module meds_fast_integ_types
    use meds_linear_algebra, only : arrowhead_system_t
    use meds_soil_water, only : ground_evap_env_t
    use meds_soil_hydr_lib, only : soil_ice_t
-   use meds_fast_params, only : CTRL_I
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    use meds_canopy_air_space, only : cas_env_t
    use meds_plant_energy, only : plant_energy_env_t
@@ -86,9 +85,6 @@ module meds_fast_integ_types
    real(wp), parameter :: ATOL_LEAF_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_WOOD_W_DEF = 1.0e-4_wp   !< [kg/plant]
    real(wp), parameter :: ATOL_THETA_DEF  = 1.0e-4_wp   !< [m3/m3] (== [fast].water_atol's default)
-   !----- Default PI gains for a first-order embedded pair (Gustafsson 1988; Soderlind), eq. (4). --!
-   real(wp), parameter :: PI_ALPHA_DEF = 0.35_wp
-   real(wp), parameter :: PI_BETA_DEF  = 0.20_wp
 
    !----- The soil-plant water network's nodes (docs/science/soil_plant_water.md §1): the pond is   !
    !      soil node POND and soil layer k is node 1 + k; each cohort has two stores, its wood and its  !
@@ -105,14 +101,11 @@ module meds_fast_integ_types
                                        ATOL_LEAF_W_DEF, ATOL_WOOD_W_DEF, ATOL_THETA_DEF]
    end type tol_set_t
 
-   !----- What an adaptive march runs under: controller, step-factor limits, tolerances. ----------!
+   !----- What an adaptive march runs under: the step-factor limits and the tolerances. -----------!
    type :: error_control_t
-      integer(ik)      :: controller = CTRL_I
       real(wp)         :: safety     = 0.9_wp
       real(wp)         :: fmin       = 0.2_wp
       real(wp)         :: fmax       = 5.0_wp
-      real(wp)         :: pi_alpha   = PI_ALPHA_DEF
-      real(wp)         :: pi_beta    = PI_BETA_DEF
       !----- p of docs/science/numerical_scheme.md eq. (4), the embedded estimate's order: 1 ESDIRK2, 4 !
       !      RK45.                                                                                      !
       integer(ik)      :: p_order    = 1_ik
