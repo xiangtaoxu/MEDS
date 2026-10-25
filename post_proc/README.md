@@ -1,117 +1,112 @@
-# `post_proc/` — plotting and evaluating the output
+# `post_proc/` — plotting and evaluating output
 
-Five scripts and a notebook that read MEDS output and make sense of it. They need **numpy**,
-**matplotlib** and **netCDF4**; the two 3-D renderers also need the optional `viz` extra
-(`pip install -e python/[viz]`, which adds **pyvista** and **scipy**), and the notebook needs
-**jupyter**.
+Five plotting scripts and an evaluation notebook. Two of them read the diagnostic files `meds_main`
+writes; the other four read only the stand file of
+[example 03](../examples/example03_demography/README.md), because they use its variable names. Pick
+by the file you have, from the table below.
 
-## Which file each one reads
+Dependencies: numpy, matplotlib and netCDF4. The two 3-D renderers also need the `viz` extra
+(`pip install -e python/[viz]`: pyvista and scipy); the notebook needs jupyter.
 
-They read two different layouts, and a script given the other layout stops on a missing variable.
+## What each one reads
 
-**`meds_main`'s diagnostic output** (also what `meds.model` writes): one series of files per tier in
-`[output].dir`, named from `[output].prefix` — `<prefix>-F-YYYYMMDD.nc` (fast), `<prefix>-D-YYYYMM.nc`
-(daily), `<prefix>-M-YYYYMM.nc` (monthly) and `<prefix>-Y.nc` (annual) with the shipped `file_chunk`s
-(the monthly tier is one file per month while it carries cohort or patch variables, and per its
-`file_chunk` otherwise). Two readers take it:
+| Tool | Reads | Draws |
+|---|---|---|
+| `plot_pft_size.py` | diagnostic files (`meds_main`, `meds.model`) of a monthly or annual tier that carries the PFT and DBH-class axes | composition by PFT and structure by DBH class |
+| `evaluate_ithaca.ipynb` | diagnostic files of one run: daily and monthly tiers required, fast and annual optional | conservation checks and plausibility plots |
+| `plot_site_timeseries.py` | example 03's stand file | site totals over time, and aboveground biomass by PFT |
+| `plot_forest_structure.py` | example 03's stand file | animated vertical LAI profile and stand cross-section |
+| `plot_landscape_3d.py` | example 03's stand file; viz extra | a synthetic 3-D landscape at one record |
+| `animate_landscape_growth.py` | example 03's stand file; viz extra | that landscape over the run, as a GIF |
+
+A script given the other layout stops on a missing variable. `meds_main` names its variables by
+level (`mean_agb_py`, `mean_agb_pft_py`, `mean_agb_size_py`, `nplant_co`, ...; `meds_main
+--dump-io-config` lists them all). Example 03's file uses plain names: per cohort `pft`, `dbh`,
+`height`, `nplant`, `agb`, `leaf_area`, `owner_patch`, `global_cohort_id`; per patch `patch_area`,
+`patch_age`, `dist_type`, `global_patch_id`; per record `n_cohort`, `n_patch`, `year` and the site
+totals `total_nplant`, `total_lai`, `total_agb`, `total_basal_area`, `mean_dbh`.
+
+### Diagnostic files
+
+With `[output].enabled = true`, each tier writes files named from `[output].dir` and
+`[output].prefix`: `<prefix>-F-YYYYMMDD.nc` (fast), `<prefix>-D-YYYYMM.nc` (daily),
+`<prefix>-M-YYYY.nc` (monthly) and `<prefix>-Y.nc` (annual). The stamp follows each tier's
+`file_chunk`; the shipped values are day, month, year and run, and a `run` chunk has no stamp
+(example 05 writes `regen-M.nc`). `plot_pft_size.py` takes one file or a quoted glob over a tier's
+files; the notebook takes the directory:
 
 ```bash
-python post_proc/plot_pft_size.py 'OUTDIR/PREFIX-M-*.nc' -o pft_size.png     # a file, or a glob over a tier's files
-python post_proc/plot_pft_size.py examples/example05_forest_regeneration/output/regen-M.nc -o pft_size.png
-MEDS_RUN=OUTDIR jupyter notebook post_proc/evaluate_ithaca.ipynb             # the notebook takes the directory
+python post_proc/plot_pft_size.py 'OUTDIR/PREFIX-M-*.nc' -o pft_size.png
+MEDS_RUN=OUTDIR jupyter notebook post_proc/evaluate_ithaca.ipynb
 ```
 
-**Example 03's stand file** (`examples/example03_demography/_write_nc.py`; `run_demography.py` writes
-`output/bare.nc` and `output/census.nc`): one record a year of the cohorts and patches under the
-names `pft`, `nplant`, `height`, `owner_patch`, `patch_area`, `total_lai`, …, which are not
-`meds_main`'s. The other four read only this layout:
+### Example 03's stand file
+
+`run_demography.py` writes `output/bare.nc` (300 years from near-bare ground) and `output/census.nc`
+(from the 1985 census to 2100), one record a year:
 
 ```bash
 E=examples/example03_demography
-PYTHONPATH=python python $E/run_demography.py --start bare                      # 300 years, about a minute
-python post_proc/plot_site_timeseries.py     $E/output/bare.nc -o timeseries.png
+PYTHONPATH=python python $E/run_demography.py --start bare
+python post_proc/plot_site_timeseries.py     $E/output/bare.nc -o timeseries.png   # also timeseries_pft.png
 python post_proc/plot_forest_structure.py    $E/output/bare.nc -o forest.gif
 python post_proc/plot_landscape_3d.py        $E/output/bare.nc -o landscape.png    # viz extra
 python post_proc/animate_landscape_growth.py $E/output/bare.nc -o growth.gif       # viz extra
 ```
 
+Without `-o`, each writes next to the input. Each script's `--help` lists its options.
+
 ## What each one draws
 
-**`plot_site_timeseries.py`** — the site totals over time: plant number, leaf area index,
-aboveground biomass, basal area, mean diameter, and cohort and patch counts. Plus a per-PFT
-aboveground-biomass plot showing successional composition, in the classic ED colours (PFT 1 green,
-2 blue, 3 magenta, after Moorcroft et al. 2001).
+- **`plot_pft_size.py`** — six panels: aboveground biomass and leaf area by PFT over time, stem
+  density and biomass by DBH class (first against last record), biomass by class stacked over the
+  run, and growth and mortality against size. Before drawing, it prints the closure identities the
+  two axes promise (the sum over PFTs, and over classes, equals the polygon total;
+  [`diagnostics.md`](../docs/science/diagnostics.md)). A variable the run did not enable is skipped.
+- **`plot_site_timeseries.py`** — plant number, leaf area index, aboveground biomass, basal area,
+  mean diameter, and cohort and patch counts; and a second figure, `<out>_pft.png`, of aboveground
+  biomass by PFT (each cohort weighted by its patch's area), in the ED colours (PFT 1 green, 2 blue,
+  3 magenta).
+- **`plot_forest_structure.py`** — two panels on one height axis: the site's LAI in 2 m layers, and
+  a cross-section in which each cohort is a horizontal bar (the flat canopy seen edge-on) at its
+  height, thick in proportion to its LAI, coloured by PFT. Patches sit side by side from oldest to
+  youngest, wide in proportion to area, in the same slot every frame.
+- **`plot_landscape_3d.py`** — an area-weighted Voronoi mosaic of the patches at one record
+  (`--time`, default the last), each filled with allometric tree crowns shaded by the leaf area
+  above them. `--interactive` opens a window.
+- **`animate_landscape_growth.py`** — the same landscape over every record. Each cohort keeps its
+  `global_cohort_id`, so a tree stays in place as it grows; positions are laid out from the last
+  record backward, and recruits are scattered into the gaps.
 
-**`plot_forest_structure.py`** — the stand structure, animated. Two panels sharing a height axis:
-on the left the site's vertical LAI profile in 2 m layers, on the right a pseudo-spatial stand
-cross-section. Following MEDS's flat-canopy assumption, each cohort is a thin horizontal rectangle
-spanning its patch's full width — the canopy disk seen edge-on — at the cohort's height, with
-thickness proportional to its LAI and colour by PFT. Patches tile oldest to youngest with width
-proportional to area, and hold stable slots across frames via their persistent patch id.
+## Following a plant across records
 
-**`plot_landscape_3d.py`** — a synthetic 3-D landscape of the whole site at one record. Patches are
-laid out as a contiguous, area-weighted Voronoi mosaic, each populated with allometric tree crowns
-shaded by Beer-Lambert attenuation through the overtopping leaf area: bright canopy top, dark
-understory, and no cast-shadow artefacts.
+Every cohort and patch carries a persistent `global_id`, stamped at creation and kept through every
+sort, fusion and compaction, and never reused. A fusion keeps the survivor's id, so one id followed
+across records follows one plant until it fuses away or dies. The cohort axis is ragged:
+`cohort_offset` and `cohort_count` map each patch to its cohorts, and slots beyond the live count
+hold the fill value.
 
-**`plot_pft_size.py`** — the two axes that describe *who* the stand is made of rather than how much
-of it there is: composition by PFT, and structure by DBH class. Six panels — biomass and leaf area
-by PFT over time, the size distribution first-against-last, biomass by class stacked over the run,
-and the vital rates against size. It is the reference consumer for the PFT and size axes, so it also
-prints the closure identities those axes promise (`Σ_pft mean_agb_pft_py == mean_agb_py`,
-`Σ_class mean_agb_size_py == mean_agb_py`) before drawing anything: a figure built on axes that do not
-partition the stand is a picture of a bug.
+## Reading the files yourself
 
-**`animate_landscape_growth.py`** — that landscape over the whole run, as a GIF. Every cohort is
-tracked by its persistent cohort id so **trees grow in place**. Positions are assigned in a
-backward pass — last record first, so the mature forest gets the cleanest layout — with recruits
-scattered into the gaps around it by a double-Poisson process; frames are then written forward.
-
-## What makes cohort tracking possible
-
-Every cohort and patch carries a `global_id`, stamped at creation and carried in lockstep through
-every sort, fusion and compaction. Ids are never reused, and a fusion keeps the survivor's. That is
-what lets a reader follow one plant across output records until it fuses away or is culled — and it
-is why the growth animation can put a tree in the same place every frame.
-
-The diagnostic file is ragged: one record per output interval, with `cohort_offset` and
-`cohort_count` giving the patch-to-cohort map for each record.
-
-## Reading the file yourself
-
-The output is plain netCDF with CF-style metadata, so anything that reads netCDF will open it. Two
-conventions worth knowing:
-
-- **Which variables exist depends on the config.** Run `meds_main --dump-io-config` against your
-  run's config to list every available name.
-- **Read the coordinates, not your memory of the setup.** Soil depths come from the file's own
-  `soil_z` coordinate and the reference CO₂ from `mean_atm_co2_py`, so a figure stays correct if a run
-  changes its soil grid or its forcing. The biophysics example carries a cautionary note about what
-  happens when a figure assumes a number instead.
-
-The variable set, the axes and the aggregation rules are documented in
-[`docs/science/diagnostics.md`](../docs/science/diagnostics.md).
+The files are plain netCDF with CF metadata, and which variables exist depends on the config. Read
+coordinates from the file (`soil_z`, `dbh_lower`, `dbh_upper`, `pft`) and the reference CO₂ from
+`mean_atm_co2_py`, so a figure stays right when a run changes its grid or forcing. The variables,
+axes and aggregation rules are in [`docs/science/diagnostics.md`](../docs/science/diagnostics.md).
 
 ## The evaluation notebook
 
-**`evaluate_ithaca.ipynb`** is a worked pass over one run, using each tier for the question that
-tier can answer: diurnal energy and carbon from **FAST**, seasonal cycles from **DAILY**,
-demographic trajectories and the closure identities from **MONTHLY/ANNUAL**.
+`evaluate_ithaca.ipynb` is a worked pass over one run, using each tier for what it can answer:
+diurnal energy and carbon from the fast tier, seasonal cycles from the daily tier, demography and
+closure from the monthly and annual tiers. Set `MEDS_RUN` to the run's `[output].dir`. It was written
+against a three-year Ithaca run with all four tiers on, which the repository does not hold; the
+notebook copes with a variable the run did not enable.
 
-It is not a benchmark. MEDS has never been scored against flux-tower or inventory data, and the
-notebook does not pretend to. What it checks is what is knowable without observations: identities
-the output must satisfy, and magnitudes and shapes that are either physically possible or are not.
-That is still enough to catch a great deal — a process silently switched off, padding written as
-data, a stale row count — that the model's own conservation checks do not see.
+It is not a benchmark. It checks what needs no observations: that the energy, water and carbon
+budgets close in the files, and that magnitudes and shapes are physically possible. Two habits it
+teaches:
 
-Two things it teaches that are easy to get wrong when reading these files by hand:
-
-- **Turning a rate back into an amount needs the width of its own window**, `t[i+1] - t[i]`, and the
-  trailing partial window has to be dropped because its width is unknown. Pairing a rate with the
-  *previous* window's width is silently fine until the end of a run, where it can turn one
-  disturbance event into a 10.8 kgC/m² phantom.
-- **`litter_*_site` is not all the carbon entering the soil.** The cull and disturbance mortality
-  pathways add necromass straight to the patch soil-carbon pools, bypassing the litter accumulator
-  the litter variables read. Closing the soil-carbon budget from file needs the
-  `mort_carbon_*_site` variables as well; with them the budget closes to 0.3%, without them it
-  misses by 29%.
+- **A rate becomes an amount with the width of its own window**, `t[i+1] - t[i]`; the trailing
+  partial window is dropped because its width is unknown.
+- **The litter variables are not all the carbon entering the soil.** Cull and disturbance mortality
+  add necromass directly to the soil-carbon pools, so closing the soil-carbon budget from the files
+  also needs the `mean_mort_carbon_*_py` variables.
