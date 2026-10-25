@@ -2,7 +2,8 @@
 !==========================================================================================!
 ! test_met_file -- the "default" forcing file and what meds_met does with it                 !
 ! (docs/science/forcing.md):                                                                 !
-!   - its reader: a netCDF round trip, the interval that contains an instant, the sunrise    !
+!   - its reader: a netCDF round trip, gaps marked by _FillValue or missing_value and a      !
+!     packed variable, the interval that contains an instant, the sunrise                     !
 !     interval's shortwave, the file and the [forcing] block agreeing, start-hold and the     !
 !     window edges, recycling a window over many years (Feb 29 included), and the nearest     !
 !     grid point;                                                                             !
@@ -27,7 +28,7 @@ program test_met_file
                                      CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, &
                                      HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, &
                                      LW_SYNTHESIZE
-   use meds_met_types,        only : met_forcing_t, met_source_t, met_cursor_t
+   use meds_met_types,        only : met_forcing_t, met_source_t, met_cursor_t, FLD_TAIR, FLD_QAIR, FLD_PSURF
    use meds_met,              only : cosz_reconstruct_factor, disaggregate_sw, cas_top_wind_factor, met_to_cas_top, &
                                      met_open, met_cursor_init, met_advance, met_instant, met_close, met_at_site
    use meds_met_grid,         only : great_circle_distance, nearest_grid_index
@@ -37,9 +38,16 @@ program test_met_file
                                      MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
    use meds_netcdf_c
    use iso_c_binding,         only : c_int, c_size_t, c_double
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
 
    character(len=*), parameter :: NCFILE = 'test_met_file_tmp.nc'
+   !----- The file of test 7c: Tair's record GAP_REC at its _FillValue, Qair's next record at its     !
+   !      missing_value, and PSurf (98000 Pa) stored packed. ----------------------------------------!
+   integer,  parameter :: GAP_REC      = 20
+   real(wp), parameter :: TAIR_FILL    = -9999.0_wp
+   real(wp), parameter :: QAIR_MISSING = -1.0_wp
+   real(wp), parameter :: PSURF_SCALE  = 10.0_wp, PSURF_OFFSET = 500.0_wp
    !----- The forcing file the CO2 tests open: 365 daily records of 2021 (write_yearfile). ------!
    character(len=*), parameter :: CO2_MET_FILE = 'test_met_co2_year_tmp.nc'
    character(len=1024) :: co2_default_file = ''
@@ -57,6 +65,7 @@ program test_met_file
 
    call test_cosz_reconstruction()
    call test_netcdf_roundtrip()
+   call test_fill_and_packing()
    call test_sunrise_interval()
    call test_nearest_grid()
    call test_cas_top()
@@ -181,6 +190,38 @@ contains
 
       call test_edge_paths(base)
    end subroutine test_netcdf_roundtrip
+
+   !----- 7c. A file's gaps and packing, by the netCDF attribute conventions: a value at its        !
+   !      variable's _FillValue or missing_value is a gap (NaN), which stops the step that reads it  !
+   !      (docs/science/forcing.md §10), and a packed variable is unpacked. ----------------------!
+   subroutine test_fill_and_packing()
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_params_t) :: fc
+      type(met_forcing_t)    :: met
+      type(meds_time_t)      :: base, now
+      integer(ik) :: jt, jq, jp
+      print '(a)', '-- test 7c: gaps by _FillValue and missing_value, and a packed variable --'
+      base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
+      call write_synthetic_forcing(NCFILE, base, conventions=.true.)
+      fc%format = MET_BACKEND_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%timestep = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 42.44_wp ; fc%longitude = -76.50_wp ; fc%recycle = .false.
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      jt = src%series_col(FLD_TAIR) ; jq = src%series_col(FLD_QAIR) ; jp = src%series_col(FLD_PSURF)
+      call check_true('Tair at its _FillValue reads as a gap', ieee_is_nan(src%series(GAP_REC, jt)))
+      call check_true('Qair at its missing_value reads as a gap', ieee_is_nan(src%series(GAP_REC + 1, jq)))
+      call check_true('every other record reads as data', count(ieee_is_nan(src%series(:, jt))) == 1 .and.   &
+                      count(ieee_is_nan(src%series(:, jq))) == 1)
+      call check('PSurf is unpacked: scale_factor, then add_offset', maxval(abs(src%series(:, jp) - 98000.0_wp)), &
+                 0.0_wp, 1.0e-9_wp)
+      now = time_advance_seconds(base, 3.5_wp*3600.0_wp)          ! a step away from the gaps
+      call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
+      call check_true('a step away from the gaps reads Tair', met%air_temp > 285.0_wp .and. met%air_temp < 305.0_wp, &
+                      met%air_temp)
+      call met_close(src)
+      call write_synthetic_forcing(NCFILE, base)
+   end subroutine test_fill_and_packing
 
    !----- 7b. A SUNRISE HOUR KEEPS ITS LIGHT. The shortwave partition's sun is the interval's mean    !
    !      cosz, so an hour that is lit only after its midpoint still splits its shortwave into the    !
@@ -379,12 +420,13 @@ contains
    end subroutine test_recycle_anchor_phase
 
    !----- Write a synthetic (time=25 hourly, grid=2) MEDS forcing NetCDF via meds_netcdf_c. ----!
-   subroutine write_synthetic_forcing(path, base, with_components, with_co2air, sw_flat)
+   subroutine write_synthetic_forcing(path, base, with_components, with_co2air, sw_flat, conventions)
       character(len=*),  intent(in) :: path
       type(meds_time_t), intent(in) :: base
       logical, optional, intent(in) :: with_components   !< also write u10 = 3, v10 = -4 (speed 5, not Wind's 3)
       logical, optional, intent(in) :: with_co2air       !< also write CO2air, which the reader rejects
       real(wp), optional, intent(in) :: sw_flat          !< every record's SWdown [W/m2], night and day
+      logical, optional, intent(in) :: conventions       !< the gaps and packing of test 7c
       integer, parameter :: NT = 25, NG = 2
       integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(7), vu, vw, vc
       integer(c_int) :: dims2(2), dims1(1)
@@ -395,10 +437,12 @@ contains
       character(len=8), parameter :: VNAMES(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ', &
                                                   'Rainf   ','SWdown  ','LWdown  ']
       integer(c_size_t) :: start2(2), count2(2), start1(1), count1(1)
-      logical :: co2air
+      logical :: co2air, packed
 
       co2air = .false.
       if (present(with_co2air)) co2air = with_co2air
+      packed = .false.
+      if (present(conventions)) packed = conventions
       st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st, 'write: create')
       st = nc_def_dim_f(ncid, 'time', int(NT, c_size_t), td) ; call nc_check(st, 'write: time dim')
       st = nc_def_dim_f(ncid, 'grid', int(NG, c_size_t), gd) ; call nc_check(st, 'write: grid dim')
@@ -416,6 +460,13 @@ contains
       end do
       if (co2air) then
          st = nc_def_var_f(ncid, 'CO2air', NC_DOUBLE, 2, dims2, vc) ; call nc_check(st, 'write: var CO2air')
+      end if
+      if (packed) then
+         st = nc_put_att_double_f(ncid, vv(1), '_FillValue', NC_DOUBLE, TAIR_FILL) ; call nc_check(st, 'write: fill')
+         st = nc_put_att_double_f(ncid, vv(2), 'missing_value', NC_DOUBLE, QAIR_MISSING)
+         call nc_check(st, 'write: missing_value')
+         st = nc_put_att_double_f(ncid, vv(3), 'scale_factor', NC_DOUBLE, PSURF_SCALE) ; call nc_check(st, 'write: scale')
+         st = nc_put_att_double_f(ncid, vv(3), 'add_offset', NC_DOUBLE, PSURF_OFFSET) ; call nc_check(st, 'write: offset')
       end if
       if (present(with_components)) then
          if (with_components) then
@@ -465,6 +516,13 @@ contains
                end select
             end do
          end do
+         if (packed) then
+            select case (k)
+            case (1) ; dat(:, GAP_REC)     = TAIR_FILL
+            case (2) ; dat(:, GAP_REC + 1) = QAIR_MISSING
+            case (3) ; dat = (dat - PSURF_OFFSET) / PSURF_SCALE
+            end select
+         end if
          st = nc_put_vara_double(ncid, vv(k), start2, count2, dat)
          call nc_check(st, 'write: vals '//trim(VNAMES(k)))
       end do

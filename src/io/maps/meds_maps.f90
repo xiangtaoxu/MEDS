@@ -13,8 +13,8 @@ module meds_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    use iso_c_binding,         only : c_int, c_size_t, c_double
    use meds_kinds,            only : wp, ik
-   use meds_netcdf_c,         only : nc_close, nc_get_att_double_f, nc_get_vara_double, nc_inq_dimlen_f,          &
-                                     nc_inq_varid_f, nc_open_f, NC_NOERR, NC_NOWRITE
+   use meds_netcdf_c,         only : nc_close, nc_get_vara_double, nc_inq_dimlen_f, nc_inq_varid_f, nc_open_f,   &
+                                     nc_packing_t, nc_packing_of, nc_unpacked, NC_NOERR, NC_NOWRITE
    use meds_met_types,        only : met_grid_t, met_cells_t
    use meds_met_grid,         only : same_grid, keep_cells, GRID_OK, GRID_ERR_OPEN
    use meds_maps_params,      only : maps_params_t, soil_maps_on, map_inputs_t, MAP_BC_FREE_DRAIN, MAP_BC_LEAKY, &
@@ -262,7 +262,7 @@ contains
       integer(c_size_t) :: nlayer_c, start3(3), count3(3), start2(2), count2(2)
       integer(ik)       :: nlayer, r0, nr, k, l
       real(c_double), allocatable :: band(:,:,:)
-      real(wp) :: fill, missing, scale, offset
+      type(nc_packing_t) :: packing
 
       allocate(values(1, cells%ncell))
       values = ieee_value(1.0_wp, ieee_quiet_nan)
@@ -314,37 +314,18 @@ contains
          st = nc_close(ncid)
          return
       end if
-      fill    = attribute(ncid, vid, '_FillValue')
-      missing = attribute(ncid, vid, 'missing_value')
-      scale   = attribute(ncid, vid, 'scale_factor')
-      offset  = attribute(ncid, vid, 'add_offset')
+      packing = nc_packing_of(ncid, vid)
       st = nc_close(ncid)
 
       deallocate(values)
       allocate(values(nlayer, cells%ncell))
+      !----- Empty where the map says so; what is there, unpacked. ------------------------------------!
       do k = 1_ik, cells%ncell
          do l = 1_ik, nlayer
-            values(l, k) = real(band(cells%col(k) + 1_ik, cells%row(k) - r0 + 1_ik, l), wp)
+            values(l, k) = nc_unpacked(packing, band(cells%col(k) + 1_ik, cells%row(k) - r0 + 1_ik, l))
          end do
       end do
-      !----- Empty where the map says so; then unpack what is there. -------------------------------!
-      if (.not. ieee_is_nan(fill))    where (values == fill)    values = ieee_value(1.0_wp, ieee_quiet_nan)
-      if (.not. ieee_is_nan(missing)) where (values == missing) values = ieee_value(1.0_wp, ieee_quiet_nan)
-      if (.not. ieee_is_nan(scale))  values = values * scale
-      if (.not. ieee_is_nan(offset)) values = values + offset
       stat = MAP_OK
-
-   contains
-
-      !----- A numeric attribute of the variable, NaN when it has none. ---------------------------!
-      real(wp) function attribute(ncid, vid, name) result(x)
-         integer(c_int),   intent(in) :: ncid, vid
-         character(len=*), intent(in) :: name
-         real(c_double) :: a
-         x = ieee_value(1.0_wp, ieee_quiet_nan)
-         if (nc_get_att_double_f(ncid, vid, name, a) == NC_NOERR) x = real(a, wp)
-      end function attribute
-
    end subroutine read_cells
 
 end module meds_maps
