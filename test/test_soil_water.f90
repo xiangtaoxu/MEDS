@@ -14,15 +14,27 @@
 !      drains f K(theta_N), free drainage and sealed bedrock at its ends exactly; the       !
 !      aquifer's face is smooth through zero gradient, with derivatives that match finite  !
 !      differences, and carries the rise of a dry column across the geometric-mean face.  !
+!   6. FROZEN GROUND (ground_evaporation_setup, ground_evaporation_rate;                   !
+!      soil_biophysics.md "Frozen soil"): a frozen layer's liquid, at the content its      !
+!      freezing curve holds, evaporates at about the ice's saturation humidity, from -1 to !
+!      -20 C: saturation is taken over liquid, since the freezing curve already puts the   !
+!      liquid at the ice's vapour pressure.                                                !
+!   7. THE AIR'S PRESSURE (ground_evaporation_setup): at 70 kPa the ground's saturation    !
+!      humidity holds the same saturation vapour pressure as at 1 atm, and the evaporation !
+!      rises by the saturation curve's ratio at that pressure.                             !
+!   8. ICE ON THE AQUIFER FACE (bottom_flux; soil_biophysics.md "Frozen soil"): a frozen   !
+!      bottom layer's ice impedes the face to the table in full, both ways; a draining     !
+!      base counts it once, in K(theta_N).                                                 !
 !==========================================================================================!
 program test_soil_water
    use meds_test_assert,   only : check_true, check_close, test_report
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : grav, grav_head, rho_h2o, r_wv, p_std, n_soil_layer_max
-   use meds_soil_hydr_lib, only : SOIL_RETENTION_VG, soil_theta_to_head
+   use meds_constants,     only : grav, grav_head, rho_h2o, r_wv, p_std, n_soil_layer_max, t_3ple, h2o_dry_ratio
+   use meds_soil_hydr_lib, only : SOIL_RETENTION_VG, soil_theta_to_head, soil_liquid_capacity, soil_ice_state,  &
+                                  soil_ice_t
    use meds_soil_water,    only : ground_evaporation_rate, ground_evaporation_setup, soil_water_flux, ground_evap_env_t, &
                                   bottom_flux
-   use meds_therm_lib,     only : sat_specific_humidity
+   use meds_therm_lib,     only : sat_specific_humidity, sat_vapor_pressure, specific_humidity_to_vapor_pressure
    use meds_soil_params,   only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_soil_derive,   only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
@@ -33,6 +45,9 @@ program test_soil_water
    call test_snow_free_evap()
    call test_evap_moisture_response()
    call test_bottom_face()
+   call test_frozen_ground_evap()
+   call test_evap_at_pressure()
+   call test_aquifer_face_ice()
 
    call test_report('test_soil_water')
 
@@ -264,5 +279,119 @@ contains
       call check_close('AQUIFER: rise at -2 m head crosses the geometric-mean face',                          &
                        q_m, sqrt(1.0e-7_wp * params%ksat(n)) * (-2.0_wp / delta + 1.0_wp), 1.0e-12_wp * abs(q_m))
    end subroutine test_bottom_face
+
+   !=======================================================================================!
+   !----- 6. A frozen loam top layer (docs/science/soil_biophysics.md, "Frozen soil"). Its liquid sits  !
+   !      at the content its freezing curve holds at the ground's temperature (soil_liquid_capacity),  !
+   !      at the head its retention curve gives that content; the ice fills the rest of its pores,     !
+   !      so no dry surface layer forms. Into dry air its evaporation is rho alpha q_sat / r_aero.     !
+   !      On the freezing curve the liquid's vapour pressure is the ice's (Clausius-Clapeyron), so     !
+   !      alpha q_sat must be the ice's saturation humidity, to the error of the curve's constant      !
+   !      latent heat and of the two saturation fits: within a fifth of the liquid-ice gap from -1 to  !
+   !      -20 C (a twentieth at -10 C). Taking q_sat over ice as well would count the ice twice and    !
+   !      land the whole gap below. ------------------------------------------------------------------!
+   subroutine test_frozen_ground_evap()
+      type(soil_profile_t)    :: params
+      type(soil_params_t)     :: opts
+      type(ground_evap_env_t) :: f
+      real(wp), parameter :: T_BELOW(4) = [1.0_wp, 5.0_wp, 10.0_wp, 20.0_wp]   ! [K] below the triple point
+      real(wp) :: theta_liq, dtheta, psi, e, de1, de2, q_evap, q_liq, q_ice, worst
+      integer(ik) :: k
+      print '(a)', 'test_frozen_ground_evap:'
+      call loam_params(params)
+      f%q_air   = 0.0_wp
+      f%rho_air = 1.3_wp
+      f%r_aero  = 100.0_wp
+      worst = 0.0_wp
+      do k = 1_ik, size(T_BELOW, kind=ik)
+         f%t_ground = t_3ple - T_BELOW(k)
+         call ground_evaporation_setup(params, opts, f)
+         call soil_liquid_capacity(params%layer_curve(1), f%t_ground, theta_liq, dtheta)
+         psi = grav_head * soil_theta_to_head(SOIL_RETENTION_VG, theta_liq, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+         call ground_evaporation_rate(params%theta_sat(1), psi, f, opts, e, de1, de2)
+         q_evap = e * f%r_aero / f%rho_air
+         q_liq  = sat_specific_humidity(f%t_ground, p_std, 1.0_wp)
+         q_ice  = sat_specific_humidity(f%t_ground, p_std, 0.0_wp)
+         print '(a,f6.2,a,3es13.5,a,f7.4)', '   T = ', f%t_ground, ' K: evaporating, liquid, ice humidity',      &
+               q_evap, q_liq, q_ice, '; off ice by (gap)', (q_evap - q_ice) / (q_liq - q_ice)
+         worst = max(worst, abs(q_evap - q_ice) / (q_liq - q_ice))
+      end do
+      call check_true('frozen ground: its liquid evaporates at the ice''s saturation humidity, '//               &
+                      'within a fifth of the liquid-ice gap (-1 to -20 C)', worst < 0.2_wp, worst)
+   end subroutine test_frozen_ground_evap
+
+   !=======================================================================================!
+   !----- 7. The ground and the air over it at 70 kPa, about 3,000 m, against the same at 1 atm, at  !
+   !      one density and conductance, the loam moist enough that no dry surface layer forms, into    !
+   !      dry air. The ground's saturation humidity at the air's pressure holds the saturation vapour !
+   !      pressure, a function of the temperature alone, so evaporation rises by q_sat(p)/q_sat(p_std) !
+   !      = (p_std - (1 - eps) e_s)/(p - (1 - eps) e_s); taken at p_std it would not move. -----------!
+   subroutine test_evap_at_pressure()
+      type(soil_profile_t)    :: params
+      type(soil_params_t)     :: opts
+      type(ground_evap_env_t) :: f_std, f_low
+      real(wp), parameter :: P_LOW = 70000.0_wp, THETA = 0.40_wp   ! [Pa], [m3/m3]
+      real(wp) :: psi, e_std, e_low, de1, de2, es, ratio
+      print '(a)', 'test_evap_at_pressure:'
+      call loam_params(params)
+      f_std%t_ground = 290.0_wp
+      f_std%q_air    = 0.0_wp
+      f_std%rho_air  = 1.2_wp
+      f_std%r_aero   = 80.0_wp
+      f_low = f_std
+      f_low%press = P_LOW
+      call ground_evaporation_setup(params, opts, f_std)
+      call ground_evaporation_setup(params, opts, f_low)
+      es = sat_vapor_pressure(f_std%t_ground)
+      call check_close('70 kPa: the ground''s saturation humidity holds the saturation vapour pressure',         &
+                       specific_humidity_to_vapor_pressure(f_low%q_sat, P_LOW), es, 1.0e-12_wp * es)
+      call check_close('and so does it at 1 atm', specific_humidity_to_vapor_pressure(f_std%q_sat, p_std), es,      &
+                       1.0e-12_wp * es)
+      psi = grav_head * soil_theta_to_head(SOIL_RETENTION_VG, THETA, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      call ground_evaporation_rate(THETA, psi, f_std, opts, e_std, de1, de2)
+      call ground_evaporation_rate(THETA, psi, f_low, opts, e_low, de1, de2)
+      ratio = (p_std - (1.0_wp - h2o_dry_ratio) * es) / (P_LOW - (1.0_wp - h2o_dry_ratio) * es)
+      call check_close('70 kPa: the ground evaporates more, by the saturation curve''s ratio at that pressure',   &
+                       e_low / e_std, ratio, 1.0e-6_wp * ratio)
+   end subroutine test_evap_at_pressure
+
+   !=======================================================================================!
+   !----- 8. The loam's deepest layer frozen, its ice 0.15 of 0.43, which impedes its conductivity by  !
+   !      I = 10^(-6 theta_ice/theta_sat) (soil_ice_state). The face to the table lies inside the    !
+   !      layer, so the table's side takes the impedance too and the face, their geometric mean,      !
+   !      carries I times the thawed layer's flux at the same liquid potential, drawing up from a     !
+   !      dry layer and draining a wet one. Impeding the node alone would leave sqrt(I). A draining   !
+   !      base passes f K(theta_N) of the impeded conductivity: the ice counted once. -------------!
+   subroutine test_aquifer_face_ice()
+      type(soil_profile_t) :: params
+      type(soil_params_t)  :: opts
+      type(soil_ice_t)     :: ice
+      real(wp), parameter :: K_LIQ = 1.0e-7_wp, THETA_ICE = 0.15_wp   ! [m/s] the liquid's K, [m3/m3]
+      real(wp), parameter :: HEAD(2) = [-2.0_wp, -0.01_wp]            ! [m] a dry layer, a wet one
+      character(len=*), parameter :: WHAT(2) = [character(len=32) :: 'the rise into a dry layer', 'the drainage of a wet layer']
+      real(wp) :: q_thaw, q_froz(2), dqp_thaw, dqp_froz, dqk
+      integer(ik) :: n, k
+      print '(a)', 'test_aquifer_face_ice:'
+      call loam_params(params)
+      n = 10_ik
+      ice = soil_ice_state(params%layer_curve(n), THETA_ICE)
+      opts%water_bottom_bc = SOIL_BC_AQUIFER
+      do k = 1_ik, 2_ik
+         call bottom_flux(params, opts, n, HEAD(k) * grav_head, K_LIQ, 1.0_wp, q_thaw, dqp_thaw, dqk)
+         call bottom_flux(params, opts, n, HEAD(k) * grav_head, ice%impedance * K_LIQ, ice%impedance, q_froz(k),    &
+                          dqp_froz, dqk)
+         call check_close('AQUIFER, frozen: the ice impedes '//trim(WHAT(k))//' in full', q_froz(k),                 &
+                          ice%impedance * q_thaw, 1.0e-12_wp * abs(ice%impedance * q_thaw))
+         call check_close('AQUIFER, frozen: and the flux''s slope in the potential with it', dqp_froz,               &
+                          ice%impedance * dqp_thaw, 1.0e-12_wp * abs(ice%impedance * dqp_thaw))
+      end do
+      call check_true('AQUIFER, frozen: the dry layer draws up and the wet one drains',                            &
+                      q_froz(1) < 0.0_wp .and. q_froz(2) > 0.0_wp, q_froz(1))
+      opts%water_bottom_bc = SOIL_BC_DRAIN
+      opts%drain_factor = 1.0_wp
+      call bottom_flux(params, opts, n, -0.37_wp * grav_head, ice%impedance * K_LIQ, ice%impedance, q_froz(1))
+      call check_close('a draining frozen base drains the impeded K(theta_N), the ice counted once', q_froz(1),     &
+                       ice%impedance * K_LIQ, 0.0_wp)
+   end subroutine test_aquifer_face_ice
 
 end program test_soil_water
