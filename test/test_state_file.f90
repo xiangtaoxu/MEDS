@@ -21,6 +21,7 @@ program test_state_file
    use iso_fortran_env,         only : int64
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : n_soil_layer_max, n_snow_layer_max
+   use meds_biogeochem_params,  only : N_SOIL_POOL
    use meds_config,             only : meds_config_t, growth_window_steps
    use meds_polygon_state_vars, only : polygon_t, alloc_polygon
    use meds_site_state_vars,    only : make_site_surface
@@ -257,15 +258,8 @@ contains
             pa%shed_water_enth(ip) = pa%shed_water_rate(ip) * 1.1e5_wp
             pa%slow_co2_rate(ip)   = 0.8_wp + x
             pa%adapt_dt_last(ip)   = 120.0_wp + x
-            pa%soil_carbon(ip)%fast_grnd_carbon   = 0.11_wp + x
-            pa%soil_carbon(ip)%fast_soil_carbon   = 0.12_wp + x
-            pa%soil_carbon(ip)%struct_grnd_carbon = 0.13_wp + x
-            pa%soil_carbon(ip)%struct_soil_carbon = 0.14_wp + x
-            pa%soil_carbon(ip)%microbial_carbon   = 0.15_wp + x
-            pa%soil_carbon(ip)%slow_carbon        = 0.16_wp + x
-            pa%soil_carbon(ip)%passive_carbon     = 0.17_wp + x
-            pa%soil_carbon(ip)%struct_grnd_lignin = 0.03_wp + x
-            pa%soil_carbon(ip)%struct_soil_lignin = 0.04_wp + x
+            pa%soil_carbon(ip)%carbon(1:N_SOIL_POOL) = [(0.10_wp + 0.01_wp * real(k, wp) + x, k = 1_ik, N_SOIL_POOL)]
+            pa%soil_carbon(ip)%lignin(1:2) = [0.03_wp + x, 0.04_wp + x]
          end associate
       end do
    end subroutine stamped_polygon

@@ -477,6 +477,7 @@ end module test_slow_step_carbon
 !==========================================================================================!
 module test_slow_step_ledger_paths
    use meds_kinds,              only : wp, ik
+   use meds_biogeochem_params,  only : IP_SLOW
    use meds_config,             only : meds_config_t
    use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
                                        soil_start_theta, top_soil_psi
@@ -540,7 +541,7 @@ contains
       poly%patch%cas(1)%can_enthalpy = 2.9e5_wp
       poly%patch%cas(1)%can_co2      = 400.0_wp
       poly%patch%cas(1)%can_depth    = 20.0_wp
-      poly%patch%soil_carbon(1)%slow_carbon = 3.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_SLOW) = 3.0_wp
       poly%patch%recruit_pool(:,1)          = 0.0_wp
       poly%cohort%leaf_water_mass(1:2) = 0.02_wp
       poly%cohort%wood_water_mass(1:2) = 0.05_wp
@@ -1135,6 +1136,8 @@ end module test_slow_step_mortality
 !==========================================================================================!
 module test_slow_step_seam
    use meds_kinds,               only : wp, ik
+   use meds_biogeochem_params,   only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, &
+                                        IP_SLOW
    use meds_config,              only : meds_config_t
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal
    use meds_soil_params,         only : soil_profile_t
@@ -1190,16 +1193,13 @@ contains
       call init_fast_state(poly, cfg)
 
       !----- Seed a nonzero starting pool so decomposition (and hence Rh) is actually active. -----!
-      poly%patch%soil_carbon(1)%fast_grnd_carbon   = 2.0_wp
-      poly%patch%soil_carbon(1)%fast_soil_carbon   = 1.0_wp
-      poly%patch%soil_carbon(1)%struct_grnd_carbon = 20.0_wp
-      poly%patch%soil_carbon(1)%struct_soil_carbon = 10.0_wp
-      poly%patch%soil_carbon(1)%slow_carbon        = 500.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_FAST_GRND)   = 2.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_FAST_SOIL)   = 1.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_STRUCT_GRND) = 20.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_STRUCT_SOIL) = 10.0_wp
+      poly%patch%soil_carbon(1)%carbon(IP_SLOW)        = 500.0_wp
 
-      total0 = poly%patch%soil_carbon(1)%fast_grnd_carbon + poly%patch%soil_carbon(1)%fast_soil_carbon &
-             + poly%patch%soil_carbon(1)%struct_grnd_carbon + poly%patch%soil_carbon(1)%struct_soil_carbon &
-             + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
-             + poly%patch%soil_carbon(1)%passive_carbon
+      total0 = sum(poly%patch%soil_carbon(1)%carbon)
 
       !=== 1. Run one real slow step: fast loop (accumulates decomp_xi against the FROZEN          !
       !    pool seeded above) THEN advance_slow_dynamics (vegetation turnover -> litter, then the       !
@@ -1227,10 +1227,7 @@ contains
                          seam%worst_lambda < 0.1_wp, seam%worst_lambda)
       end block
 
-      total1 = poly%patch%soil_carbon(1)%fast_grnd_carbon + poly%patch%soil_carbon(1)%fast_soil_carbon &
-             + poly%patch%soil_carbon(1)%struct_grnd_carbon + poly%patch%soil_carbon(1)%struct_soil_carbon &
-             + poly%patch%soil_carbon(1)%microbial_carbon + poly%patch%soil_carbon(1)%slow_carbon      &
-             + poly%patch%soil_carbon(1)%passive_carbon
+      total1 = sum(poly%patch%soil_carbon(1)%carbon)
 
       !----- Direction is not asserted (this cohort's turnover litter can outweigh or be outweighed by !
       !      Rh depending on the seeded pool -- test_soil_carbon's INDEPENDENT mass check (Rh        !
@@ -1253,14 +1250,11 @@ contains
          call add_cohort(poly2, cfg, 1_ik, 3_ik, 0.5_wp, 20.0_wp)
          call finalize_init(poly2)
          call init_fast_state(poly2, cfg)
-         poly2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
-         totalA = poly2%patch%soil_carbon(1)%slow_carbon
+         poly2%patch%soil_carbon(1)%carbon(IP_SLOW) = 500.0_wp
+         totalA = poly2%patch%soil_carbon(1)%carbon(IP_SLOW)
          call fast_dynamics(poly2, cfg)
          call advance_slow_dynamics(poly2, cfg, no_ledger)
-         totalB = poly2%patch%soil_carbon(1)%fast_grnd_carbon + poly2%patch%soil_carbon(1)%fast_soil_carbon &
-                + poly2%patch%soil_carbon(1)%struct_grnd_carbon + poly2%patch%soil_carbon(1)%struct_soil_carbon &
-                + poly2%patch%soil_carbon(1)%microbial_carbon + poly2%patch%soil_carbon(1)%slow_carbon  &
-                + poly2%patch%soil_carbon(1)%passive_carbon
+         totalB = sum(poly2%patch%soil_carbon(1)%carbon)
          call check_close(totalB, totalA, 1.0e-12_wp, 'soil_carbon_on=.false.: pool exactly untouched')
       end block
    end subroutine run_soil_seam

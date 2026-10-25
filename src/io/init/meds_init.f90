@@ -145,9 +145,7 @@ contains
          pools = soil_carbon_steady_pools(cfg%soil_carbon)
          poly%patch%soil_carbon(1:poly%patch%n) = pools
          if (verbose) write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',            &
-            pools%fast_grnd_carbon + pools%fast_soil_carbon + pools%struct_grnd_carbon +          &
-            pools%struct_soil_carbon + pools%microbial_carbon + pools%slow_carbon +               &
-            pools%passive_carbon, ' kgC/m2'
+            sum(pools%carbon), ' kgC/m2'
       end if
       ok = .true.
    end subroutine init_polygon

@@ -13,6 +13,7 @@ module meds_biogeochem_params
 
    public :: N_SOIL_POOL
    public :: IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
+   public :: SOIL_POOL_NAME
    public :: DECOMP_STEP_EULER, DECOMP_STEP_EXPM
    public :: DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    public :: soil_carbon_params_t
@@ -31,6 +32,10 @@ module meds_biogeochem_params
    integer(ik), parameter :: IP_MICR        = 5_ik   !< microbial SOM        (active only in scheme 5)
    integer(ik), parameter :: IP_SLOW        = 6_ik   !< slow / humified SOM
    integer(ik), parameter :: IP_PASSIVE     = 7_ik   !< passive SOM          (active only in scheme 5)
+   !----- Each pool's name, by index: the restart file's soilc_<name>_pa and the reports.  !
+   !      Index 0 is no pool, for a check that found none. --------------------------------!
+   character(len=11), parameter :: SOIL_POOL_NAME(0:N_SOIL_POOL) = [character(len=11) ::          &
+      '(none)', 'fast_grnd', 'fast_soil', 'struct_grnd', 'struct_soil', 'microbial', 'slow', 'passive']
 
    !----- Daily-step solver (docs/science/soil_carbon.md §6). -----------------------------!
    integer(ik), parameter :: DECOMP_STEP_EULER = 1_ik  !< forward Euler (the coupled daily step)

@@ -10,6 +10,8 @@
 !==========================================================================================!
 module meds_output_extract
    use meds_kinds,          only : wp, ik
+   use meds_biogeochem_params, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, &
+                                      IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_output_types,   only : var_desc_t, diag_setup_t, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
                                    DIM_SIZE, DIM_SOIL_PATCH, DIM_SITE, MISSING_VALUE
    use meds_polygon_state_vars, only : polygon_t
@@ -374,41 +376,35 @@ contains
          end do
       case (FLD_P_SOILC_FAST_GRND)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_FAST_GRND)
          end do
       case (FLD_P_SOILC_FAST_SOIL)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%fast_soil_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_FAST_SOIL)
          end do
       case (FLD_P_SOILC_STRUCT_GRND)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%struct_grnd_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_STRUCT_GRND)
          end do
       case (FLD_P_SOILC_STRUCT_SOIL)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%struct_soil_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_STRUCT_SOIL)
          end do
       case (FLD_P_SOILC_MICROBIAL)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%microbial_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_MICR)
          end do
       case (FLD_P_SOILC_SLOW)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%slow_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_SLOW)
          end do
       case (FLD_P_SOILC_PASSIVE)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%passive_carbon
+            x(ip) = poly%patch%soil_carbon(ip)%carbon(IP_PASSIVE)
          end do
       case (FLD_P_SOILC_TOTAL)
          do ip = 1_ik, n
-            x(ip) = poly%patch%soil_carbon(ip)%fast_grnd_carbon                                &
-                  + poly%patch%soil_carbon(ip)%fast_soil_carbon                                &
-                  + poly%patch%soil_carbon(ip)%struct_grnd_carbon                              &
-                  + poly%patch%soil_carbon(ip)%struct_soil_carbon                              &
-                  + poly%patch%soil_carbon(ip)%microbial_carbon                                &
-                  + poly%patch%soil_carbon(ip)%slow_carbon                                     &
-                  + poly%patch%soil_carbon(ip)%passive_carbon
+            x(ip) = sum(poly%patch%soil_carbon(ip)%carbon)
          end do
       case (FLD_P_RH)
          do ip = 1_ik, n

@@ -25,7 +25,8 @@ module meds_polygon
    use meds_stepper,                  only : run_ledgers_t, advance_one_step
    use meds_slow_update,              only : max_cohort_count
    use meds_slow_ledger,              only : slow_ledger_report
-   use meds_soil_carbon,              only : soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_soil_carbon,              only : soil_carbon_bad_pool
+   use meds_biogeochem_params,        only : SOIL_POOL_NAME
    use meds_met_types,                only : met_source_t, met_cursor_t
    use meds_met,                      only : met_cursor_init
    use meds_output_types,             only : output_files_t, output_buffers_t
@@ -203,7 +204,7 @@ contains
          do i = 1_ik, poly%patch%n
             k = soil_carbon_bad_pool(poly%patch%soil_carbon(i))
             if (k == 0_ik) cycle
-            write(where,'(3a,i0,a,i0)') 'pool ', trim(soil_carbon_pool_name(k)), ', patch ', i, ' of ',   &
+            write(where,'(3a,i0,a,i0)') 'pool ', trim(SOIL_POOL_NAME(k)), ', patch ', i, ' of ',   &
                   poly%patch%n
             call report_failure(run, 'a CENTURY soil-carbon pool is physically impossible.', where,       &
                                 'date '//time_to_string(now),                                          &

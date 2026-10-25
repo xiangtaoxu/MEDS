@@ -935,7 +935,6 @@ module test_slow_update_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : pack_pool_vector
    use meds_biogeochem_params,  only : N_SOIL_POOL
    use meds_init_bare_ground,   only : init_bare_ground, add_cohort, finalize_init
    use meds_slow_dynamics,      only : advance_boundary_dynamics, advance_slow_dynamics
@@ -1048,7 +1047,7 @@ contains
       integer(ik) :: ip
       soil_carbon_total = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         call pack_pool_vector(poly%patch%soil_carbon(ip), x)
+         x = poly%patch%soil_carbon(ip)%carbon
          soil_carbon_total = soil_carbon_total + patch_polygon_area(poly, ip) * sum(x)
       end do
    end function soil_carbon_total
