@@ -15,11 +15,11 @@
 !                      reaches it at once.                                                 !
 !   5. THERMAL       : acclimate_leaf_photo_table (Kattge & Knorr 2007): a warmer growth   !
 !      ACCLIMATION     temperature lowers both entropy terms and the Jmax:Vcmax ratio and  !
-!                      moves the Vcmax and Jmax optima up, the Vcmax optimum of a stand    !
-!                      grown at 10 C being the page's 28.2 C; at the growth temperature    !
-!                      where the fit gives the table's own values the table is unchanged;  !
-!                      no other trait moves; the table depends on the growth temperature   !
-!                      alone.                                                              !
+!                      moves the Vcmax and Jmax optima up, the Vcmax optimum of stands     !
+!                      grown at 10 C and 30 C being the page's 28.2 C and 38.2 C; at the   !
+!                      growth temperature where the fit gives the table's own values the   !
+!                      table is unchanged; no other trait moves; the table depends on the  !
+!                      growth temperature alone.                                           !
 !==========================================================================================!
 program test_plant_traits
    use meds_test_assert,  only : check_close, check_true, test_report
@@ -106,12 +106,11 @@ contains
       end do
 
       !----- What the shift is for: the optimum, measured on the table's own response, sits where   !
-      !      the page puts it for a stand grown at 10 C and higher for one grown at 30 C. -----------!
+      !      the page puts it for stands grown at 10 C and 30 C. -------------------------------------!
       topt_cold = peak_temperature(cold%pft(1)%ea_vcmax, cold%pft(1)%hd_vcmax, cold%pft(1)%ds_vcmax)
       topt_warm = peak_temperature(warm%pft(1)%ea_vcmax, warm%pft(1)%hd_vcmax, warm%pft(1)%ds_vcmax)
       call check_close('Vcmax optimum of a stand grown at 10 C [C]', topt_cold - t_kelvin, 28.2_wp, 0.05_wp)
-      call check_true('a stand grown at 30 C has a higher Vcmax optimum', topt_warm > topt_cold,                  &
-                      topt_warm - topt_cold)
+      call check_close('Vcmax optimum of a stand grown at 30 C [C]', topt_warm - t_kelvin, 38.2_wp, 0.05_wp)
       call check_true('and a higher Jmax optimum',                                                                &
                       peak_temperature(warm%pft(1)%ea_jmax, warm%pft(1)%hd_jmax, warm%pft(1)%ds_jmax) >           &
                       peak_temperature(cold%pft(1)%ea_jmax, cold%pft(1)%hd_jmax, cold%pft(1)%ds_jmax))
