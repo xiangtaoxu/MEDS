@@ -89,7 +89,7 @@ The main file holds all non-PFT settings. It names the PFT file in `[init].pft_c
 | Block | What it controls |
 |---|---|
 | `[run]` | the slow step `dt_slow` (`"1d"`, `"12h"`, `"900s"`: a number and a unit `s`, `m`, `h`, `d` or `w`; a bare number is seconds), the span as calendar dates (`start_time`, `end_time`, exclusive; `"YYYY-MM-DD[ HH:MM:SS]"`, Gregorian with leap years), `mode` (`"site"`, the default, or `"region"`), the thread count and two slow-step switches |
-| `[fast]` | the sub-daily loop: whether it runs (`fast_biophysics_on`), its step `dt_fast`, the GPP of a run without it (`gpp_ref`), the integrator and its error control (`time_integrator`, `rtol`, `atol_scale`, `water_atol`), the budget checks (`soil_energy_budget_atol`, `debug_error`), canopy interception, and the initial snow |
+| `[fast]` | the sub-daily loop: whether it runs (`fast_biophysics_on`), its step `dt_fast`, the GPP of a run without it (`gpp_ref`; its soil carbon decays at `[soil_carbon].spinup_xi`), the integrator and its error control (`time_integrator`, `rtol`, `atol_scale`, `water_atol`), the budget checks (`soil_energy_budget_atol`, `debug_error`), canopy interception, and the initial snow |
 | `[soil]` | the ground: column, hydraulic and thermal texture, surface, and the two bottom boundaries |
 | `[snow]`, `[aerodynamics]` | the snow store's and the canopy aerodynamics' parameters |
 | `[demography]` | the stand's structure: one switch per operator, and the settings of cohort and patch fusion, fission, the cull, treefall gaps and recruitment |

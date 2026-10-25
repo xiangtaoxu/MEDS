@@ -25,10 +25,10 @@ a move is safe and a renumbering is not.
 | Document | What is open |
 |---|---|
 | [`MEDS_BCI_CENSUS_INIT_PLAN.md`](MEDS_BCI_CENSUS_INIT_PLAN.md) | The census start of the BCI example is built. Open: the census-plot figure and the validation gates of §8 that need model runs. |
-| [`MEDS_EFFICIENCY_SWEEP_PLAN.md`](MEDS_EFFICIENCY_SWEEP_PLAN.md) | The sweep's phases 0–3 shipped. Open: the runtime consolidation and region threading of Phase 5 (#310, #183, #400), the cohort axis (#196), and Phase 4, moved to a later numerics round. |
+| [`MEDS_EFFICIENCY_SWEEP_PLAN.md`](MEDS_EFFICIENCY_SWEEP_PLAN.md) | The sweep's phases 0–3 shipped. Open: the region threading of Phase 5 (#400), the cohort axis (#196), and Phase 4, moved to a later numerics round. Phase 5's runtime consolidation shipped as the one run path. |
 | [`MEDS_MULTI_SITE_PLAN.md`](MEDS_MULTI_SITE_PLAN.md) | Several sites per polygon, steps S0–S5, is built. Open: the diffuse light of a slope, a site map for a region, lateral water and seed dispersal between sites, and the example (#455). |
 | [`MEDS_PHENOLOGY_SENESCENCE_PLAN.md`](MEDS_PHENOLOGY_SENESCENCE_PLAN.md) | The generic cue model is built. Open: senescence as an up-regulation of the PFT's baseline leaf turnover (#379). |
-| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Region runs are built (§14). Open: patch threads inside a region's polygons (#400), one run container and one loop (#310), reading the next month's forcing during the current step (#407). |
+| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Region runs are built (§14). Open: patch threads inside a region's polygons (#400) and reading the next month's forcing during the current step (#407). One run container and one loop shipped as the one run path. |
 | [`MEDS_PRODUCTION_INTEGRATOR_PLAN.md`](MEDS_PRODUCTION_INTEGRATOR_PLAN.md) | The numerics roadmap's remainder and the record of what measurement refuted. Open: the `dt_fast` checks (#415) and the closed items to revisit with the numerical scheme (#158, #159). |
 | [`MEDS_STATE_HIERARCHY_PLAN.md`](MEDS_STATE_HIERARCHY_PLAN.md) | The state layer by model hierarchy is built. Open: the follow-ups of §9 (the cohort file's field lists, folding the pool changes into the tendency bundle, the output-only accumulators on the polygon state). |
 

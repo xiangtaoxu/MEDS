@@ -148,9 +148,15 @@ and patch termination merges and re-sorts as patch fusion does (#523). The stand
 one switch each, and the stand's keys are one `[demography]` block (#525). The slow tests are one
 per module of the new layout (#528). The soil-carbon state holds its pools as the matrix's vector
 (#529). Every documentation page and README is checked against the code and rewritten for
-readability, with no change to any result (#542).
+readability, with no change to any result (#542). Before the release, a sweep: the default forcing
+reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
+`spinup_xi`, and four code oddities go (#551).
 
 **Upgrading from v0.3.5:**
+- **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
+  (default 1.0) for every pool, where it decomposed nothing before. A fast-off spin-up with soil
+  carbon on now ends with less soil carbon: set `spinup_xi` to the site's mean scalar, or turn the
+  soil carbon off.
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
   `_co`, `_pa`, `_si` or `_py`; the breakdown `_pft`, `_size` or `_layer`; `mean_` for a mean over the
   record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
@@ -1862,6 +1868,8 @@ readability, with no change to any result (#542).
 
 ### Removed
 
+- **The `METAVG_CENTER` code and `record_mean_cosz`'s instantaneous-record branch** (#551), which
+  nothing reached: `[forcing].avg_convention` takes only `"end"` and `"begin"`.
 - **`fast_dynamics`' `met_fixed` argument** (#536), which nothing in production passed. A run without
   forcing still steps on the reference climate.
 - **Storage maintenance** (#534): `[pft].storage_turnover_rate`, the cohort row `CO_STORAGE_RESP` and the
@@ -1947,6 +1955,20 @@ readability, with no change to any result (#542).
 
 ### Fixed
 
+- **The default forcing reader took a file's numeric `_FillValue` as data** (#551). A value equal to
+  the variable's `_FillValue` or `missing_value` is now a gap, which stops the step that reads it
+  and names the field and the record, as MEDS never gap-fills (`docs/science/forcing.md` §10); a
+  packed variable is unpacked with its `scale_factor` and `add_offset`. The map reader keeps the
+  same rule, now shared (`nc_packing_of`, `nc_unpacked`). No shipped forcing file has a gap or is
+  packed, so no result moves.
+- **With the fast loop off, soil carbon never decomposed** (#551). The soil step decays the pools by
+  the scalar the fast loop integrates, which stayed 0, so the litter piled up with no heterotrophic
+  respiration and nothing said so. Without the loop the step now takes `[soil_carbon].spinup_xi`,
+  as growth takes `gpp_ref` (`docs/science/soil_carbon.md` §7).
+- **The longwave synthesis kept a stale clearness index over three kinds of interval** (#551):
+  `met_advance` returned early on a held start, at the recycle seam and past the file's end, before
+  it updated the index held through the night. Only `lwdown_source = "synthesize"` reads it, which
+  no shipped config uses.
 - **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
   now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
 - **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`

@@ -75,7 +75,7 @@ module meds_pft_params
       integer(ik) :: stomatal_model     = 0_ik    !< SM_LEUNING | SM_MEDLYN | SM_KATUL
       integer(ik) :: temp_response_form = 0_ik    !< TEMP_RESPONSE_ARRHENIUS | TEMP_RESPONSE_PEAKED
       integer(ik) :: colimitation       = 0_ik    !< COLIM_MIN | COLIM_QUADRATIC
-      logical     :: use_boundary_layer = .true.  !< couple through the leaf boundary layer (gb)
+      logical     :: use_boundary_layer = .false. !< couple through the leaf boundary layer (gb)
    end type leaf_photo_table_t
 
    !----- One PFT's hydraulic traits, from its PFT file's [hydraulics] block               !

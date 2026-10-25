@@ -22,7 +22,8 @@ end_time   = "2250-01-01"      # end, exclusive: a 250-year spin-up
 
 [fast]
 # The sub-daily loop, nint(dt_slow/dt_fast) sub-steps a slow step. Off in this reference, a demographic
-# spin-up with no forcing file: growth then runs on gpp_ref (example 04 turns it on).
+# spin-up with no forcing file: growth then runs on gpp_ref and the soil carbon decays at
+# [soil_carbon].spinup_xi (example 04 turns it on).
 fast_biophysics_on  = false    # the sub-daily loop
 dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is the edge of the measured
                                #   range; 300 s for the timing of dry-season leaf habits
@@ -298,7 +299,7 @@ phi_psii         = 0.74    # [-] electrons per absorbed photon in low light, tim
 # resp_water_below_opt = 5.0786    # [-]  and its shape below and above the optimum
 # resp_water_above_opt = 4.5139
 # spinup_steady       = false      # start from the semi-analytic steady state, not from zero (eq. (7))
-# spinup_xi           = 1.0        # [-]  its environmental scalar
+# spinup_xi           = 1.0        # [-]  its environmental scalar, and every step's without the fast loop
 # spinup_labile_grnd  = 0.0        # [kgC/m2/day] its litter input, per pool
 # spinup_labile_soil  = 0.0
 # spinup_struct_grnd  = 0.0

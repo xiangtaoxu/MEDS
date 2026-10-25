@@ -5,7 +5,8 @@
 ! are compiler-specific, while the C library links from any compiler, so MEDS binds the C  !
 ! entry points it uses directly. C counts from 0 (callers pass 0-based starts), lists      !
 ! dimensions slowest-varying first ([time, cohort]), and takes sizes as size_t and         !
-! NUL-terminated strings (cstr); the `_f` wrappers take Fortran strings.                   !
+! NUL-terminated strings (cstr); the `_f` wrappers take Fortran strings. The readers share !
+! one rule for a variable's gaps and packing (nc_packing_of, nc_unpacked).                 !
 !==========================================================================================!
 module meds_netcdf_c
    use iso_c_binding, only : c_int, c_size_t, c_double, c_float, c_char, c_ptr, c_null_char,           &
@@ -29,6 +30,14 @@ module meds_netcdf_c
    !----- netCDF's default fill values: what a variable holds where nothing was written. --------!
    real(c_double),    parameter :: NC_FILL_DOUBLE = 9.9692099683868690e+36_c_double
    integer(c_int),    parameter :: NC_FILL_INT    = -2147483647_c_int
+
+   !----- A variable's gap and packing attributes, NaN where it has none (nc_packing_of). ----------!
+   type :: nc_packing_t
+      real(c_double) :: fill     !< _FillValue
+      real(c_double) :: missing  !< missing_value
+      real(c_double) :: scale    !< scale_factor
+      real(c_double) :: offset   !< add_offset
+   end type nc_packing_t
 
    interface
       integer(c_int) function nc_create(path, cmode, ncidp) bind(c, name="nc_create")
@@ -381,6 +390,43 @@ contains
       st = nc_get_att_double(ncid, varid, cname, buf)
       if (st == NC_NOERR) value = buf(1)
    end function nc_get_att_double_f
+
+   !----- A variable's gaps and packing, as the netCDF attribute conventions declare them: a value !
+   !      equal to _FillValue or missing_value is a gap, and scale_factor and add_offset unpack the !
+   !      rest. Read once per variable here; nc_unpacked applies it value by value. -------------!
+   function nc_packing_of(ncid, varid) result(packing)
+      integer(c_int), intent(in) :: ncid, varid
+      type(nc_packing_t)         :: packing
+      packing%fill    = attribute_or_nan('_FillValue')
+      packing%missing = attribute_or_nan('missing_value')
+      packing%scale   = attribute_or_nan('scale_factor')
+      packing%offset  = attribute_or_nan('add_offset')
+   contains
+      real(c_double) function attribute_or_nan(name) result(x)
+         use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
+         character(len=*), intent(in) :: name
+         real(c_double) :: a
+         x = ieee_value(1.0_c_double, ieee_quiet_nan)
+         if (nc_get_att_double_f(ncid, varid, name, a) == NC_NOERR) x = a
+      end function attribute_or_nan
+   end function nc_packing_of
+
+   !----- One stored value as data: NaN for a gap, otherwise unpacked. An attribute the variable  !
+   !      lacks (NaN in the record) does nothing, so a plain variable reads as stored. ------------!
+   elemental real(c_double) function nc_unpacked(packing, raw) result(x)
+      use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
+      type(nc_packing_t), intent(in) :: packing
+      real(c_double),     intent(in) :: raw
+      x = raw
+      if (.not. ieee_is_nan(packing%fill)) then
+         if (raw == packing%fill) x = ieee_value(x, ieee_quiet_nan)
+      end if
+      if (.not. ieee_is_nan(packing%missing)) then
+         if (raw == packing%missing) x = ieee_value(x, ieee_quiet_nan)
+      end if
+      if (.not. ieee_is_nan(packing%scale))  x = x * packing%scale
+      if (.not. ieee_is_nan(packing%offset)) x = x + packing%offset
+   end function nc_unpacked
 
    !----- The netCDF library's text for a status ('' when it has none). ---------------------!
    function nc_error_text(status) result(text)

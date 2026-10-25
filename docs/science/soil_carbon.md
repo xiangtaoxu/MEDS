@@ -240,6 +240,13 @@ The boundary's fusion and gaps run before the next fast window opens, so the win
 the patches as they are ([order_of_processes](order_of_processes.md) §5). A nonzero gap on any step is
 a broken contract; do not widen the tolerance to absorb it.
 
+**Without the fast loop** (`[fast].fast_biophysics_on = false`, a demography spin-up) there is no soil
+climate to integrate and no seam. The soil step takes the fixed scalar `spinup_xi` for every pool,
+$`\xi^{\mathrm{int}}_j = \bar\xi\,\Delta t_{\mathrm{slow}}`$ (in days), as growth takes the fixed
+`gpp_ref`, and the pools tend to the steady state of §8 for that scalar and the run's litter. Nothing
+respires into a canopy air space, so the soil step's own debit is the respiration the slow ledger
+declares.
+
 ## 8. Steady state (SASU) and traceability diagnostics
 
 Under climatological-mean drivers the equilibrium is a direct linear solve rather than a
@@ -323,7 +330,7 @@ The `[soil_carbon]` keys; every one is optional, at the default shown in `meds_c
 | `e_lignin` | the lignin brake exponent, eq. (4) |
 | `er_micr_int`, `er_micr_slp`, `xsand`; `fx_micr_pass_int`, `fx_micr_pass_slp`, `fx_slow_pass_int`, `fx_slow_pass_slp`, `xclay` | scheme-5 texture control: sand sets the microbial respired fraction, clay the routing to passive |
 | `rh_q10`, `rh_t_ref`, `resp_temp_increase`, `resp_temp_ref`, `resp_opt_water`, `resp_water_below_opt`, `resp_water_above_opt` | the $\xi$ responses, eq. (3) |
-| `spinup_steady`, `spinup_xi`, `spinup_labile_grnd`, `spinup_labile_soil`, `spinup_struct_grnd`, `spinup_struct_soil` | the steady-state start, §8 |
+| `spinup_steady`, `spinup_xi`, `spinup_labile_grnd`, `spinup_labile_soil`, `spinup_struct_grnd`, `spinup_struct_soil` | the steady-state start, §8; `spinup_xi` is also the scalar of a run without the fast loop, §7 |
 
 The defaults are the `"ed2"` scheme's. `decomp_scheme = "century5"` changes the topology and the
 temperature form but not the rates, so set them with it. ED2's scheme-5 values are `k_fast` 12.0,

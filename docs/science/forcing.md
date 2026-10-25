@@ -593,7 +593,9 @@ A region's window starts at 00:00 or 01:00 on the 1st, because a region loads ea
 ## 10. MEDS never gap-fills
 
 Every required field is checked for NaN as it is read, and a missing value **halts the run**, naming the
-field, the time record and the grid index. There is no gap policy, no persistence hold and no climatology
+field, the time record and the grid index. In a forcing file, a value equal to its variable's `_FillValue`
+or `missing_value` is a missing value too, and a packed variable is unpacked with its `scale_factor` and
+`add_offset`, as the map reader does. There is no gap policy, no persistence hold and no climatology
 fill; the preparation scripts apply the same rule, erroring rather than inventing a value. This is
 deliberate: gap-filling is a modelling decision with real consequences for the fluxes it produces, and it
 belongs upstream in the user's own preprocessing, where it is visible and documented. Buried in a reader,
