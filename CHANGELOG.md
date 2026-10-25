@@ -836,6 +836,12 @@ matrix's vector (#529).
 
 ### Changed
 
+- **Three gaps a mutation check found are tested** (#541):
+  - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
+  - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
+  - the frozen build leaves the canopy films out of the tissue heat capacity, as the end-of-step commit
+    requires.
+  Each check fails under a mutation that every test passed before.
 - **`test/` is in folders that mirror `src/`** (#540): `support/`, `share/`, `config/`, `state/`, `fast/`,
   `slow/`, `io/`, `driver/`, `c_api/` and `checks/`. `test/CMakeLists.txt` registers every test through one
   helper, with commands, directories and limits unchanged. Every test has one label (`unit`, `integration`,

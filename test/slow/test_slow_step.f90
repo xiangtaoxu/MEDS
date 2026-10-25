@@ -398,12 +398,15 @@ end module test_slow_step_acclimation
 ! The carbon step: a step without the fast loop grows wood and diameter, the driver's      !
 ! guards see the fast loop's states, the cached wood geometry follows the growth, a shaded !
 ! cohort acclimates and resorbs, its fine roots turn over with its leaves when             !
-! fineroot_turnover_plastic says so, the turnover sheds its water, and a restart's re-     !
-! acclimation takes only the storage there is.                                             !
+! fineroot_turnover_plastic says so, the turnover sheds its water, a re-flushing cohort    !
+! fills its new leaves on its own PFT's water curves, and a restart's re-acclimation takes !
+! only the storage there is.                                                               !
 !==========================================================================================!
 module test_slow_step_carbon
    use meds_kinds,                  only : wp, ik
+   use meds_constants,              only : grav_head
    use meds_therm_lib,              only : internal_energy_liquid
+   use meds_plant_hydr_lib,         only : water_curve_t, tissue_water_to_psi, tissue_psi_to_water
    use meds_allometry_lib, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_finite, cohort_field_name
@@ -412,7 +415,7 @@ module test_slow_step_carbon
    use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives, commit_trait_carbon
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_slow_state, only : kill_report_t, advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
-                               slow_step_data_t, compute_carbon_allocation, clear_litter
+                               slow_step_data_t, compute_carbon_allocation, clear_litter, fill_new_leaf_water
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step, run_ledgers_t
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -622,6 +625,45 @@ contains
          call shed_turnover_water(poly, cfg, step, no_ledger)
          call check_close(poly%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
                           'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
+      end block
+
+      !=== 4b. fill_new_leaf_water reads the cohort's OWN water curves. A bare PFT 2 cohort re-flushes !
+      !    from a stem a tenth drier than at birth: its new leaves take the water that puts them at    !
+      !    the wood's potential less the crown's gravity head, the wood's potential and the leaves'    !
+      !    water both read on PFT 2's curves (docs/science/soil_plant_water.md §2). The fixture's PFTs !
+      !    differ in every curve parameter, so PFT 1's curves give the leaves another amount. =========!
+      block
+         integer(ik), parameter :: PFT = 2_ik
+         type(slow_step_data_t) :: step
+         type(water_curve_t)    :: leaf_own, wood_own, leaf_pft1, wood_pft1
+         real(wp) :: wood_water0, wood_store, head, psi_wood0, psi_leaf, leaf_water, leaf_water_pft1
+         call init_bare_ground(poly, cfg, 1_ik)
+         call add_cohort(poly, cfg, 1_ik, PFT, 0.3_wp, 16.0_wp)
+         call finalize_init(poly)
+         leaf_own  = cfg%pft%hydro(PFT)%leaf_curve
+         wood_own  = cfg%pft%hydro(PFT)%wood_curve
+         leaf_pft1 = cfg%pft%hydro(1_ik)%leaf_curve
+         wood_pft1 = cfg%pft%hydro(1_ik)%wood_curve
+         !----- Bare before the commit, so all its leaf carbon is new and holds no water yet. --------!
+         allocate(step%leaf_carbon_before(1))
+         step%leaf_carbon_before(1)     = 0.0_wp
+         poly%cohort%leaf_water_mass(1) = 0.0_wp
+         poly%cohort%wood_water_mass(1) = 0.9_wp * poly%cohort%wood_water_mass(1)
+         wood_water0 = poly%cohort%wood_water_mass(1)
+         wood_store  = poly%cohort%sapwood_carbon(1) + poly%cohort%fineroot_carbon(1)
+         head        = grav_head * poly%cohort%height(1)
+         call fill_new_leaf_water(poly, cfg, step)
+         leaf_water = poly%cohort%leaf_water_mass(1)
+         call check(leaf_water > 0.0_wp, 'fill_new_leaf_water: the PFT 2 cohort''s new leaves take water')
+         psi_wood0 = tissue_water_to_psi(wood_water0, wood_own, wood_store)
+         psi_leaf  = tissue_water_to_psi(leaf_water, leaf_own, poly%cohort%leaf_carbon(1))
+         call check(abs(psi_leaf - (psi_wood0 - head)) <= 1.0e-9_wp,                                         &
+                    'fill_new_leaf_water: PFT 2''s new leaves sit at its wood''s potential less the head, on its curves')
+         !----- What PFT 1's curves would put in the same leaves: the check above tells the two apart. -!
+         leaf_water_pft1 = tissue_psi_to_water(tissue_water_to_psi(wood_water0, wood_pft1, wood_store) - head,    &
+                                               leaf_pft1, poly%cohort%leaf_carbon(1))
+         call check(abs(leaf_water_pft1 - leaf_water) > 0.01_wp * leaf_water,                                 &
+                    'fill_new_leaf_water: PFT 1''s curves would give the leaves another amount')
       end block
 
       !=== Re-acclimation to a lower SLA asks storage for more leaf carbon: it takes only what     !

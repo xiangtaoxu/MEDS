@@ -23,8 +23,9 @@
 !      to start a pack reaches the ground as ice.                                           !
 !   7. PLANT WATER AND HEAT: the leaf potential converges in dt_fast; the wood's heat      !
 !      store lags the canopy air on both schemes; refilling wood takes no heat from water  !
-!      at its own temperature; the wood's heat capacity follows its water; a new cohort's  !
-!      predawn potential follows a Campbell soil's curve.                                   !
+!      at its own temperature; the wood's heat capacity follows its water; the canopy      !
+!      films stay out of the tissues' heat capacity for the step; a new cohort's predawn   !
+!      potential follows a Campbell soil's curve.                                          !
 !   8. RK45 AT ITS EDGES: a drydown to theta_res, a just-recruited cohort, a dense canopy   !
 !      in a cold snap, and the dry soil's uptake seam.                                      !
 !   9. THE REPORTED NET RADIATION (fast_step's out%rnet) counts the wood: with the leaves  !
@@ -36,10 +37,11 @@
 program test_fast_integ_step
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : latent_heat_fusion, rho_h2o, grav, pio4, cp_liq, grav_head, mmh2o,          &
-                                       tissue_c_wood_dry
+                                       tissue_c_wood_dry, tissue_c_leaf
    use meds_fast_params,        only : INTEG_ESDIRK2, INTEG_RK45, RK45_RTOL
    use meds_time,               only : solar_cosz
-   use meds_therm_lib,          only : temp_to_internal_energy, internal_energy_liquid, sat_specific_humidity
+   use meds_therm_lib,          only : temp_to_internal_energy, internal_energy_liquid, sat_specific_humidity,     &
+                                       tissue_temp_to_energy, tissue_dry_heat_capacity
    use meds_soil_hydr_lib,      only : SOIL_RETENTION_CAMPBELL, SOIL_SPECIFIC_STORAGE, soil_theta_to_head
    use meds_soil_params,        only : soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_site_state_vars,    only : make_site_surface
@@ -107,6 +109,7 @@ program test_fast_integ_step
    call test_prognostic_wood()
    call test_refilling_wood()
    call test_wood_capacity()
+   call test_film_outside_capacity()
    call test_campbell_seed()
    call test_rk45_drydown()
    call test_rk45_tiny_cohort()
@@ -240,6 +243,14 @@ contains
       e = sum(col%dynamic%soil_energy%soil_energy(1:NSL) * col%site%soil_profile%dz(1:NSL))                    &
           + col%dynamic%soil_water%w_surface_energy
    end function ground_energy
+
+   !----- The heat a tissue gains per kelvin at T0 [J/m2/K], with dry heat capacity dry_hcap and     !
+   !      holding wmass of water: the slope of its energy in temperature (tissue_temp_to_energy). ---!
+   real(wp) function heat_per_kelvin(dry_hcap, wmass) result(c)
+      real(wp), intent(in) :: dry_hcap   !< [J/m2/K]
+      real(wp), intent(in) :: wmass      !< [kg/m2]
+      c = tissue_temp_to_energy(dry_hcap, wmass, T0 + 1.0_wp) - tissue_temp_to_energy(dry_hcap, wmass, T0)
+   end function heat_per_kelvin
 
    !=======================================================================================!
    ! 1. THE COLUMN: what the gathered view brings to the step.                               !
@@ -947,6 +958,60 @@ contains
       call check('wood capacity: a store drained by a fifth holds a fifth less water heat', cap_full - cap_drained,  &
                  0.2_wp * col%static%nplant(1) * w_store * cp_liq, 1.0e-9_wp * cap_full)
    end subroutine test_wood_capacity
+
+   !----- The canopy films stay out of the tissues' heat capacity for the step (build_frozen; docs/     !
+   !      science/vegetation_energy_dynamics.md, "The canopy's interception film"). A film is part of   !
+   !      its tissue's energy, but within a step the tissue's balance runs on the tissue's own heat     !
+   !      capacity, its dry matter and its internal water, and the commit reads the temperature back    !
+   !      with the end-of-step film. Counted in the step's capacity, a film far heavier than its tissue !
+   !      that evaporates within the step would leave its heat to the tissue alone: at Palo Verde a     !
+   !      nearly leafless cohort's leaf read back at 107 K. The column frozen dry and frozen with its   !
+   !      leaf and wood films half full gives the same two capacities, each the heat its tissue's dry   !
+   !      matter and internal water gain per kelvin; each film holds enough heat that counting it would !
+   !      show. ----------------------------------------------------------------------------------------!
+   subroutine test_film_outside_capacity()
+      real(wp), parameter :: FILL = 0.5_wp   ! the films' share of their capacity
+      type(frozen_t)      :: fz
+      type(march_state_t) :: ys
+      real(wp) :: leaf_cap_no_film, wood_cap_no_film, leaf_film, wood_film, leaf_own, wood_own
+      print '(a)', 'test_film_outside_capacity:'
+      col%cfg%canopy_water_on = .true.
+      call reset_column(col)
+      call set_noon_forcing(col)
+      call frozen_record(col, fz, ys)
+      leaf_cap_no_film = fz%tissue%leaf_hcap_per_dt(1)
+      wood_cap_no_film = fz%tissue%wood_hcap_per_dt(1)
+      leaf_film = FILL * col%cfg%pft%leaf_surf_water_max(col%static%pft(1)) * col%static%lai(1)
+      wood_film = FILL * col%cfg%pft%wood_surf_water_max(col%static%pft(1)) * col%static%wai(1)
+      call reset_column(col)
+      col%dynamic%leaf_surf_water(1) = leaf_film
+      col%dynamic%wood_surf_water(1) = wood_film
+      call frozen_record(col, fz, ys)
+      call check_true('film: the wet column''s frozen build sees its films', fz%film%f_wet_c(1) > 0.0_wp,          &
+                      fz%film%f_wet_c(1))
+      call check('film: the leaves'' capacity for the step leaves their film out', fz%tissue%leaf_hcap_per_dt(1),    &
+                 leaf_cap_no_film, 1.0e-12_wp * leaf_cap_no_film)
+      call check('film: the wood''s capacity for the step leaves its film out', fz%tissue%wood_hcap_per_dt(1),       &
+                 wood_cap_no_film, 1.0e-12_wp * wood_cap_no_film)
+      !----- Each is its tissue's own, the dry matter and the internal water, as the column made them. -!
+      leaf_own = heat_per_kelvin(tissue_dry_heat_capacity(col%static%nplant(1), col%static%bleaf(1), tissue_c_leaf),  &
+                                 col%dynamic%leaf_water_mass(1) * col%static%nplant(1))
+      wood_own = heat_per_kelvin(tissue_dry_heat_capacity(col%static%nplant(1), col%static%bwood(1),                 &
+                                                          tissue_c_wood_dry),                                       &
+                                 col%dynamic%wood_water_mass(1) * col%static%nplant(1))
+      call check('film: the leaves'' capacity is their dry matter''s and internal water''s',                       &
+                 fz%tissue%leaf_hcap_per_dt(1) * DT_FAST, leaf_own, 1.0e-12_wp * leaf_own)
+      call check('film: the wood''s capacity is its dry matter''s and internal water''s',                          &
+                 fz%tissue%wood_hcap_per_dt(1) * DT_FAST, wood_own, 1.0e-12_wp * wood_own)
+      !----- Counted, either film would move its capacity far beyond the tolerances above. ------------!
+      call check_true('film: the leaf film holds heat a capacity counting it would show',                         &
+                      heat_per_kelvin(0.0_wp, leaf_film) > 1.0e-6_wp * leaf_own,                                    &
+                      heat_per_kelvin(0.0_wp, leaf_film) / leaf_own)
+      call check_true('film: the wood film holds heat a capacity counting it would show',                         &
+                      heat_per_kelvin(0.0_wp, wood_film) > 1.0e-6_wp * wood_own,                                    &
+                      heat_per_kelvin(0.0_wp, wood_film) / wood_own)
+      col%cfg%canopy_water_on = .false.
+   end subroutine test_film_outside_capacity
 
    !----- A new cohort's predawn potential is seeded from the top soil layer's, which the leaf's        !
    !      stomatal limb reads until the cohort has a day of its own. On a Campbell soil the seed comes  !
