@@ -646,11 +646,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_c_api_leaf)
    add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
 
-   add_executable(test_c_api_phenology test/test_c_api_phenology.f90)
-   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_c_api)
-   meds_fortran_flags(test_c_api_phenology)
-   add_test(NAME c_api_phenology COMMAND test_c_api_phenology)
-
    add_executable(test_c_api_demography test/test_c_api_demography.f90)
    target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_demography)
@@ -691,12 +686,18 @@ if(MEDS_BUILD_TESTS)
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
    #     allocation and trait dynamics are daily -- so it links both kernel libraries: there is no
    #     edge between them to ride on.
-   foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
+   foreach(t plant_hydraulics plant_respiration plant_carbon_allocation plant_traits)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- The phenology kernel and its C-API shim, so the shim compiles under ctest. -----#
+   add_executable(test_plant_phenology test/test_plant_phenology.f90)
+   target_link_libraries(test_plant_phenology PRIVATE meds_slow_kernels meds_c_api meds_testassert)
+   meds_fortran_flags(test_plant_phenology)
+   add_test(NAME plant_phenology COMMAND test_plant_phenology)
 
    #----- Canopy radiative-transfer test links meds_fast_kernels (state-free). ------------#
    add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
@@ -744,10 +745,10 @@ if(MEDS_BUILD_TESTS)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
-   add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
-   meds_fortran_flags(test_soil_biogeochem)
-   add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
+   add_executable(test_soil_carbon test/test_soil_carbon.f90)
+   target_link_libraries(test_soil_carbon PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
+   meds_fortran_flags(test_soil_carbon)
+   add_test(NAME soil_carbon COMMAND test_soil_carbon)
 
    #----- A site's forcing within its polygon: the sun and the beam on a slope, the lapse to the site. #
    add_executable(test_site_terrain test/test_site_terrain.f90)

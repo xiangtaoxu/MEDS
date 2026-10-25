@@ -140,6 +140,12 @@ program test_time
       call check(solar_declination(355_ik) < -0.40_wp, 'declination near -23.45 deg at the December solstice')
    end block
 
+   !=== The day length's polar branches: a polar day at 80 N in June, a polar night in December, !
+   !    and 12 h at the equator. ===========================================================!
+   call check(daylength(80.0_wp, 172_ik) > 23.5_wp, 'polar day ~ 24 h')
+   call check(daylength(80.0_wp, 355_ik) < 0.5_wp,  'polar night ~ 0 h')
+   call check(abs(daylength(0.0_wp, 172_ik) - 12.0_wp) < 0.5_wp, 'equator ~ 12 h')
+
    write(*,'(a)') '[test] calendar / time tracking: PASS'
 
 contains
