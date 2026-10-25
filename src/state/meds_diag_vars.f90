@@ -183,7 +183,7 @@ module meds_diag_vars
    !----- TOP-OF-CANOPY radiative fluxes. Kept as FLUXES, not as a time-averaged albedo: a        !
    !      period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and     !
    !      at night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down)     !
-   !      over the period (docs/science/canopy_radiation_transfer.md eq. (15)), which these       !
+   !      over the period (docs/science/canopy_radiation_transfer.md eq. (16)), which these       !
    !      make computable -- and which is what a satellite product is. ---------------------------!
    integer(ik), parameter, public :: PA_SW_IN_VIS         =  4_ik  !< [W/m2] incident VIS at canopy top
    integer(ik), parameter, public :: PA_SW_IN_NIR         =  5_ik  !< [W/m2] incident NIR at canopy top

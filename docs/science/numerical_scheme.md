@@ -5,7 +5,7 @@ differ, and which to use. Written for ecological modellers rather than numerical
 reading it you can read a run's `[fast]` block and know what it committed you to. The short version
 is in §6: `esdirk2` at `dt_fast = 900 s`, and `dt_fast` is an accuracy setting, not a stability limit.
 
-Companion pages: [column_biophysics](column_biophysics.md) describes *what* is being integrated
+Companion pages: [coupled_biophysics](coupled_biophysics.md) describes *what* is being integrated
 (the stores and their fluxes). This page is about *how*. Open numerics work is listed in
 `docs/ROADMAP.md`.
 

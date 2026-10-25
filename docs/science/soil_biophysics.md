@@ -2,7 +2,7 @@
 
 The soil is two coupled stores on one grid of layers, with $z$ negative below the surface as in ED2: a **water** store (mixed-form Richards' equation) and a **thermal** store (heat diffusion in internal energy). This page gives their equations, the layers, the hydraulic and thermal properties the soil maps provide, frozen soil, and the coupling of water and heat. The water is solved together with the pond and the plants' water as one network ([soil_plant_water](soil_plant_water.md)); this page is the soil's part.
 
-This is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes the two principles the stores share (**prognostic internal energy**, not temperature; **closed-budget discipline**) and how they are woven each `dt_fast`. Here the first makes freeze and thaw a read-off of each layer's freezing curve (§ Frozen soil), and the second makes both stores close a machine-precision budget every step.
+This is one of the per-store pages under [coupled_biophysics](coupled_biophysics.md), which describes the two principles the stores share (**prognostic internal energy**, not temperature; **closed-budget discipline**) and how they are woven each `dt_fast`. Here the first makes freeze and thaw a read-off of each layer's freezing curve (§ Frozen soil), and the second makes both stores close a machine-precision budget every step.
 
 ---
 

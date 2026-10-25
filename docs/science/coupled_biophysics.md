@@ -1,4 +1,4 @@
-# Column biophysics
+# Coupled biophysics
 
 The hub page for the fast loop: how MEDS advances the coupled internal-energy, water and CO₂ budgets of
 a patch's soil–vegetation–canopy-air system each fast step (`dt_fast`). The page ties together the

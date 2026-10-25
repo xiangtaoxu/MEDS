@@ -58,7 +58,7 @@ network's step, one adaptive march of `meds_fast_integ_esdirk2` (an L-stable ESD
 `meds_fast_integ_rk45` (adaptive Cash–Karp, the explicit alternative, redone on ESDIRK2 when it
 cannot resolve a step), and the update. Every store closes a machine-precision budget residual.
 
-The integration is described in [`column_biophysics.md`](../../docs/science/column_biophysics.md), with
+The integration is described in [`coupled_biophysics.md`](../../docs/science/coupled_biophysics.md), with
 per-store pages for the canopy air space, soil, vegetation energy and snow, and the time integration
 itself in [`numerical_scheme.md`](../../docs/science/numerical_scheme.md). The call order within a slow
 step is in [`order_of_processes.md`](../../docs/science/order_of_processes.md) §3.

@@ -256,7 +256,7 @@ contains
 
    !----- The diffuse light a homogeneous layer scatters out of the beam entering its top, as it   !
    !      leaves the layer's two faces (docs/science/canopy_radiation_transfer.md eqs.             !
-   !      (10)-(10b)): the two-stream equations with the beam's source omega k S0 exp(-k x)        !
+   !      (10)-(11)): the two-stream equations with the beam's source omega k S0 exp(-k x)         !
    !      through the layer's depth, split up by beta0 and down by 1 - beta0, solved exactly with  !
    !      no diffuse entering either face. Their solution is a particular part in exp(-k x) plus   !
    !      the two diffuse modes of layer_rt. The adding method then combines the layers exactly,   !
@@ -379,7 +379,7 @@ contains
                                   leaf_frac(1:ncoh))
 
          !----- A cohort's absorptivity-weighted area (1-omega)*etai, the weight leaf_frac is     !
-         !      built from and the layer's members share its absorption by (eq. (13)). -----------!
+         !      built from and the layer's members share its absorption by (eq. (14)). -----------!
          wsum_l(1:nlayer) = 0.0_wp
          do i = 1_ik, ncoh
             wabs(i) = (1.0_wp - omega(i)) * etai(i)
@@ -470,7 +470,7 @@ contains
 
          !----- The solve's absorbed flux is net of the layer's emission. Every element of a layer  !
          !      sees the same radiation, so what the layer takes in, that net plus all its members  !
-         !      emit, goes to its members by absorptivity-weighted area (eq. (13)), and each is     !
+         !      emit, goes to its members by absorptivity-weighted area (eq. (14)), and each is     !
          !      charged its own emission; members that absorb nothing get nothing. -----------------!
          do i = 1_ik, ncoh
             il = lyr(i)
@@ -483,7 +483,7 @@ contains
             end if
          end do
 
-         !----- The same within a cohort (eq. (14)): leaves and wood share what it takes in by      !
+         !----- The same within a cohort (eq. (15)): leaves and wood share what it takes in by      !
          !      leaf_frac, and each is charged its own emission. Every member of a layer sees the   !
          !      light reaching the layer's top. ----------------------------------------------------!
          do i = 1_ik, ncoh

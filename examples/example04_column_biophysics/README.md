@@ -4,7 +4,7 @@ The coupled column of MEDS — canopy radiation, leaf gas exchange, the energy b
 canopy air and soil, plant hydraulics, and the soil's water and heat — solved every 15 minutes in
 each patch of a forest. The site is the Barro Colorado Island (BCI) flux tower in Panama (AmeriFlux
 PA-Bar, 41 m above a seasonal tropical forest), over its five years, 2012–2017. How the column is
-solved: [`docs/science/column_biophysics.md`](../../docs/science/column_biophysics.md).
+solved: [`docs/science/coupled_biophysics.md`](../../docs/science/coupled_biophysics.md).
 
 The example:
 

@@ -194,7 +194,7 @@ contains
    !  and w2 are area fractions, w1 = a1/(a1+a2), so a quantity per ground area keeps its  !
    !  site total; the canopy air is weighted by air mass instead. Diagnosed fields are     !
    !  mixed only for a provisional value: the caller re-diagnoses them                     !
-   !  (docs/science/column_biophysics.md, "Mixing two patches").                           !
+   !  (docs/science/coupled_biophysics.md, "Mixing two patches").                          !
    !=======================================================================================!
 
    !----- Mix two canopy airs on their air mass, area x depth: enthalpy, humidity and CO2  !

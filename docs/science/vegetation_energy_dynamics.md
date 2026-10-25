@@ -6,7 +6,7 @@ toward their quasi-steady balance, with their own heat capacity. The page gives 
 interception film that is part of each tissue, the exact relaxation, and the tissue energy that is
 the stored state.
 
-This page is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes
+This page is one of the per-store pages under [coupled_biophysics](coupled_biophysics.md), which describes
 the two cross-cutting principles (prognostic internal energy; closed-budget discipline) and how the
 stores are woven each fast step. Absorbed shortwave and net longwave enter from the radiation kernel
 ([canopy_radiation_transfer](canopy_radiation_transfer.md)); the boundary-layer conductances come from
@@ -82,7 +82,7 @@ The tissue relaxes toward the zero-inertia offset $`\Delta T_{diag}=\mathrm{nume
 its own heat capacity (next section), and reports its fluxes over the step average, eqs. (5)–(6).
 
 **The emission base.** The two-stream charges each tissue its own emission at its start-of-step
-temperature $`T_0`$ ([canopy_radiation_transfer](canopy_radiation_transfer.md) §4, eq. (14)), so the
+temperature $`T_0`$ ([canopy_radiation_transfer](canopy_radiation_transfer.md) §4, eq. (15)), so the
 absorbed longwave $`A_{lw}`$ already contains it. The tissue's net longwave is therefore linearized
 about that same temperature, $`R_{lw}(T) = A_{lw} - S\,(T - T_0)`$, with the slope $`S`$ taken at $`T_0`$.
 Written about $`T_{cas}`$, that is the $`S\,(T_0 - T_{cas})`$ term and the $`S`$ in $`\mathrm{denom}`$ of

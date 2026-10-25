@@ -160,7 +160,7 @@ particular solution is
 ```math
 u_p = a\,e^{-kx},\quad d_p = b\,e^{-kx},\qquad
 a = \frac{\omega k S_0\,[\beta_0(\mathrm{att}-k) + \sigma_b(1-\beta_0)]}{m^2-k^2},\quad
-b = \frac{\omega k S_0\,[(1-\beta_0)(\mathrm{att}+k) + \sigma_b\beta_0]}{m^2-k^2} \qquad(10b)
+b = \frac{\omega k S_0\,[(1-\beta_0)(\mathrm{att}+k) + \sigma_b\beta_0]}{m^2-k^2} \qquad(11)
 ```
 
 The diffuse modes $`e^{-mx}`$ and $`e^{m(x-\mathrm{ETAI})}`$, in the ratio $`r_\infty`$ of up to
@@ -187,7 +187,7 @@ upward source (thermal emission plus the reflected direct beam reaching the grou
 ```math
 r_{bel}(i) = r_{dd}(i) + \frac{t_{dd}(i)^2\,r_{bel}(i{-}1)}{1-r_{bel}(i{-}1)\,r_{dd}(i)},\qquad
 s_{bel}(i) = s_{up}(i) + t_{dd}(i)\,\frac{s_{bel}(i{-}1)+r_{bel}(i{-}1)\,s_{dn}(i)}{1-r_{bel}(i{-}1)\,r_{dd}(i)}
-\qquad(11)
+\qquad(12)
 ```
 
 The top-down sweep, which starts from the incident diffuse radiation at the canopy top, then recovers
@@ -197,7 +197,7 @@ beam plus diffuse flux divergence (in minus out), so energy is conserved by cons
 ```math
 A_i = \big(I^\downarrow_0(i{+}1)-I^\downarrow_0(i)\big)
       + \big(d^\downarrow_{in}(i)+u^\uparrow_{up}(i)\big)
-      - \big(u^\uparrow_{top}(i)+d^\downarrow_{bot}(i)\big) \qquad(12)
+      - \big(u^\uparrow_{top}(i)+d^\downarrow_{bot}(i)\big) \qquad(13)
 ```
 
 The solver also returns the downwelling flux below the canopy $`d_{ground}`$, the upwelling flux from
@@ -234,7 +234,7 @@ emission:
 ```math
 A_{b,i} = \big(A_{b,\ell}+E_{b,\ell}\big)\,\frac{(1-\omega_i)\,\mathrm{ETAI}_i}{\sum_{j\in\ell}(1-\omega_j)\,\mathrm{ETAI}_j}
           - E_{b,i}
-\qquad(13)
+\qquad(14)
 ```
 
 A cohort's emission is its tissues', each from both faces of its area at its absorptivity,
@@ -252,7 +252,7 @@ charged its own emission:
 
 ```math
 A^{leaf}_{b,i} = \big(A_{b,i}+E_{b,i}\big)\,\mathrm{leaf\_frac}_i - E^{leaf}_{b,i}, \qquad
-A^{wood}_{b,i} = \big(A_{b,i}+E_{b,i}\big)\,(1-\mathrm{leaf\_frac}_i) - E^{wood}_{b,i} \qquad(14)
+A^{wood}_{b,i} = \big(A_{b,i}+E_{b,i}\big)\,(1-\mathrm{leaf\_frac}_i) - E^{wood}_{b,i} \qquad(15)
 ```
 
 In a shortwave band this is the split by `leaf_frac`. In the thermal band it is exact for the
@@ -290,7 +290,7 @@ which is not the ratio of the means, and at night the shortwave ratio is 0/0. Th
 wants, and what a satellite product reports, is
 
 ```math
-\alpha_b = \frac{\sum_t \mathrm{SW}^\uparrow_b}{\sum_t \mathrm{SW}^\downarrow_b} \qquad(15)
+\alpha_b = \frac{\sum_t \mathrm{SW}^\uparrow_b}{\sum_t \mathrm{SW}^\downarrow_b} \qquad(16)
 ```
 
 over the period of interest. The contrast between the low VIS and high NIR albedo is the vegetation
@@ -321,8 +321,8 @@ vegetation indices are built on. A snow-covered ground raises both.
 | per-PFT optics table ($\omega, g$), eq. (4) | `meds_pft_derive`: `build_rad_optics`, `derive_rad_optics`, once at load onto the PFT table (`cfg%pft%optics`) |
 | per-cohort blend ($\beta, \beta_0, k$, `leaf_frac`), eqs. (5)–(7) | `meds_canopy_radiation`: `blend_cohort_optics` |
 | ground reflectance and emission | `meds_canopy_radiation`: `ground_optics` (`ground_optics_env_t`) |
-| single-band adding solve, eqs. (8)–(12) | `meds_canopy_radiation`: `solve_band`, `layer_rt`, `layer_beam_sources` |
-| the per-patch entry point, tied-cohort layers, each tissue's emission and the leaf/wood split, eqs. (13)–(14) | `meds_canopy_radiation`: `canopy_radiation` |
+| single-band adding solve, eqs. (8)–(13) | `meds_canopy_radiation`: `solve_band`, `layer_rt`, `layer_beam_sources` |
+| the per-patch entry point, tied-cohort layers, each tissue's emission and the leaf/wood split, eqs. (14)–(15) | `meds_canopy_radiation`: `canopy_radiation` |
 | cohorts of one height are one layer (as in the wind and the overtopping LAI) | `meds_numerics`: `equal_height_layers` |
 | types | `meds_pft_params`: `rad_pft_optics_t` and the bands `RAD_VIS`, `RAD_NIR`, `RAD_LW`; `meds_canopy_radiation`: `rad_env_t`, `rad_out_t`, `ground_optics_env_t` |
 | fast-loop join (PAR conversion, cohorts bottom to top, top-of-canopy fluxes) | `meds_fast_forcing`: `apply_rt_forcing` |

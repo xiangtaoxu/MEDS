@@ -8,7 +8,7 @@ advances each of them, and how the canopy air is set at the start of a run.
 
 Each variable changes by the sum of its surface sources and an exchange with the atmosphere that
 uses the conductance from the aerodynamics kernel ([canopy_aerodynamics](canopy_aerodynamics.md)). The
-page is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes
+page is one of the per-store pages under [coupled_biophysics](coupled_biophysics.md), which describes
 the two cross-cutting principles (prognostic internal energy; closed-budget discipline) and how the
 stores are woven together each `dt_fast`.
 
@@ -76,7 +76,7 @@ enthalpy $`H = (1-q)\,c_{p,d}\,T + q\,c_{p,v}\,(T - T_{sc,v})`$ (`cas_temp_to_en
 shares, in which ice at 0 K holds no energy, so a vapour flux carries its latent heat with it. All three
 variables share $`u_*`$ and the profile factor, which keeps them on one turbulence basis; CO₂ without
 the profile factor would be over-coupled to the free atmosphere and lose its nocturnal build-up (see
-[canopy_aerodynamics](canopy_aerodynamics.md) eq. (5)).
+[canopy_aerodynamics](canopy_aerodynamics.md) eq. (6)).
 
 Air that becomes supersaturated condenses through a smooth sink, $`\mathrm{d}q/\mathrm{d}t=-(q-q_{sat})/\tau`$
 with $\tau=300$ s (`cas_condensation`). The condensate leaves as liquid at the air's temperature and
@@ -118,7 +118,7 @@ wrote it.
 | the canopy air's enthalpy, humidity and CO₂ (two-form box), eqs. (1)–(2) | `meds_canopy_air_space`: `cas_box_step_implicit`, `cas_box_time_deriv` |
 | what the box reads: capacities, conductances, the atmosphere, the sources | `meds_canopy_air_space`: `cas_env_t` |
 | capacities $`W_{cap}`$, $`C_{cap}`$ | `meds_patch_state_vars`: `cas_capacities` (the frozen build and the slow ledger) |
-| conductances, eq. (5) of canopy_aerodynamics | `meds_canopy_aerodynamics`: `cas_atm_conductances`, `canopy_air_conductances` |
+| conductances, eq. (6) of canopy_aerodynamics | `meds_canopy_aerodynamics`: `cas_atm_conductances`, `canopy_air_conductances` |
 | condensation sink | `meds_canopy_air_space`: `cas_condensation` |
 | temperature ↔ enthalpy | `meds_therm_lib`: `cas_temp_to_enthalpy`, `cas_enthalpy_to_temp`, `cas_molar_density` |
 | biotic CO₂ source $`F_{bio}`$ | `meds_fast_integ_frozen`: `build_frozen` |

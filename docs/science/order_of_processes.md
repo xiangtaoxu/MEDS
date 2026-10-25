@@ -140,7 +140,7 @@ the slow step: the soil-carbon pools, the tissue water the turnover shed, and th
    shortwave and longwave among the cohorts and the ground
    ([canopy_radiation_transfer](canopy_radiation_transfer.md)), with forcing on or off. It runs before
    the coupled step.
-3. **The coupled step** (`fast_step`, [column_biophysics](column_biophysics.md)), in this order:
+3. **The coupled step** (`fast_step`, [coupled_biophysics](coupled_biophysics.md)), in this order:
    1. The pre-pass (`build_frozen`) computes, from the state at the start of the step: the
       aerodynamic environment above the canopy ([canopy_aerodynamics](canopy_aerodynamics.md)); leaf
       gas exchange (GPP, stomatal conductance, leaf respiration); stem, root and heterotrophic

@@ -47,7 +47,7 @@ census and is calibrated against the tower's fluxes:
 | Plant hydraulics | pressure-volume tissues, Kirchhoff xylem, per-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
 | Soil water | mixed-form Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
 | Soil and plant water solve | one implicit network per patch: pond, soil layers, each cohort's wood and leaves | [soil_plant_water](docs/science/soil_plant_water.md) |
-| Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
+| Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [coupled_biophysics](docs/science/coupled_biophysics.md) |
 | Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
 | Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |
 | Phenology | one cue kernel (temperature, hours of light, water) → flush and senescence tendencies; evergreen as a leaf-cover floor | [plant_phenology](docs/science/plant_phenology.md) |

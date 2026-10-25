@@ -78,7 +78,7 @@ u_* = \max\!\Big(u_{*,min},\,\frac{\kappa\,u_m}{D_m(\zeta)}\Big), \qquad
 ```math
 u_m = \begin{cases}\bar u & \zeta\ge0\\[2pt]
 \sqrt{\bar u^2+w_c^2},\ \ w_c = \beta\Big(\dfrac{-g\,u_*\,\theta_{v*}\,z_i}{\theta_{v,atm}}\Big)^{1/3} & \zeta<0\end{cases}
-\qquad(3b)
+\qquad(4)
 ```
 
 with $\beta = 1$ and the mixed-layer depth $`z_i`$ = 1000 m (CLM5's constants). As in CLM5, each sweep's
@@ -95,7 +95,7 @@ $`x=(1-16\zeta)^{1/4}`$:
 
 ```math
 \Psi_m(\zeta) = 2\ln\frac{1+x}{2} + \ln\frac{1+x^2}{2} - 2\arctan x + \frac{\pi}{2}, \qquad
-\Psi_h(\zeta) = 2\ln\frac{1+x^2}{2} \qquad(4)
+\Psi_h(\zeta) = 2\ln\frac{1+x^2}{2} \qquad(5)
 ```
 
 (`stabfunc1` and `stabfunc2`; the stable branch is $`-5\zeta`$). The roughness term
@@ -115,7 +115,7 @@ kernel:
 ```math
 g_{ah} = \rho\,u_*\,\mathrm{temp1}, \qquad
 g_{aw} = \rho\,u_*\,\mathrm{temp2}, \qquad
-g_{ac} = \rho_{mol}\,u_*\,\mathrm{temp2} \qquad(5)
+g_{ac} = \rho_{mol}\,u_*\,\mathrm{temp2} \qquad(6)
 ```
 
 $g_{ah}$ [kg m⁻² s⁻¹] drives the enthalpy, $g_{aw}$ the humidity, and $g_{ac}$ [mol m⁻² s⁻¹]
@@ -138,7 +138,7 @@ solve and lower the reported H by $`g_{ah}\,g\,z_{ref}`$.
 
 Most of what the fast loop computes per cohort (photosynthesis, stomatal conductance, the leaf boundary
 layers, radiation, hydraulics) is held fixed for one `dt_fast` (see [numerical_scheme](numerical_scheme.md)
-§2). The conductances of eq. (5) are the exception. `mo_surface_layer` is solved again at each stage of
+§2). The conductances of eq. (6) are the exception. `mo_surface_layer` is solved again at each stage of
 the time integrator: under RK45 (Cash–Karp) at the stage's own canopy-air temperature and humidity, under
 ESDIRK2 at the state the stage starts from, held through its Newton solve. Only $`g_{ah}`$, $`g_{aw}`$ and
 $`g_{ac}`$ are updated (`canopy_air_conductances`, from the step's reference level and canopy geometry);
@@ -167,13 +167,13 @@ The ground-to-CAS scalar conductance blends CLM5's bare-soil term with CLM4's de
 g_{g,bare} = \frac{\kappa\,u_*}{a\,(z_{0g}\,u_*/\nu)^{b}}, \qquad
 g_{g,veg} = \frac{c_s\,u_*}{1+\gamma_g\,\mathrm{stab}}, \qquad
 g_{g,net} = W\,g_{g,bare} + (1-W)\,g_{g,veg}, \qquad
-W = e^{-(\mathrm{LAI}+\mathrm{WAI})} \qquad(6)
+W = e^{-(\mathrm{LAI}+\mathrm{WAI})} \qquad(7)
 ```
 
 The bare term is CLM5's soil coefficient (`soil_conductance`; Zeng & Dickinson 1998, $a = 0.13$,
 $b = 0.45$), with $`z_{0g}=`$ `soil_rough` (0.01 m) and $\nu$ the air's kinematic viscosity at the
 canopy air's temperature. It spans only the thin layer between the soil and its roughness height. The
-turbulent layer above it is the canopy air's own exchange with the atmosphere, eq. (5), so on bare
+turbulent layer above it is the canopy air's own exchange with the atmosphere, eq. (6), so on bare
 ground the two in series are CLM5's bare-soil resistance from the soil to $`z_{ref}`$. A patch with no
 cohorts, or only shorter ones, takes the canopy height whose roughness is the soil's,
 `soil_rough`/`z0m_ratio` (7.7 cm), so its $`z_{0m}`$ is $`z_{0g}`$. ED2 uses $`u_*\,\mathrm{temp1}`$
@@ -200,7 +200,7 @@ the surface layer's Obukhov length, so the profile and $`u_*`$ share CLM5's four
 
 ```math
 u_h = \frac{u_*}{\kappa}\,D_m\big(\zeta_h;\ h-d,\ z_{0m}\big), \qquad
-\zeta_h = \zeta\,\frac{h-d}{z_{ldis}} \qquad(7)
+\zeta_h = \zeta\,\frac{h-d}{z_{ldis}} \qquad(8)
 ```
 
 floored at `ugbmin`. When $`u_*`$ is not on its floor the profile passes through $`u_m`$ at
@@ -217,7 +217,7 @@ handed to the layer below are
 
 ```math
 u_{ico} = u_h\,e^{-0.25\,\mathrm{LAI}}, \qquad
-u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(8)
+u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(9)
 ```
 
 so the cascade walks from the top down. The kernel's cohort arrays run bottom to top (the radiation
@@ -239,12 +239,12 @@ forms:
 \mathrm{Nu}_{forced}=\max\!\big(a_{lam}\mathrm{Re}^{\,n_{lam}},\,a_{turb}\mathrm{Re}^{\,n_{turb}}\big),
 \qquad
 \mathrm{Nu}_{free}=\max\!\big(b_{lam}\mathrm{Gr}^{\,m_{lam}},\,b_{turb}\mathrm{Gr}^{\,m_{turb}}\big)
-\qquad(9)
+\qquad(10)
 ```
 
 ```math
 g_{bh} = \max\!\Big(g_{bh,min},\ \big(\mathrm{Nu}_{forced}+\mathrm{Nu}_{free}\big)\,
-\frac{\alpha_{th}}{\ell}\Big) \qquad(10)
+\frac{\alpha_{th}}{\ell}\Big) \qquad(11)
 ```
 
 The kinematic viscosity $\nu$ and thermal diffusivity $\alpha_{th}$ are linear-in-temperature about a
@@ -266,11 +266,11 @@ The `[aerodynamics]` block, held in `aero_params_t`; every key is optional.
 | $`c_{z0}`$ | `z0m_ratio` | roughness length over canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement height over canopy height (0.63) |
 | $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, a buried canopy's $`z_{0m}`$ and the $`z_{0m}`$ floor (0.001 m) |
-| $`z_{0g}`$ | `soil_rough` | bare soil's roughness length (0.01 m, CLM's `zlnd`): the soil coefficient of eq. (6), a bare patch's $`z_{0m}`$ and the length scale of the snow-cover fraction ([snow_biophysics](snow_biophysics.md)) |
+| $`z_{0g}`$ | `soil_rough` | bare soil's roughness length (0.01 m, CLM's `zlnd`): the soil coefficient of eq. (7), a bare patch's $`z_{0m}`$ and the length scale of the snow-cover fraction ([snow_biophysics](snow_biophysics.md)) |
 | none | `n_iter_mo` | the most Monin–Obukhov sweeps (20); they stop when $`u_*\cdot\mathrm{temp1}`$ settles to $`10^{-4}`$ |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum and scalar range transitions of CLM5 (1.574, 0.465) |
 | none | `zeta_max_stable` | cap on the stable $\zeta$, of the first guess and of each sweep (0.5) |
-| $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (0.5 m s⁻¹); the sweeps take $w_c$ from eq. (3b) |
+| $w_c$ | `wc` | convective velocity of the first guess, eq. (2) (0.5 m s⁻¹); the sweeps take $w_c$ from eq. (4) |
 | $`u_{*,min}`$ | `ustmin` | friction-velocity floor (0.10 m s⁻¹) |
 | $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) (0.65 m s⁻¹) |
 | none | `ugbmin` | floor on the canopy-top and in-canopy wind (0.25 m s⁻¹) |
@@ -291,15 +291,15 @@ The leaf width and branch diameter that set $\ell$ are PFT traits (`[pft]`).
 |---|---|
 | the per-patch entry point | `canopy_aerodynamics` (cohorts reordered, then `aerodynamics_bottom_to_top`) |
 | roughness and displacement, eq. (1) | `canopy_roughness`; burial fraction `canopy_burial_fraction` |
-| Monin–Obukhov solve ($`u_*`$, temp1, $\zeta$), eqs. (2)–(3b) | `mo_surface_layer` |
+| Monin–Obukhov solve ($`u_*`$, temp1, $\zeta$), eqs. (2)–(4) | `mo_surface_layer` |
 | profile denominators $D_m, D_h$ | `d_mom`, `d_heat` |
-| stability functions $`\Psi_m,\Psi_h`$, eq. (4) | `stabfunc1`, `stabfunc2` |
-| atmosphere↔CAS conductances, eq. (5) | `cas_atm_conductances` |
-| per-stage re-solve of eq. (5) | `canopy_air_conductances`, called by `refresh_cas_conductances` in `meds_fast_integ_derivs` |
-| ground conductance and open fraction $W$, eq. (6) | `soil_conductance`, `open_canopy_fraction`; blended inside `aerodynamics_bottom_to_top` |
-| canopy-top wind, eq. (7) | `reduced_wind` |
-| in-canopy wind, eq. (8) | `aerodynamics_bottom_to_top` (inline, closed-crown extinction) |
-| leaf and wood Nusselt boundary layer, eqs. (9)–(10) | `boundary_layer_conductance` |
+| stability functions $`\Psi_m,\Psi_h`$, eq. (5) | `stabfunc1`, `stabfunc2` |
+| atmosphere↔CAS conductances, eq. (6) | `cas_atm_conductances` |
+| per-stage re-solve of eq. (6) | `canopy_air_conductances`, called by `refresh_cas_conductances` in `meds_fast_integ_derivs` |
+| ground conductance and open fraction $W$, eq. (7) | `soil_conductance`, `open_canopy_fraction`; blended inside `aerodynamics_bottom_to_top` |
+| canopy-top wind, eq. (8) | `reduced_wind` |
+| in-canopy wind, eq. (9) | `aerodynamics_bottom_to_top` (inline, closed-crown extinction) |
+| leaf and wood Nusselt boundary layer, eqs. (10)–(11) | `boundary_layer_conductance` |
 | types | `meds_biophysics_params`: `aero_params_t`; `aero_env_t`, `aero_args_t`, `aero_out_t` |
 | filling the environment | `set_aero_env_atm` (the reference level), `set_aero_env_canopy` (the canopy air and ground) |
 | cohorts of one height are one layer | `meds_numerics`: `equal_height_layers` |
@@ -310,9 +310,9 @@ The leaf width and branch diameter that set $\ell$ are PFT traits (`[pft]`).
   in-canopy wind.
 - CLM5 Technical Note (Oleson et al. 2018): Monin–Obukhov surface layer, stability functions.
 - Businger et al. (1971); Paulson (1970): surface-layer flux–profile relations.
-- Zeng & Dickinson (1998), *J. Climate* 11:2628–2644: the bare-soil coefficient of eq. (6).
+- Zeng & Dickinson (1998), *J. Climate* 11:2628–2644: the bare-soil coefficient of eq. (7).
 - Zeng, X., et al. (2005), Treatment of undercanopy turbulence in land models, *J. Climate* 18,
-  5086–5094: the open-fraction blend of eq. (6); Sakaguchi, K., and X. Zeng (2009), *J. Geophys.
+  5086–5094: the open-fraction blend of eq. (7); Sakaguchi, K., and X. Zeng (2009), *J. Geophys.
   Res.* 114, D01107: its under-canopy stability factor.
 - Design records: [`MEDS_COLUMN_DYNAMICS_DESIGN.md`](../dev_plans/archive/MEDS_COLUMN_DYNAMICS_DESIGN.md)
   (Part I, ED2↔CLM reconciliation) and

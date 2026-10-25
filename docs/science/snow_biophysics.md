@@ -2,7 +2,7 @@
 
 The snow pack is a single bulk layer of water-equivalent mass and internal energy, stacked between the canopy air space and the top soil layer. This page gives how it accumulates, drains, exchanges energy and vapour with the air, and covers the ground. Where the pack exists, its energy balance replaces the bare-ground skin and it becomes the soil's top thermal boundary, blended by a cover fraction so the transition between snow-on and snow-off is continuous.
 
-This is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes the two principles the stores share (prognostic internal energy; closed-budget discipline) and how they are woven each `dt_fast`.
+This is one of the per-store pages under [coupled_biophysics](coupled_biophysics.md), which describes the two principles the stores share (prognostic internal energy; closed-budget discipline) and how they are woven each `dt_fast`.
 
 ---
 
