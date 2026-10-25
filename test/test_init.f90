@@ -14,6 +14,9 @@
 !      defaults pinned (288 K, theta = 0.30); a start below freezing holds the liquid its        !
 !      freezing curve allows; a texture per layer starts each layer at its own field capacity;  !
 !      and bare ground is empty unless a PFT's nbg_init_density seeds it at min_cohort_height.  !
+!   4. THE INITIAL SNOWPACK (meds_init: init_fast_state; docs/science/snow_biophysics.md): no   !
+!      [fast].snow_init_swe seeds no pack; one seeds every patch with one frozen layer of that   !
+!      water equivalent at [fast].snow_init_temp, as deep as its water over the snow density.    !
 !==========================================================================================!
 program test_init
    use meds_kinds,              only : wp, ik
@@ -35,6 +38,7 @@ program test_init
    call test_census()
    call test_census_refusals()
    call test_soil_state()
+   call test_initial_snowpack()
    write(*,'(a)') 'test_init: ALL PASSED'
 
 contains
@@ -320,5 +324,39 @@ contains
                  count(poly%cohort%pft(1:6) == 1_ik) == 3 .and. count(poly%cohort%pft(1:6) == 3_ik) == 3,       &
                  'a seeded cohort has the wrong PFT or density')
    end subroutine test_soil_state
+
+   !----- 4. The initial snowpack: none by default; [fast].snow_init_swe = 40 kg/m2 at 265 K lays one   !
+   !      frozen layer on every patch, whose energy gives back 265 K, as deep as the pack's water over  !
+   !      the snow density (depth = swe / rho_snow, the relation the pack keeps every step). ---------!
+   subroutine test_initial_snowpack()
+      type(meds_config_t) :: cfg
+      type(polygon_t)     :: poly
+      integer(ik)         :: ip
+      real(wp), parameter :: SWE = 40.0_wp, T_PACK = 265.0_wp   ! [kg/m2], [K]
+      call banner('the initial snowpack')
+      cfg = build_test_config()
+      call init_bare_ground(poly, cfg, 3_ik)
+      call finalize_init(poly)
+      call init_fast_state(poly, cfg)
+      do ip = 1_ik, poly%patch%n
+         call check(poly%patch%snow(ip)%nlayer == 0_ik .and. poly%patch%snow(ip)%swe(1) == 0.0_wp,               &
+                    'a patch holds snow with no [fast].snow_init_swe')
+      end do
+      cfg%snow_init_swe  = SWE
+      cfg%snow_init_temp = T_PACK
+      call init_bare_ground(poly, cfg, 3_ik)
+      call finalize_init(poly)
+      call init_fast_state(poly, cfg)
+      do ip = 1_ik, poly%patch%n
+         associate (snow => poly%patch%snow(ip))
+            call check(snow%nlayer == 1_ik, 'a seeded patch does not hold one snow layer')
+            call check_close(snow%swe(1), SWE, 1.0e-15_wp, 'a seeded pack does not hold [fast].snow_init_swe')
+            call check_close(snow%snow_temp(1), T_PACK, 1.0e-10_wp, 'a seeded pack''s energy does not give back its temperature')
+            call check(snow%snow_fliq(1) == 0.0_wp, 'a seeded pack below freezing holds liquid')
+            call check_close(snow%snow_depth(1), SWE / cfg%snow%rho_snow, 1.0e-12_wp,                               &
+                             'a seeded pack is not as deep as its water over the snow density')
+         end associate
+      end do
+   end subroutine test_initial_snowpack
 
 end program test_init
