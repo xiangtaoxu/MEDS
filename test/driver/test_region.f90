@@ -30,10 +30,10 @@
 !      (meds_config_check: check_region and the region keys of check_key_use; the cell     !
 !      mask's grid), with that rule's message.                                             !
 !                                                                                          !
-! The configs are derived from test/region/meds_config_site.toml (the test runs from that  !
-! directory) by derive_config: a case's own keys, then the blocks every run shares, then   !
-! the template, each key written once, at its first value. Everything the test writes goes !
-! under the work directory given as the first argument.                                    !
+! The configs are derived from test/driver/region/meds_config_site.toml (the test runs    !
+! from that directory) by derive_config: a case's own keys, then the blocks every run      !
+! shares, then the template, each key written once, at its first value. Everything the     !
+! test writes goes under the work directory given as the first argument.                   !
 !==========================================================================================!
 program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
@@ -41,7 +41,7 @@ program test_region
    use meds_biogeochem_params,     only : IP_SLOW
    use meds_test_assert,           only : check_true, test_report
    use meds_test_run,              only : derive_config, main_refuses
-   use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
+   use meds_test_archive,          only : write_archive, write_map, write_surface_maps, deep_temp_at, &
                                           f_leak_at, NLAT, NLON
    use meds_soil_params,           only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_constants,             only : n_soil_layer_max
@@ -64,7 +64,7 @@ program test_region
    real(wp),    parameter :: LAT(NP) = [35.0_wp, 35.0_wp, 25.0_wp], LON(NP) = [160.0_wp, -180.0_wp, 160.0_wp]
    real(wp),    parameter :: ELEV(NP) = [117.0_wp, 100.0_wp, 217.0_wp]
    integer(ik), parameter :: ROW(NP) = [1_ik, 1_ik, 2_ik], COL(NP) = [17_ik, 0_ik, 17_ik]
-   !----- Their soil (meds_test_era5land_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on  !
+   !----- Their soil (meds_test_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on          !
    !      the default ones; sealed (drainage at f = 0), leaky (drainage at the cell's f_leak) and      !
    !      aquifer bottoms. ---------------------------------------------------------------------------!
    integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]

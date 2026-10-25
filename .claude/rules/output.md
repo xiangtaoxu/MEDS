@@ -5,7 +5,7 @@ paths:
   - "src/io/meds_netcdf_c.f90"
   - "src/io/meds_netcdf_write.f90"
   - "src/config/params/meds_output_params.f90"
-  - "test/test_output*.f90"
+  - "test/io/test_output*.f90"
 ---
 
 # The diagnostic output subsystem

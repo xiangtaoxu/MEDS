@@ -24,7 +24,7 @@ program test_met_era5land
                                     ERA_ERR_NAN, ERA_ERR_FILL, ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF,      &
                                     ERA_U10, ERA_V10, ERA_LWDOWN
    use meds_met_grid,        only : select_site_cell, select_box_cells, GRID_OK, GRID_ERR_NO_CELL
-   use meds_test_era5land_archive, only : T0, field, hour_index, write_archive, write_month, archive_grid
+   use meds_test_archive, only : T0, field, hour_index, write_archive, write_month, archive_grid
    implicit none
 
    character(len=*), parameter :: DIR = 'era5land_test_tmp'

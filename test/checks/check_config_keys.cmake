@@ -8,7 +8,7 @@
 #
 # Usage: cmake -DSRC_DIR=<src> -DMAIN_TOML=<main> -DPFT_TOML=<pft> -P check_config_keys.cmake
 cmake_minimum_required(VERSION 3.20)
-include(${CMAKE_CURRENT_LIST_DIR}/../cmake/meds_config_keys.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/meds_config_keys.cmake)
 
 meds_toml_keys("${MAIN_TOML}" main_keys)
 meds_toml_keys("${PFT_TOML}" pft_keys)
@@ -64,7 +64,7 @@ endforeach()
 
 if(problems)
    message(FATAL_ERROR "The reference configs and the loader disagree (see the comment at the top "
-                       "of test/check_config_keys.cmake):${problems}")
+                       "of test/checks/check_config_keys.cmake):${problems}")
 endif()
 list(LENGTH read_keys n)
 message(STATUS "the references list all ${n} keys the loader reads, and only those")

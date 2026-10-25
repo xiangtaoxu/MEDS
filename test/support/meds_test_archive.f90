@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_test_era5land_archive -- a tiny synthetic ED_ERA5land archive for the tests, written       !
+! meds_test_archive -- a tiny synthetic ED_ERA5land archive for the tests, written               !
 ! through the netCDF C API: a 4 x 18 grid (10 deg x 20 deg) spanning the antimeridian and two     !
 ! 16-cell chunk columns wide, every month of 2021 and January 2022 (so a recycle window may start  !
 ! after January 1st), two no-data cells, a mostly-water column, and values that are analytic       !
@@ -9,7 +9,7 @@
 ! soil depth, texture and chemistry on SoilGrids' six layers, and Chave's E, each a function of the  !
 ! cell (soil_depth_at, ..., texture_at), empty at the no-data cells.                                  !
 !==========================================================================================!
-module meds_test_era5land_archive
+module meds_test_archive
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_kinds,           only : wp, sp, ik
    use meds_time,            only : meds_time_t, seconds_between
@@ -387,4 +387,4 @@ contains
       st = nc_close(ncid) ; call nc_check(st, 'close '//path)
    end subroutine write_month
 
-end module meds_test_era5land_archive
+end module meds_test_archive
