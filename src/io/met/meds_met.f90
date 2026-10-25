@@ -20,7 +20,7 @@ module meds_met
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string, solar_cosz_utc,     &
                          mean_solar_cosz
    use meds_forcing_params, only : forcing_params_t, MET_BACKEND_DEFAULT, MET_BACKEND_ERA5LAND,                   &
-                                   METAVG_END, METAVG_BEGIN, METAVG_CENTER, CLAMP_ERROR, LW_SYNTHESIZE,           &
+                                   METAVG_END, METAVG_BEGIN, CLAMP_ERROR, LW_SYNTHESIZE,                          &
                                    CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
    use meds_radiation_lib,  only : COSZ_MIN, SWPART_PASSTHROUGH, lapse_longwave, partition_shortwave, clearness_index,      &
                                    synthesize_lwdown
@@ -199,55 +199,54 @@ contains
       type(meds_time_t),  intent(in)    :: now
       real(wp)    :: now_sec
       integer(ik) :: i
+      logical     :: at_seam, past_end
 
       !----- The same recycle-mapped seconds on the file axis that met_instant uses. ----------!
       now_sec = file_lookup_sec(src, now)
 
-      !----- A start before the first record. Hold loads records 1-2 and met_instant clamps     !
-      !      w_next to 0; rec_next is left alone, or a stale copy would stop the reload at t1. ---!
+      !----- The recycle seam: the window's last interval wraps to its first record              !
+      !      (docs/science/forcing.md §9). The seam is the window's edge, not the file's. --------!
+      !      Nested, not one .and.: Fortran need not short-circuit, and irec_cycle_last is 0 unless recycling.
+      at_seam = .false.
+      if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first)               &
+         at_seam = now_sec >= src%time_sec(src%irec_cycle_last)
+      !----- A non-recycling run past the end clamps to the last interval. ----------------------!
+      past_end = .not. src%fcfg%recycle .and. src%nrec >= 2_ik .and. now_sec >= src%time_sec(src%nrec)
+
       if (now_sec < src%time_sec(1)) then
+         !----- A start before the first record. Hold loads records 1-2 and met_instant clamps  !
+         !      w_next to 0; rec_next is left alone, or a stale copy would stop the reload at t1. !
          if (src%fcfg%start_clamp == CLAMP_ERROR) then
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
          end if
          if (cur%irec_prev /= 1_ik) call load_bracket(src, cur, 1_ik)
-         return
-      end if
-
-      !----- The recycle seam: the window's last interval wraps to its first record              !
-      !      (docs/science/forcing.md §9). The seam is the window's edge, not the file's. --------!
-      !      Nested, not one .and.: Fortran need not short-circuit, and irec_cycle_last is 0 unless recycling.
-      if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first) then
-         if (now_sec >= src%time_sec(src%irec_cycle_last)) then
-            if (.not. cur%at_wrap_seam) call load_wrap_bracket(src, cur)
-            return
-         end if
-      end if
-
-      !----- A non-recycling run past the end: clamp to the last interval. ---------------------!
-      if (.not. src%fcfg%recycle .and. src%nrec >= 2_ik .and. now_sec >= src%time_sec(src%nrec)) then
+      else if (at_seam) then
+         if (.not. cur%at_wrap_seam) call load_wrap_bracket(src, cur)
+      else if (past_end) then
          if (cur%irec_prev /= src%nrec - 1_ik) call load_bracket(src, cur, src%nrec - 1_ik)
-         return
+      else
+         !----- Search from the current bracket (cheap for a forward march). ------------------!
+         i = max(1_ik, cur%irec_prev)
+         do while (i < src%nrec - 1_ik)
+            if (src%time_sec(i + 1_ik) <= now_sec) then
+               i = i + 1_ik
+            else
+               exit
+            end if
+         end do
+         do while (i > 1_ik)
+            if (src%time_sec(i) > now_sec) then
+               i = i - 1_ik
+            else
+               exit
+            end if
+         end do
+         if (i /= cur%irec_prev) call load_bracket(src, cur, i)
       end if
 
-      !----- Search from the current bracket (cheap for a forward march). ---------------------!
-      i = max(1_ik, cur%irec_prev)
-      do while (i < src%nrec - 1_ik)
-         if (src%time_sec(i + 1_ik) <= now_sec) then
-            i = i + 1_ik
-         else
-            exit
-         end if
-      end do
-      do while (i > 1_ik)
-         if (src%time_sec(i) > now_sec) then
-            i = i - 1_ik
-         else
-            exit
-         end if
-      end do
-      if (i /= cur%irec_prev) call load_bracket(src, cur, i)
-      !----- The daytime clearness the longwave synthesis holds after dark: updated here, outside !
-      !      the patch loop, because met_instant is intent(in) (docs/science/forcing.md §11). ----!
+      !----- The daytime clearness the longwave synthesis holds after dark, on whichever bracket  !
+      !      the instant takes: updated here, outside the patch loop, because met_instant is       !
+      !      intent(in) (docs/science/forcing.md §11). ---------------------------------------------!
       if (src%fcfg%lwdown_source == LW_SYNTHESIZE) call remember_clearness(src, cur, now)
    end subroutine met_advance
 
@@ -613,7 +612,7 @@ contains
    end subroutine read_record
 
    !----- The sun the shortwave partition uses for one record: the mean of max(cosz, 0) over the  !
-   !      interval it averages, or the sun at the stamp for an instantaneous record             !
+   !      interval it averages, which ends at the stamp or begins there                         !
    !      (docs/science/forcing.md §6). --------------------------------------------------------!
    real(wp) function record_mean_cosz(src, cur, when) result(cosz)
       type(met_source_t), intent(in) :: src
@@ -621,17 +620,8 @@ contains
       type(meds_time_t),  intent(in) :: when
       real(wp) :: stamp_sec, start_sec, factor
       stamp_sec = seconds_into_day(when)
-      select case (src%fcfg%avg_convention)
-      case (METAVG_END)
-         start_sec = stamp_sec - src%dt_forcing
-      case (METAVG_BEGIN)
-         start_sec = stamp_sec
-      case (METAVG_CENTER)
-         start_sec = stamp_sec - 0.5_wp * src%dt_forcing
-      case default
-         cosz = solar_cosz_utc(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
-         return
-      end select
+      start_sec = stamp_sec                                    ! avg_convention = "begin"
+      if (src%fcfg%avg_convention == METAVG_END) start_sec = stamp_sec - src%dt_forcing
       factor = cosz_reconstruct_factor(when, start_sec, src%dt_forcing / real(N_COSZ_SUB, wp),       &
                                        src%dt_forcing, cur%latitude_deg, cur%longitude_deg)
       cosz = 0.0_wp
