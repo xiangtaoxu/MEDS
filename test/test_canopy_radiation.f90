@@ -18,6 +18,10 @@
 !                             a thin layer's scattered beam is the single-scatter split.            !
 !   9. TISSUE LONGWAVE      : leaves and wood, or two tied cohorts, exchange longwave reciprocally,  !
 !                             each charged its own emission.                                        !
+!  10. NO COHORTS           : a patch with no cohort (ncoh = 0): the ground takes what its albedo   !
+!                             leaves of the shortwave and its emissivity's share of the sky less its !
+!                             emission, the canopy nothing, every band closes, and the light is a   !
+!                             cohort of no leaf or wood area's.                                     !
 ! The leaf-angle distribution and its moments are test_optics_lib's.                       !
 !==========================================================================================!
 program test_canopy_radiation
@@ -42,6 +46,7 @@ program test_canopy_radiation
    call test_tied_cohorts_codominant()
    call test_cutting_invariance()
    call test_tissue_longwave()
+   call test_no_cohorts()
 
    call test_report('test_canopy_radiation')
 
@@ -427,5 +432,54 @@ contains
       call check_true('a cool tied cohort gains from a warm one', gain_b > 0.0_wp, gain_b)
       call check('tied cohorts exchange reciprocally', gain_b, gain_a, 1.0e-9_wp * abs(gain_a))
    end subroutine test_tissue_longwave
+
+   !=======================================================================================!
+   !  NO COHORTS (canopy_radiation, ncoh = 0): a bare patch under the sun at cos(z) = 0.7, a 280 K  !
+   !  sky and 295 K soil of albedo 0.15 / 0.30 and emissivity 0.95. The ground absorbs (1 - albedo) !
+   !  of each shortwave band and, by Kirchhoff, eps (L_sky - sigma T^4) of the longwave; the canopy  !
+   !  has nothing to absorb; what reaches the ground and what it returns close each band. A single !
+   !  cohort of no leaf or wood area must give the same light, so the branch is the canopy's limit.  !
+   !=======================================================================================!
+   subroutine test_no_cohorts()
+      type(rad_pft_optics_t) :: opt
+      type(rad_env_t)        :: f
+      type(rad_out_t)        :: bare, empty
+      integer(ik) :: pft0(0), b
+      real(wp)    :: r0(0), incid, l_sky
+      real(wp), parameter :: T_SKY = 280.0_wp, T_SOIL = 295.0_wp, EMISS = 0.95_wp
+      real(wp), parameter :: ALBEDO(2) = [0.15_wp, 0.30_wp]   ! VIS, NIR, as build_forcing sets them
+      print '(a)', '[10] no cohorts: the ground takes it all'
+      call build_optics(45.0_wp, opt)
+      call build_forcing(0.7_wp, T_SKY, T_SOIL, f)
+      call canopy_radiation(opt, f, 0_ik, pft0, r0, r0, r0, r0, r0, bare)
+      call check_true('no cohorts: the canopy has no tissue to absorb anything',                                   &
+                      bare%n_coh == 0_ik .and. size(bare%abs_leaf, 2) == 0 .and. size(bare%abs_wood, 2) == 0)
+      do b = RAD_VIS, RAD_NIR
+         incid = f%incid_beam(b) + f%incid_diff(b)
+         call check('no cohorts: all the shortwave reaches the ground', bare%dn_ground(b), incid, 1.0e-12_wp * incid)
+         call check('no cohorts: the ground absorbs 1 - albedo of it', bare%dn_ground(b) - bare%up_ground(b),       &
+                    (1.0_wp - ALBEDO(b)) * incid, 1.0e-12_wp * incid)
+         call check('no cohorts: the patch''s albedo is the ground''s', bare%albedo(b), ALBEDO(b), 1.0e-15_wp)
+         call check('no cohorts: incident = absorbed by the ground + reflected', incid,                            &
+                    (bare%dn_ground(b) - bare%up_ground(b)) + bare%albedo(b) * incid, 1.0e-12_wp * incid)
+      end do
+      l_sky = stefan_boltzmann * T_SKY ** 4
+      call check('no cohorts: the ground nets eps (L_sky - sigma T^4) of the longwave (Kirchhoff)',                  &
+                 bare%dn_ground(RAD_LW) - bare%up_ground(RAD_LW), EMISS * (l_sky - stefan_boltzmann * T_SOIL ** 4),  &
+                 1.0e-12_wp * l_sky)
+      call check('no cohorts: the sky''s longwave in = the ground''s net + what leaves the top',                    &
+                 l_sky, (bare%dn_ground(RAD_LW) - bare%up_ground(RAD_LW)) + bare%albedo(RAD_LW) * l_sky,          &
+                 1.0e-12_wp * l_sky)
+      !----- The canopy's limit: one cohort with no leaf and no wood. ---------------------------------!
+      call canopy_radiation(opt, f, 1_ik, [1_ik], [5.0_wp], [0.0_wp], [0.0_wp], [T_SOIL], [T_SOIL], empty)
+      do b = RAD_VIS, RAD_LW
+         call check('no cohorts = a cohort with no leaf or wood area: the light reaching the ground',               &
+                    bare%dn_ground(b), empty%dn_ground(b), 1.0e-12_wp * max(bare%dn_ground(b), 1.0_wp))
+         call check('no cohorts = a cohort with no leaf or wood area: the light leaving the ground',                &
+                    bare%up_ground(b), empty%up_ground(b), 1.0e-12_wp * max(bare%up_ground(b), 1.0_wp))
+         call check('no cohorts = a cohort with no leaf or wood area: the albedo', bare%albedo(b), empty%albedo(b),  &
+                    1.0e-12_wp)
+      end do
+   end subroutine test_no_cohorts
 
 end program test_canopy_radiation

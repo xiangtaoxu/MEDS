@@ -29,15 +29,27 @@
 !   9. THE REFERENCE LEVEL (canopy_aerodynamics, §2): canopy air at the temperature and    !
 !      humidity of the air at the canopy-air top is neutral, with no temperature scale,    !
 !      whatever the reference height.                                                      !
+!  10. SNOW BURIAL (canopy_burial_fraction, canopy_roughness, eq. (1)): no snow buries     !
+!      nothing and leaves the canopy's own roughness and displacement; the buried share    !
+!      rises with the pack's depth, continuously, to ED2's cap for a pack as deep as the   !
+!      canopy or deeper; as burial goes to 1 the roughness and displacement go to the      !
+!      snow surface's, continuously; a canopy below the snow's roughness takes the snow's. !
+!  11. CANOPY-AIR CONDUCTANCES (canopy_air_conductances, cas_atm_conductances, eq. (5)):   !
+!      neutral, the log law's rho kappa^2 u / ln^2((zref - d)/z0) for enthalpy and vapour, !
+!      and the dry air's moles for CO2; more wind or a rougher canopy conducts more, a     !
+!      buried canopy less, stable canopy air less and unstable more; at the patch kernel's !
+!      own state the re-solve gives what cas_atm_conductances makes of the kernel's u*.    !
 !==========================================================================================!
 program test_canopy_aerodynamics
    use meds_test_assert,         only : check, check_true, test_report
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : von_karman
+   use meds_constants,           only : von_karman, mmdry
    use meds_biophysics_params,   only : aero_params_t
+   use meds_therm_lib,           only : cas_molar_density
    use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity,          &
                                         canopy_aerodynamics, mo_surface_layer, open_canopy_fraction,             &
-                                        set_aero_env_atm, set_aero_env_canopy
+                                        set_aero_env_atm, set_aero_env_canopy, canopy_burial_fraction,          &
+                                        canopy_roughness, canopy_air_conductances, cas_atm_conductances
    use meds_numerics,            only : ascending_order
    implicit none
 
@@ -50,6 +62,8 @@ program test_canopy_aerodynamics
    call test_tied_layer()
    call test_caller_order()
    call test_reference_level()
+   call test_snow_burial()
+   call test_cas_conductances()
 
    call test_report('test_canopy_aerodynamics')
 
@@ -362,5 +376,145 @@ contains
       call check('reference level: canopy air like the air above has no temperature scale', out%tstar, 0.0_wp, 0.0_wp)
       call check('reference level: canopy air like the air above is neutral', out%zeta, 0.0_wp, 0.0_wp)
    end subroutine test_reference_level
+
+   !----- 10. Snow burial (docs/science/canopy_aerodynamics.md eq. (1)): a pack buries the share of   !
+   !      the canopy's height its depth reaches, capped at ED2's 0.99 so a buried canopy keeps a     !
+   !      trace of its own roughness, and the roughness and displacement blend from the canopy's    !
+   !      own (z0 = 0.13 h, d = 0.63 h) toward the snow surface's (snow_rough, no displacement). A    !
+   !      2 m shrub under a pack swept from bare ground to 1.5 times its height. --------------------!
+   subroutine test_snow_burial()
+      type(aero_params_t) :: cfg
+      type(aero_args_t)   :: geom
+      integer(ik), parameter :: NS = 61_ik
+      real(wp), parameter :: H = 2.0_wp, CAP = 0.99_wp      ! [m], [-] ED2's cap on the burial fraction
+      real(wp) :: depth(NS), f(NS), z0(NS), d(NS), z0_own, d_own, z0_snow, d_snow, step
+      integer(ik) :: k
+      geom%veg_height   = H
+      geom%opencan_frac = 0.0_wp
+      step = 1.5_wp * H / real(NS - 1_ik, wp)
+      do k = 1_ik, NS
+         depth(k) = step * real(k - 1_ik, wp)
+         f(k) = canopy_burial_fraction(depth(k), H)
+         geom%snowfac = f(k)
+         call canopy_roughness(cfg, geom, z0(k), d(k))
+      end do
+      z0_own = cfg%z0m_ratio * H
+      d_own  = cfg%d_ratio * H
+      !----- No snow: nothing buried, and the canopy's own roughness and displacement. -------------!
+      call check('no snow buries nothing', f(1), 0.0_wp, 0.0_wp)
+      call check('no snow: the canopy''s own roughness, 0.13 h', z0(1), z0_own, 1.0e-15_wp * z0_own)
+      call check('no snow: the canopy''s own displacement, 0.63 h', d(1), d_own, 1.0e-15_wp * d_own)
+      !----- The buried share rises with the pack, as the share of the height it reaches, to the cap. -!
+      call check_true('burial rises monotonically with the pack''s depth', all(f(2:) >= f(:NS - 1_ik)),       &
+                      minval(f(2:) - f(:NS - 1_ik)))
+      call check('a pack half the canopy''s height buries half of it', canopy_burial_fraction(0.5_wp * H, H),  &
+                 0.5_wp, 1.0e-15_wp)
+      call check_true('a pack as deep as the canopy, or deeper, buries it to the cap',                         &
+                      all(abs(pack(f, depth >= H) - CAP) <= 1.0e-15_wp), maxval(pack(f, depth >= H)))
+      call check_true('the burial is continuous: a step in depth moves it by at most the step over h',      &
+                      all(abs(f(2:) - f(:NS - 1_ik)) <= step / H * (1.0_wp + 1.0e-12_wp)),                     &
+                      maxval(abs(f(2:) - f(:NS - 1_ik))))
+      !----- The roughness and displacement fall monotonically and continuously with the burial. -----!
+      call check_true('a deeper pack never roughens the canopy', all(z0(2:) <= z0(:NS - 1_ik)),               &
+                      maxval(z0(2:) - z0(:NS - 1_ik)))
+      call check_true('a deeper pack never raises the displacement', all(d(2:) <= d(:NS - 1_ik)),             &
+                      maxval(d(2:) - d(:NS - 1_ik)))
+      call check_true('the roughness is continuous in the pack''s depth',                                      &
+                      all(abs(z0(2:) - z0(:NS - 1_ik)) <= (z0_own - cfg%snow_rough) * step / H                 &
+                          * (1.0_wp + 1.0e-12_wp)), maxval(abs(z0(2:) - z0(:NS - 1_ik))))
+      call check_true('under the deepest pack the canopy keeps only a trace of its own roughness',            &
+                      z0(NS) > cfg%snow_rough .and. z0(NS) - cfg%snow_rough <= (1.0_wp - CAP) * z0_own        &
+                      * (1.0_wp + 1.0e-12_wp) .and. d(NS) <= (1.0_wp - CAP) * d_own * (1.0_wp + 1.0e-12_wp),   &
+                      z0(NS) - cfg%snow_rough)
+      !----- Burial 1 is the snow surface itself, and burial approaching 1 approaches it. ------------!
+      geom%snowfac = 1.0_wp
+      call canopy_roughness(cfg, geom, z0_snow, d_snow)
+      call check('fully buried: the snow surface''s roughness', z0_snow, cfg%snow_rough, 1.0e-15_wp)
+      call check('fully buried: no displacement', d_snow, 0.0_wp, 1.0e-15_wp)
+      geom%snowfac = 1.0_wp - 1.0e-6_wp
+      call canopy_roughness(cfg, geom, z0(1), d(1))
+      call check_true('nearly buried: within a millionth of the canopy''s own of the snow surface',            &
+                      abs(z0(1) - z0_snow) <= 1.0e-6_wp * z0_own * (1.0_wp + 1.0e-9_wp)                        &
+                      .and. abs(d(1) - d_snow) <= 1.0e-6_wp * d_own * (1.0_wp + 1.0e-9_wp), z0(1) - z0_snow)
+      !----- A canopy below the snow surface's roughness (5 mm of grass) takes the snow's. ------------!
+      geom%veg_height = 0.005_wp
+      geom%snowfac    = 0.0_wp
+      call canopy_roughness(cfg, geom, z0(1), d(1))
+      call check('a canopy below the snow''s roughness takes the snow''s', z0(1), cfg%snow_rough, 0.0_wp)
+   end subroutine test_snow_burial
+
+   !----- 11. The canopy-air <-> atmosphere conductances (docs/science/canopy_aerodynamics.md eq. (5)), !
+   !      re-solved at a canopy-air state (canopy_air_conductances) from the surface layer and the     !
+   !      roughness, under a wind u at zref = 30 m (neutral_env). Neutral, u* = kappa u / ln and the    !
+   !      profile factor is kappa / ln, ln = ln((zref - d)/z0), so g = rho kappa^2 u / ln^2; vapour    !
+   !      takes the heat factor (z0q = z0h) and CO2 counts the dry air's moles, rho (1 - q) / M_dry.   !
+   subroutine test_cas_conductances()
+      type(aero_params_t) :: cfg
+      type(aero_env_t)    :: env
+      type(aero_args_t)   :: geom
+      type(aero_out_t)    :: out
+      real(wp), parameter :: RHO = 1.2_wp, H = 20.0_wp, ZREF = 30.0_wp, U = 3.0_wp
+      real(wp), parameter :: PACK_DEPTH(4) = [0.0_wp, 0.5_wp, 1.0_wp, 2.0_wp]   ! [m]
+      real(wp) :: gh, gv, gc, g_log, ln, g(4), gk_h, gk_v, gk_c
+      integer(ik) :: k, order(1)
+      env = neutral_env(U)
+      geom%veg_height   = H
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
+      call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm, env%shv_atm, gh, gv, gc)
+      ln    = log((ZREF - cfg%d_ratio * H) / (cfg%z0m_ratio * H))
+      g_log = RHO * von_karman ** 2 * U / ln ** 2
+      call check('neutral: g = rho kappa^2 u / ln^2((zref - d)/z0)', gh, g_log, 1.0e-12_wp * g_log)
+      call check('vapour takes the enthalpy''s conductance (z0q = z0h)', gv, gh, 0.0_wp)
+      call check('CO2: the same exchange counted in the dry air''s moles, (1 - q)/M_dry per kg', gc,           &
+                 gh * (1.0_wp - env%shv_atm) / mmdry, 1.0e-12_wp * gc)
+      !----- More wind conducts more: neutral, in proportion to it. -----------------------------------!
+      do k = 1_ik, 4_ik
+         env = neutral_env(U * 2.0_wp ** (k - 1_ik))
+         call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm, env%shv_atm, g(k), gv, gc)
+      end do
+      call check_true('a stronger wind conducts more', all(g(2:) > g(:3)), minval(g(2:) - g(:3)))
+      call check('neutral, the conductance is linear in the wind', g(4), 8.0_wp * g(1), 1.0e-12_wp * g(4))
+      !----- A rougher canopy (taller, under the same zref) conducts more. ---------------------------!
+      env = neutral_env(U)
+      do k = 1_ik, 4_ik
+         geom%veg_height = 2.5_wp * 2.0_wp ** (k - 1_ik)
+         call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm, env%shv_atm, g(k), gv, gc)
+      end do
+      call check_true('a rougher canopy conducts more (h 2.5, 5, 10, 20 m)', all(g(2:) > g(:3)),               &
+                      minval(g(2:) - g(:3)))
+      !----- A 2 m shrub under a deepening pack (0, 0.5, 1, 2 m) conducts less. ------------------------!
+      geom%veg_height = 2.0_wp
+      do k = 1_ik, 4_ik
+         geom%snowfac = canopy_burial_fraction(PACK_DEPTH(k), geom%veg_height)
+         call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm, env%shv_atm, g(k), gv, gc)
+      end do
+      call check_true('a buried canopy conducts less, the more so the deeper the pack', all(g(2:) < g(:3)),   &
+                      maxval(g(2:) - g(:3)))
+      !----- Canopy air 3 K colder than the air above (stable) conducts less than neutral, 3 K warmer  !
+      !      (unstable) more. --------------------------------------------------------------------------!
+      geom%veg_height = H
+      geom%snowfac    = 0.0_wp
+      call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm - 3.0_wp, env%shv_atm, g(1), gv, gc)
+      call canopy_air_conductances(cfg, env, geom, RHO, env%theta_atm + 3.0_wp, env%shv_atm, g(2), gv, gc)
+      call check_true('stable canopy air conducts less than neutral', g(1) < gh, gh - g(1))
+      call check_true('unstable canopy air conducts more than neutral', g(2) > gh, g(2) - gh)
+      !----- The patch kernel's u* and profile factors at its own, unstable canopy air give, through   !
+      !      cas_atm_conductances, the conductances the re-solve finds at that state: the frozen       !
+      !      record's and the march's are one exchange. --------------------------------------------!
+      env%can_temp = env%theta_atm + 3.0_wp
+      env%can_shv  = 0.012_wp
+      call ascending_order([H], 1_ik, order)
+      call ensure_aero_out_capacity(out, 1_ik)
+      call canopy_aerodynamics(cfg, env, geom, 1_ik, order, [H], [4.0_wp], [env%can_temp], [env%can_temp],       &
+                               [0.05_wp], [0.02_wp], out)
+      call cas_atm_conductances(RHO, cas_molar_density(RHO, env%can_shv), out%ustar, out%heat_transfer_factor,  &
+                                out%vapour_transfer_factor, gk_h, gk_v, gk_c)
+      call canopy_air_conductances(cfg, env, geom, RHO, env%can_temp, env%can_shv, gh, gv, gc)
+      call check('the kernel''s u* through cas_atm_conductances: the re-solved enthalpy conductance', gk_h, gh,   &
+                 1.0e-12_wp * gh)
+      call check('... and the re-solved vapour and CO2 conductances', abs(gk_v - gv) / gv + abs(gk_c - gc) / gc,  &
+                 0.0_wp, 1.0e-12_wp)
+   end subroutine test_cas_conductances
 
 end program test_canopy_aerodynamics

@@ -27,6 +27,9 @@
 !      predawn potential follows a Campbell soil's curve.                                   !
 !   8. RK45 AT ITS EDGES: a drydown to theta_res, a just-recruited cohort, a dense canopy   !
 !      in a cold snap, and the dry soil's uptake seam.                                      !
+!   9. THE REPORTED NET RADIATION (fast_step's out%rnet) counts the wood: with the leaves  !
+!      and the ground dark, shortwave on the wood alone raises it by what the wood         !
+!      absorbs, less only the warmer wood's extra emission, on both schemes.               !
 ! The building blocks are test_fast_integ_kernels'; the schemes' orders and the adaptive  !
 ! march are test_fast_integ_schemes'.                                                       !
 !==========================================================================================!
@@ -109,6 +112,7 @@ program test_fast_integ_step
    call test_rk45_tiny_cohort()
    call test_rk45_dense_cold()
    call test_rk45_dry_seam()
+   call test_rnet_counts_wood()
 
    call test_report('test_fast_integ_step')
 
@@ -1117,5 +1121,44 @@ contains
                       col%out%report%ledgers%whole_water%worst < 1.0e-8_wp, col%out%report%ledgers%whole_water%worst)
       call use_scheme(INTEG_ESDIRK2)
    end subroutine test_rk45_dry_seam
+
+   !=======================================================================================!
+   ! 9. THE REPORTED NET RADIATION. The step reports the net radiation the ground, the leaves  !
+   ! and the wood absorbed, as their balances booked it (out%rnet, the output's net radiation; !
+   ! docs/science/vegetation_energy_dynamics.md, "The emission base"). One step from the fresh !
+   ! column under the noon air, its leaves and ground given no radiation, twice: the wood      !
+   ! absorbing nothing, then 40 W/m2 of shortwave. The second reports 40 W/m2 more, less only  !
+   ! what the wood, warmed over the step, emits beyond the first (well under 2 %). Leaving the  !
+   ! wood out of the sum would report no change at all.                                       !
+   !=======================================================================================!
+   subroutine test_rnet_counts_wood()
+      real(wp), parameter :: SW_WOOD = 40.0_wp, AGREE = 0.02_wp   ! [W/m2], [-]
+      real(wp)    :: rnet(2)
+      integer(ik) :: is, k
+      print '(a)', 'test_rnet_counts_wood:'
+      do is = 1_ik, size(SCHEMES, kind=ik)
+         call use_scheme(SCHEMES(is))
+         do k = 1_ik, 2_ik
+            call reset_column(col)
+            call set_noon_forcing(col)
+            col%forcing%abs_sw        = 0.0_wp
+            col%forcing%abs_par       = 0.0_wp
+            col%forcing%abs_lw        = 0.0_wp
+            col%forcing%abs_sw_ground = 0.0_wp
+            col%forcing%abs_lw_ground = 0.0_wp
+            col%forcing%abs_sw_wood   = merge(SW_WOOD, 0.0_wp, k == 2_ik)
+            col%forcing%abs_lw_wood   = 0.0_wp
+            call set_ground_tiles(col)
+            call step_column(col, DT_FAST)
+            rnet(k) = col%out%rnet
+         end do
+         print '(3a,2f10.4,a)', '   ', scheme_name(SCHEMES(is)), ': net radiation, the wood dark and lit ', rnet, ' W/m2'
+         call check_true(trim(scheme_name(SCHEMES(is)))//': the reported net radiation counts what the wood absorbs', &
+                         rnet(2) - rnet(1) <= SW_WOOD * (1.0_wp + 1.0e-12_wp)                                       &
+                         .and. rnet(2) - rnet(1) >= (1.0_wp - AGREE) * SW_WOOD, rnet(2) - rnet(1))
+      end do
+      col%forcing%abs_sw_wood = 0.0_wp
+      call use_scheme(INTEG_ESDIRK2)
+   end subroutine test_rnet_counts_wood
 
 end program test_fast_integ_step
