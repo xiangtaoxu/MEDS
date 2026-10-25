@@ -51,10 +51,10 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #      export OMP_STACKSIZE=512M    (a threaded run)
 #
 #  -DMEDS_HEAP_ARRAYS=ON moves large automatic arrays to the heap instead. It is OFF by default
-#  because ifx's -heap-arrays SEGFAULTS test_output_registry at the exit of apply_variable_override
-#  in a Debug build -- a compiler codegen interaction, not a MEDS bug (the routine only assigns
-#  plain integer components, and the same code is clean without the flag). Turn it on only if the
-#  runtime fix is unavailable, and re-run the Debug suite when you do.
+#  because ifx's -heap-arrays SEGFAULTS test_output (its registry section) at the exit of
+#  apply_variable_override in a Debug build -- a compiler codegen interaction, not a MEDS bug (the
+#  routine only assigns plain integer components, and the same code is clean without the flag).
+#  Turn it on only if the runtime fix is unavailable, and re-run the Debug suite when you do.
 #-----------------------------------------------------------------------------------------#
 #
 #  AUTOMATIC (STACK) LOCALS ARE MANDATORY WHEN THE PATCH LOOP IS THREADED.
@@ -832,13 +832,13 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
-   foreach(t output_integrate output_registry)
-      add_executable(test_${t} test/test_${t}.f90)
-      target_link_libraries(test_${t} PRIVATE meds_output meds_testsupport)
-      meds_fortran_flags(test_${t})
-      add_test(NAME ${t} COMMAND test_${t})
-   endforeach()
+   #----- The diagnostic output's netCDF-free half (src/io/output): the registry and the selection,  #
+   #      the reduction, the extract and the per-tier integration, one section per module. It links  #
+   #      meds_output rather than the serializer.                                                     #
+   add_executable(test_output test/test_output.f90)
+   target_link_libraries(test_output PRIVATE meds_output meds_testsupport)
+   meds_fortran_flags(test_output)
+   add_test(NAME output COMMAND test_output)
 
    #----- meds_allometry_lib: the size laws, and the shipped [allometry] block equal to the     #
    #      library's initializers (the Python library's config-free values), which are Chave 2014 #
@@ -869,14 +869,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_output_roundtrip PRIVATE meds_output_stream meds_testsupport)
    meds_fortran_flags(test_output_roundtrip)
    add_test(NAME output_roundtrip COMMAND test_output_roundtrip)
-
-   #----- The WEIGHTED scale-aggregation layer: extensive/intensive, PFT + DBH-class closure,  #
-   #      empty-set handling, class edges, and the flattened 2-D (layer, patch) soil slab.      #
-   #      netCDF-free, so it links meds_output rather than the serializer.                     #
-   add_executable(test_diagnostic_reduce test/test_diagnostic_reduce.f90)
-   target_link_libraries(test_diagnostic_reduce PRIVATE meds_output meds_testsupport)
-   meds_fortran_flags(test_diagnostic_reduce)
-   add_test(NAME diagnostic_reduce COMMAND test_diagnostic_reduce)
 
    #----- The state file: written, read back and written again, every variable (links the IO layer). #
    add_executable(test_state_file test/test_state_file.f90)
