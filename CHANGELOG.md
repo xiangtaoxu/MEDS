@@ -137,7 +137,7 @@ worst values; the demographic laws make the founding and treefall decisions the 
 cull's and the treefall's dead carbon reach the soil through the litter and the slow ledger declares
 them; the slow loop converts CO2 with the fast loop's constant; and patch termination merges and
 re-sorts as patch fusion does (#523). The stand's operators have one switch each, and the stand's keys
-are one `[demography]` block (#525).
+are one `[demography]` block (#525). The slow tests are one per module of the new layout (#528).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -803,8 +803,21 @@ are one `[demography]` block (#525).
   value no longer forces it. With `patch_disturbance_on`, `patch_disturbance_rate` must be positive.
   In Fortran the keys are `cfg%demography%<key>` (`demography_params_t`) and
   `cfg%trait_dynamics%<key>` (`trait_dynamics_params_t`).
+- **The slow ctests** (#528). `slow_update` holds `fusion_cohort`, `patch` and `disturbance`;
+  `slow_step` holds `phenology_driver`, `mortality_pathways`, `biogeochem_dynamics` and
+  `slow_diag_units`; `carbon_growth` is split among `plant_carbon_allocation`, `slow_step` and
+  `slow_update`; `plant_phenology` holds `c_api_phenology`; `plant_trait_dynamics` is `plant_traits`
+  and `soil_biogeochem` is `soil_carbon`. `demography` is new.
 
 ### Changed
+
+- **One slow test per module** (#528), the tests only. Each module of `driver/` and `processes/` has
+  its test, and a test that merged into another keeps its fixture as a private module of its new
+  file. `test_demography` checks each demographic law by a property it must have, and
+  `test_slow_update` runs a stand through a month-and-year boundary with soil carbon on: every phase
+  closes, the recruit, cull and treefall declare their carbon, ids stay distinct, and the boundary's
+  dead carbon reaches the soil with the next step. The slow ledger's store test perturbs every member
+  of every reservoir. `meds_slow_ledger`'s verdict is the public `slow_ledger_failures`.
 
 - **One switch per operator of the stand** (#525), with no change to any result. Recruitment, cohort
   fusion, cohort fission, the treefall gaps and patch fusion each have a `[demography]` switch under
