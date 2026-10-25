@@ -1,14 +1,17 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! The commit: the applier advances only the carbon and derives the geometry from it, the   !
-! driver's tendency follows the applier's rule, a decline aimed at the floor ends on it,   !
-! and the cull removes the cohort there.                                                   !
+! The commit: the applier advances only the carbon and derives the geometry from it and   !
+! holds each tissue's temperature through its change of mass, the driver's tendency       !
+! follows the applier's rule, a decline aimed at the floor ends on it, and the cull        !
+! removes the cohort there.                                                                !
 !==========================================================================================!
 module test_slow_update_commit
    use meds_kinds,              only : wp, ik
+   use meds_constants,          only : tissue_c_wood_dry
    use meds_allometry_lib,      only : carbon_to_structure
+   use meds_therm_lib,          only : tissue_dry_heat_capacity
    use meds_config,             only : meds_config_t, growth_window_steps
-   use meds_cohort_state_vars,  only : cohort_deriv_alloc, cohort_bad_field, cohort_field_name
+   use meds_cohort_state_vars,  only : cohort_deriv_alloc, cohort_bad_field, cohort_field_name, cohort_tissue_temps
    use meds_polygon_state_vars, only : polygon_t
    use meds_slow_update,        only : update_cohort_states, terminate_cohorts,                          &
                                        update_cohort_derivatives
@@ -29,7 +32,7 @@ module test_slow_update_commit
 contains
 
    subroutine run_commit()
-      call banner('the commit: the applier, the tendency rule, the floor and the cull')
+      call banner('the commit: the applier, the held temperatures, the tendency rule, the floor and the cull')
       cfg = build_test_config()
 
       !=== The applier advances only the carbon and derives the geometry from it: a cohort         !
@@ -73,6 +76,47 @@ contains
          call check(poly%cohort%nonstructural_carbon(1) < 0.0_wp, 'applier: a 1 % overdraw is not floored')
          call check(trim(cohort_field_name(cohort_bad_field(poly%cohort, 1_ik))) == 'nonstructural_carbon', &
                     'applier: the bounds guard names the overdrawn pool')
+      end block
+
+      !=== The applier holds each tissue's temperature through its change of mass                   !
+      !    (update_cohort_states, through hold_cohort_tissue_temps; docs/science/                      !
+      !    vegetation_energy_dynamics.md eqs. (9)-(10)): the tissue made or lost came or went at the    !
+      !    tissue's temperature. Wood that grows keeps its temperature, its energy rising by the new    !
+      !    dry wood's heat at that temperature; a crown that sheds its last leaf, its water gone,       !
+      !    holds no energy and takes its wood's temperature. =========================================!
+      block
+         real(wp) :: dt, tl, tw, t_wood, e_wood, c_wood
+         dt = 1.0_wp / 365.0_wp
+         call init_bare_ground(poly, cfg, 1_ik)
+         call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+         call finalize_init(poly)
+         call cohort_tissue_temps(poly%cohort, 1_ik, tl, tw)
+         call check(tl == poly%cohort%leaf_temp(1) .and. tw == poly%cohort%wood_temp(1),               &
+                    'held temperatures: a cohort is born with the temperatures its energies give')
+         t_wood = poly%cohort%wood_temp(1)
+         e_wood = poly%cohort%wood_energy(1)
+         c_wood = poly%cohort%wood_carbon(1)
+         call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
+         poly%deriv%d_leaf_carbon_dt(1)          = 0.0_wp
+         poly%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+         poly%deriv%d_wood_carbon_dt(1)          = 0.2_wp * c_wood / dt
+         poly%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
+         poly%deriv%dln_nplant_dt(1)             = 0.0_wp
+         call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
+         call check(abs(poly%cohort%wood_temp(1) - t_wood) < 1.0e-10_wp,                              &
+                    'held temperatures: wood that grows at its temperature keeps it')
+         call check(abs(poly%cohort%wood_energy(1) - e_wood                                            &
+                        - tissue_dry_heat_capacity(1.0_wp, poly%cohort%wood_carbon(1) - c_wood, tissue_c_wood_dry) &
+                          * t_wood) <= 1.0e-9_wp * e_wood,                                             &
+                    'held temperatures: and its energy rises by the new dry wood''s heat at that temperature')
+         !----- The last leaf shed, as a rounded full shed is (it lands on 0), its water gone. -----!
+         poly%cohort%leaf_water_mass(1)          = 0.0_wp
+         poly%deriv%d_leaf_carbon_dt(1)          = -poly%cohort%leaf_carbon(1) / dt * (1.0_wp + 1.0e-15_wp)
+         poly%deriv%d_wood_carbon_dt(1)          = 0.0_wp
+         call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
+         call check(poly%cohort%leaf_energy(1) == 0.0_wp, 'held temperatures: a leafless crown holds no energy')
+         call check(poly%cohort%leaf_temp(1) == poly%cohort%wood_temp(1),                              &
+                    'held temperatures: and takes its wood''s temperature')
       end block
 
       !=== The driver's tendency follows the applier's rule: a step that empties a pool lands it on  !
@@ -332,6 +376,15 @@ contains
       !      film water is what it was. -------------------------------------------------------------!
       poly%cohort%leaf_surf_water(1) = 0.30_wp ; poly%cohort%wood_surf_water(1) = 0.05_wp
       film0 = poly%cohort%nplant(1) * 0.35_wp
+      !----- The tissues away from their birth temperature, held to their energies, films included:   !
+      !      each daughter keeps its parent's temperatures (the wood carbon it gained or lost held at  !
+      !      them), and together they hold the parent's tissue energy. ------------------------------!
+      poly%cohort%leaf_temp(1) = 301.0_wp
+      poly%cohort%wood_temp(1) = 296.0_wp
+      call hold_cohort_tissue_temps(poly%cohort, 1_ik)
+      ltemp_exp = poly%cohort%leaf_temp(1)
+      wtemp_exp = poly%cohort%wood_temp(1)
+      e_sum0    = poly%cohort%nplant(1) * (poly%cohort%leaf_energy(1) + poly%cohort%wood_energy(1))
       call split_cohorts(poly, cfg)
       call check(poly%cohort%n >= 2_ik, 'split did not create a second cohort')
       call check_close(total_nplant(poly), n0,   1.0e-12_wp, 'split broke nplant conservation')
@@ -339,6 +392,14 @@ contains
       call check_close(sum(poly%cohort%nplant(1:poly%cohort%n) * (poly%cohort%leaf_surf_water(1:poly%cohort%n)        &
                                                                 + poly%cohort%wood_surf_water(1:poly%cohort%n))),   &
                        film0, 1.0e-12_wp, 'split broke canopy film water conservation')
+      do j = 1_ik, poly%cohort%n
+         call check(abs(poly%cohort%leaf_temp(j) - ltemp_exp) < 1.0e-9_wp .and.                            &
+                    abs(poly%cohort%wood_temp(j) - wtemp_exp) < 1.0e-9_wp,                                 &
+                    'split: a daughter lost its parent''s tissue temperatures')
+      end do
+      call check_close(sum(poly%cohort%nplant(1:poly%cohort%n) * (poly%cohort%leaf_energy(1:poly%cohort%n)            &
+                                                                + poly%cohort%wood_energy(1:poly%cohort%n))),       &
+                       e_sum0, 1.0e-12_wp, 'split broke tissue energy conservation')
 
       !=== 4. Carbon pools/traits thread correctly through the lockstep sort reorder. ==========!
       !     3 PFTs (sla 16/13/10) are inserted then height-sorted (reordered); re-deriving with   !

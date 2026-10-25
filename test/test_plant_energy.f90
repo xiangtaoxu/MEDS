@@ -20,15 +20,22 @@
 !   5. THE TISSUE'S LONGWAVE (canopy_tissue_energy; "The emission base"): linearized about  !
 !      the tissue's own start-of-step temperature, it is the exact Stefan-Boltzmann        !
 !      balance when the tissue ends there, and second order in the distance from it.       !
+!   6. THE COMMIT (commit_tissue_energy; eqs. (9)-(10)): the energies gain exactly the     !
+!      heat each tissue relaxed through and its water's enthalpy, the gained water arrives !
+!      at the tissue's start-of-step temperature, and the committed temperatures give back !
+!      the energies, so the next step starts where this one ended; a film far heavier than !
+!      its tissue that evaporates within the step leaves the tissue at the step's          !
+!      temperature, its heat capacity over the step being the tissue's own.                !
 !==========================================================================================!
 program test_plant_energy
    use meds_test_assert,  only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
-   use meds_constants,    only : cp_air, latent_heat_vap, stefan_boltzmann, pi
+   use meds_constants,    only : cp_air, cp_liq, latent_heat_vap, stefan_boltzmann, pi
    use meds_therm_lib,    only : enthalpy_vapor, internal_energy_liquid, sat_specific_humidity,                     &
-                                 sat_specific_humidity_temp_deriv
+                                 sat_specific_humidity_temp_deriv, tissue_temp_to_energy
    use meds_canopy_water, only : canopy_water_out_t
-   use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t, plant_energy_env_t, canopy_tissue_energy
+   use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t, plant_energy_env_t, canopy_tissue_energy,  &
+                                 commit_tissue_energy, tissue_hcap_per_dt
    implicit none
 
    !----- The canopy air the canopy tests run under. -------------------------------------------!
@@ -46,6 +53,8 @@ program test_plant_energy
    call test_film_transfer()
    call test_film_evaporation()
    call test_tissue_longwave()
+   call test_commit()
+   call test_commit_heavy_film()
 
    call test_report('test_plant_energy')
 
@@ -469,6 +478,89 @@ contains
       call check_true('canopy_tissue_energy: the linearized longwave is second order in t0 - T',                    &
                       abs(p1 - 2.0_wp) < 0.2_wp .and. abs(p2 - 2.0_wp) < 0.2_wp, p2)
    end subroutine test_tissue_longwave
+
+   !=======================================================================================!
+   ! 6. THE COMMIT (commit_tissue_energy). One cohort, one plant per m2, whose leaf and wood  !
+   ! gain water over a 900 s step and relax from 300 K and 296 K towards 301.5 K and 296.8 K, !
+   ! each at its heat capacity over the step (tissue_hcap_per_dt: its dry matter and its      !
+   ! start-of-step water).                                                                     !
+   !=======================================================================================!
+   subroutine test_commit()
+      real(wp), parameter :: DT = 900.0_wp
+      real(wp), parameter :: DL = 2.0e3_wp, DW = 4.0e4_wp          ! [J/K] dry heat capacities
+      real(wp), parameter :: WL0 = 0.8_wp, WW0 = 9.0_wp            ! [kg] start-of-step water
+      real(wp), parameter :: DWL = 0.05_wp, DWW = 0.4_wp           ! [kg] the water each gains
+      real(wp), parameter :: TL0 = 300.0_wp, TW0 = 296.0_wp, TL_AVG = 301.5_wp, TW_AVG = 296.8_wp
+      type(plant_energy_env_t) :: env
+      real(wp) :: e_leaf(1), e_wood(1), t_leaf(1), t_wood(1)
+      real(wp) :: store0, store1, heat, enth, tl_expect, tw_expect
+      print '(a)', 'test_commit:'
+      call commit_env(env, DL, WL0, DW, WW0, TL0, TW0, DT)
+      env%leaf_water_enth = DWL / DT * internal_energy_liquid(TL0)
+      env%wood_water_enth = DWW / DT * internal_energy_liquid(TW0)
+      e_leaf = tissue_temp_to_energy(DL, WL0, TL0)
+      e_wood = tissue_temp_to_energy(DW, WW0, TW0)
+      t_leaf = TL0
+      t_wood = TW0
+      call commit_tissue_energy(env, [1.0_wp], DT, [TL_AVG], [TW_AVG], 1_ik, [WL0 + DWL], [WW0 + DWW],          &
+                                [0.0_wp], [0.0_wp], [0.0_wp], [0.0_wp], e_leaf, e_wood, t_leaf, t_wood,          &
+                                store0, store1)
+      heat = (DL + WL0 * cp_liq) * (TL_AVG - TL0) + (DW + WW0 * cp_liq) * (TW_AVG - TW0)
+      enth = DWL * internal_energy_liquid(TL0) + DWW * internal_energy_liquid(TW0)
+      tl_expect = ((DL + WL0 * cp_liq) * TL_AVG + DWL * cp_liq * TL0) / (DL + (WL0 + DWL) * cp_liq)
+      tw_expect = ((DW + WW0 * cp_liq) * TW_AVG + DWW * cp_liq * TW0) / (DW + (WW0 + DWW) * cp_liq)
+      call check_true('commit_tissue_energy: the tissues gain the heat they relaxed through and their '//      &
+                      'water''s enthalpy', abs((store1 - store0) - (heat + enth)) <= 1.0e-12_wp * abs(heat + enth))
+      call check_true('commit_tissue_energy: the gained water arrived at the tissues'' start-of-step '//       &
+                      'temperatures', abs(t_leaf(1) - tl_expect) < 1.0e-9_wp .and. abs(t_wood(1) - tw_expect) < 1.0e-9_wp)
+      call check_true('commit_tissue_energy: the committed temperatures give back the energies, so the next '// &
+                      'step starts where this one ended',                                                      &
+                      abs(tissue_temp_to_energy(DL, WL0 + DWL, t_leaf(1)) - e_leaf(1)) <= 1.0e-12_wp * abs(e_leaf(1)) &
+                      .and. abs(tissue_temp_to_energy(DW, WW0 + DWW, t_wood(1)) - e_wood(1))                   &
+                            <= 1.0e-12_wp * abs(e_wood(1)))
+   end subroutine test_commit
+
+   !----- A nearly leafless cohort at Palo Verde's first rains (one plant per m2): its leaf holds a   !
+   !      film of a thousand times its own heat capacity, which evaporates within the step while the !
+   !      leaf cools from 298 K to 297.5 K. The leaf's heat capacity over the step is its own, the    !
+   !      film left out, and the commit reads the temperature back with the end-of-step film, so the !
+   !      leaf reads back at the step's temperature. --------------------------------------------!
+   subroutine test_commit_heavy_film()
+      real(wp), parameter :: DT = 900.0_wp
+      real(wp), parameter :: DL = 3.4e-8_wp, WL = 1.0e-11_wp, F0 = 8.4e-9_wp   ! [J/K], [kg], [kg]
+      real(wp), parameter :: DW = 4.0e4_wp, WW = 9.0_wp                       ! [J/K], [kg]
+      real(wp), parameter :: TL0 = 298.0_wp, TL_AVG = 297.5_wp, TW0 = 298.0_wp
+      type(plant_energy_env_t) :: env
+      real(wp) :: e_leaf(1), e_wood(1), t_leaf(1), t_wood(1), store0, store1
+      print '(a)', 'test_commit_heavy_film:'
+      call commit_env(env, DL, WL, DW, WW, TL0, TW0, DT)
+      e_leaf = tissue_temp_to_energy(DL, WL + F0, TL0)
+      e_wood = tissue_temp_to_energy(DW, WW, TW0)
+      t_leaf = TL0
+      t_wood = TW0
+      call commit_tissue_energy(env, [1.0_wp], DT, [TL_AVG], [TW0], 1_ik, [WL], [WW], [F0], [0.0_wp], [0.0_wp],    &
+                                [0.0_wp], e_leaf, e_wood, t_leaf, t_wood, store0, store1)
+      call check('commit_tissue_energy: a film heavier than its tissue, evaporated within the step, leaves '//  &
+                 'the tissue at the step''s temperature', t_leaf(1), TL_AVG, 1.0e-6_wp)
+   end subroutine test_commit_heavy_film
+
+   !----- The commit's inputs for one cohort: each tissue's dry heat capacity, its heat capacity over  !
+   !      the step (tissue_hcap_per_dt on its start-of-step water) and its start-of-step temperature, !
+   !      with no water arriving. ------------------------------------------------------------------!
+   subroutine commit_env(env, dry_leaf, w_leaf, dry_wood, w_wood, t_leaf0, t_wood0, dt)
+      type(plant_energy_env_t), intent(out) :: env
+      real(wp),                 intent(in)  :: dry_leaf, w_leaf, dry_wood, w_wood, t_leaf0, t_wood0, dt
+      allocate(env%leaf_hcap_per_dt(1), env%wood_hcap_per_dt(1), env%t_leaf0(1), env%t_wood0(1),                 &
+               env%leaf_dry_hcap(1), env%wood_dry_hcap(1), env%leaf_water_enth(1), env%wood_water_enth(1))
+      env%leaf_dry_hcap    = dry_leaf
+      env%wood_dry_hcap    = dry_wood
+      env%leaf_hcap_per_dt = tissue_hcap_per_dt(dry_leaf, w_leaf, dt)
+      env%wood_hcap_per_dt = tissue_hcap_per_dt(dry_wood, w_wood, dt)
+      env%t_leaf0          = t_leaf0
+      env%t_wood0          = t_wood0
+      env%leaf_water_enth  = 0.0_wp
+      env%wood_water_enth  = 0.0_wp
+   end subroutine commit_env
 
    !----- The exact balance's residual at T. -----------------------------------------------------!
    pure real(wp) function exact_balance(t) result(g)
