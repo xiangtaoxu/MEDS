@@ -836,6 +836,11 @@ matrix's vector (#529).
 
 ### Changed
 
+- **`test/` is in folders that mirror `src/`** (#540): `support/`, `share/`, `config/`, `state/`, `fast/`,
+  `slow/`, `io/`, `driver/`, `c_api/` and `checks/`. `test/CMakeLists.txt` registers every test through one
+  helper, with commands, directories and limits unchanged. Every test has one label (`unit`, `integration`,
+  `lint`, `python`), so `ctest -L unit` runs the quick ones. `-DMEDS_TEST_LONG=ON` adds the full Palo
+  Verde inventory and 150-year regrowth, labelled `long`.
 - **The last test merges** (#539). `test_output_registry`, `test_diagnostic_reduce` and
   `test_output_integrate` are `test_output`, one section per `src/io/output` module. `test_tissue_energy`
   dissolves into `test_therm_lib`, `test_plant_energy` and `test_slow_update`. `test_pft_optics_config` is
