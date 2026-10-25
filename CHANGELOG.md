@@ -751,6 +751,20 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Changed
 
+- **The fast-loop process tests are one per module** (#524). Each `processes/` module has its test,
+  named after it (`test_canopy_aerodynamics`, `test_canopy_air_space`, `test_canopy_radiation`,
+  `test_canopy_water`, `test_leaf_gas_exchange`, `test_plant_energy`, `test_plant_hydraulics`,
+  `test_respiration`, `test_soil_heat`, `test_soil_water`, `test_surface`). So do the libraries the
+  processes use (`test_therm_lib`, `test_optics_lib`, `test_soil_hydr_lib`, `test_plant_hydr_lib`), and
+  each links only what it tests.
+  - `test_surface_energy`, `test_snow`, `test_column_energy`, `test_column_hydrology`,
+    `test_water_processes`, `test_pedotransfer`, `test_plant_respiration` and `test_leaf_physiology`
+    dissolve into them. The forcing's moist-air and lapse checks leave `test_met_file` for the library tests.
+  - Checks that restated the code's formula, or held by construction, give way to properties: the log-law
+    wind, Monteith & Unsworth's flat plate, the Ross G-function's closed forms, a column gaining exactly
+    the heat let in at its top.
+  - The snow tests step the pack as the integrator does.
+  - `test_c_api_leaf` calls the canopy shim, which no test called before.
 - **The tests of `src/share`, `src/config` and `src/io` are one per module** (#519).
   - `test_time` is `test_numerics`' calendar section. `test_numerics` also takes the sun on a slope and
     linear interpolation.
@@ -1633,6 +1647,10 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Removed
 
+- **`snow_energy_step`** (#524), which only the snow tests called, with `snow_out_t`'s `energy_resid` and
+  `fliq`, which only it wrote. Eight procedures only tests reached become private: `reduced_wind`,
+  `boundary_layer_conductance`, `alloc_rad_out`, `lw_emission_slope`, `latent_pathway`,
+  `cohort_root_depth`, `snow_surface_balance` and `snow_surface_fluxes`.
 - **`test_phenology_config` and `test_column_co2`** (#518). The first's section checks join
   `test_config_keys`, and the canopy-air CO₂ update joins `test_surface_energy`. The wood-timescale check
   (8εσT³) and the `G_top` identity go: neither checked the model.
