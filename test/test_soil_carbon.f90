@@ -1,27 +1,23 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_soil_carbon -- unit tests for the slow soil-carbon kernels (meds_soil_carbon;        !
+! test_soil_carbon -- unit tests for the soil carbon pools' daily step (meds_soil_carbon;  !
 ! docs/science/soil_carbon.md):                                                            !
-!   1. MASS CLOSURE  : dC == litter_in - Rh for one soil_carbon_step (EULER and EXPM), with  !
-!                      Rh recomputed INDEPENDENTLY from er*xi_int*K*X0. rh_today is DEFINED !
-!                      as litter_in - dC, so a residual built from it is identically zero   !
-!                      for any inputs (docs/science/soil_carbon.md §9).                     !
-!   2. Rh COMPLEMENT : Rh = sum er_j*xi_j*K_j*X_j = -1^T A xi K X; column sum_i a_ij = -er_j. !
-!   3. SCALAR PLACE  : A*(xi*K*X) conserves mass to Rh; the wrong xi*(A*K*X) does not.        !
-!   5. SPIN-UP       : SASU active-block X_ss is an exact EULER fixed point; brute force     !
-!                      converges; inert pools held at 0; the singular full 7x7 is never     !
-!                      solved (default K5=K7=0).                                            !
-!   7. LITTER+LIGNIN : build_litter_input maps pre-split streams; lignin is a proportional   !
-!                      passive tracer.                                                      !
-!  10. NECROMASS     : necromass_to_litter's split matches the hand formula, conserves mass. !
-!  PLAUSIBILITY      : soil_carbon_bad_pool passes round-off and real soils, catches the rest.!
-! The decomposition chemistry is meds_respiration's, and its three sections close the file, !
-! to move to test_respiration:                                                             !
-!   4. SCHEME TOPO   : scheme 0 = 3-active (struct->slow); scheme 5 = 5-active clay/sand.     !
-!   8. T/THETA RESP  : Q10 doubling per 10 K; ED2 cap at 45 C; moisture peak; Rh=0 at X=0.    !
-!   9. FAST/SLOW SEAM: the accumulated xi_int path closes rh_today==today_rh, the daily-mean  !
-!                      path does NOT (Jensen; docs/science/soil_carbon.md §6).              !
-!==========================================================================================
+!   1. MASS CLOSURE  : dC == litter_in - Rh for one soil_carbon_step (EULER and EXPM),     !
+!                      with Rh recomputed INDEPENDENTLY from er*xi_int*K*X0. rh_today is   !
+!                      DEFINED as litter_in - dC, so a residual built from it is           !
+!                      identically zero for any inputs (docs/science/soil_carbon.md §9).   !
+!   2. SPIN-UP       : SASU active-block X_ss is an exact EULER fixed point; brute force   !
+!                      converges; inert pools held at 0; the singular full 7x7 is never    !
+!                      solved (default K5=K7=0).                                           !
+!   3. LITTER+LIGNIN : build_litter_input maps pre-split streams; lignin is a proportional !
+!                      passive tracer.                                                     !
+!   4. NECROMASS     : necromass_to_litter's split matches the hand formula and conserves  !
+!                      mass.                                                               !
+!  PLAUSIBILITY      : soil_carbon_bad_pool passes round-off and real soils, catches the   !
+!                      rest.                                                               !
+! The decomposition chemistry the step debits with (xi, A, K, er and Rh) is                !
+! meds_respiration's (test_respiration).                                                   !
+!==========================================================================================!
 program test_soil_carbon
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_test_assert, only : check, check_true, test_report
@@ -34,22 +30,14 @@ program test_soil_carbon
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2,         &
                                       DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL,                      &
                                       IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE, SOIL_POOL_NAME
-   use meds_respiration,      only : decomposition_env_scalar, decomposition_transfer_matrix,      &
-                                     heterotrophic_respiration
+   use meds_respiration,      only : decomposition_transfer_matrix
    implicit none
 
    call test_mass_closure()
-   call test_rh_complement()
-   call test_scalar_placement()
    call test_spinup_steady_state()
    call test_litter_and_lignin()
    call test_necromass_to_litter()
    call test_pool_plausibility()
-
-   !----- The decomposition chemistry (meds_respiration), to move to test_respiration. -------!
-   call test_scheme_topology()
-   call test_temperature_moisture()
-   call test_fast_slow_seam()
 
    call test_report('test_soil_carbon')
 
@@ -130,79 +118,11 @@ contains
       end block
    end subroutine test_mass_closure
    !=======================================================================================!
-   ! 2. Rh respired complement + column-sum identity.                                              !
-   !=======================================================================================!
-   subroutine test_rh_complement()
-      type(soil_carbon_state_t)  :: pools
-      type(soil_carbon_params_t) :: opts
-      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
-      real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL), rh_fun, rh_hand, colsum, worst
-      integer(ik) :: i, j
-      print '(a)', '-- test 2: Rh = -1^T A xi K X + column identity --'
-      opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
-      opts%k_micr = 6.0_wp ; opts%k_pass = 0.012_wp ; opts%k_slow = 0.15_wp ; opts%k_struct = 1.5_wp
-      opts%k_fast = 12.0_wp
-      opts%er_fast=0.55_wp; opts%er_struct_nonlig=0.50_wp; opts%er_struct_lig=0.20_wp
-      opts%er_slow=0.55_wp; opts%er_pass=0.55_wp; opts%er_micr_int=0.60_wp; opts%er_micr_slp=0.17_wp
-      pools%carbon(IP_FAST_GRND)=0.4_wp; pools%carbon(IP_FAST_SOIL)=0.6_wp
-      pools%carbon(IP_STRUCT_GRND)=2.0_wp; pools%carbon(IP_STRUCT_SOIL)=3.0_wp
-      pools%carbon(IP_MICR)=0.5_wp; pools%carbon(IP_SLOW)=8.0_wp; pools%carbon(IP_PASSIVE)=20.0_wp
-      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      xi = [ (0.4_wp + 0.3_wp*frac(int(i,ik)), i = 1, N_SOIL_POOL) ]
-      x = pools%carbon
-      rh_fun  = heterotrophic_respiration(a_mat, k_diag, xi, pools)
-      rh_hand = 0.0_wp
-      do j = 1_ik, N_SOIL_POOL
-         rh_hand = rh_hand + er(j)*xi(j)*k_diag(j)*x(j)
-      end do
-      call check('Rh matrix == sum er*xi*K*X', rh_fun, rh_hand, 1.0e-14_wp*max(abs(rh_hand),1.0_wp))
-      ! column identity: sum_i a_ij = -er_j  and  a_jj = -1
-      worst = 0.0_wp
-      do j = 1_ik, N_SOIL_POOL
-         colsum = sum(a_mat(:, j))
-         worst  = max(worst, abs(colsum + er(j)))
-         worst  = max(worst, abs(a_mat(j,j) + 1.0_wp))
-      end do
-      call check_true('column identity sum_i a_ij = -er_j, a_jj=-1', worst < 1.0e-14_wp, worst)
-   end subroutine test_rh_complement
-   !=======================================================================================!
-   ! 3. Scalar placement -- A*(xi*K*X) conserves to Rh; xi*(A*K*X) (receiver-scalar) does NOT.      !
-   !=======================================================================================!
-   subroutine test_scalar_placement()
-      type(soil_carbon_state_t)  :: pools
-      type(soil_carbon_params_t) :: opts
-      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
-      real(wp) :: xi(N_SOIL_POOL), x(N_SOIL_POOL)
-      real(wp) :: dcorrect(N_SOIL_POOL), dwrong(N_SOIL_POOL), rh, loss_correct, loss_wrong
-      integer(ik) :: i, j
-      print '(a)', '-- test 3: scalar placement A*(xi*K*X) vs xi*(A*K*X) --'
-      opts%decomp_scheme = DECOMP_SCHEME_ED2           ! default 3-active
-      pools%carbon(IP_STRUCT_GRND)=2.0_wp; pools%carbon(IP_STRUCT_SOIL)=3.0_wp
-      pools%carbon(IP_FAST_GRND)=1.0_wp; pools%carbon(IP_FAST_SOIL)=1.5_wp; pools%carbon(IP_SLOW)=5.0_wp
-      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      x = pools%carbon
-      ! DISTINCT per-pool xi (surface vs below), so ordering matters:
-      xi = [0.9_wp, 0.3_wp, 0.9_wp, 0.3_wp, 0.3_wp, 0.3_wp, 0.3_wp]
-      ! correct: dX_i = sum_j a_ij*(xi_j*K_j*X_j)   (donor scalar)
-      do i = 1_ik, N_SOIL_POOL
-         dcorrect(i) = 0.0_wp ; dwrong(i) = 0.0_wp
-         do j = 1_ik, N_SOIL_POOL
-            dcorrect(i) = dcorrect(i) + a_mat(i,j)*(xi(j)*k_diag(j)*x(j))
-            dwrong(i)   = dwrong(i)   + a_mat(i,j)*(xi(i)*k_diag(j)*x(j))    ! receiver scalar (WRONG)
-         end do
-      end do
-      rh = heterotrophic_respiration(a_mat, k_diag, xi, pools)
-      loss_correct = -sum(dcorrect)      ! total carbon leaving the network
-      loss_wrong   = -sum(dwrong)
-      call check('correct form: total loss == Rh', loss_correct, rh, 1.0e-14_wp*max(rh,1.0_wp))
-      call check_true('wrong form: total loss /= Rh', abs(loss_wrong - rh) > 1.0e-6_wp, loss_wrong - rh)
-   end subroutine test_scalar_placement
-   !=======================================================================================!
-   ! 5. SASU spin-up: active-block X_ss is an exact EULER fixed point; brute force converges;       !
+   ! 2. SASU spin-up: active-block X_ss is an exact EULER fixed point; brute force converges;       !
    !    inert pools held at 0; default (K5=K7=0) solves despite the singular full matrix.            !
    !=======================================================================================!
    subroutine test_spinup_steady_state()
-      print '(a)', '-- test 5: SASU steady state (active block) --'
+      print '(a)', '-- test 2: SASU steady state (active block) --'
       call spinup_one_scheme(DECOMP_SCHEME_ED2, 'scheme0')
       call spinup_one_scheme(DECOMP_SCHEME_CENTURY5, 'scheme5')
    end subroutine test_spinup_steady_state
@@ -279,7 +199,7 @@ contains
       end if
    end subroutine spinup_one_scheme
    !=======================================================================================!
-   ! 7. Litter mapping + lignin passive tracer.                                                    !
+   ! 3. Litter mapping + lignin passive tracer.                                                    !
    !=======================================================================================!
    subroutine test_litter_and_lignin()
       type(soil_carbon_state_t)  :: pools, p
@@ -294,7 +214,7 @@ contains
       real(wp), parameter :: FLAB_LEAF1=0.7_wp, FLAB_STEM1=0.05_wp, AGF1=0.6_wp
       real(wp), parameter :: FLAB_LEAF2=0.5_wp, FLAB_STEM2=0.10_wp, AGF2=0.7_wp
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
-      print '(a)', '-- test 7: litter mapping + lignin tracer --'
+      print '(a)', '-- test 3: litter mapping + lignin tracer --'
 
       ! per-cohort split: leaf splits labile/structural by f_labile_leaf and lies above ground;
       ! fineroot is below-ground; wood (CWD) is mostly structural via f_labile_stem, split by agf.
@@ -365,7 +285,7 @@ contains
       call check_true('EXPM large step: lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-12_wp, audit%lignin_resid)
    end subroutine test_litter_and_lignin
    !=======================================================================================!
-   ! 10. NECROMASS_TO_LITTER (meds_soil_carbon; docs/science/soil_carbon.md §5):                    !
+   ! 4. NECROMASS_TO_LITTER (meds_soil_carbon; docs/science/soil_carbon.md §5):                    !
    !     the driver-side (and core-side termination/disturbance) necromass -> litter-destination !
    !     split. (a) reproduces test_litter_and_lignin's own two-cohort hand formula EXACTLY when   !
    !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !
@@ -386,7 +306,7 @@ contains
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
       real(wp) :: leaf_c, root_c, wood_c, storage_c, total_in, total_out
       real(wp) :: lg, ls, sg, ss, lig_g, lig_s
-      print '(a)', '-- test 10: necromass_to_litter (driver/core litter-split helper) --'
+      print '(a)', '-- test 4: necromass_to_litter (driver/core litter-split helper) --'
 
       ! (a) per-cohort call reproduces test_litter_and_lignin's hand formula exactly (storage_c=0,
       !     lignin_frac=0.3 matching that test's flat structural-stream lignin fraction).
@@ -513,140 +433,4 @@ contains
       call check_true('a NaN pool is caught', soil_carbon_bad_pool(p) == IP_MICR,                   &
                       real(soil_carbon_bad_pool(p), wp))
    end subroutine test_pool_plausibility
-
-   !=======================================================================================!
-   ! The decomposition chemistry, meds_respiration's: these three move to test_respiration. !
-   !=======================================================================================!
-   !=======================================================================================!
-   ! 4. Scheme topology -- hand-checked A/er for scheme 0 (default) and scheme 5 (CENTURY).         !
-   !=======================================================================================!
-   subroutine test_scheme_topology()
-      type(soil_carbon_state_t)  :: pools
-      type(soil_carbon_params_t) :: opts
-      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL), offsum
-      real(wp) :: er_micr, ex_mp, ex_sp
-      integer(ik) :: i, j
-      print '(a)', '-- test 4: decomp scheme topology --'
-      ! ---- scheme 0 (default 3-active): only a(6,3),a(6,4) off-diagonal; micr/pass inert. ----
-      opts = soil_carbon_params_t()                            ! defaults: scheme 0, er_struct=0.3, k_micr=k_pass=0
-      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      call check('scheme0 K_micr = 0', k_diag(IP_MICR),    0.0_wp, 0.0_wp)
-      call check('scheme0 K_pass = 0', k_diag(IP_PASSIVE), 0.0_wp, 0.0_wp)
-      call check('scheme0 a(slow,struct_grnd)=0.7', a_mat(IP_SLOW,IP_STRUCT_GRND), 0.7_wp, 1.0e-14_wp)
-      call check('scheme0 a(slow,struct_soil)=0.7', a_mat(IP_SLOW,IP_STRUCT_SOIL), 0.7_wp, 1.0e-14_wp)
-      call check('scheme0 er(struct_grnd)=0.3', er(IP_STRUCT_GRND), 0.3_wp, 1.0e-14_wp)
-      call check('scheme0 er(fast_soil)=1.0',   er(IP_FAST_SOIL),   1.0_wp, 1.0e-14_wp)
-      ! everything except a(6,3),a(6,4) and the -1 diagonal must be 0:
-      offsum = 0.0_wp
-      do j = 1_ik, N_SOIL_POOL
-         do i = 1_ik, N_SOIL_POOL
-            if (i /= j .and. .not. (i==IP_SLOW .and. (j==IP_STRUCT_GRND .or. j==IP_STRUCT_SOIL))) then
-               offsum = offsum + abs(a_mat(i,j))
-            end if
-         end do
-      end do
-      call check_true('scheme0 no other transfers', offsum < 1.0e-14_wp, offsum)
-
-      ! ---- scheme 5 (5-active): clay/sand-controlled transfers (hand values, f_lignin=0). ----
-      opts = soil_carbon_params_t()
-      opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
-      opts%k_micr=6.0_wp; opts%k_pass=0.012_wp; opts%k_slow=0.15_wp; opts%k_struct=1.5_wp; opts%k_fast=12.0_wp
-      opts%er_fast=0.55_wp; opts%er_struct_nonlig=0.50_wp; opts%er_struct_lig=0.20_wp
-      opts%er_slow=0.55_wp; opts%er_pass=0.55_wp; opts%er_micr_int=0.60_wp; opts%er_micr_slp=0.17_wp
-      opts%xsand=0.35_wp; opts%xclay=0.25_wp
-      call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      er_micr = 0.60_wp + 0.17_wp*0.35_wp
-      ex_mp   = min(1.0_wp-er_micr, 0.003_wp+0.032_wp*0.25_wp)
-      ex_sp   = min(1.0_wp-0.55_wp, 0.003_wp+0.009_wp*0.25_wp)
-      call check('scheme5 a(micr,fast_grnd)=0.45', a_mat(IP_MICR,IP_FAST_GRND), 0.45_wp, 1.0e-14_wp)
-      call check('scheme5 a(micr,struct_grnd)=0.50', a_mat(IP_MICR,IP_STRUCT_GRND), 0.50_wp, 1.0e-14_wp)
-      call check('scheme5 a(pass,micr)=ex_mp', a_mat(IP_PASSIVE,IP_MICR), ex_mp, 1.0e-14_wp)
-      call check('scheme5 a(slow,micr)=(1-er_micr)-ex_mp', a_mat(IP_SLOW,IP_MICR), (1.0_wp-er_micr)-ex_mp, 1.0e-14_wp)
-      call check('scheme5 a(pass,slow)=ex_sp', a_mat(IP_PASSIVE,IP_SLOW), ex_sp, 1.0e-14_wp)
-      call check('scheme5 a(slow,pass)=0.45', a_mat(IP_SLOW,IP_PASSIVE), 0.45_wp, 1.0e-14_wp)
-      call check('scheme5 er(micr)=er_micr', er(IP_MICR), er_micr, 1.0e-13_wp)
-   end subroutine test_scheme_topology
-   !=======================================================================================!
-   ! 8. Temperature/moisture response + N-off inertness.                                           !
-   !=======================================================================================!
-   subroutine test_temperature_moisture()
-      type(soil_carbon_state_t)  :: pools
-      type(soil_carbon_params_t) :: opts
-      real(wp) :: xi_a(N_SOIL_POOL), xi_b(N_SOIL_POOL), xi_lo(N_SOIL_POOL), xi_hi(N_SOIL_POOL)
-      real(wp) :: xi_opt(N_SOIL_POOL), xi_dry(N_SOIL_POOL)
-      print '(a)', '-- test 8: temperature / moisture response --'
-      pools = soil_carbon_state_t()
-      ! Q10 = 2 doubling per 10 K (scheme 5, uncapped):
-      opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_CENTURY5
-      opts%rh_q10 = 2.0_wp ; opts%rh_t_ref = 288.15_wp
-      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_a)  ! T
-      call decomposition_env_scalar(308.15_wp, 308.15_wp, 0.5_wp, 0.1_wp, 0.6_wp, pools, opts, xi_b)  ! T+10
-      call check('Q10=2 doubling per 10K', xi_b(IP_FAST_SOIL)/xi_a(IP_FAST_SOIL), 2.0_wp, 1.0e-12_wp)
-      ! ED2 capped exp: saturates (min(1,.)) at/above 45 C (318.15 K):
-      opts = soil_carbon_params_t() ; opts%decomp_scheme = DECOMP_SCHEME_ED2
-      call decomposition_env_scalar(320.15_wp, 320.15_wp, opts%resp_opt_water*0.6_wp+0.1_wp, 0.1_wp, 0.6_wp, &
-                               pools, opts, xi_hi)
-      ! at rel = resp_opt_water the water factor = 1, so xi(fast) = min(1,exp(pos)) = 1
-      call decomposition_env_scalar(320.15_wp, 320.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
-                               pools, opts, xi_opt)
-      call check('ED2 cap: f_temp<=1 at 47C, rel=opt => xi=1', xi_opt(IP_FAST_SOIL), 1.0_wp, 1.0e-12_wp)
-      ! moisture: rel=opt gives f_water=1 (peak); a drier rel gives f_water<1 (lower xi):
-      opts = soil_carbon_params_t()
-      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.1_wp + opts%resp_opt_water*(0.6_wp-0.1_wp), 0.1_wp, 0.6_wp, &
-                               pools, opts, xi_opt)
-      call decomposition_env_scalar(298.15_wp, 298.15_wp, 0.2_wp, 0.1_wp, 0.6_wp, pools, opts, xi_dry)   ! rel < opt
-      call check_true('moisture peak at opt (dry side lower)', xi_dry(IP_FAST_SOIL) < xi_opt(IP_FAST_SOIL), &
-                      xi_opt(IP_FAST_SOIL) - xi_dry(IP_FAST_SOIL))
-      ! N off (default): structural xi has NO N brake -> with zero lignin, xi(struct)==xi(fast) same layer.
-      call check('N off: struct xi == fast xi (no lignin, no N brake)', xi_opt(IP_STRUCT_SOIL), xi_opt(IP_FAST_SOIL), 1.0e-14_wp)
-   end subroutine test_temperature_moisture
-   !=======================================================================================!
-   ! 9. Fast/slow seam -- the accumulated xi_int path closes rh_today==today_rh; the daily-mean     !
-   !    path does NOT (Jensen; docs/science/soil_carbon.md §6).                                     !
-   !=======================================================================================!
-   subroutine test_fast_slow_seam()
-      type(soil_carbon_state_t)  :: pools
-      type(soil_carbon_params_t) :: dopts
-      real(wp) :: xi(N_SOIL_POOL), a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
-      real(wp) :: theta, theta_dry, theta_sat, xpool
-      real(wp) :: xi_int, today_rh, tmean, ftemp, fwater, rel, dt_sub, ttime, k2
-      real(wp) :: rh_today, rh_meanpath, xi_meanpath
-      integer(ik) :: is, nsub
-      print '(a)', '-- test 9: fast/slow seam (Rh reconciliation + Jensen) --'
-      pools = soil_carbon_state_t() ; pools%carbon(IP_FAST_SOIL) = 4.0_wp ; xpool = 4.0_wp
-      theta = 0.45_wp ; theta_dry = 0.1_wp ; theta_sat = 0.6_wp
-
-      ! ---- There is one production Rh authority, the matrix, so the fast/slow seam that exists is
-      !      rh_seam_gap (the matrix against the fast loop's accumulation of the SAME matrix), and
-      !      test_slow_step asserts it. Part (b) below builds its own Q10 and moisture
-      !      factors inline.
-      dopts = soil_carbon_params_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
-      dopts%rh_q10 = 1.5_wp ; dopts%rh_t_ref = 288.15_wp ; dopts%k_fast = 12.0_wp
-      k2 = dopts%k_fast / yr_day
-
-      ! ---- (b) diurnal accumulation: rh_today (matrix, from xi_int) == today_rh (fast integral). ----
-      nsub = 48_ik ; dt_sub = 1.0_wp / real(nsub, wp)        ! day fraction per substep [day]
-      xi_int = 0.0_wp ; today_rh = 0.0_wp ; tmean = 0.0_wp
-      rel = min(1.0_wp, max(0.0_wp,(theta-theta_dry)/(theta_sat-theta_dry)))
-      if (rel <= dopts%resp_opt_water) then
-         fwater = exp((rel-dopts%resp_opt_water)*dopts%resp_water_below_opt)
-      else
-         fwater = exp((dopts%resp_opt_water-rel)*dopts%resp_water_above_opt)
-      end if
-      do is = 1_ik, nsub
-         ttime = 295.15_wp + 8.0_wp*sin(2.0_wp*3.14159265358979_wp*(real(is,wp)-0.5_wp)/real(nsub,wp))  ! diurnal T
-         ftemp = dopts%rh_q10 ** ((ttime - dopts%rh_t_ref)*0.1_wp)
-         xi_int   = xi_int   + (ftemp*fwater) * dt_sub          ! INT xi dt  [day]
-         today_rh = today_rh + (ftemp*fwater)*k2*xpool * dt_sub ! INT xi K X dt [kgC/m2]
-         tmean    = tmean    + ttime * dt_sub
-      end do
-      ! matrix daily step decrements the fast pool by xi_int -> rh_today for the single active pool:
-      rh_today = xi_int * k2 * xpool                            ! (er=1 for fast pool)
-      call check('rh_today (xi_int) == today_rh (fast integral)', rh_today, today_rh, 1.0e-14_wp*max(today_rh,1.0_wp))
-      ! Jensen counter-check: recomputing xi from daily-mean T does NOT close.
-      xi_meanpath = (dopts%rh_q10 ** ((tmean - dopts%rh_t_ref)*0.1_wp)) * fwater
-      rh_meanpath = xi_meanpath * k2 * xpool
-      call check_true('daily-mean path leaves a nonzero Jensen gap', abs(rh_meanpath - today_rh) > 1.0e-8_wp, &
-                      rh_meanpath - today_rh)
-   end subroutine test_fast_slow_seam
 end program test_soil_carbon
