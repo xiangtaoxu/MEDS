@@ -1,9 +1,18 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_pft_optics_config -- the [pft] canopy optics reach the two-stream's per-PFT table,    !
-! and DIFFERENTIATE the PFTs.                                                                !
+! test_pft_config -- the PFT file's loader (load_meds_config's PFT half) and the per-PFT   !
+! tables derive_parameters builds from it.                                                 !
+!   1. THE SHIPPED FILE: meds_config_pft.toml, loaded through meds_config_main.toml, gives  !
+!      as many PFTs as wood_density lists; each [pft] optics key and each [hydraulics] key  !
+!      reaches every PFT's field (one value broadcast, or one per PFT), and the two-stream  !
+!      table holds each shipped PFT's optics.                                               !
+!   2-5. On the test fixture: the optics, the clumping and the leaf angles, and the         !
+!      hydraulics arrive per PFT and DIFFERENTIATE the PFTs; the ground optics come from    !
+!      [soil]; a cohort is born with its water on its PFT's curve, and the slow tier caps   !
+!      it there.                                                                            !
+!   6. The PFT-parameter CSV has as many values as column headers.                          !
 !                                                                                          !
-! These fourteen traits are what lets two plant functional types differ in how they        !
+! The fourteen optics traits are what lets two plant functional types differ in how they   !
 ! intercept or scatter light -- the competition the two-stream solver exists to resolve.   !
 ! They are only worth anything if the values arrive per PFT, and that wiring fails         !
 ! silently: a mis-threaded index leaves every PFT on the first one's optics, the radiation !
@@ -11,14 +20,17 @@
 ! type. So this asserts the values arrive AND that PFTs differ, not merely that the code   !
 ! compiles. The same holds for the per-PFT hydraulics, down to a cohort's water at birth   !
 ! and the slow tier's shed of water above capacity.                                       !
+!                                                                                          !
+! It runs from the source tree, where meds_config_main.toml names meds_config_pft.toml,    !
+! and writes only into the directory its first argument names.                             !
 !==========================================================================================!
-program test_pft_optics_config
+program test_pft_config
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t, derive_parameters
    use meds_pft_derive,     only : pft_leaf_psi_tlp
-   use meds_soil_derive,    only : build_soil_profile
-   use meds_config_io,      only : write_pft_params_csv
-   use meds_pft_params,     only : hydraulics_table_t, RAD_VIS, RAD_LW
+   use meds_config_io,      only : load_meds_config, write_pft_params_csv
+   use meds_toml,           only : toml_table_t, toml_parse_file, toml_has, toml_is_array, toml_real, toml_real_array
+   use meds_pft_params,     only : hydraulics_table_t, RAD_VIS, RAD_NIR, RAD_LW
    use meds_constants,      only : stefan_boltzmann
    use meds_met_types,      only : met_forcing_t
    use meds_fast_integ_types,     only : fast_static_state_t, fast_dynamic_state_t, fast_forcing_t,       &
@@ -36,17 +48,16 @@ program test_pft_optics_config
 
    type(meds_config_t)  :: cfg
    real(wp) :: om1, om2
+   character(len=1024) :: work_dir   !< where the CSV of section 6 is written
 
-   call banner('[pft] canopy optics: per PFT, and reaching the two-stream')
+   call banner('the PFT file: its loader, and its per-PFT tables')
+   call get_command_argument(1, work_dir)
+   call check(len_trim(work_dir) > 0, 'the work directory was passed on the command line')
+
+   !=== 1. The shipped PFT file through its loader. ========================================!
+   call test_shipped_pft_file()
+
    cfg = build_test_config()
-
-   !=== 1. The test configuration's DEFAULT optics. ========================================!
-   call check_close(cfg%pft%leaf_reflect_vis(1),  0.10_wp,  1.0e-14_wp, 'default leaf VIS reflectance changed')
-   call check_close(cfg%pft%leaf_transmit_nir(1), 0.25_wp,  1.0e-14_wp, 'default leaf NIR transmittance changed')
-   call check_close(cfg%pft%leaf_emissivity(1),   0.97_wp,  1.0e-14_wp, 'default leaf emissivity changed')
-   call check_close(cfg%pft%wood_emissivity(1),   0.90_wp,  1.0e-14_wp, 'default wood emissivity changed')
-   call check_close(cfg%pft%leaf_clumping(1),     0.80_wp,  1.0e-14_wp, 'default leaf clumping changed')
-   call check_close(cfg%pft%leaf_angle_mean(1),   45.0_wp,  1.0e-14_wp, 'default leaf-angle mean changed')
 
    !=== 2. Uniform traits => a uniform table. The control for test 3. The tables are the     !
    !       configuration's, derived from its traits (derive_parameters), so each change below    !
@@ -182,12 +193,13 @@ program test_pft_optics_config
    !        because the run completes and every budget still closes. Counting the two lines is   !
    !        the whole test.                                                                       !
    block
-      character(len=*), parameter :: CSVFILE = 'test_pft_params_tmp.csv'
+      character(len=:), allocatable :: csvfile
       character(len=8192) :: head_line, val_line
       integer(ik)         :: u, ios, nhead, nval
+      csvfile = trim(work_dir)//'/test_pft_params_tmp.csv'
       call derive_parameters(cfg)                ! keep cfg consistent with the edits above
-      call write_pft_params_csv(cfg, CSVFILE)
-      open(newunit=u, file=CSVFILE, status='old', action='read', iostat=ios)
+      call write_pft_params_csv(cfg, csvfile)
+      open(newunit=u, file=csvfile, status='old', action='read', iostat=ios)
       call check(ios == 0, 'PFT parameter CSV must be written')
       read(u,'(a)') head_line
       read(u,'(a)') val_line
@@ -202,9 +214,93 @@ program test_pft_optics_config
                  'PFT CSV: a real printed through an integer descriptor (format reversion)')
    end block
 
-   print '(a)', 'test_pft_optics_config: all checks passed'
+   print '(a)', 'test_pft_config: all checks passed'
 
 contains
+
+   !----- 1. meds_config_main.toml and the PFT file it names, loaded as a run loads them, against  !
+   !      the PFT file read on its own: the PFT count, every optics key of [pft] and every key of  !
+   !      [hydraulics] for every PFT, and the two-stream table's optics for every PFT. ----------!
+   subroutine test_shipped_pft_file()
+      type(meds_config_t) :: shipped
+      type(toml_table_t)  :: t
+      real(wp)    :: buf(64)
+      integer(ik) :: n, ip
+      logical     :: ok
+      call load_meds_config('meds_config_main.toml', shipped)
+      call toml_parse_file(trim(shipped%init%pft_config), t, ok)
+      call check(ok, 'the PFT file meds_config_main.toml names parses on its own')
+      call toml_real_array(t, 'pft.wood_density', buf, n)
+      call check(n > 1_ik .and. shipped%pft%n == n, 'the loader gives as many PFTs as pft.wood_density lists')
+      associate (p => shipped%pft)
+         call check_key(t, 'pft.leaf_reflect_vis',  p%leaf_reflect_vis,  p%n)
+         call check_key(t, 'pft.leaf_transmit_vis', p%leaf_transmit_vis, p%n)
+         call check_key(t, 'pft.leaf_reflect_nir',  p%leaf_reflect_nir,  p%n)
+         call check_key(t, 'pft.leaf_transmit_nir', p%leaf_transmit_nir, p%n)
+         call check_key(t, 'pft.leaf_emissivity',   p%leaf_emissivity,   p%n)
+         call check_key(t, 'pft.wood_reflect_vis',  p%wood_reflect_vis,  p%n)
+         call check_key(t, 'pft.wood_transmit_vis', p%wood_transmit_vis, p%n)
+         call check_key(t, 'pft.wood_reflect_nir',  p%wood_reflect_nir,  p%n)
+         call check_key(t, 'pft.wood_transmit_nir', p%wood_transmit_nir, p%n)
+         call check_key(t, 'pft.wood_emissivity',   p%wood_emissivity,   p%n)
+         call check_key(t, 'pft.leaf_clumping',     p%leaf_clumping,     p%n)
+         call check_key(t, 'pft.wood_clumping',     p%wood_clumping,     p%n)
+         call check_key(t, 'pft.leaf_angle_mean',   p%leaf_angle_mean,   p%n)
+         call check_key(t, 'pft.leaf_angle_std',    p%leaf_angle_std,    p%n)
+         call check_key(t, 'hydraulics.leaf_pi0',             p%hydro(1:p%n)%leaf_curve%pi0,           p%n)
+         call check_key(t, 'hydraulics.leaf_elastic_mod',     p%hydro(1:p%n)%leaf_curve%elastic_mod,   p%n)
+         call check_key(t, 'hydraulics.leaf_apoplast_frac',   p%hydro(1:p%n)%leaf_curve%apoplast_frac, p%n)
+         call check_key(t, 'hydraulics.leaf_water_sat',       p%hydro(1:p%n)%leaf_curve%water_sat,     p%n)
+         call check_key(t, 'hydraulics.wood_pi0',             p%hydro(1:p%n)%wood_curve%pi0,           p%n)
+         call check_key(t, 'hydraulics.wood_elastic_mod',     p%hydro(1:p%n)%wood_curve%elastic_mod,   p%n)
+         call check_key(t, 'hydraulics.wood_apoplast_frac',   p%hydro(1:p%n)%wood_curve%apoplast_frac, p%n)
+         call check_key(t, 'hydraulics.wood_water_sat',       p%hydro(1:p%n)%wood_curve%water_sat,     p%n)
+         call check_key(t, 'hydraulics.wood_psi50',           p%hydro(1:p%n)%wood_psi50,               p%n)
+         call check_key(t, 'hydraulics.wood_kexp',            p%hydro(1:p%n)%wood_kexp,                p%n)
+         call check_key(t, 'hydraulics.wood_kmax',            p%hydro(1:p%n)%wood_kmax,                p%n)
+         call check_key(t, 'hydraulics.vessel_curl',          p%hydro(1:p%n)%vessel_curl,              p%n)
+         call check_key(t, 'hydraulics.root_beta',            p%hydro(1:p%n)%root_beta,                p%n)
+         call check_key(t, 'hydraulics.root_depth_b1',        p%hydro(1:p%n)%root_depth_b1,            p%n)
+         call check_key(t, 'hydraulics.root_depth_b2',        p%hydro(1:p%n)%root_depth_b2,            p%n)
+         call check_key(t, 'hydraulics.specific_root_length', p%hydro(1:p%n)%specific_root_length,     p%n)
+         call check_key(t, 'hydraulics.fine_root_radius',     p%hydro(1:p%n)%fine_root_radius,         p%n)
+         !----- The two-stream table: a leaf's single-scatter albedo is its reflectance plus its   !
+         !      transmittance in each shortwave band and 1 - emissivity in the thermal one, and its  !
+         !      clumping is its own, for every shipped PFT. -------------------------------------!
+         do ip = 1_ik, p%n
+            call check_close(p%optics%omega_leaf(RAD_VIS, ip), p%leaf_reflect_vis(ip) + p%leaf_transmit_vis(ip),   &
+                             1.0e-12_wp, 'a shipped PFT''s VIS optics did not reach the two-stream table')
+            call check_close(p%optics%omega_leaf(RAD_NIR, ip), p%leaf_reflect_nir(ip) + p%leaf_transmit_nir(ip),   &
+                             1.0e-12_wp, 'a shipped PFT''s NIR optics did not reach the two-stream table')
+            call check_close(p%optics%omega_leaf(RAD_LW, ip), 1.0_wp - p%leaf_emissivity(ip), 1.0e-12_wp,          &
+                             'a shipped PFT''s emissivity did not reach the two-stream table')
+            call check(p%optics%clumping_leaf(ip) == p%leaf_clumping(ip) .and.                                   &
+                       p%optics%clumping_wood(ip) == p%wood_clumping(ip),                                       &
+                       'a shipped PFT''s clumping did not reach the two-stream table')
+         end do
+      end associate
+   end subroutine test_shipped_pft_file
+
+   !----- A per-PFT key of the PFT file against what the loader put in the configuration: a list    !
+   !      gives each PFT its own value, one value gives every PFT the same. --------------------!
+   subroutine check_key(t, key, loaded, npft)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: key
+      real(wp),           intent(in) :: loaded(:)
+      integer(ik),        intent(in) :: npft
+      real(wp)    :: buf(64)
+      integer(ik) :: n
+      logical     :: same
+      if (toml_is_array(t, key)) then
+         call toml_real_array(t, key, buf, n)
+         same = n == npft
+         if (same) same = all(loaded(1:npft) == buf(1:npft))
+      else
+         same = toml_has(t, key)
+         if (same) same = all(loaded(1:npft) == toml_real(t, key, 0.0_wp))
+      end if
+      call check(same, 'meds_config_pft.toml '//key//' did not reach every PFT')
+   end subroutine check_key
 
    pure integer(ik) function count_fields(line) result(n)
       character(len=*), intent(in) :: line
@@ -215,4 +311,4 @@ contains
       end do
    end function count_fields
 
-end program test_pft_optics_config
+end program test_pft_config

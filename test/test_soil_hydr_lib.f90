@@ -17,6 +17,8 @@
 !   4. PEDOTRANSFER (soil_texture_to_hydraulics): Hodnett & Tomasella (2002)'s worked      !
 !      example, Ottoni et al. (2019)'s Ks, coarse fragments, the residual-water floor, and !
 !      the elemental call over a profile.                                                  !
+!   5. RELATIVE SATURATION (soil_theta_to_saturation), the output's soil-water read-off:   !
+!      (theta - theta_res) / (theta_sat - theta_res), clamped to [0, 1].                   !
 !==========================================================================================!
 program test_soil_hydr_lib
    use meds_test_assert,   only : check_true, check_close, test_report
@@ -27,13 +29,14 @@ program test_soil_hydr_lib
                                   SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH, SOIL_RETENTION_VG,            &
                                   SOIL_RETENTION_CAMPBELL, soil_head_to_theta, VG_PORE_CONNECTIVITY,          &
                                   soil_ice_t, soil_ice_state, soil_liquid_capacity, soil_texture_t,           &
-                                  soil_texture_to_hydraulics
+                                  soil_texture_to_hydraulics, soil_theta_to_saturation
    implicit none
 
    call test_soil_water_relations()
    call test_frozen_soil()
    call test_pond_water_relations()
    call test_pedotransfer()
+   call test_relative_saturation()
 
    call test_report('test_soil_hydr_lib')
 
@@ -339,5 +342,17 @@ contains
       end do
       call check_true('elemental call over a profile equals the per-layer calls', same)
    end subroutine test_pedotransfer
+
+   !----- 5. The relative saturation the output reports (soil_theta_to_saturation): half way     !
+   !      between theta_res 0.1 and theta_sat 0.5 is 0.5; above saturation it is 1, below the     !
+   !      residual water 0. -------------------------------------------------------------------!
+   subroutine test_relative_saturation()
+      print '(a)', 'test_relative_saturation:'
+      call check_close('relative saturation', soil_theta_to_saturation(0.3_wp, 0.5_wp, 0.1_wp), 0.5_wp, 1.0e-12_wp)
+      call check_close('oversaturated clamps to 1', soil_theta_to_saturation(0.6_wp, 0.5_wp, 0.1_wp), 1.0_wp,       &
+                       1.0e-12_wp)
+      call check_close('below residual clamps to 0', soil_theta_to_saturation(0.0_wp, 0.5_wp, 0.1_wp), 0.0_wp,      &
+                       1.0e-12_wp)
+   end subroutine test_relative_saturation
 
 end program test_soil_hydr_lib

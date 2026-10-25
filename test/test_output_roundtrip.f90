@@ -10,7 +10,7 @@ module test_ro_support
    implicit none
 contains
    !----- Opaque per-cohort agb mutation (production mutates through veg dynamics; see the        !
-   !      test_output_integrate header note on the nvfortran -O2 aliasing hazard).                !
+   !      test_output header note on the nvfortran -O2 aliasing hazard).                          !
    subroutine set_site_agb(poly, a)
       type(polygon_t), intent(inout) :: poly
       real(wp),     intent(in)    :: a

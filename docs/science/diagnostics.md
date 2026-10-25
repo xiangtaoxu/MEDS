@@ -114,7 +114,7 @@ forcing echo and the per-cohort fast diagnostics. The slow operators' own rates 
 recruitment, mortality carbon, and litterfall when soil carbon is on) are weighted by the slow step
 instead, and report their values.
 
-**Closure identities** (asserted in `test_diagnostic_reduce`, and true to roundoff on real output):
+**Closure identities** (asserted in `test_output`'s reduction section, and true to roundoff on real output):
 
 ```math
 \sum_{\text{pft}} X_\text{pft} \;=\; \sum_{\text{class}} X_\text{size} \;=\; X_\text{site} \qquad(3)

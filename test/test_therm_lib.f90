@@ -33,6 +33,10 @@
 !      lapse_specific_humidity; forcing.md §8): the temperature falls at the rate given, the !
 !      pressure drops, barometrically when isothermal, the humidity keeps its relative       !
 !      humidity, and nothing changes at dz = 0.                                              !
+!   9. A TISSUE'S ENERGY (tissue_temp_to_energy, tissue_energy_to_temp;                      !
+!      docs/science/vegetation_energy_dynamics.md eqs. (9)-(10)): it is                      !
+!      temp_to_internal_energy with liquid water, tissue_energy_to_temp inverts it, and      !
+!      water that comes or goes at the tissue's temperature leaves the temperature there.    !
 !==========================================================================================!
 program test_therm_lib
    use meds_test_assert, only : check, check_true, test_report
@@ -43,7 +47,8 @@ program test_therm_lib
                                 sat_vapor_pressure, sat_vapor_pressure_temp_deriv, sat_specific_humidity,         &
                                 soil_thermal_conductivity, soil_texture_to_thermal, rh_to_specific_humidity,      &
                                 precip_phase, lapse_air_temperature, lapse_pressure, lapse_specific_humidity,     &
-                                specific_humidity_to_vpd
+                                specific_humidity_to_vpd, tissue_temp_to_energy, tissue_energy_to_temp,          &
+                                internal_energy_liquid
    implicit none
    real(wp), parameter :: SCAN_LO = 5.0_wp, SCAN_HI = 55.0_wp   !< [C] the optimum scan's range
 
@@ -55,6 +60,7 @@ program test_therm_lib
    call test_soil_texture()
    call test_moist_air()
    call test_lapse()
+   call test_tissue_energy()
 
    call test_report('test_therm_lib')
 
@@ -313,5 +319,24 @@ contains
       call check_true('a site 500 m below its cell is warmer and holds more vapour', q1 > Q0, q1 - Q0)
       call check('dz = 0 leaves q unchanged', lapse_specific_humidity(Q0, T0, P0, T0, P0), Q0, 1.0e-15_wp)
    end subroutine test_lapse
+
+   !----- 9. A tissue of 5e4 J/K of dry matter holding 12 kg of water at 297.3 K, and 0.7 kg of water  !
+   !      arriving or leaving at that temperature, carrying internal_energy_liquid per kilogram. ----!
+   subroutine test_tissue_energy()
+      real(wp), parameter :: DRY = 5.0e4_wp, WATER = 12.0_wp, T_TISSUE = 297.3_wp, DW = 0.7_wp
+      real(wp) :: e
+      print '(a)', 'test_tissue_energy:'
+      e = tissue_temp_to_energy(DRY, WATER, T_TISSUE)
+      call check_true('the tissue datum is the soil''s: temp_to_internal_energy with liquid water',             &
+                      abs(e - temp_to_internal_energy(DRY, WATER, T_TISSUE, 1.0_wp)) <= 1.0e-12_wp * abs(e))
+      call check_true('tissue_energy_to_temp inverts tissue_temp_to_energy',                                    &
+                      abs(tissue_energy_to_temp(e, WATER, DRY) - T_TISSUE) < 1.0e-10_wp)
+      call check_true('water that arrives at the tissue''s temperature leaves it there',                        &
+                      abs(tissue_energy_to_temp(e + DW * internal_energy_liquid(T_TISSUE), WATER + DW, DRY)      &
+                          - T_TISSUE) < 1.0e-10_wp)
+      call check_true('and so does water that leaves at it',                                                    &
+                      abs(tissue_energy_to_temp(e - DW * internal_energy_liquid(T_TISSUE), WATER - DW, DRY)      &
+                          - T_TISSUE) < 1.0e-10_wp)
+   end subroutine test_tissue_energy
 
 end program test_therm_lib
