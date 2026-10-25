@@ -223,7 +223,7 @@ target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gener
 target_link_libraries(meds_config PUBLIC meds_share)
 meds_fortran_flags(meds_config)
 
-#----- STATE, one LAYER in five files by model hierarchy (src/README.md, rule 3). -------------#
+#----- STATE, one LAYER in six files by model hierarchy (src/README.md, rule 3). --------------#
 #                                                                                            #
 #  meds_cohort_state_vars  -- the flat cohort SoA and the cohort lockstep.                    #
 #  meds_patch_state_vars   -- ONE patch's stores (canopy air, snow, soil water and heat,      #

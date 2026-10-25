@@ -103,7 +103,7 @@ storage_cushion        = [3.0, 3.0, 3.0]            # [--] storage target as a m
                                                     #      fine-root target (three full flushes); also the
                                                     #      starting storage of an inventory cohort
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost: the fraction of the carbon built
-                                                    #      that is respired (plant_carbon_allocation.md eq. (5))
+                                                    #      that is respired (plant_carbon_allocation.md eq. (4))
 # retained_carbon_fraction = [0.3, 0.3, 0.3]       # [--] OPTIONAL (default 0.3): share of all leaf and fine-root
 #                                                  #      loss resorbed to storage rather than littered
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
@@ -160,9 +160,9 @@ aboveground_frac = [0.7, 0.7, 0.7]        # [--] share of the wood carbon above 
 [hydraulics]
 # Each PFT's plant-hydraulics traits (docs/science/plant_hydraulics.md): the tissues' pressure-volume curves
 # (Bartlett/Tyree-Hammel, eqs. (3)-(6)), the xylem's vulnerability (eq. (7)) and conductivity, and the
-# roots. Read when [fast].fast_biophysics_on = true. Every key takes one value, for every PFT, or an array
+# roots. Every key is required, and takes one value, for every PFT, or an array
 # with one value per PFT. wood_kexp = 1 or 2 keeps a closed form of the Kirchhoff integral (ln, atan); any
-# other value uses the lookup table build_hydro_table precomputes (eq. (8)).
+# other value uses the lookup table build_kirchhoff_table precomputes (eq. (8)).
 leaf_pi0           = -1.5    # [MPa]        leaf osmotic potential at full turgor
 leaf_elastic_mod   = 12.0    # [MPa]        leaf bulk elastic modulus
 leaf_apoplast_frac = 0.30    # [-]          leaf apoplastic fraction

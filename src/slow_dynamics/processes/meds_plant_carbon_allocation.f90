@@ -4,15 +4,15 @@
 ! (docs/science/plant_carbon_allocation.md).                                               !
 !   * cohort_carbon_demand    -- the step's turnover, taken first, and the                  !
 !                                flush-capped growth demands (§1; plant_phenology.md §5).  !
-!   * growth_window_so_far    -- the growth window the sink limit sees (eq. (4)).          !
+!   * growth_window_so_far    -- the growth window the sink limit sees (eq. (3)).          !
 !   * growth_sink_limitation  -- the most wood a cohort can build in a step, whatever its  !
-!                                carbon (§2, "Sink limitation of wood growth", eq. (4)).   !
+!                                carbon (§2, "Sink limitation of wood growth", eq. (3)).   !
 !   * plant_carbon_allocation -- the priority ladder: growth by pool, the net storage      !
 !                                change, growth respiration, root exudate and the unpaid   !
 !                                maintenance (§2-§3).                                      !
-!   * growth_respiration      -- g x the carbon built (eq. (5)).                           !
+!   * growth_respiration      -- g x the carbon built (eq. (4)).                           !
 ! All amounts are carbon [kgC/plant]. Turnover is taken before the ladder, so the ladder   !
-! only adds carbon; it closes eq. (6).                                                     !
+! only adds carbon; it closes eq. (5).                                                     !
 !==========================================================================================!
 module meds_plant_carbon_allocation
    use meds_kinds,           only : wp, ik

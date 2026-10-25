@@ -177,9 +177,9 @@ contains
    end subroutine slow_ledger_heat_close
 
    !----- Keep the run's worst of one patch's soil-carbon checks (soil_carbon.md §7, §9),    !
-   !      active or not, and the step and patch count where the Rh gap peaked: a seam that is !
-   !      zero except on the days a patch operator fires reads differently from one that    !
-   !      drifts every day. ----------------------------------------------------------------!
+   !      active or not, and the step and patch count where the Rh gap peaked: the gap is    !
+   !      zero by construction, so a nonzero peak names the step and patch count to look     !
+   !      at. -------------------------------------------------------------------------------!
    subroutine slow_ledger_soil_check(ledger, out, n_patch)
       type(slow_ledger_t),     intent(inout) :: ledger
       type(soil_carbon_out_t), intent(in)    :: out

@@ -391,7 +391,7 @@ contains
             seed_lost = g_repro * cohort%nplant(j)                                              &
                       * (1.0_wp - min(max(step%recruit_efficiency(j), 0.0_wp), 1.0_wp))
             !----- The unresorbed share of the turnover and the seed lost go to the patch's litter !
-            !      (docs/science/plant_carbon_allocation.md eq. (3)). ----------------------------!
+            !      (docs/science/plant_carbon_allocation.md eq. (2)). ----------------------------!
             call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
                      (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
                      seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &

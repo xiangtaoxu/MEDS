@@ -46,7 +46,7 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @25C]
 reproduction_investment_fraction = [0.10, 0.10, 0.10]   # [--] growth fraction to reproduction ...
 min_repro_height   = [5.27, 5.27, 5.27]   # [m] ... from this height (calibrate_growth.py)
 
-#----- Sink limit on wood growth (docs/science/plant_carbon_allocation.md eq. (4)): a cohort's diameter
+#----- Sink limit on wood growth (docs/science/plant_carbon_allocation.md eq. (3)): a cohort's diameter
 #      grows at most max_absolute_growth_rate x dbh[cm]^0.5 a year, and the carbon it cannot use is
 #      exuded by the roots. The shape is BCI's census: the 75th percentile of diameter growth rises as
 #      dbh^0.5 at a given light (a quantile regression ln g = a + 0.5 ln dbh + beta x overtopping LAI on

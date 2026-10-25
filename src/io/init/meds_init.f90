@@ -171,7 +171,7 @@ contains
    !      stand's fusion leaves no blend behind); each cohort settled in its patch as a recruit is  !
    !      born, its tissues at the canopy-air temperature holding the water they hold at the top   !
    !      soil layer's potential (the restructuring and the traits' acclimation change the tissues !
-   !      the setup cohorts were born with); and the snowpack [snow].init_swe asks for. ---------!
+   !      the setup cohorts were born with); and the snowpack [fast].snow_init_swe asks for. ---!
    subroutine init_fast_state(poly, cfg)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
@@ -195,7 +195,7 @@ contains
       if (cfg%snow_init_swe > 0.0_wp) call seed_snow(poly, cfg)
    end subroutine init_fast_state
 
-   !----- The initial snowpack, [snow].init_swe at [snow].init_temp, one layer on every patch. -------!
+   !----- The initial snowpack, [fast].snow_init_swe at [fast].snow_init_temp, one layer per patch. -!
    subroutine seed_snow(poly, cfg)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
