@@ -18,6 +18,9 @@
 !      [fast].snow_init_swe seeds no pack; one seeds every patch with one frozen layer of that   !
 !      water equivalent at [fast].snow_init_temp, as deep as its water over the snow density,   !
 !      at a configured density too.                                                            !
+!   5. THE CANOPY AIR'S DEPTH (meds_init: init_polygon, which ends every start with the depth  !
+!      the stand sets): a bare-ground start, which has no stand, opens each patch's canopy air !
+!      at [aerodynamics].min_canopy_depth.                                                     !
 !==========================================================================================!
 program test_init
    use meds_kinds,              only : wp, ik
@@ -31,8 +34,9 @@ program test_init
    use meds_constants,          only : n_soil_layer_max, rho_h2o
    use meds_soil_heat,          only : soil_layer_temp
    use meds_soil_hydr_lib,      only : soil_liquid_capacity
-   use meds_init,               only : init_fast_state
+   use meds_init,               only : init_fast_state, init_polygon
    use meds_met_types,          only : met_forcing_t
+   use meds_time,               only : meds_time_t
    use meds_test_support,       only : banner, build_test_config, check, check_close
    implicit none
 
@@ -40,6 +44,7 @@ program test_init
    call test_census_refusals()
    call test_soil_state()
    call test_initial_snowpack()
+   call test_canopy_air_floor()
    write(*,'(a)') 'test_init: ALL PASSED'
 
 contains
@@ -368,5 +373,24 @@ contains
       call check_close(poly%patch%snow(1)%snow_depth(1), SWE / cfg%snow%rho_snow, 1.0e-12_wp,                       &
                        'a pack seeded at [snow].rho_snow = 350 is as deep as its water over 350 kg/m3')
    end subroutine test_initial_snowpack
+
+   !----- 5. The canopy air's depth at a bare-ground start: the floor, not the type's default.     !
+   !      The floor is set above the freeboard over the tallest cohort (5 m by default), so a     !
+   !      depth taken from the freeboard on the empty stand would not pass. ----------------------!
+   subroutine test_canopy_air_floor()
+      real(wp), parameter :: FLOOR = 7.0_wp   ! [m]
+      type(meds_config_t) :: cfg
+      type(polygon_t)     :: poly
+      type(meds_time_t)   :: now
+      logical             :: ok
+      call banner('the canopy air''s depth at a bare-ground start')
+      cfg = build_test_config()
+      cfg%aero%min_canopy_depth = FLOOR
+      now = cfg%start_time
+      call init_polygon(poly, cfg, 'bare ground', .false., 1_ik, now, ok, 0_ik, 0.0_wp, 0.0_wp, 0.0_wp)
+      call check(ok .and. poly%cohort%n == 0_ik, 'the bare-ground start did not open, or not empty')
+      call check(all(poly%patch%cas(1:poly%patch%n)%can_depth == FLOOR),                                  &
+                 'a bare-ground stand does not open at the canopy-air floor')
+   end subroutine test_canopy_air_floor
 
 end program test_init

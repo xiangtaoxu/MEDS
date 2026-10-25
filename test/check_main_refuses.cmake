@@ -5,8 +5,21 @@
 # (meds_config_pft.toml), into a run that must stop before its first step, runs meds_main on it, and
 # asserts that it stopped and that its report names the cause:
 #   config_unknown_keys        a misspelt key, a key that moved block, and a [region] block in a site run
+#   config_bad_choice          a key set to none of its choices (run.mode = "globe")
+#   config_inapplicable_keys   keys a setting leaves nothing to do (check_key_use): a lapse rate with the
+#                              lapse off, and the [soil] keys the [maps] soil maps provide (the
+#                              reference's own, and deep_temp)
 #   config_rk45_loose_rtol     RK45 at a tolerance looser than it can integrate (fast.rtol > 1e-4)
 #   config_malformed_value     a value the reader cannot parse as the number its key takes
+#   output_fast_window         a sub-daily record that spans more fast steps than divide a slow step, so
+#                              its window would straddle two slow steps
+#   io_config_*                an [output].io_config line the selection refuses (meds_output_registry):
+#                              a variable with no sub-daily value on F (coarse_on_f), one that exists
+#                              only sub-daily on D (fast_on_coarse), `true` on a variable off by default
+#                              (true_off), a pattern that matches nothing (no_match), two lines as
+#                              specific as each other that disagree (tie), a tier none of a pattern's
+#                              variables can be on (tier_none), and the axes' bookkeeping (axis)
+#   maps_chave_e               a Chave E map with no PFT on the Chave height allometry
 #   hydraulics_pv_traits       a leaf elastic modulus below |pi0|, whose turgor-loss point is not
 #                              negative, in a PFT file that sets its stress points by hand
 #   hydraulics_vulnerability   a xylem psi50 above zero
@@ -36,6 +49,37 @@ function(replace_or_fail var pattern replacement what)
    set(${var} "${edited}" PARENT_SCOPE)
 endfunction()
 
+#----- The forcing on, from the ED_ERA5land archive at a site, the [site] keys given ending the   #
+#      block: the keys load and check, and the archive is never opened, for each case using it     #
+#      stops before the run starts. ------------------------------------------------------------#
+function(archive_forcing var site_keys)
+   set(${var} "
+[site]
+latitude = 42.44
+longitude = -76.50
+elevation = 320.0
+apply_elevation_lapse = false
+${site_keys}[forcing]
+forcing_on = true
+format = \"ERA5land\"
+data_path = \"${WORK_DIR}/no_archive\"
+max_distance_km = 15.0
+tq_height = 2.0
+wind_height = 10.0
+height_above = \"zero_plane\"
+wind_exposure = \"open_terrain\"
+wind_exposure_z0 = 0.03
+wind_blending_height = 40.0
+timestep = \"3600s\"
+avg_convention = \"end\"
+sw_partition = \"clearidx\"
+lwdown_source = \"file\"
+co2_const = 420.0
+recycle = false
+start_clamp = \"hold\"
+" PARENT_SCOPE)
+endfunction()
+
 file(REMOVE_RECURSE "${WORK_DIR}")
 file(MAKE_DIRECTORY "${WORK_DIR}")
 file(READ "${SOURCE_DIR}/meds_config_main.toml" text)
@@ -52,6 +96,59 @@ if(CASE STREQUAL "config_unknown_keys")
                "state.cohort_max .*did you mean output.cohort_max\\?"
                "\\[region\\] .*needs \\[run\\]\\.mode = \"region\""
                "the configuration has missing, unknown or inapplicable keys")
+elseif(CASE STREQUAL "config_bad_choice")
+   replace_or_fail(text "\n\\[run\\][^\n]*\n" "\n[run]\nmode = \"globe\"\n" "a [run] block")
+   set(expects "run\\.mode = \"globe\" is not one of site \\| region")
+elseif(CASE STREQUAL "config_inapplicable_keys")
+   #----- The lapse off with a lapse rate, and the soil maps beside the reference's [soil] keys. ---#
+   archive_forcing(forcing "lapse_rate_tair = 0.0065\n")
+   replace_or_fail(text "\n\\[soil\\][^\n]*\n" "\n[soil]\ndeep_temp = 290.0\n" "a [soil] block")
+   string(APPEND text "${forcing}\n[maps]\nsoil_depth_map = \"${WORK_DIR}/soil_depth.nc\"\n"
+                      "soil_texture_map = \"${WORK_DIR}/soil_texture.nc\"\n"
+                      "soil_chemistry_map = \"${WORK_DIR}/soil_chemistry.nc\"\n")
+   set(expects "site\\.lapse_rate_tair [^\n]*applies only with site\\.apply_elevation_lapse = true"
+               "soil\\.theta_sat [^\n]*comes from the \\[maps\\] soil maps"
+               "soil\\.deep_temp [^\n]*comes from the \\[maps\\] soil maps")
+elseif(CASE STREQUAL "maps_chave_e")
+   archive_forcing(forcing "")
+   string(APPEND text "${forcing}\n[maps]\nchave_e_map = \"${WORK_DIR}/chave_e.nc\"\n")
+   set(expects "maps\\.chave_e_map needs a PFT with allometry\\.height_allometry = \"chave2014\"")
+elseif(CASE STREQUAL "output_fast_window")
+   #----- The fast loop and the diagnostics on: 900 s steps, 96 to the day, and a 5-step record. ---#
+   replace_or_fail(text "\nfast_biophysics_on *= *false" "\nfast_biophysics_on = true" "fast_biophysics_on = false")
+   replace_or_fail(text "\nenabled *= *false" "\nenabled = true" "[output] enabled")
+   replace_or_fail(text "\nfast_interval_steps *= *[0-9]+" "\nfast_interval_steps = 5" "[output] fast_interval_steps")
+   set(expects "output\\.fast_interval_steps must divide the fast steps in a slow step")
+elseif(CASE MATCHES "^io_config_")
+   #----- The fast loop and the diagnostics on, and a file of the case's [variables] lines. --------#
+   if(CASE STREQUAL "io_config_coarse_on_f")
+      set(lines "mean_dbh_co = \"F D\"")
+      set(expects "\"mean_dbh_co\" has no sub-daily value and cannot be put on the F stream")
+   elseif(CASE STREQUAL "io_config_fast_on_coarse")
+      set(lines "mean_reco_pa = \"D\"")
+      set(expects "\"mean_reco_pa\" exists only sub-daily and can only be on the F stream")
+   elseif(CASE STREQUAL "io_config_true_off")
+      set(lines "cas_temp_py = true")
+      set(expects "\"cas_temp_py\" is off by default, so true has no tiers to restore")
+   elseif(CASE STREQUAL "io_config_no_match")
+      set(lines "\"*_xyz\" = false")
+      set(expects "io_config \"\\*_xyz\" matches no variable")
+   elseif(CASE STREQUAL "io_config_tie")
+      set(lines "\"mean_a*\" = \"D\"\n\"*agb_py\" = \"M\"")
+      set(expects "select [a-z_]+ alike and disagree; make one more specific")
+   elseif(CASE STREQUAL "io_config_tier_none")
+      set(lines "\"*_co\" = \"Y\"")
+      set(expects "io_config \"\\*_co\": none of its variables can be on Y")
+   elseif(CASE STREQUAL "io_config_axis")
+      set(lines "owner_patch = \"D\"")
+      set(expects "io_config \"owner_patch\" is written with its axis")
+   else()
+      message(FATAL_ERROR "check_main_refuses: unknown CASE '${CASE}'")
+   endif()
+   file(WRITE "${WORK_DIR}/io_config.toml" "[variables]\n${lines}\n")
+   replace_or_fail(text "\nfast_biophysics_on *= *false" "\nfast_biophysics_on = true" "fast_biophysics_on = false")
+   replace_or_fail(text "\nenabled *= *false" "\nenabled = true" "[output] enabled")
+   replace_or_fail(text "\nio_config *= *\"\"[^\n]*" "\nio_config = \"${WORK_DIR}/io_config.toml\"" "[output] io_config")
 elseif(CASE STREQUAL "config_rk45_loose_rtol")
    #----- The fast loop on, RK45, rtol 1e-3: any line naming either key goes, then both are set. -#
    replace_or_fail(text "\nfast_biophysics_on *= *false" "\nfast_biophysics_on = true" "fast_biophysics_on = false")

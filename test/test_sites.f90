@@ -25,7 +25,8 @@
 !    soil water.                                                                           !
 ! 7. WHAT meds_main REFUSES (meds_config_check: check_sites, check_key_use): shares that do  !
 !    not sum to 1, a table without area_fraction, a key no table takes, a census run       !
-!    without census_site_id.                                                               !
+!    without census_site_id, [[sites]] in a region, and a site's soil keys beside the soil  !
+!    maps.                                                                                 !
 !                                                                                          !
 ! The configs of 1-3, 6 and 7 are derived from example 04's meds_config_eval.toml (the test !
 ! runs from its directory) by derive_config: a case's own keys, then a run block that cuts  !
@@ -246,6 +247,17 @@ program test_sites
    call refused('a census run without census_site_id',                                          &
                 '[init]'//nl//'init_mode = 1'//nl//'[[sites]]'//nl//'area_fraction = 1.0'//nl,    &
                 'census_site_id')
+   !----- A region takes one site per cell, and with the soil maps a site takes its cell's soil.   !
+   !      The maps are never opened: the config is refused first. ---------------------------------!
+   call refused('[[sites]] in a region', '[run]'//nl//'mode = "region"'//nl//'[region]'//nl//       &
+                'box_nwse = [10.0, -80.0, 9.0, -79.0]'//nl//'[[sites]]'//nl//'area_fraction = 1.0'//nl, &
+                'a region refuses [[sites]]')
+   call refused('a [[sites]] soil key beside the soil maps', '[maps]'//nl//                     &
+                'soil_depth_map = "'//trim(work)//'/soil_depth.nc"'//nl//                         &
+                'soil_texture_map = "'//trim(work)//'/soil_texture.nc"'//nl//                     &
+                'soil_chemistry_map = "'//trim(work)//'/soil_chemistry.nc"'//nl//                 &
+                '[[sites]]'//nl//'area_fraction = 1.0'//nl//'depth = 1.0'//nl,                    &
+                'every site takes its cell''s soil')
 
    call test_report('test_sites')
 

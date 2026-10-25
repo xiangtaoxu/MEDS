@@ -11,7 +11,9 @@
 !      the configuration gives, listed in MADE_BY_THE_RUN;                                     !
 !   3. the restructuring owed is recorded: a year's, a month's, none;                          !
 !   4. a run of another growth-window length seeds each cohort's rings full of its growth_avg; !
-!   5. the reader refuses a file it cannot start from, and says why.                           !
+!   5. the reader refuses a file it cannot start from, and says why; and a run whose polygons  !
+!      the file does not each hold a row for is refused (restart_file_slots, as region_open    !
+!      matches them): a site run (polygon 0) a region's file, a region a site's file.           !
 ! A store a restart drops comes back at its default: stomata reopened mid-drought, phenology  !
 ! reborn at flush 1 and shed 0, soil bone dry at 0 K. Section 1 catches it for every variable !
 ! the file holds, and section 2 makes sure a new variable is stamped here before it counts.   !
@@ -28,7 +30,7 @@ program test_state_file
    use meds_cohort_state_vars,  only : hold_cohort_tissue_temps, set_cohort_size_from_carbon
    use meds_init_bare_ground,   only : init_bare_sites, add_cohort, finalize_init
    use meds_init_restart,       only : restart_file_t, restart_file_open, restart_file_write, restart_file_close, &
-                                       read_restart_file
+                                       read_restart_file, restart_file_slots
    use meds_time,               only : meds_time_t
    use meds_netcdf_c,           only : NC_NOERR, NC_NOWRITE, nc_open_f, nc_close, nc_inq_varid_f, nc_inq_dimlen,  &
                                        nc_get_vara_double
@@ -60,6 +62,7 @@ program test_state_file
    character(len=*), parameter :: FILE_A = './test_sf_a-S-20000101000000.nc'
    character(len=*), parameter :: FILE_B = './test_sf_b-S-20000101000000.nc'
    character(len=*), parameter :: FILE_Z = './test_sf_z-S-20000101000000.nc'
+   character(len=*), parameter :: FILE_R = './test_sf_r-S-20000101000000.nc'   !< a region's: polygons 35, 18, 53
 
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly, back
@@ -165,6 +168,7 @@ contains
    subroutine test_refusals()
       type(meds_config_t) :: cfg_pft
       character(len=:), allocatable :: why
+      integer(ik), allocatable :: slot(:)
       print '(a)', '-- 5. the files a run cannot start from --'
       call read_restart_file(back, cfg, './no_such_state.nc', rt, found, polygon=1_ik, why=why)
       call check_true('a missing file: not found, "cannot be opened"', .not. found .and.                  &
@@ -177,6 +181,12 @@ contains
       call read_restart_file(back, cfg, FILE_A, rt, found, polygon=1_ik, site_cfg=[cfg], why=why)
       call check_true('another site count: refused, naming both', .not. found .and.                       &
                       index(why, 'holds 2 sites and the configuration 1') > 0)
+      !----- A region's file in a site run, and a site's file (FILE_A, polygon 0) in a region. ---------!
+      call write_region_state('test_sf_r', [35_ik, 18_ik, 53_ik])
+      call restart_file_slots(FILE_R, [0_ik], slot, why)
+      call check_true('a site run refuses a region state file', index(why, 'does not hold polygon 0') > 0)
+      call restart_file_slots(FILE_A, [35_ik, 18_ik, 53_ik], slot, why)
+      call check_true('a region refuses a site state file', index(why, 'does not hold polygon 35') > 0)
    end subroutine test_refusals
 
    !----- The fixture: two sites (0.3 and 0.7 of the polygon) of one and two patches, four   !
@@ -276,6 +286,22 @@ contains
       call restart_file_write(sf, s, now, 1_ik)
       call restart_file_close(sf)
    end subroutine write_state
+
+   !----- A region's state file: the fixture's polygon in each row, the rows the polygons `ids`. --!
+   subroutine write_region_state(prefix, ids)
+      character(len=*), intent(in) :: prefix
+      integer(ik),      intent(in) :: ids(:)
+      type(restart_file_t) :: sf
+      integer(ik) :: row
+      call restart_file_open(sf, '.', prefix, now, poly%n_pft, int(size(poly%cohort%growth_hist, 1), ik),      &
+                             poly%cohort%n, poly%patch%n, poly%site%n, polygon_id=ids,                       &
+                             polygon_lat=[(0.0_wp, row = 1_ik, size(ids, kind=ik))],                         &
+                             polygon_lon=[(0.0_wp, row = 1_ik, size(ids, kind=ik))])
+      do row = 1_ik, size(ids, kind=ik)
+         call restart_file_write(sf, poly, now, row)
+      end do
+      call restart_file_close(sf)
+   end subroutine write_region_state
 
    !----- Every variable of file a, and whether file b holds the same values, bit for bit. -----!
    subroutine compare_files(a, b, names, same)
