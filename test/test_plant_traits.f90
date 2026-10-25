@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_plant_trait_dynamics -- unit tests for the light-plasticity kernel                   !
+! test_plant_traits -- unit tests for the light-plasticity kernel                   !
 ! (docs/science/plant_traits.md eqs. (1)-(2)).                                             !
 !                                                                                          !
 !   1. NO SHADE      : cum_lai_above = 0 => every target equals its top-of-canopy value.       !
@@ -11,7 +11,7 @@
 !                      a slow-turnover (shaded) canopy acclimates slowly, dt >> 1/rate reaches  !
 !                      target, and the instantaneous (census) mode reaches it at once.            !
 !==========================================================================================!
-program test_plant_trait_dynamics
+program test_plant_traits
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,                only : wp, ik
    use meds_plant_traits, only : light_plastic_traits, update_plastic_trait
@@ -55,10 +55,10 @@ program test_plant_trait_dynamics
    call check_close('update: a rate of 0 replaces no leaves',                                                         &
            update_plastic_trait(15.0_wp, 20.0_wp, 0.0_wp, 1.0_wp, .false.), 15.0_wp)
 
-   call test_report('test_plant_trait_dynamics')
+   call test_report('test_plant_traits')
 
 contains
 
 
 
-end program test_plant_trait_dynamics
+end program test_plant_traits

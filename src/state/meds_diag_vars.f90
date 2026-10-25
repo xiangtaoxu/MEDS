@@ -251,7 +251,7 @@ module meds_diag_vars
    !      user can tell a stand thinning continuously from one being knocked over. The three      !
    !      are mutually exclusive and jointly exhaustive -- every kilogram of carbon that          !
    !      leaves the live pools as a whole-individual death passes through exactly one of         !
-   !      them -- so they SUM to the total, which is the property test_mortality_pathways         !
+   !      them -- so they SUM to the total, which is the property test_slow_step                  !
    !      asserts.                                                                                !
    !                                                                                              !
    !      Written UNCONDITIONALLY, unlike the litter each pathway also generates: two of the      !

@@ -26,7 +26,10 @@ program test_slow_ledger
    use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
                                        soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars, only : cas_set_depth, patch_physical_state, litter_input_t
+   use meds_patch_state_vars, only : cas_set_depth, patch_physical_state, litter_input_t, pack_pool_vector, &
+                                     unpack_pool_vector
+   use meds_biogeochem_params, only : N_SOIL_POOL
+   use meds_soil_carbon,     only : soil_carbon_pool_name
    use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
@@ -45,6 +48,10 @@ program test_slow_ledger
    implicit none
    type(kill_report_t)  :: kills   !< what the cull and the treefall killed
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
+   integer(ik) :: which   !< the member of a group a perturbation moves (section 1)
+   character(len=8), parameter :: TISSUE(2) = [character(len=8) :: 'leaf', 'wood']
+   character(len=13), parameter :: LIVE_POOL(4) = [character(len=13) :: 'leaf', 'fine-root', 'wood', &
+                                                   'nonstructural']
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
    integer(ik) :: n_soil_layer
 
@@ -92,25 +99,36 @@ program test_slow_ledger
    call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! the tissues' energy with that water and film
    call hold_cohort_tissue_temps(poly%cohort, 2_ik)
 
-   !=== 1. STORE COVERAGE: every reservoir must reach the total, in its own currency. =========!
+   !=== 1. STORE COVERAGE: every member of every reservoir must reach the total, in its own   !
+   !       currency -- each tissue, each live and CENTURY pool, each PFT's recruit pool. =====!
    call moves_water ('soil theta',        perturb_theta,        0.01_wp * soil%dz(1) * 1000.0_wp)
    call moves_water ('pond w_surface',    perturb_pond,         1.0_wp)
    call moves_water ('snow swe',          perturb_swe,          1.0_wp)
    call moves_water ('canopy vapour',     perturb_shv,          RHO * 20.0_wp * 0.001_wp)
-   call moves_water ('tissue water',      perturb_tissue_water, poly%cohort%nplant(1) * 0.01_wp)
-   call moves_water ('interception film', perturb_film,         poly%cohort%nplant(1) * 0.01_wp)
+   do which = 1_ik, 2_ik
+      call moves_water (trim(TISSUE(which))//' water', perturb_tissue_water, poly%cohort%nplant(1) * 0.01_wp)
+      call moves_water (trim(TISSUE(which))//' film',  perturb_film,         poly%cohort%nplant(1) * 0.01_wp)
+   end do
    call moves_energy('soil energy',       perturb_soil_energy,  1.0e6_wp * soil%dz(1))
    call moves_energy('pond energy',       perturb_pond_energy,  1.0e5_wp)
    call moves_energy('snow energy',       perturb_snow_energy,  1.0e5_wp)
    call moves_energy('canopy enthalpy',   perturb_cas_enth,     RHO * 20.0_wp * 1.0e4_wp)
-   call moves_carbon('live pools',        perturb_live_c,       poly%cohort%nplant(1) * 0.5_wp)
-   call moves_carbon('CENTURY pools',     perturb_necromass,    1.0_wp)
+   do which = 1_ik, 4_ik
+      call moves_carbon(trim(LIVE_POOL(which))//' carbon', perturb_live_c, poly%cohort%nplant(1) * 0.5_wp)
+   end do
+   do which = 1_ik, N_SOIL_POOL
+      call moves_carbon('CENTURY '//trim(soil_carbon_pool_name(which)), perturb_necromass, 1.0_wp)
+   end do
    !----- Tissue HEAT and canopy CO2 have no closed-form expectation worth restating here (they  !
    !      are the store's own formulae); assert only that they reach the total, which is the     !
    !      blindness this test is about. ----------------------------------------------------!
-   call moves('tissue energy', perturb_tissue_energy, 'energy')
+   do which = 1_ik, 2_ik
+      call moves(trim(TISSUE(which))//' energy', perturb_tissue_energy, 'energy')
+   end do
    call moves('canopy CO2',    perturb_cas_co2,     'carbon')
-   call moves('recruit pool',  perturb_recruit,     'carbon')
+   do which = 1_ik, poly%n_pft
+      call moves('recruit pool',  perturb_recruit,     'carbon')
+   end do
 
    !=== 2. DECLARATION ARITHMETIC: a declared term is subtracted from the residual. ===========!
    led%active = .true.
@@ -160,44 +178,26 @@ program test_slow_ledger
    !        report, so the store's fall must be exactly it.                                     !
    call check_treefall_carbon()
 
-   !=== 6. A recruit is born at its PATCH's temperature, not at the global constant. ===========!
-   call check_birth_temp()
 
-   !=== 7. The allocator's outputs actually LEAVE the slow tier. ==============================!
-   !       Neither ledger can catch a break here: the slow ledger declares the HANDOFF, so it      !
-   !       closes whether or not the fast loop ever picks the rate up, and the fast CAS ledger      !
-   !       closes around whatever nee_biotic it is given. Only a test binds the two ends, so these  !
-   !       assert that the trait CHANGES the routed quantity -- the same differential shape the      !
-   !       PFT-trait tests use, because a silently-zero channel is the realistic failure.            !
-   call check_routing()
 
-   !=== 8. Tissue THERMAL MASS tracks biomass, and is the whole of the store's tissue term. ===!
+   !=== 6. Tissue THERMAL MASS tracks biomass, and is the whole of the store's tissue term. ===!
    call check_tissue_thermal_mass()
 
-   !=== 9. Mortality's water LEAVES the tissue and ARRIVES in the shed channel, exactly. ======!
-   !       It guards two errors every other assertion in this file passes through: not routing the !
-   !       water at all, and scaling the loss with the SURVIVORS' density instead of the density   !
-   !       DROP. It is the one property that pins the basis.                                        !
-   call check_mortality_water()
-   call check_litter_patch_lockstep()
-   call check_litter_without_soil_carbon()
 
-   !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
-   call check_recruit_pool()
 
-   !=== 11. The turnover shed takes its water's HEAT with it, and declares it. =================!
+   !=== 7. The turnover shed takes its water's HEAT with it, and declares it. =================!
    !        The leaf's heat capacity counts its water and the wood's its whole store, so          !
    !        shedding either moves the tissue heat store; the declared energy must                  !
    !        explain that move exactly.                                                              !
    call check_shed_heat()
-   !=== 12. Tissue water is booked when it is made, shed or moved: a recruit's birth water, a    !
+
+   !=== 8. Tissue water is booked when it is made, shed or moved: a recruit's birth water, a    !
    !        canopy's snap to bare, and water above a store's capacity. ======================!
    call check_tissue_water_ledger()
 
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
-
    !----- Every water amount a slow step moves into or out of the tissue is declared, so the       !
    !       ledger's water residual is zero across each: (a) a recruitment, whose recruits are born   !
    !       holding their patch's top-soil potential, drawn from outside like their carbon; (b) a     !
@@ -302,7 +302,6 @@ contains
       !      the dry end of their curve, and the plant's water is unchanged. ---------------------!
       call check_reflush_water()
    end subroutine check_tissue_water_ledger
-
    subroutine check_reflush_water()
       type(meds_config_t) :: c
       type(polygon_t)     :: st
@@ -345,205 +344,6 @@ contains
       call check(abs(lg%resid_sum(SLOW_PHASE_GROW)%water) <= 1.0e-12_wp,                           &
                  'reflush: the fill moves water inside the plant; the ledger sees no residual')
    end subroutine check_reflush_water
-
-   !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
-   !       the parents were debited for. Two assertions, one per half of the contract: the       !
-   !       CADENCE (credited every step, not sampled on month boundaries from one day's rate      !
-   !       scaled up to stand for the month) and the CARBON LINK (the credit must follow          !
-   !       recruit_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
-   !       A third: under recruit_shade_decay the credit falls as exp(-k * LAI) of the patch.      !
-   subroutine check_recruit_pool()
-      real(wp) :: p1, p2, p_lo, p_hi, p_one, p_shade, lai
-      call pool_after_steps(3_ik, 1.0e-3_wp, p1)
-      call pool_after_steps(6_ik, 1.0e-3_wp, p2)
-      call check(p1 > 0.0_wp, 'recruit pool: credited on an ordinary step, not only at month end')
-      !----- Six steps credit about twice what three do. NOT exactly twice: the stand grows       !
-      !      between steps, so later steps produce a little more reproduction carbon. The point   !
-      !      is that every step contributes -- a monthly sampling would leave p1 and p2 both      !
-      !      identically zero, since neither run crosses a month boundary.  --------------------!
-      call check(abs(p2 - 2.0_wp * p1) <= 0.01_wp * p2,                                            &
-                 'recruit pool: six steps credit ~twice what three do (it integrates, not samples)')
-      call pool_after_steps(3_ik, 1.0e-3_wp, p_lo)
-      call pool_after_steps(3_ik, 2.0e-3_wp, p_hi)
-      call check_close(p_hi, 2.0_wp * p_lo, 1.0e-9_wp,                                             &
-                       'recruit pool: the credit follows recruit_carbon_efficiency')
-      !----- One step, so both runs see the same stand and its LAI exactly. ----------------------!
-      call pool_after_steps(1_ik, 1.0e-3_wp, p_one, lai=lai)
-      call pool_after_steps(1_ik, 1.0e-3_wp, p_shade, shade_decay=0.5_wp)
-      call check(lai > 0.1_wp, 'recruit pool: the shade test stand has leaves')
-      call check_close(p_shade, p_one * exp(-0.5_wp * lai), 1.0e-9_wp,                             &
-                       'recruit pool: the credit falls as exp(-recruit_shade_decay * patch LAI)')
-   end subroutine check_recruit_pool
-
-   !----- Run `nstep` ordinary (non-month-boundary) slow steps on a fresh stand and return the    !
-   !       accumulated recruit pool. Seed rain is off, so what accumulates is reproduction alone. !
-   subroutine pool_after_steps(nstep, repro_eff, pool, shade_decay, lai)
-      integer(ik), intent(in)  :: nstep
-      real(wp),    intent(in)  :: repro_eff
-      real(wp),    intent(out) :: pool
-      real(wp), optional, intent(in)  :: shade_decay   !< pft.recruit_shade_decay (default 0)
-      real(wp), optional, intent(out) :: lai           !< the stand's LAI before the first step
-      type(meds_config_t) :: c
-      type(polygon_t)     :: st
-      integer(ik)         :: k
-      c = build_test_config()
-      c%fast_biophysics_on = .true.
-      c%demography%demography_on      = .false.
-      c%pft%recruit_carbon_efficiency(:) = repro_eff
-      if (present(shade_decay)) c%pft%recruit_shade_decay(:) = shade_decay
-      c%pft%seed_rain_recruits(:)      = 0.0_wp
-      c%pft%leaf_turnover_rate_toc(:)  = 0.01_wp    ! [1/yr] keep turnover from eating the supply
-      call init_bare_ground(st, c, 1_ik)
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above the reproduction height
-      call finalize_init(st)
-      if (present(lai)) lai = sum(st%cohort%nplant(1:st%cohort%n) * st%cohort%leaf_area(1:st%cohort%n))
-      do k = 1_ik, nstep
-         st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
-         st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
-         st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
-         st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-         call vegetation_dynamics(st, c, no_ledger)
-      end do
-      pool = st%patch%recruit_pool(1, 1)
-   end subroutine pool_after_steps
-
-
-   !---------------------------------------------------------------------------------------!
-   ! THE LITTER ACCUMULATOR MUST RIDE THE PATCH ARRAY.                                           !
-   !                                                                                          !
-   ! restructure_stand (apply_patch_disturbance) CREATES patches after vegetation_dynamics has   !
-   ! filled the step's litter, and the consumer (advance_soil_carbon) loops to the NEW           !
-   ! patch count. An accumulator sized to the patch count when it was filled is read past its    !
-   ! end, feeding undefined memory into the CENTURY litter input (1.8e9 kgC/m2 on a gap patch    !
-   ! born that step, over a 50-year spin-up).                                                    !
-   !                                                                                          !
-   ! The slow ledger cannot catch that: it DECLARES the same out-of-bounds read as a boundary    !
-   ! term and so balances perfectly against the garbage. Only `-check bounds` sees it.           !
-   !                                                                                          !
-   ! So the assertion is the INVARIANT -- the accumulator is patch state, at least as long as    !
-   ! the patch array after the operators that change the patch count have run -- plus the        !
-   ! quieter half: a FUSION must carry the litter across area-weighted rather than dropping or   !
-   ! duplicating it (a local array misattributes one patch's litter to another).                 !
-   !---------------------------------------------------------------------------------------!
-   subroutine check_litter_patch_lockstep()
-      type(meds_config_t) :: c
-      type(polygon_t)     :: st
-      real(wp)    :: tot0, tot1
-      integer(ik) :: np0
-
-      c = build_test_config()
-      c%fast_biophysics_on   = .true.
-      c%demography%demography_on        = .true.        ! the structural operators are the point here
-      c%demography%patch_disturbance_on = .true.
-      c%soil_carbon%soil_carbon_on       = .true.        ! the only consumer of the accumulator
-      call init_bare_ground(st, c, 2_ik)
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
-      call add_cohort(st, c, 2_ik, 1_ik, 0.3_wp, 35.0_wp)
-      call finalize_init(st)
-      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
-      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-      np0 = st%patch%n
-
-      call vegetation_dynamics(st, c, no_ledger)
-      call restructure_stand(st, c, .true., .true., no_ledger)   ! monthly + annual: every operator fires
-
-      !----- THE invariant. `>=` not `==`: the patch block is capacity-allocated, so the array is  !
-      !      allowed to be longer than the live patch count -- it must never be SHORTER.  ---------!
-      call check(size(st%patch%litter_in) >= st%patch%n,                                           &
-                 'the litter accumulator is at least as long as the patch array')
-      call check(allocated(st%patch%litter_in), 'the litter accumulator is patch state, not a local')
-
-      !----- A fusion must MOVE the litter, not lose it. Fusing two patches area-weighted leaves   !
-      !      the site-wide litter flux unchanged, which is the same rule blend_soil_carbon obeys    !
-      !      -- and has to, since this litter is on its way into those pools.  ---------------------!
-      if (st%patch%n >= 2_ik) then
-         tot0 = litter_site_total(st)
-         call fuse_2_patches(st, 1_ik, 2_ik)
-         tot1 = litter_site_total(st)
-         call check_close(tot1, tot0, 1.0e-12_wp * max(abs(tot0), 1.0_wp),                         &
-                          'patch fusion conserves the site-wide litter flux')
-      end if
-   end subroutine check_litter_patch_lockstep
-
-   !----- With the soil-carbon pools off, the litter is still recorded and still declared leaving at !
-   !      the growth phase: the same litter, and the same growth-phase residual, as with them on.     !
-   !      Undeclared, the phase would read it as a carbon leak. -----------------------------------!
-   subroutine check_litter_without_soil_carbon()
-      real(wp) :: lit_on, lit_off, res_on, res_off
-      call grow_one_step(.true.,  lit_on,  res_on)
-      call grow_one_step(.false., lit_off, res_off)
-      call check(lit_off > 0.0_wp, 'soil carbon off: the litter is still recorded')
-      call check_close(lit_off, lit_on, 1.0e-12_wp * lit_on, 'soil carbon off: the same litter as with it on')
-      call check_close(res_off, res_on, 1.0e-12_wp * max(lit_on, 1.0e-12_wp),                        &
-                       'soil carbon off: the growth phase closes as it does with it on')
-   end subroutine check_litter_without_soil_carbon
-
-   subroutine grow_one_step(soil_carbon_on, litter, grow_residual)
-      logical,  intent(in)  :: soil_carbon_on
-      real(wp), intent(out) :: litter, grow_residual
-      type(meds_config_t) :: c
-      type(polygon_t)     :: st
-      type(slow_ledger_t) :: lg
-      c = build_test_config()
-      c%fast_biophysics_on = .true.
-      c%demography%demography_on      = .false.        ! one step of growth, turnover and mortality, no restructuring
-      c%soil_carbon%soil_carbon_on     = soil_carbon_on
-      call init_bare_ground(st, c, 1_ik)
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
-      call finalize_init(st)
-      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
-      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-      lg%active = .true.
-      call slow_ledger_open(lg, st, c)
-      call vegetation_dynamics(st, c, lg)
-      litter        = litter_site_total(st)
-      grow_residual = lg%resid_sum(SLOW_PHASE_GROW)%carbon
-   end subroutine grow_one_step
-
-   !----- Area-weighted site total of today's litter [kgC/m2/day]. ---------------------------!
-   pure function litter_site_total(st) result(t)
-      type(polygon_t), intent(in) :: st
-      real(wp)    :: t
-      integer(ik) :: ip
-      t = 0.0_wp
-      do ip = 1_ik, st%patch%n
-         t = t + st%patch%area(ip) * (st%patch%litter_in(ip)%labile_grnd                           &
-                                    + st%patch%litter_in(ip)%labile_soil                           &
-                                    + st%patch%litter_in(ip)%struct_grnd                           &
-                                    + st%patch%litter_in(ip)%struct_soil)
-      end do
-   end function litter_site_total
-
-   subroutine check_mortality_water()
-      type(meds_config_t) :: c
-      type(polygon_t)     :: st
-      real(wp) :: tis0, tis1, shed0, shed1
-      c = build_test_config()
-      c%fast_biophysics_on = .true.
-      c%demography%demography_on      = .false.        ! isolate the commit from the structural operators
-      call init_bare_ground(st, c, 1_ik)
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
-      call finalize_init(st)
-      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp     ! grow, so p1 /= p0 and the basis matters
-      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%leaf_water_mass(1:st%cohort%n) = 0.7_wp
-      st%cohort%wood_water_mass(1:st%cohort%n) = 2.3_wp
-      tis0  = tissue_water_total(st)
-      shed0 = shed_total(st, c)
-      call vegetation_dynamics(st, c, no_ledger)
-      tis1  = tissue_water_total(st)
-      shed1 = shed_total(st, c)
-      call check(tis1 < tis0, 'mortality water: the tissue store actually falls')
-      call check_close(shed1 - shed0, tis0 - tis1, 1.0e-12_wp,                                     &
-                       'every kg that leaves tissue must arrive in the patch shed channel')
-   end subroutine check_mortality_water
-
    subroutine check_shed_heat()
       type(slow_step_data_t) :: step
       type(slow_ledger_t)     :: lg
@@ -578,21 +378,6 @@ contains
       call check_close(fast_in, lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy, 1.0e-12_wp,                  &
                        'shed heat: the fast tier takes in the enthalpy the shed handed off')
    end subroutine check_shed_heat
-
-   pure function tissue_water_total(st) result(w)
-      type(polygon_t), intent(in) :: st
-      real(wp)    :: w
-      integer(ik) :: ip, i, i0, i1
-      w = 0.0_wp
-      do ip = 1_ik, st%patch%n
-         i0 = st%patch%cohort_offset(ip) ; i1 = i0 + st%patch%cohort_count(ip) - 1_ik
-         do i = i0, i1
-            w = w + st%patch%area(ip) * st%cohort%nplant(i)                                        &
-                  * (st%cohort%leaf_water_mass(i) + st%cohort%wood_water_mass(i))
-         end do
-      end do
-   end function tissue_water_total
-
    pure function shed_total(st, c) result(w)
       type(polygon_t),     intent(in) :: st
       type(meds_config_t), intent(in) :: c
@@ -603,8 +388,6 @@ contains
          w = w + st%patch%area(ip) * st%patch%shed_water_rate(ip) * c%dt_slow
       end do
    end function shed_total
-
-
    !----- A cohort's heat capacity is a function of its biomass, so changing biomass alone moves   !
    !       the tissue store with no flux. That is the exchange the growth commit declares; these   !
    !       assert the two properties the declaration rests on -- that the term is real (biomass    !
@@ -631,117 +414,6 @@ contains
       poly%cohort%leaf_energy(1) = poly%cohort%leaf_energy(1) - 1.0e4_wp
       call check(slow_tissue_energy(poly) < e1, 'thermal mass: heat moves it too (so it is not frozen in)')
    end subroutine check_tissue_thermal_mass
-
-   subroutine check_routing()
-      real(wp) :: co2_on, co2_off, lit_lossy, lit_perfect, dummy
-      real(wp) :: lab0, lab1, wood0, wood1, n0, dd, dty
-      !----- Each variant runs on a FRESH stand. vegetation_dynamics COMMITS growth, so calling it !
-      !      twice on one site compares two different forests and the second comparison passes for !
-      !      the wrong reason (a mutation that should fail it does not).  -------------------------!
-      call run_variant(0.3_wp, 1.0_wp, co2_on,  dummy)
-      call run_variant(0.0_wp, 1.0_wp, co2_off, dummy)
-      call check(co2_on > 0.0_wp, 'routing: growth respiration reaches patch%slow_co2_rate')
-      call check(abs(co2_off) < abs(co2_on),                                                       &
-                 'routing: zero construction cost => nothing owed (the channel is not a constant)')
-
-      call run_variant(0.3_wp, 0.0_wp, dummy, lit_lossy)     ! every seed dies -> all necromass
-      call run_variant(0.3_wp, 1.0_wp, dummy, lit_perfect)   ! every seed establishes -> none
-      call check(lit_lossy > lit_perfect,                                                          &
-                 'routing: the unestablished seed fraction becomes litter, not nothing')
-
-      !----- STARVATION rides the same channel with the OPPOSITE sign. The fast loop has already   !
-      !      exhaled the full maintenance respiration; a stand that could not fund it means the    !
-      !      loop OVER-reported, so the correction owed to the canopy air is NEGATIVE. A sign      !
-      !      error here would quietly turn a starving forest into a CO2 source.  -----------------!
-      call run_variant(0.3_wp, 1.0_wp, co2_on, dummy, starve=.true.)
-      call check(co2_on < 0.0_wp, 'routing: a starving stand OWES the canopy air a negative flux')
-
-      !----- SINK LIMIT: the wood a binding limit leaves unbuilt reaches the soil as exudate, one for !
-      !      one, and since exudate costs (1+g) like wood the CO2 owed does not change. Mortality is   !
-      !      off in both runs: it rises as growth falls, so the limited stand would also lose more     !
-      !      trees to litter. -------------------------------------------------------------------!
-      call run_variant(0.3_wp, 1.0_wp, co2_on, dummy, lab_soil=lab0, wood=wood0, nplant0=n0,       &
-                       immortal=.true.)
-      call run_variant(0.3_wp, 1.0_wp, co2_off, dummy, max_rgr=1.0e-3_wp, lab_soil=lab1, wood=wood1, &
-                       immortal=.true.)
-      call check(wood1 < wood0, 'sink limit: a binding limit builds less wood')
-      call check_close(lab1 - lab0, (wood0 - wood1) * n0, 1.0e-9_wp,                               &
-                       'sink limit: the unbuilt wood arrives as below-ground labile litter')
-      call check_close(co2_off, co2_on, 1.0e-9_wp,                                                 &
-                       'sink limit: the exudate pays the growth respiration the wood would have')
-      !----- An ABSOLUTE limit that binds grows the stem by exactly the limit: 0.2 cm/yr for a step. -!
-      call run_variant(0.3_wp, 1.0_wp, dummy, dummy, max_agr=0.2_wp, ddbh=dd, dt_yr=dty, immortal=.true.)
-      call check_close(dd, 0.2_wp * dty, 1.0e-9_wp, 'sink limit: a binding absolute limit grows dbh by rate x dt')
-   end subroutine check_routing
-
-   !----- One slow step on a FRESH stand, returning the two routed quantities (CO2 rate, litter). --!
-   subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve, max_rgr,              &
-                          lab_soil, wood, nplant0, immortal, max_agr, ddbh, dt_yr)
-      real(wp), intent(in)  :: g_resp, repro_eff
-      real(wp), intent(out) :: co2_rate, litter_total
-      logical, optional, intent(in) :: starve
-      real(wp), optional, intent(in)  :: max_rgr    !< pft.max_relative_growth_rate (default 0, no limit)
-      real(wp), optional, intent(out) :: lab_soil   !< patch 1's below-ground labile litter
-      real(wp), optional, intent(out) :: wood       !< the cohort's wood carbon after the step
-      real(wp), optional, intent(out) :: nplant0    !< the cohort's density before the step
-      logical,  optional, intent(in)  :: immortal   !< .true. => no background or low-growth mortality
-      real(wp), optional, intent(in)  :: max_agr    !< pft.max_absolute_growth_rate (default 0, no limit)
-      real(wp), optional, intent(out) :: ddbh       !< the cohort's dbh growth over the step
-      real(wp), optional, intent(out) :: dt_yr      !< the step's length [yr]
-      real(wp) :: dbh_start
-      type(meds_config_t) :: c
-      type(polygon_t)     :: st
-      c = build_test_config()
-      c%fast_biophysics_on = .true.
-      c%demography%demography_on      = .false.        ! isolate allocation from the structural operators
-      c%soil_carbon%soil_carbon_on     = .true.
-      c%pft%growth_resp_factor(:)      = g_resp
-      c%pft%recruit_carbon_efficiency(:) = repro_eff
-      !----- A SLOW leaf turnover, so turnover does not eat the whole supply before reproduction !
-      !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
-      !      reproduction, then wood -- with the default ~1 /yr turnover this cohort's daily leaf  !
-      !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
-      !      is made, so the seed-loss assertion would pass while asserting nothing.               !
-      c%pft%leaf_turnover_rate_toc(:) = 0.01_wp
-      if (present(max_rgr)) c%pft%max_relative_growth_rate(:) = max_rgr
-      if (present(max_agr)) c%pft%max_absolute_growth_rate(:) = max_agr
-      if (present(dt_yr))   dt_yr = c%dt_years
-      if (present(immortal)) then
-         if (immortal) then
-            c%pft%mort_gamma(:) = 0.0_wp
-            c%pft%mort_alpha(:) = 0.0_wp
-         end if
-      end if
-      call init_bare_ground(st, c, 1_ik)
-      !----- 40 cm => ~25 m, clear of the reproduction height (20 m): a cohort below it allocates  !
-      !      NOTHING to reproduction, and the seed-loss assertion would then be vacuously true.  --!
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
-      call finalize_init(st)
-      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp      ! generous: a clear surplus to allocate
-      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
-      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-      if (present(starve)) then
-         if (starve) then
-            !----- No photosynthate, a real maintenance bill, and no reserves to pay it with. ----!
-            st%cohort%gpp_accum(1:st%cohort%n)            = 0.0_wp
-            st%cohort%leaf_resp_accum(1:st%cohort%n)      = 1.0_wp
-            st%cohort%nonstructural_carbon(1:st%cohort%n) = 0.0_wp
-         end if
-      end if
-      if (present(nplant0)) nplant0 = st%cohort%nplant(1)
-      dbh_start = st%cohort%dbh(1)
-      call vegetation_dynamics(st, c, no_ledger)
-      if (present(ddbh)) ddbh = st%cohort%dbh(1) - dbh_start
-      if (present(lab_soil)) lab_soil = st%patch%litter_in(1)%labile_soil
-      if (present(wood))     wood     = st%cohort%wood_carbon(1)
-      co2_rate     = st%patch%slow_co2_rate(1)
-      !----- The litter accumulator is patch state, so it is read off the site rather than
-      !      returned: st%patch%litter_in(1), in lockstep with patch 1.
-      litter_total = st%patch%litter_in(1)%labile_grnd + st%patch%litter_in(1)%labile_soil          &
-                   + st%patch%litter_in(1)%struct_grnd + st%patch%litter_in(1)%struct_soil
-   end subroutine run_variant
-
    subroutine check_cull()
       real(wp) :: w_before, shed_before, w_shed, expect_w, heat_before, heat_after
       real(wp) :: lit_before, kill_c
@@ -781,7 +453,6 @@ contains
       heat_after = slow_tissue_energy(poly)
       call check(heat_after < heat_before, 'cull: the tissue heat store falls when a cohort goes')
    end subroutine check_cull
-
    !----- A treefall gap that kills every cohort's share, on a copy of the stand. -------------!
    subroutine check_treefall_carbon()
       type(polygon_t)      :: st
@@ -802,33 +473,6 @@ contains
       call check_close(litter_carbon_total(st, st%patch%litter_in) - lit_before, kill_c,          &
                        1.0e-12_wp, 'treefall: its carbon reaches the litter')
    end subroutine check_treefall_carbon
-
-   !----- A cohort is born in its patch's state (patch_physical_state): at the canopy-air temperature, !
-   !      its tissues at the top soil layer's potential. -------------------------------------------!
-   subroutine check_birth_temp()
-      integer(ik) :: m
-      real(wp)    :: t_birth, psi_birth, t_save
-      type(water_curve_t) :: leaf_curve, wood_curve
-      m = poly%cohort%n + 1_ik
-      t_save = poly%patch%cas(1)%can_temp
-      poly%patch%cas(1)%can_temp = 268.0_wp        ! a cold, seeded patch
-      call patch_physical_state(poly%patch%cas(1), poly%patch%soil_water(1), poly%site%surface(1),       &
-                                t_birth, psi_birth)
-      call check_close(t_birth, 268.0_wp, 1.0e-12_wp, 'birth: a seeded patch gives its canopy-air temperature')
-      call check_close(psi_birth, top_soil_psi(poly%site%surface(1)%soil_profile, poly%patch%soil_water(1)%theta(1)), &
-                       1.0e-12_wp,                                                                        &
-                       'birth: a seeded patch gives its top soil layer''s potential')
-      call init_cohort(poly%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, t_birth, psi_birth)
-      call check_close(poly%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
-      call check_close(poly%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
-      leaf_curve = cfg%pft%hydro(1_ik)%leaf_curve
-      wood_curve = cfg%pft%hydro(1_ik)%wood_curve
-      call check_close(tissue_water_to_psi(poly%cohort%leaf_water_mass(m), leaf_curve,                &
-                       poly%cohort%leaf_carbon(m)), psi_birth, 1.0e-9_wp,                               &
-                       'birth: the leaves hold the water of that potential')
-      poly%patch%cas(1)%can_temp = t_save
-   end subroutine check_birth_temp
-
    !----- Assert a perturbation moves the named currency by `amount` (and moves it at all). ----!
    subroutine moves_water(name, perturb, amount)
       character(len=*), intent(in) :: name
@@ -844,7 +488,6 @@ contains
       call check_close(b%water - a%water, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),            &
                        'store: '//name//' reaches the water total')
    end subroutine moves_water
-
    subroutine moves_energy(name, perturb, amount)
       character(len=*), intent(in) :: name
       real(wp),         intent(in) :: amount
@@ -859,7 +502,6 @@ contains
       call check_close(b%energy - a%energy, amount, 1.0e-6_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the energy total')
    end subroutine moves_energy
-
    subroutine moves_carbon(name, perturb, amount)
       character(len=*), intent(in) :: name
       real(wp),         intent(in) :: amount
@@ -874,7 +516,6 @@ contains
       call check_close(b%carbon - a%carbon, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the carbon total')
    end subroutine moves_carbon
-
    subroutine moves(name, perturb, currency)
       character(len=*), intent(in) :: name, currency
       interface
@@ -893,7 +534,6 @@ contains
       end select
       call check(abs(d) > 0.0_wp, 'store: '//name//' reaches the '//currency//' total')
    end subroutine moves
-
    subroutine perturb_theta()        ; poly%patch%soil_water(1)%theta(1) = poly%patch%soil_water(1)%theta(1) + 0.01_wp
    end subroutine perturb_theta
    subroutine perturb_pond()         ; poly%patch%soil_water(1)%w_surface = poly%patch%soil_water(1)%w_surface + 1.0_wp
@@ -902,9 +542,18 @@ contains
    end subroutine perturb_swe
    subroutine perturb_shv()          ; poly%patch%cas(1)%can_shv = poly%patch%cas(1)%can_shv + 0.001_wp
    end subroutine perturb_shv
-   subroutine perturb_tissue_water() ; poly%cohort%leaf_water_mass(1) = poly%cohort%leaf_water_mass(1) + 0.01_wp
+   !----- The members of a group, one at a time: `which` picks the tissue, pool or PFT. ------!
+   subroutine perturb_tissue_water()
+      select case (which)
+      case (1_ik) ; poly%cohort%leaf_water_mass(1) = poly%cohort%leaf_water_mass(1) + 0.01_wp
+      case default ; poly%cohort%wood_water_mass(1) = poly%cohort%wood_water_mass(1) + 0.01_wp
+      end select
    end subroutine perturb_tissue_water
-   subroutine perturb_film()         ; poly%cohort%leaf_surf_water(1) = poly%cohort%leaf_surf_water(1) + 0.01_wp
+   subroutine perturb_film()
+      select case (which)
+      case (1_ik) ; poly%cohort%leaf_surf_water(1) = poly%cohort%leaf_surf_water(1) + 0.01_wp
+      case default ; poly%cohort%wood_surf_water(1) = poly%cohort%wood_surf_water(1) + 0.01_wp
+      end select
    end subroutine perturb_film
    subroutine perturb_soil_energy()
       poly%patch%soil_energy(1)%soil_energy(1) = poly%patch%soil_energy(1)%soil_energy(1) + 1.0e6_wp
@@ -919,14 +568,26 @@ contains
    end subroutine perturb_cas_enth
    subroutine perturb_cas_co2()      ; poly%patch%cas(1)%can_co2 = poly%patch%cas(1)%can_co2 + 50.0_wp
    end subroutine perturb_cas_co2
-   subroutine perturb_live_c()       ; poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) + 0.5_wp
+   subroutine perturb_live_c()
+      select case (which)
+      case (1_ik) ; poly%cohort%leaf_carbon(1)          = poly%cohort%leaf_carbon(1)          + 0.5_wp
+      case (2_ik) ; poly%cohort%fineroot_carbon(1)      = poly%cohort%fineroot_carbon(1)      + 0.5_wp
+      case (3_ik) ; poly%cohort%wood_carbon(1)          = poly%cohort%wood_carbon(1)          + 0.5_wp
+      case default ; poly%cohort%nonstructural_carbon(1) = poly%cohort%nonstructural_carbon(1) + 0.5_wp
+      end select
    end subroutine perturb_live_c
-   subroutine perturb_necromass()    ; poly%patch%soil_carbon(1)%slow_carbon = poly%patch%soil_carbon(1)%slow_carbon + 1.0_wp
+   subroutine perturb_necromass()
+      real(wp) :: x(N_SOIL_POOL)
+      call pack_pool_vector(poly%patch%soil_carbon(1), x)
+      x(which) = x(which) + 1.0_wp
+      call unpack_pool_vector(x, poly%patch%soil_carbon(1))
    end subroutine perturb_necromass
    subroutine perturb_tissue_energy()
-      poly%cohort%leaf_energy(1) = poly%cohort%leaf_energy(1) + 1.0e3_wp
+      select case (which)
+      case (1_ik) ; poly%cohort%leaf_energy(1) = poly%cohort%leaf_energy(1) + 1.0e3_wp
+      case default ; poly%cohort%wood_energy(1) = poly%cohort%wood_energy(1) + 1.0e3_wp
+      end select
    end subroutine perturb_tissue_energy
-   subroutine perturb_recruit()      ; poly%patch%recruit_pool(1,1) = poly%patch%recruit_pool(1,1) + 0.5_wp
+   subroutine perturb_recruit()      ; poly%patch%recruit_pool(which,1) = poly%patch%recruit_pool(which,1) + 0.5_wp
    end subroutine perturb_recruit
-
 end program test_slow_ledger

@@ -17,6 +17,8 @@
 !   8. SINK CAP        : wood stops at the limit, the rest is exudate at cost (1+g), carbon closes, !
 !                        growth respiration is unchanged; a limit that does not bind changes       !
 !                        nothing.                                                                   !
+!   9. MATURE COHORT   : with reproduction and growth respiration on, the books still close,  !
+!                        and a surplus grows wood.                                         !
 !==========================================================================================!
 program test_plant_carbon_allocation
    use meds_test_assert, only : check_close, check_true, test_report
@@ -38,6 +40,7 @@ program test_plant_carbon_allocation
    call test_starving()
    call test_sink_limitation()
    call test_sink_cap()
+   call test_mature_cohort()
 
    call test_report('test_plant_carbon_allocation')
 
@@ -195,5 +198,18 @@ contains
       call check_true('sink cap: no limit => bit-identical wood', gw == gw0 .and. gresp == gresp0)
       call check_close('sink cap: no limit => no exudate', ex, 0.0_wp)
    end subroutine test_sink_cap
+
+   !----- 9. A mature cohort with a surplus: the books close with reproduction and growth        !
+   !      respiration in them, and the surplus grows wood. ---------------------------------!
+   subroutine test_mature_cohort()
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
+      call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.05_wp, 0.05_wp, 0.02_wp, 0.3_wp, &
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
+      call check_close('mature: (growth + store) - deficit = net - growth resp', (gl+gf+gw+gr+gs) - def,     &
+                       1.0_wp - gresp, 1.0e-9_wp)
+      call check_true ('mature: a mature cohort allocates to reproduction', gr > 0.0_wp)
+      call check_true ('mature: the surplus grows wood', gw > 0.0_wp)
+      call check_true ('mature: growth respiration is charged on realized growth', gresp > 0.0_wp)
+   end subroutine test_mature_cohort
 
 end program test_plant_carbon_allocation

@@ -4,7 +4,7 @@
 !                                                                                          !
 ! One shim per subsystem, mirroring the Fortran tree (src/README.md).                         !
 ! The bind(c) structs are an ABI contract with `python/meds/plant/pheno.py` and are compiled  !
-! by a mandatory ctest target (`test_c_api_phenology`) so a field-order change breaks the     !
+! by a mandatory ctest target (`test_plant_phenology`) so a field-order change breaks the     !
 ! BUILD -- see the header of meds_c_api_leaf for why.                                         !
 !==========================================================================================!
 module meds_c_api_phenology

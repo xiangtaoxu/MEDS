@@ -4,11 +4,10 @@ paths:
   - "src/slow_dynamics/**"
   - "src/io/init/**"
   - "test/test_containers.f90"
-  - "test/test_fusion_cohort.f90"
-  - "test/test_patch.f90"
-  - "test/test_disturbance.f90"
-  - "test/test_carbon_growth.f90"
+  - "test/test_slow_update.f90"
+  - "test/test_slow_step.f90"
   - "test/test_slow_ledger.f90"
+  - "test/test_demography.f90"
   - "test/test_state_*.f90"
 ---
 
@@ -52,7 +51,7 @@ disturbance.
 **Cached geometry is per plant.** Leaf area, wood area, sapwood carbon and sapwood area are cached
 on the cohort block; per-ground indices are formed at the point of use, so no stored value carries a
 plant density that mortality can invalidate. Re-derive wherever size changes. A stale cache is
-invisible in a conservation ledger — that is what `test_carbon_growth` exists to catch.
+invisible in a conservation ledger — that is what `test_slow_step`'s carbon step exists to catch.
 
 ## Laws and operators do not touch
 

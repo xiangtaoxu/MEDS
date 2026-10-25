@@ -595,7 +595,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch disturbance carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
+   foreach(t containers fast_loop tissue_energy slow_update slow_step)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
@@ -623,11 +623,6 @@ if(MEDS_BUILD_TESTS)
    #      Runs from the SOURCE dir: the canopy shim opens the reference configuration and the PFT
    #      file it names, relative to it, and writes nothing.
    add_test(NAME c_api_leaf COMMAND test_c_api_leaf WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-
-   add_executable(test_c_api_phenology test/test_c_api_phenology.f90)
-   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_c_api)
-   meds_fortran_flags(test_c_api_phenology)
-   add_test(NAME c_api_phenology COMMAND test_c_api_phenology)
 
    add_executable(test_c_api_demography test/test_c_api_demography.f90)
    target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_c_api)
@@ -665,14 +660,20 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/region)
 
-   #----- The daily plant kernels' tests (phenology, allocation, traits) link the kernel libraries   #
-   #      (state-free).                                                                              #
-   foreach(t plant_phenology plant_carbon_allocation plant_trait_dynamics)
+   #----- The daily plant kernels' tests (allocation, traits, demography) link the kernel        #
+   #      libraries (state-free).                                                                #
+   foreach(t plant_carbon_allocation plant_traits demography)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- The phenology kernel and its C-API shim, so the shim compiles under ctest. -----#
+   add_executable(test_plant_phenology test/test_plant_phenology.f90)
+   target_link_libraries(test_plant_phenology PRIVATE meds_slow_kernels meds_c_api meds_testassert)
+   meds_fortran_flags(test_plant_phenology)
+   add_test(NAME plant_phenology COMMAND test_plant_phenology)
 
    #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
    #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
@@ -694,10 +695,10 @@ if(MEDS_BUILD_TESTS)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
-   add_executable(test_soil_biogeochem test/test_soil_biogeochem.f90)
-   target_link_libraries(test_soil_biogeochem PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
-   meds_fortran_flags(test_soil_biogeochem)
-   add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
+   add_executable(test_soil_carbon test/test_soil_carbon.f90)
+   target_link_libraries(test_soil_carbon PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
+   meds_fortran_flags(test_soil_carbon)
+   add_test(NAME soil_carbon COMMAND test_soil_carbon)
 
    #----- The radiation laws of the forcing: the beam/diffuse split, PAR, the sky's longwave. #
    add_executable(test_radiation_lib test/test_radiation_lib.f90)
