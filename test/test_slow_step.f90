@@ -252,6 +252,149 @@ contains
 end module test_slow_step_phenology
 
 !==========================================================================================!
+! Thermal acclimation's wiring (meds_slow_state's acclimate_site_leaf_tables, and its      !
+! switch in advance_one_step; docs/science/leaf_gas_exchange.md §2): each site's growth    !
+! temperature starts from its own first day and follows its own days as a running mean,   !
+! and each site's leaf table is the PFT table acclimated at its own mean; a site whose     !
+! fast loop did not run keeps both; with acclimation off every table stays the PFT's own.  !
+!==========================================================================================!
+module test_slow_step_acclimation
+   use meds_kinds,              only : wp, ik
+   use meds_constants,          only : t_kelvin
+   use meds_config,             only : meds_config_t
+   use meds_pft_params,         only : leaf_photo_table_t
+   use meds_polygon_state_vars, only : polygon_t
+   use meds_state_defaults,     only : is_unset_positive
+   use meds_init_bare_ground,   only : init_bare_sites, finalize_init
+   use meds_plant_traits,       only : acclimate_leaf_photo_table
+   use meds_slow_state,         only : acclimate_site_leaf_tables
+   use meds_stepper,            only : advance_one_step, run_ledgers_t
+   use meds_test_support,       only : banner, build_test_config, check_close, check_true
+   implicit none
+   private
+
+   public :: run_thermal_acclimation
+
+   real(wp), parameter :: T_COOL = t_kelvin + 10.0_wp   !< [K] the cool site's daily mean
+   real(wp), parameter :: T_WARM = t_kelvin + 30.0_wp   !< [K] the warm site's
+   real(wp), parameter :: WINDOW = 30.0_wp              !< [day] the running mean's window
+
+contains
+
+   subroutine run_thermal_acclimation()
+      type(meds_config_t)      :: cfg
+      type(polygon_t)          :: poly
+      type(run_ledgers_t)      :: ledgers   !< never activated: the steps book nothing
+      type(leaf_photo_table_t) :: warm_table
+      real(wp)    :: t_new, gap0
+      integer(ik) :: iday, is
+      call banner('thermal acclimation: each site''s growth temperature and leaf table')
+      cfg = build_test_config()
+      cfg%leaf_physiology%thermal_acclimation = .true.
+      cfg%leaf_physiology%acclim_window_days  = WINDOW
+
+      !----- 1. A first day, 10 C at one site and 30 C at the other: each unset mean takes its own   !
+      !      site's day, and each site's table is the PFT table acclimated there, so the warm site's !
+      !      entropy term is the lower. ---------------------------------------------------------------!
+      call two_sites(cfg, poly)
+      call set_day(poly, [T_COOL, T_WARM])
+      call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, 1_ik)
+      call check_close('an unset mean takes the cool site''s first day', poly%site%t_growth_avg(1), T_COOL, 0.0_wp)
+      call check_close('an unset mean takes the warm site''s first day', poly%site%t_growth_avg(2), T_WARM, 0.0_wp)
+      call check_tables_follow(poly, cfg, 'first day')
+      call check_true('the warm site''s Vcmax entropy term is the lower',                                    &
+                      poly%site%leaf_photo(2)%pft(1)%ds_vcmax < poly%site%leaf_photo(1)%pft(1)%ds_vcmax,     &
+                      poly%site%leaf_photo(1)%pft(1)%ds_vcmax - poly%site%leaf_photo(2)%pft(1)%ds_vcmax)
+
+      !----- 2. Thirty days at 20 C at the cool site, on a 30-day window: each day closes 1/30 of the !
+      !      gap to the day's temperature, so (29/30)**30 of the first gap is left. The warm site's    !
+      !      fast loop runs no sub-step: its mean and its table stay. ---------------------------------!
+      t_new = t_kelvin + 20.0_wp
+      gap0  = poly%site%t_growth_avg(1) - t_new
+      warm_table = poly%site%leaf_photo(2)
+      do iday = 1_ik, 30_ik
+         call set_day(poly, [t_new, T_COOL])
+         poly%site%pheno_tair_n(2) = 0_ik
+         call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, 1_ik)
+      end do
+      call check_close('a month later (29/30)**30 of the gap is left', poly%site%t_growth_avg(1) - t_new,       &
+                       gap0 * (1.0_wp - 1.0_wp / WINDOW)**30, 1.0e-9_wp)
+      call check_tables_follow(poly, cfg, 'a month later')
+      call check_close('a site with no sub-step keeps its mean', poly%site%t_growth_avg(2), T_WARM, 0.0_wp)
+      call check_true('and its table', same_acclimated(poly%site%leaf_photo(2), warm_table))
+
+      !----- 3. A step longer than the window takes the day's mean outright. ----------------------!
+      call set_day(poly, [T_WARM, T_WARM])
+      call acclimate_site_leaf_tables(poly, cfg%leaf_physiology, 2_ik * nint(WINDOW, ik))
+      call check_close('a step longer than the window takes the day''s mean', poly%site%t_growth_avg(1), T_WARM,  &
+                       1.0e-12_wp)
+
+      !----- 4. Through advance_one_step, after a fast loop that saw 10 C and 30 C: with acclimation  !
+      !      off every site's mean stays unset and its table the PFT's own; on, the same step seeds    !
+      !      the means and acclimates the tables. -----------------------------------------------------!
+      cfg%leaf_physiology%thermal_acclimation = .false.
+      call two_sites(cfg, poly)
+      call set_day(poly, [T_COOL, T_WARM])
+      call advance_one_step(poly, cfg, ledgers)
+      do is = 1_ik, poly%site%n
+         call check_true('acclimation off: the mean stays unset', is_unset_positive(poly%site%t_growth_avg(is)),  &
+                         poly%site%t_growth_avg(is))
+         call check_true('acclimation off: the table is the PFT''s own',                                          &
+                         same_acclimated(poly%site%leaf_photo(is), cfg%pft%leaf_photo))
+      end do
+      cfg%leaf_physiology%thermal_acclimation = .true.
+      call two_sites(cfg, poly)
+      call set_day(poly, [T_COOL, T_WARM])
+      call advance_one_step(poly, cfg, ledgers)
+      call check_close('acclimation on: the step seeds the cool site''s mean', poly%site%t_growth_avg(1), T_COOL,  &
+                       0.0_wp)
+      call check_tables_follow(poly, cfg, 'through the step')
+   end subroutine run_thermal_acclimation
+
+   !----- A polygon of two bare sites, each half of it, on the run's config. --------------------!
+   subroutine two_sites(cfg, poly)
+      type(meds_config_t), intent(in)  :: cfg
+      type(polygon_t),     intent(out) :: poly
+      call init_bare_sites(poly, cfg, [1_ik, 1_ik], [cfg, cfg], [0.5_wp, 0.5_wp])
+      call finalize_init(poly)
+   end subroutine two_sites
+
+   !----- Each site's daily-mean air temperature [K], as the last fast loop's one sub-step. -----!
+   subroutine set_day(poly, t_air)
+      type(polygon_t), intent(inout) :: poly
+      real(wp),        intent(in)    :: t_air(:)
+      poly%site%pheno_tair_sum(1:2) = t_air
+      poly%site%pheno_tair_n(1:2)   = 1_ik
+   end subroutine set_day
+
+   !----- Each site's table is the PFT table acclimated at that site's running mean. ------------!
+   subroutine check_tables_follow(poly, cfg, tag)
+      type(polygon_t),     intent(in) :: poly
+      type(meds_config_t), intent(in) :: cfg
+      character(len=*),    intent(in) :: tag
+      type(leaf_photo_table_t) :: expected
+      integer(ik) :: is
+      do is = 1_ik, poly%site%n
+         expected = cfg%pft%leaf_photo
+         associate (lp => cfg%leaf_physiology)
+            call acclimate_leaf_photo_table(poly%site%t_growth_avg(is), lp%acclim_ds_vcmax_a, lp%acclim_ds_vcmax_b, &
+                                            lp%acclim_ds_jmax_a, lp%acclim_ds_jmax_b, lp%acclim_jv_a,               &
+                                            lp%acclim_jv_b, expected)
+         end associate
+         call check_true(tag//': the site''s table is acclimated at its own mean',                               &
+                         same_acclimated(poly%site%leaf_photo(is), expected), poly%site%t_growth_avg(is))
+      end do
+   end subroutine check_tables_follow
+
+   !----- Whether two tables hold the same entropy terms and Jmax:Vcmax ratios, every PFT. ------!
+   pure logical function same_acclimated(a, b)
+      type(leaf_photo_table_t), intent(in) :: a, b
+      same_acclimated = all(a%pft%ds_vcmax == b%pft%ds_vcmax) .and. all(a%pft%ds_jmax == b%pft%ds_jmax)       &
+                        .and. all(a%jmax_vcmax_ratio == b%jmax_vcmax_ratio)
+   end function same_acclimated
+
+end module test_slow_step_acclimation
+!==========================================================================================!
 ! The carbon step: a step without the fast loop grows wood and diameter, the driver's      !
 ! guards see the fast loop's states, the cached wood geometry follows the growth, a shaded !
 ! cohort acclimates and resorbs, the turnover sheds its water, and a restart's re-         !
@@ -1433,12 +1576,13 @@ end module test_slow_step_diag
 
 !==========================================================================================!
 ! test_slow_step -- the slow step through meds_slow_state and meds_slow_dynamics           !
-! (docs/science/order_of_processes.md §4): leaf phenology's wiring, the carbon step, the   !
-! paths the ledger cannot see, mortality by pathway, the soil-carbon seam and the slow     !
-! rows' units. One module per section.                                                     !
+! (docs/science/order_of_processes.md §4): leaf phenology's wiring, thermal acclimation's  !
+! wiring, the carbon step, the paths the ledger cannot see, mortality by pathway, the      !
+! soil-carbon seam and the slow rows' units. One module per section.                       !
 !==========================================================================================!
 program test_slow_step
    use test_slow_step_phenology, only : run_phenology_wiring
+   use test_slow_step_acclimation, only : run_thermal_acclimation
    use test_slow_step_carbon, only : run_carbon_step
    use test_slow_step_ledger_paths, only : run_ledger_paths
    use test_slow_step_mortality, only : run_mortality_pathways
@@ -1448,6 +1592,7 @@ program test_slow_step
    implicit none
 
    call run_phenology_wiring()
+   call run_thermal_acclimation()
    call run_carbon_step()
    call run_ledger_paths()
    call run_mortality_pathways()
