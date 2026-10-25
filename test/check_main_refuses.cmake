@@ -13,6 +13,7 @@
 #   soil_nan_layer             a NaN soil conductivity, as a map layer with no sand or clay gives; NaN
 #                              fails every "<= 0" test, so the check must state what holds (Release
 #                              builds only: a Debug build traps the NaN at that comparison)
+#   toml_unclosed_string       a string value with no closing quote, which would otherwise read as ""
 #   init_census_missing        a census file that is not there (init mode 1)
 #   init_census_empty          a census file with no row for the site
 #   init_restart_missing       a state file that is not there (init mode 2)
@@ -64,6 +65,11 @@ elseif(CASE STREQUAL "config_malformed_value")
 elseif(CASE STREQUAL "soil_nan_layer")
    replace_or_fail(text "\nsolid_conductivity *= *[0-9.eE+-]+" "\nsolid_conductivity = nan" "[soil] solid_conductivity")
    set(expects "soil conductivities must be positive \\(a map layer needs sand or clay\\)")
+elseif(CASE STREQUAL "toml_unclosed_string")
+   #----- The diagnostics on, and the file of their variables named with no closing quote. --------#
+   replace_or_fail(text "\nenabled *= *false" "\nenabled = true" "[output] enabled")
+   replace_or_fail(text "\nio_config *= *\"\"[^\n]*" "\nio_config = \"my_variables.txt" "[output] io_config")
+   set(expects "cannot parse string[^\n]*for key \"output\\.io_config\"")
 elseif(CASE MATCHES "^hydraulics_")
    #----- The PFT file's copy beside the run, with one trait made impossible for every PFT. --------#
    file(READ "${SOURCE_DIR}/meds_config_pft.toml" pft)
