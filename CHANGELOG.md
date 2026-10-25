@@ -156,8 +156,10 @@ readability, with no change to any result (#542).
   record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
   `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
   are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (on the F tier the per-cohort
-  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
-  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) to its old names.
+  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). The map from every old name to its new one, the per-site statics (`site_area` is
+  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) included, is
+  [`docs/output_renames.md`](https://github.com/xiangtaoxu/MEDS/blob/7223449d/docs/output_renames.md),
+  retired from the documentation in #542.
   - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
     tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
     lists every variable.
@@ -838,6 +840,17 @@ readability, with no change to any result (#542).
   nitrogen factor; `order_of_processes.md` follows the code's order; ice saturation is 9, 18 and 26 %
   below liquid at −10, −20 and −30 °C. Comment lines that cited the wrong equation or key are
   corrected. No code changes.
+  - `docs/science/column_biophysics.md` is `docs/science/coupled_biophysics.md` ("column" is the soil
+    or snow profile); its sections and equation keep their numbers.
+  - Lettered equations are numbered: `canopy_aerodynamics.md` eqs. (3b), (4)–(10) are (4)–(11), and
+    `canopy_radiation_transfer.md` eqs. (10b), (11)–(15) are (11)–(16); every citation follows.
+  - `docs/output_renames.md` is retired (the naming rule is `docs/science/diagnostics.md` §3), and so is
+    `post_proc/evaluate_ithaca.ipynb`, which needed a run the repository does not hold.
+  - The region runs' file layout moves from `docs/configuration.md` to `diagnostics.md` §3.
+  - CLAUDE.md's compiler traps gain an eighth: ifx's AVX-512 code misreads an array expression over
+    `a(:)%b%c`.
+  - `docs/ROADMAP.md` cites the issues filed with it: #544 and #545 (two defects the review found),
+    #546–#549.
 - **Three gaps a mutation check found are tested** (#541):
   - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
   - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
