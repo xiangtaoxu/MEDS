@@ -1,13 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 #----- meds_main refuses a run it cannot start, and names the cause. ------------------------------#
 #
-# Each case edits the reference config (meds_config_main.toml) into a run that must stop before its
-# first step, runs meds_main on it, and asserts that it stopped and that its report names the cause:
-#   config_unknown_keys     a misspelt key, a key that moved block, and a [region] block in a site run
-#   config_rk45_loose_rtol  RK45 at a tolerance looser than it can integrate (fast.rtol > 1e-4)
-#   init_census_missing     a census file that is not there (init mode 1)
-#   init_census_empty       a census file with no row for the site
-#   init_restart_missing    a state file that is not there (init mode 2)
+# Each case edits the reference config (meds_config_main.toml), or a copy of the PFT file it names
+# (meds_config_pft.toml), into a run that must stop before its first step, runs meds_main on it, and
+# asserts that it stopped and that its report names the cause:
+#   config_unknown_keys        a misspelt key, a key that moved block, and a [region] block in a site run
+#   config_rk45_loose_rtol     RK45 at a tolerance looser than it can integrate (fast.rtol > 1e-4)
+#   config_malformed_value     a value the reader cannot parse as the number its key takes
+#   hydraulics_pv_traits       a leaf elastic modulus below |pi0|, whose turgor-loss point is not
+#                              negative, in a PFT file that sets its stress points by hand
+#   hydraulics_vulnerability   a xylem psi50 above zero
+#   soil_nan_layer             a NaN soil conductivity, as a map layer with no sand or clay gives; NaN
+#                              fails every "<= 0" test, so the check must state what holds (Release
+#                              builds only: a Debug build traps the NaN at that comparison)
+#   init_census_missing        a census file that is not there (init mode 1)
+#   init_census_empty          a census file with no row for the site
+#   init_restart_missing       a state file that is not there (init mode 2)
 # Every case runs in its own directory of the build tree, on a one-day run whose input paths are
 # absolute: a refusal that stops working then costs a day's run there, never a long run in the
 # source tree.
@@ -21,7 +29,7 @@ cmake_minimum_required(VERSION 3.20)
 function(replace_or_fail var pattern replacement what)
    string(REGEX MATCH "${pattern}" found "${${var}}")
    if(NOT found)
-      message(FATAL_ERROR "meds_config_main.toml no longer holds ${what}: the test cannot build its run")
+      message(FATAL_ERROR "the reference configuration no longer holds ${what}: the test cannot build its run")
    endif()
    string(REGEX REPLACE "${pattern}" "${replacement}" edited "${${var}}")
    set(${var} "${edited}" PARENT_SCOPE)
@@ -50,6 +58,29 @@ elseif(CASE STREQUAL "config_rk45_loose_rtol")
    string(REGEX REPLACE "\n#? *rtol *=[^\n]*" "" text "${text}")
    replace_or_fail(text "\n\\[fast\\][^\n]*\n" "\n[fast]\ntime_integrator = \"rk45\"\nrtol = 1.0e-3\n" "a [fast] block")
    set(expects "fast\\.rtol > 1e-4 with time_integrator = \"rk45\"")
+elseif(CASE STREQUAL "config_malformed_value")
+   replace_or_fail(text "\ndepth *= *[0-9.]+" "\ndepth = two" "[soil] depth")
+   set(expects "cannot parse real for key \"soil\\.depth\"" "raw value: \"two\"" "malformed configuration value")
+elseif(CASE STREQUAL "soil_nan_layer")
+   replace_or_fail(text "\nsolid_conductivity *= *[0-9.eE+-]+" "\nsolid_conductivity = nan" "[soil] solid_conductivity")
+   set(expects "soil conductivities must be positive \\(a map layer needs sand or clay\\)")
+elseif(CASE MATCHES "^hydraulics_")
+   #----- The PFT file's copy beside the run, with one trait made impossible for every PFT. --------#
+   file(READ "${SOURCE_DIR}/meds_config_pft.toml" pft)
+   if(CASE STREQUAL "hydraulics_pv_traits")
+      #----- The stress points set by hand, as a PFT file may: left to their default, the positive    #
+      #      turgor-loss point would already be refused through them. -------------------------------#
+      foreach(key wstress_psi_open wstress_psi_close stomata_psi_onset)
+         replace_or_fail(pft "\n# *${key}( *=)" "\n${key}\\1" "[pft] ${key}, commented out")
+      endforeach()
+      replace_or_fail(pft "\nleaf_elastic_mod *= *[^ #\n]+" "\nleaf_elastic_mod = 1.0" "[hydraulics] leaf_elastic_mod")
+      set(expects "hydraulics\\.leaf_elastic_mod and wood_elastic_mod must exceed \\|pi0\\|")
+   else()
+      replace_or_fail(pft "\nwood_psi50 *= *[^ #\n]+" "\nwood_psi50 = 0.5" "[hydraulics] wood_psi50")
+      set(expects "hydraulics\\.wood_psi50 must be < 0")
+   endif()
+   file(WRITE "${WORK_DIR}/meds_config_pft.toml" "${pft}")
+   replace_or_fail(text "\npft_config *= *\"[^\"]*\"" "\npft_config = \"${WORK_DIR}/meds_config_pft.toml\"" "pft_config")
 elseif(CASE MATCHES "^init_")
    if(CASE STREQUAL "init_restart_missing")
       set(mode 2)
