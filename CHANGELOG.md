@@ -836,6 +836,10 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The last test merges** (#539). `test_output_registry`, `test_diagnostic_reduce` and
+  `test_output_integrate` are `test_output`, one section per `src/io/output` module. `test_tissue_energy`
+  dissolves into `test_therm_lib`, `test_plant_energy` and `test_slow_update`. `test_pft_optics_config` is
+  `test_pft_config`, and checks the shipped PFT file instead of the fixture's own values.
 - **The tests' config fixture runs on the shipped values, with distinct PFTs** (#538). `build_test_config`
   said it mirrored the shipped config but ran at `dt_fast` 150 s, `growth_memory_days` 90, a 20 m
   reproduction height and a storage cushion of 1. It now takes the shipped values. Its three PFTs, which
