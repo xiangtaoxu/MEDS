@@ -66,10 +66,6 @@ Science page: [`science/soil_carbon.md`](science/soil_carbon.md).
   Treefall necromass enters the structural pools directly.
 - **Fire consumption of the ground pools.** *Candidate.* [#157](https://github.com/xiangtaoxu/MEDS/issues/157)
   There is no fire in MEDS.
-- **Soil carbon does not decompose when the fast loop is off.** *Candidate.* [#545](https://github.com/xiangtaoxu/MEDS/issues/545)
-  The soil step decays the pools by the environmental scalar the fast loop integrates, so with
-  `[fast].fast_biophysics_on = false` nothing decomposes, silently. Refuse the combination, give the
-  step a fixed scalar, or warn.
 
 ---
 
@@ -206,12 +202,6 @@ Science page: [`science/forcing.md`](science/forcing.md).
   The forcing moves from its own heights to each patch's canopy-air top assuming a neutral surface
   layer (`science/forcing.md` §8). The move is small at BCI and one-sided where the sensor is far above
   the canopy-air tops.
-- **The multi-polygon runtime.** *In beta, for one node.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183)
-  `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon
-  in one process, over one forcing reader. Tiles, launchers and MPI are not planned: a larger area runs
-  as several regions, one node each. Still open:
-  - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
-  - one run container, one loop and one output-file-set sequence ([#310](https://github.com/xiangtaoxu/MEDS/issues/310)).
 - **Several sites per polygon: what is not built.** *Planned.* [#455](https://github.com/xiangtaoxu/MEDS/issues/455)
   A polygon's sites (`[[sites]]` in a site run) each take the polygon's forcing to their elevation and
   their beam onto their slope (`science/forcing.md` §8). Issue #455 asks for an example. Not built:
@@ -220,9 +210,6 @@ Science page: [`science/forcing.md`](science/forcing.md).
     cell;
   - lateral water from upslope to downslope sites, and seed dispersal between sites;
   - an optional `site` axis for the stand variables (`agb`, `lai`).
-- **The default forcing reader takes a numeric `_FillValue` as data.** *Candidate.* [#544](https://github.com/xiangtaoxu/MEDS/issues/544)
-  `read_series` does not turn a file's `_FillValue` or `missing_value` into NaN, so a gap marked
-  1e20 runs as data. The archive and map readers already refuse or mask fills.
 
 ---
 
@@ -240,12 +227,6 @@ Science page: [`science/snow_biophysics.md`](science/snow_biophysics.md).
 
 ## 10. Code, tests and documentation
 
-- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417)
-  Unused tolerances, a never-assigned tendency field, two unused dummy arguments and unused module
-  imports.
-- **The `post_proc` readers use example 03's stand-layout names.** *Candidate.* [#423](https://github.com/xiangtaoxu/MEDS/issues/423)
-  Four scripts read the layout example 03 writes, not `meds_main`'s names. Either teach them
-  `meds_main`'s names or keep saying which script reads which layout in `post_proc/README.md`.
 - **A redistributable Python wheel.** *Candidate.* [#549](https://github.com/xiangtaoxu/MEDS/issues/549)
   The wheel `python/pyproject.toml` builds is machine-local. A PyPI wheel needs a gfortran build,
   `cibuildwheel` and `auditwheel`, and netCDF's dependency closure vendored.
@@ -258,6 +239,10 @@ Science page: [`science/snow_biophysics.md`](science/snow_biophysics.md).
   Patch-axis threading ships; the cohort axis is untouched.
 - **Region runs: read the next month's forcing while the current month steps.** *Planned.* [#407](https://github.com/xiangtaoxu/MEDS/issues/407)
   A region reads each month's forcing on one thread while the others wait.
+- **Region runs: let idle threads help the slowest polygons with their patches.** *Candidate.* [#400](https://github.com/xiangtaoxu/MEDS/issues/400)
+  A region threads over polygons only, each stepping its patches on one thread, so a region with
+  fewer polygons than threads, and every month's last polygons, leave cores idle. Tiles, launchers
+  and MPI are not planned: a larger area runs as several regions, one node each.
 - **Decided against.** Single precision (`wp = real32`): MEDS stays `real64` throughout
   ([#197](https://github.com/xiangtaoxu/MEDS/issues/197), closed). GPU offload: OpenMP `target` offload
   measured 1.4× slower than the CPU, so the build option is removed.
