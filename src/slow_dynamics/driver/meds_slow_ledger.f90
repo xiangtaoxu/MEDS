@@ -381,8 +381,8 @@ contains
       end do
    end function slow_fast_carbon_handover
 
-   !----- The CO2 this step owes the canopy air [kgC/m2 site]: growth respiration and storage upkeep, !
-   !       less the starvation deficit. A declared handoff, not a store: it reaches the canopy air   !
+   !----- The CO2 this step owes the canopy air [kgC/m2 site]: growth respiration less the          !
+   !       starvation deficit. A declared handoff, not a store: it reaches the canopy air          !
    !       in the next fast window (docs/science/conservation.md §3). -------------------------------!
    pure function slow_co2_handoff(poly, cfg) result(c)
       type(polygon_t),     intent(in) :: poly

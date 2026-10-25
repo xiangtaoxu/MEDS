@@ -266,7 +266,7 @@ contains
       allocate(pft%leaf_width(n), pft%branch_diameter(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n),                                        &
                pft%storage_cushion(n), pft%growth_resp_factor(n),                            &
-               pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &
+               pft%retained_carbon_fraction(n),                                             &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
                pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
@@ -275,7 +275,6 @@ contains
                pft%leaf_clumping(n), pft%wood_clumping(n),                                   &
                pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
                pft%leaf_turnover_rate_toc(n), pft%fineroot_turnover_rate(n))
-      pft%storage_turnover_rate = 0.0_wp   ! optional key; 0 = no storage maintenance
       allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
                pft%max_absolute_growth_exponent(n))
       pft%max_relative_growth_rate     = 0.0_wp   ! optional keys; a rate of 0 = that sink limit off

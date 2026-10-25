@@ -153,7 +153,6 @@
 # mean_npp_storage_py = "M Y"                         # D M Y     [polygon] NPP to non-structural storage (kgC/m2/yr)
 # mean_npp_repro_py = "M Y"                           # D M Y     [polygon] NPP allocated to reproduction (kgC/m2/yr)
 # mean_growth_resp_py = "M Y"                         # D M Y     [polygon] growth respiration (kgC/m2/yr)
-# mean_storage_resp_py = "M Y"                        # D M Y     [polygon] storage maintenance respiration (kgC/m2/yr)
 # mean_root_exudate_py = "M Y"                        # D M Y     [polygon] root exudate: carbon the growth sink could not use (kgC/m2/yr)
 # mean_nee_py = "F D M Y"                             # F D M Y   [polygon] net ecosystem exchange (umol/m2/s)
 # mean_nee_pa = "F D M"                               # F D M     [patch] patch net ecosystem exchange (umol/m2/s)

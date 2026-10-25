@@ -1818,6 +1818,11 @@ matrix's vector (#529).
 
 ### Removed
 
+- **Storage maintenance** (#534): `[pft].storage_turnover_rate`, the cohort row `CO_STORAGE_RESP` and the
+  output `mean_storage_resp_py`. No shipped PFT set the rate, which defaulted to 0, and only tests ran it.
+  `plant_carbon_allocation.md` drops its eq. (2), and the later equations are renumbered. Results are
+  bit-identical on gfortran. On ifx, runs with the slow loop differ in the last bits (6e-8 relative at most,
+  outside the budget residuals), because the storage sum is reassociated without the zero term.
 - **The PI step controller and ESDIRK2's fixed sub-steps** (#530): `[fast].step_controller`,
   `[fast].esdirk2_adaptive` and `[fast].esdirk2_fixed_substep`, with `CTRL_I`, `CTRL_PI`, the PI gains and
   `fixed_march`. Only tests ran either option. The fast loop marches ESDIRK2 adaptively under the integral

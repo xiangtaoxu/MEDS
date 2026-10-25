@@ -26,7 +26,7 @@ module meds_slow_state
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, cohort_carbon_demand,               &
                                             growth_window_so_far, growth_sink_limitation
    use meds_diag_vars,               only : CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE,   &
-                                            CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP, CO_EXUDATE,   &
+                                            CO_NPP_REPRO, CO_GROWTH_RESP, CO_EXUDATE,   &
                                             PA_MORT_C_BACKGROUND
    use meds_leaf_params,             only : leaf_physiology_params_t
    use meds_patch_state_vars,        only : litter_input_t, add_shed_water, soil_carbon_state_t
@@ -54,7 +54,7 @@ module meds_slow_state
    !      for meds_slow_update to commit (docs/science/order_of_processes.md §4). --------------!
    type :: slow_step_data_t
       !----- The net change of the four carbon pools [kgC/plant]: growth less shed for leaf  !
-      !      and fine root, growth for wood, allocation less storage upkeep plus resorption   !
+      !      and fine root, growth for wood, allocation plus resorption                       !
       !      for storage. Not the reported NPP (the gross CO_NPP_* rows): a canopy that sheds !
       !      more than it grows has a negative leaf change, the sign shed_turnover_water reads. !
       real(wp), allocatable :: d_leaf(:), d_fineroot(:), d_wood(:), d_nonstructural(:)
@@ -291,7 +291,7 @@ contains
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
-      real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
+      real(wp)    :: leaf_retained_c, fineroot_retained_c
       real(wp)    :: seed_lost, exudate, window_yr, grown_in_window
       real(wp), allocatable :: co2_owed(:)
       integer(ik) :: n_window, next_pos
@@ -316,20 +316,8 @@ contains
             leaf_target  = size_to_leaf_carbon(cohort%pft_table%allom(pf), cohort%dbh(j), cohort%height(j), &
                                             cohort%sla(j))
             leaf_turn    = cohort%leaf_turnover_rate(j)   ! baseline leaf turnover [1/yr]
-            !----- Storage upkeep, charged first: netted into the storage tendency, not written to the  !
-            !      pool, and the allocator sees the reserve after it. The fraction is clamped to [0,1],  !
-            !      so the charge never exceeds the pool or turns negative                                !
-            !      (docs/science/plant_carbon_allocation.md eq. (2), §1 "Storage maintenance"). --------!
-            storage_maint = cohort%nonstructural_carbon(j)                                              &
-                          * min(1.0_wp, max(0.0_wp, pft%storage_turnover_rate(pf) * dt_yr))
-            store_post    = cohort%nonstructural_carbon(j) - storage_maint
-            !----- Storage upkeep is owed to the canopy air with growth respiration                 !
-            !      (docs/science/plant_respiration.md §6). ----------------------------------------!
-            co2_owed(cohort%owner_patch(j)) = co2_owed(cohort%owner_patch(j))                           &
-                                            + cohort%nplant(j) * storage_maint
-
             store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
-                                                             r2l * leaf_target) - store_post)
+                                                             r2l * leaf_target) - cohort%nonstructural_carbon(j))
             !----- Reproduction starts at min_repro_height (docs/science/plant_carbon_allocation.md §2). !
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%min_repro_height(pf))
@@ -354,7 +342,7 @@ contains
             !----- Allocate the day's carbon: growth respiration on realized growth, wood capped by !
             !      the sink limit (docs/science/plant_carbon_allocation.md §2-§3). ---------------!
             call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
-                     growth_resp_frac=pft%growth_resp_factor(pf), storage=store_post,                    &
+                     growth_resp_frac=pft%growth_resp_factor(pf), storage=cohort%nonstructural_carbon(j),                    &
                      leaf_demand=leaf_demand, fineroot_demand=fineroot_demand,                     &
                      storage_demand=store_demand, repro_frac=repro_frac,                           &
                      growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
@@ -373,16 +361,16 @@ contains
             step%d_leaf(j)          = g_leaf     - leaf_shed_c
             step%d_fineroot(j)      = g_fineroot - fineroot_shed_c
             step%d_wood(j)          = g_wood
-            !----- Storage: allocation less upkeep, plus the resorbed carbon, which d_leaf and     !
-            !      d_fineroot remove in full (docs/science/plant_carbon_allocation.md eq. (3)). ----!
-            step%d_nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
+            !----- Storage: the allocation, plus the resorbed carbon, which d_leaf and d_fineroot    !
+            !      remove in full (docs/science/plant_carbon_allocation.md eq. (2)). ----------------!
+            step%d_nonstructural(j) = npp_store + leaf_retained_c + fineroot_retained_c
             step%npp_repro(j)       = g_repro
             !----- No leaves and no storage: the maintenance left unpaid once storage is spent exceeds !
             !      all the leaf carbon, so no flush can be paid for                                   !
             !      (docs/science/plant_carbon_allocation.md §2, "A cohort with no leaves and no storage"). !
             step%exhausted(j)       = deficit > cohort%leaf_carbon(j)
-            !----- Slow cohort rows: the allocation split, growth respiration, storage upkeep and     !
-            !      exudate, as rates [kgC/plant/yr], so the carbon budget closes from the output. ----!
+            !----- Slow cohort rows: the allocation split, growth respiration and exudate, as rates  !
+            !      [kgC/plant/yr], so the carbon budget closes from the output. -------------------!
             if (cohort%sdiag%active) then
                cohort%sdiag%v(CO_NPP_LEAF,     j) = g_leaf     / dt_yr
                cohort%sdiag%v(CO_NPP_FINEROOT, j) = g_fineroot / dt_yr
@@ -390,7 +378,6 @@ contains
                cohort%sdiag%v(CO_NPP_STORAGE,  j) = npp_store  / dt_yr
                cohort%sdiag%v(CO_NPP_REPRO,    j) = g_repro    / dt_yr
                cohort%sdiag%v(CO_GROWTH_RESP,  j) = growth_resp / dt_yr
-               cohort%sdiag%v(CO_STORAGE_RESP, j) = storage_maint / dt_yr
                cohort%sdiag%v(CO_EXUDATE,      j) = exudate / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
