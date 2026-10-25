@@ -139,12 +139,12 @@ contains
       call check_close(sum([(poly%patch%area(poly%cohort%owner_patch(i)) * poly%cohort%nplant(i)             &
                              * poly%cohort%agb(i), i = 1_ik, poly%cohort%n)]), agb0, 1.0e-12_wp,         &
                        'restructuring must conserve the site''s biomass')
-      !----- With both switches off it leaves the stand alone. ----------------------------------!
+      !----- With demography off it leaves the stand alone. ----------------------------------!
       call init_from_census(poly, cfg, 'test_census_cells.csv', found)
-      cfg%do_cohort_fissfuse = .false. ; cfg%do_patch_fissfuse = .false.
+      cfg%demography%demography_on = .false.
       call restructure_census_stand(poly, cfg)
       call check(poly%patch%n == 20_ik .and. poly%cohort%n == 60_ik, 'restructuring must honour the switches')
-      cfg%do_cohort_fissfuse = .true. ; cfg%do_patch_fissfuse = .true.
+      cfg%demography%demography_on = .true.
       open(newunit=u, file='test_census_cells.csv', status='old', action='read')
       close(u, status='delete')
       !=== A missing file, or a site the file has no row for, is reported (found=.false.) with  !

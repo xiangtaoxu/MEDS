@@ -35,8 +35,8 @@ program test_disturbance
    call finalize_init(poly)
    h_tall  = poly%cohort%height(1)                                ! sorted tallest-first
    h_short = poly%cohort%height(poly%cohort%n)
-   call check(h_tall  >= cfg%disturbance_survive_height, 'tall cohort should exceed threshold')
-   call check(h_short <  cfg%disturbance_survive_height, 'short cohort should be below threshold')
+   call check(h_tall  >= cfg%demography%disturbance_survive_height, 'tall cohort should exceed threshold')
+   call check(h_short <  cfg%demography%disturbance_survive_height, 'short cohort should be below threshold')
    n_before = total_nplant(poly)
    !----- The survivor's film [kg/plant] goes into the gap with it; the site total of the        !
    !      SURVIVOR's film is conserved across the split. -----------------------------------------!
@@ -74,7 +74,7 @@ program test_disturbance
    !      disturbance is normalized over; the answer is then the declared [1/yr] rate.            !
    poly%patch%diag%n      = poly%patch%n
    poly%patch%diag%w(1:poly%patch%n) = yr_sec
-   frac_expect = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
+   frac_expect = 1.0_wp - exp(-cfg%demography%patch_disturbance_rate * 1.0_wp)
    call check(frac_expect > 1.0e-6_wp, 'the fixture must actually disturb something')
    call patch_diag_value(poly%patch%diag, PA_DISTURB_AREA, disturb_rate, n_slot)
    call check_close(disturb_rate(1), frac_expect, 1.0e-12_wp,                                       &
@@ -97,14 +97,14 @@ program test_disturbance
    do ip = 1_ik, poly%patch%n
       i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
-         if (poly%cohort%height(i) < cfg%disturbance_survive_height)                                &
+         if (poly%cohort%height(i) < cfg%demography%disturbance_survive_height)                                &
             film_after = film_after + poly%patch%area(ip) * poly%cohort%nplant(i) * poly%cohort%leaf_surf_water(i)
       end do
    end do
    call check_close(film_after, film_before, 1.0e-12_wp, 'disturbance broke the survivor film-water conservation')
    i0 = poly%patch%cohort_offset(ig) ; i1 = i0 + poly%patch%cohort_count(ig) - 1_ik
    do i = i0, i1
-      call check(poly%cohort%height(i) < cfg%disturbance_survive_height,                        &
+      call check(poly%cohort%height(i) < cfg%demography%disturbance_survive_height,                        &
                  'tall canopy cohort must not survive in the gap')
    end do
 
@@ -125,7 +125,7 @@ program test_disturbance
    do ip = 1_ik, poly%patch%n
       i0 = poly%patch%cohort_offset(ip) ; i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
       do i = i0, i1
-         if (poly%cohort%height(i) < cfg%disturbance_survive_height .and. ip == 1_ik) then
+         if (poly%cohort%height(i) < cfg%demography%disturbance_survive_height .and. ip == 1_ik) then
             poly%cohort%leaf_surf_water(i) = 0.25_wp
             film_before = film_before + poly%patch%area(ip) * poly%cohort%nplant(i) * 0.25_wp
          end if

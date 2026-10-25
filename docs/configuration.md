@@ -71,10 +71,9 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | Block | What it sets |
 |---|---|
 | `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
-| `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control; the relative tolerance `rtol` of every error-controlled store, the soil-plant water network's absolute tolerance `water_atol`, the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
+| `[fast]` | The sub-daily loop: `dt_fast`, the GPP of a run without it (`gpp_ref`), the integrator, tolerances, error control; the relative tolerance `rtol` of every error-controlled store, the soil-plant water network's absolute tolerance `water_atol`, the budget checks (`soil_energy_budget_atol`, `debug_error`) and the canopy interception (`intercept_alpha`, `intercept_k`). |
 | `[init]` | How the run starts, and the path to the PFT file. |
-| `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
-| `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |
+| `[demography]` | The stand's structure: one switch per operator (recruitment, cohort fusion and fission, treefall gaps, patch fusion), each under `demography_on`; cohort and patch fusion and fission, the cull, the treefall rate and the recruit pool that founds a cohort. |
 | `[soil]` | The **ground**: depth and layers, hydraulic texture, retention family and thermal properties; its surface (the pond, the dry surface layer, and the optics `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`); and its two bottom boundaries, `water_bottom_bc` and `thermal_bottom_bc` with the thermal anchor's `deep_temp` and `deep_depth`. |
 | `[snow]`, `[aerodynamics]` | The snow store's and the canopy aerodynamics' parameters. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
@@ -177,8 +176,8 @@ are not compared.
 **The ceiling is hard and the target is not.** Two cohorts or patches more different than the
 ceiling stay apart even if the count is then above its target, because merging them would lose
 structure the model needs. A run in which that happened says so at the end, for example
-`NOTE: patch fusion left 24 patches on 2013-01-01 (max_patch = 12): ...`. A negative `max_cohort` or
-`max_patch` forces fusion instead, ignoring the test.
+`NOTE: patch fusion left 24 patches on 2013-01-01 (max_patch = 12): ...`. Each target is at least
+1; fusion is turned off by its switch, `cohort_fusion_on` or `patch_fusion_on`.
 
 `patch_light_tol_max` is optional. Absent, it is 0.15, or `patch_light_tol` if that is larger. Set
 it to `patch_light_tol × 1.5^(n_patch_fusion_iter − 1)`, 0.759375 for the shipped 0.10 and six

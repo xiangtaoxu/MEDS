@@ -187,6 +187,7 @@ contains
       write(uout,'(a)') 'dt_slow    = "1d"'
       write(uout,'(a)') '[fast]'
       write(uout,'(a)') 'fast_biophysics_on = false'
+      write(uout,'(a)') 'gpp_ref = 0.3'
       write(uout,'(a)') '[forcing]'
       write(uout,'(a)') 'forcing_on = false'
       write(uout,'(a)') '[init]'
@@ -200,8 +201,6 @@ contains
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'state_write = false'
       write(uout,'(a)') 'enabled = false'
-      write(uout,'(a)') '[carbon]'
-      write(uout,'(a)') 'gpp_ref = 0.3'
       open(newunit=uin, file=CFG_DEFAULT, status='old', action='read')
       do
          read(uin,'(a)',iostat=ios) line

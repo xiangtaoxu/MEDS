@@ -22,11 +22,13 @@ end_time   = "2250-01-01"      # end, exclusive: a 250-year spin-up
 
 [fast]
 # The sub-daily loop, nint(dt_slow/dt_fast) sub-steps a slow step. Off in this reference, a demographic
-# spin-up with no forcing file: growth then runs on [carbon].gpp_ref (example 04 turns it on).
+# spin-up with no forcing file: growth then runs on gpp_ref (example 04 turns it on).
 fast_biophysics_on  = false    # the sub-daily loop
 dt_fast             = "900s"   # sub-daily step, an accuracy setting: 900 s is the edge of the measured
                                #   range; 300 s for the timing of dry-season leaf habits
                                #   (docs/science/numerical_scheme.md §5a, §6)
+gpp_ref             = 0.3      # [kgC/m2 leaf/yr] the GPP of a run without the loop: required there,
+                               #   unused with the loop on
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). ----
 # time_integrator     = "esdirk2"    # "esdirk2" (default) | "rk45" (explicit, for comparison)
 # esdirk2_adaptive    = true         # adaptive sub-steps; false: esdirk2_fixed_substep of them
@@ -130,38 +132,42 @@ dth_diff         = 0.007      # [1/K] its linear temperature slope
 t_ref_air        = 273.15     # [K]   reference temperature of the two air properties
 
 [demography]
-# Cohort and patch fusion (docs/configuration.md "Cohort and patch fusion").
+# The stand's structure (docs/science/demography.md; docs/configuration.md "Cohort and patch fusion").
 demography_on             = true     # false: the stand's structure is frozen (growth and mortality run)
-do_cohort_fissfuse        = true     # monthly cohort recruitment, fusion and fission
-do_patch_disturbance      = true     # yearly treefall gaps
-do_patch_fissfuse         = true     # yearly patch fusion and termination
-max_cohort                = 60       # cohorts in the most crowded patch, a target
+# ---- One switch per operator, each under demography_on. The cull (min_cohort_agb,
+# negligible_nplant) and patch termination (min_patch_area) always run: they bound the blocks. ----
+recruitment_on            = true     # monthly: a recruit pool of min_recruit_size founds a cohort
+cohort_fusion_on          = true     # monthly, and yearly after patch fusion: similar cohorts fuse
+cohort_fission_on         = true     # monthly: a cohort above cohort_lai_cap splits
+patch_disturbance_on      = true     # yearly: treefall gaps
+patch_fusion_on           = true     # yearly: patches of similar light profiles fuse
+# ---- Recruitment. ----
+min_recruit_size          = 1.0e-2   # [plant/m2] the recruit pool that founds a cohort
+# ---- Cohort fusion, fission and the cull. ----
+max_cohort                = 60       # cohorts in the most crowded patch, a target (at least 1)
 n_cohort_fusion_iter      = 6        # cohort-fusion passes at most
 cohort_size_tol_min       = 0.02     # [-] height tolerance, a share of the patch's top height, first pass
 cohort_size_tol_max       = 0.10     # [-] its ceiling
 cohort_lai_cap            = 1.0      # [m2/m2] one cohort's LAI at most: split above it, no fusion above it
+split_eps                 = 1.0e-4   # [-] the diameter perturbation of a split
 min_cohort_agb            = 1.0e-6   # [kgC/m2] a cohort below this nplant * agb is culled
 negligible_nplant         = 1.0e-8   # [plant/m2] the density mortality stops at and the cull removes
-split_eps                 = 1.0e-4   # [-] the diameter perturbation of a split
-enable_cohort_fission     = true
-n_height_layers           = 16       # layers of the light profile patch fusion compares
-max_patch                 = 12       # patches, a target
+# ---- Treefall gaps. ----
+patch_disturbance_rate    = 0.014    # [1/yr] the share of the area a year's treefall gaps open (above 0)
+disturbance_survive_height = 10.0    # [m] a cohort this tall or taller dies in the gap
+# ---- Patch fusion and termination. ----
+max_patch                 = 12       # patches per site, a target (at least 1)
 n_patch_fusion_iter       = 6        # patch-fusion passes at most
 patch_light_tol           = 0.10     # [-] mean light-profile distance that fuses two patches, first pass
 patch_light_tol_max       = 0.15     # [-] its ceiling: patches further apart stay apart above max_patch
-# light_ext_coeff_fusefiss  = 0.5      # [-] extinction of the light profiles fusion compares
 patch_light_maxdev_factor = 1.5      # [-] one layer's distance may be this times the tolerance
-min_patch_area            = 1.0e-4   # [-] a patch below this share of its site is culled
+n_height_layers           = 16       # layers of the light profile patch fusion compares
+# light_ext_coeff_fusefiss  = 0.5      # [-] extinction of the light profiles fusion compares
+min_patch_area            = 1.0e-4   # [-] a patch below this share of its site is merged away
+# ---- The operators' tolerance, and the growth memory mortality reads. ----
 conservation_tol          = 0.001    # [-] the biomass and area a fusion or split may lose
 growth_memory_days        = 365.0    # [day] the window of the growth average mortality reads; a year, as
                                      #   the census growth its laws are fitted on
-
-[disturbance]
-patch_disturbance_rate     = 0.014   # [1/yr] the share of the area a year's treefall gaps open
-disturbance_survive_height = 10.0    # [m] a cohort this tall or taller dies in the gap
-
-[recruitment]
-min_recruit_size = 1.0e-2            # [plant/m2] the recruit pool that founds a cohort
 
 [init]
 # How the run starts (docs/configuration.md "How a run starts").
@@ -212,10 +218,6 @@ sync_every    = "flush"         # "flush": records reach the disk each month | "
   [output.annual]
   enabled = true
   file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3            # [kgC/m2 leaf/yr] the GPP of a run without the fast loop: required there,
-                               #   unused with the loop on
 
 # Leaf phenology has no switch: it runs every day of every run, with each PFT's [phenology] block in
 # the PFT file (docs/science/plant_phenology.md).

@@ -113,7 +113,7 @@ contains
       !          targets from last step's overtopping LAI, before the allocation reads them. The     !
       !          leaf carbon an SLA rise resorbs to storage (no heat capacity) changes the tissue     !
       !          energy at unchanged temperature: declared (docs/science/conservation.md §4). -------!
-      if (cfg%trait_plasticity_on) then
+      if (cfg%trait_dynamics%trait_plasticity_on) then
          call advance_plant_traits(poly, cfg%dt_years, leaf_carbon_new, storage_new)
          call slow_ledger_heat_open(ledger, poly)
          call commit_trait_carbon(poly, leaf_carbon_new, storage_new)
@@ -212,37 +212,38 @@ contains
       logical,             intent(in)    :: is_new_month, is_new_year   !< which boundary this is
       type(slow_ledger_t), intent(inout) :: ledger   !< the slow ledger; an inactive one books nothing
       real(wp) :: cull_water, rec_carbon, rec_heat, rec_water, dist_water, frac, kill_carbon
-      logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
+      logical  :: monthly, yearly
       logical, allocatable :: found(:,:), survives(:)
       type(kill_report_t)  :: kills
 
-      !----- The calendar cadence, and the demography and fusion/fission switches. ----------!
-      do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
-      do_patch_disturbance = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_disturbance
-      do_patch_fissfuse    = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_fissfuse
+      !----- The calendar cadence; each operator also has its own switch. ----------------------!
+      monthly = is_new_month .and. cfg%demography%demography_on
+      yearly  = is_new_year  .and. cfg%demography%demography_on
 
       !----- Cohort restructuring (monthly): recruitment, fusion, cull, fission and sort. ----!
       !      Recruitment is marked on its own: it alone draws carbon, heat and water from     !
       !      outside the model, checkable only if no other operator shares its phase          !
       !      (docs/science/conservation.md §3). -----------------------------------------------!
-      if (do_cohort_fissfuse) then
-         call decide_recruitment(poly, cfg, found)
-         call apply_recruitment(poly, cfg, found, rec_carbon, rec_heat, rec_water)
-         call slow_ledger_declare(ledger, carbon_in = rec_carbon, energy_in = rec_heat, water_in = rec_water)
+      if (monthly) then
+         if (cfg%demography%recruitment_on) then
+            call decide_recruitment(poly, cfg, found)
+            call apply_recruitment(poly, cfg, found, rec_carbon, rec_heat, rec_water)
+            call slow_ledger_declare(ledger, carbon_in = rec_carbon, energy_in = rec_heat, water_in = rec_water)
+         end if
          call slow_ledger_heat_open(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_RECRUIT)
-         call fuse_cohorts(poly, cfg)
+         if (cfg%demography%cohort_fusion_on) call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg, cull_water, kills)
          call kill_litter(poly, kills, kill_carbon)
-         call split_cohorts(poly, cfg)
+         if (cfg%demography%cohort_fission_on) call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
          call slow_ledger_declare(ledger, carbon_out = kill_carbon, water_out = cull_water)
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_COHORT)
       end if
 
-      !----- Patch disturbance, then patch fusion and termination (yearly, each switchable). -!
-      if (do_patch_disturbance) then
+      !----- Treefall gaps, then patch fusion and termination (yearly). ----------------------!
+      if (yearly .and. cfg%demography%patch_disturbance_on) then
          call decide_disturbance(poly, cfg, PATCH_DYNAMICS_INTERVAL, frac, survives)
          call slow_ledger_heat_open(ledger, poly)
          call apply_patch_disturbance(poly, cfg, frac, survives, dist_water, kills)
@@ -251,12 +252,12 @@ contains
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_DISTURB)
       end if
-      if (do_patch_fissfuse) then
+      if (yearly) then
          call slow_ledger_heat_open(ledger, poly)
          call sort_patches(poly)
-         call fuse_patches(poly, cfg)
+         if (cfg%demography%patch_fusion_on) call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
-         call fuse_cohorts(poly, cfg)
+         if (cfg%demography%cohort_fusion_on) call fuse_cohorts(poly, cfg)
          call terminate_cohorts(poly, cfg, cull_water, kills)
          call kill_litter(poly, kills, kill_carbon)
          call sort_cohorts(poly)

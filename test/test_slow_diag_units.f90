@@ -139,13 +139,13 @@ program test_slow_diag_units
       elapsed_yr = poly%patch%diag%w(1) / yr_sec
       call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
                        'the window after the boundary weighs exactly one slow step')
-      frac_expected = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)   ! PATCH_DYNAMICS_INTERVAL
+      frac_expected = 1.0_wp - exp(-cfg%demography%patch_disturbance_rate * 1.0_wp)   ! PATCH_DYNAMICS_INTERVAL
       call check(frac_expected > 0.0_wp, 'the test config actually disturbs')
       call patch_diag_value(poly%patch%diag, PA_DISTURB_AREA, x, np)
       call check_close(x(1) * elapsed_yr, frac_expected, 1.0e-9_wp,                                &
                        'PA_DISTURB_AREA rate x elapsed == the area fraction disturbed')
       write(*,'(a,es12.5,a,es12.5,a)') '   (disturbance: reported ', x(1),                         &
-                                       ' 1/yr  vs configured hazard ', cfg%patch_disturbance_rate, ' 1/yr)'
+                                       ' 1/yr  vs configured hazard ', cfg%demography%patch_disturbance_rate, ' 1/yr)'
    end block
 
    !=== 5. A SLOW-ONLY RUN. No fast loop weighs the block or sets its patch count, so the         !

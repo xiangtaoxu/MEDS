@@ -104,7 +104,7 @@ contains
       cfg%soil_carbon%soil_carbon_on    = .false.
       !----- Raise the density floor so a NORMAL cohort is culled: the alternative is a cohort so  !
       !      small its carbon is at the rounding floor, which would make the assertion vacuous.    !
-      cfg%negligible_nplant = 0.30_wp
+      cfg%demography%negligible_nplant = 0.30_wp
 
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.20_wp, 20.0_wp)   ! below the floor -> culled
@@ -137,15 +137,15 @@ contains
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.20_wp, 40.0_wp)   ! tall  -> dies in the gap
       call add_cohort(poly, cfg, 1_ik, 2_ik, 0.50_wp,  3.0_wp)   ! short -> survives into it
       call finalize_init(poly)
-      call check(poly%cohort%height(1) >= cfg%disturbance_survive_height,                          &
+      call check(poly%cohort%height(1) >= cfg%demography%disturbance_survive_height,                          &
                  'disturbance fixture: cohort 1 is canopy')
-      call check(poly%cohort%height(2) <  cfg%disturbance_survive_height,                          &
+      call check(poly%cohort%height(2) <  cfg%demography%disturbance_survive_height,                          &
                  'disturbance fixture: cohort 2 is understorey')
       call arm_patch_diag(poly, cfg)
 
       !----- The oracle, on the state BEFORE the call, since the call removes the canopy cohort.   !
       !      One patch of unit area, so the site amount is just frac x its density x its pools.    !
-      frac   = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
+      frac   = 1.0_wp - exp(-cfg%demography%patch_disturbance_rate * 1.0_wp)
       expect = poly%patch%area(1) * frac * poly%cohort%nplant(1) * plant_carbon(poly, 1_ik)
       call check(expect > 0.0_wp, 'disturbance fixture: the canopy carries carbon')
 
@@ -222,9 +222,9 @@ contains
       call leafless_stand(poly, cfg, 0.0_wp)
       call arm_patch_diag(poly, cfg)        ! fast loop on: the fixture's weight stands in for it
       n0     = poly%cohort%nplant(1)
-      expect = (n0 - cfg%negligible_nplant) * plant_carbon(poly, 1_ik)
+      expect = (n0 - cfg%demography%negligible_nplant) * plant_carbon(poly, 1_ik)
       call advance_slow_dynamics(poly, cfg, no_ledger)
-      call check(poly%cohort%nplant(1) == cfg%negligible_nplant,                                   &
+      call check(poly%cohort%nplant(1) == cfg%demography%negligible_nplant,                                   &
                  'no leaves, no storage: the density reaches the floor on the first step')
       call check_close(site_amount(poly, cfg, PA_MORT_C_BACKGROUND), expect, 1.0e-9_wp,            &
                        'no leaves, no storage: its carbon dies down the background pathway')

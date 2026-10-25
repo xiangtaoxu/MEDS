@@ -4,7 +4,7 @@
 # The driver is examples/example03_demography/run_demography.py, not meds_main: the laws live in the
 # example, and meds_main has only the carbon path. This is still a full MEDS config because
 # `meds_config_load` requires one; the driver reads the PFT table, the demographic settings, the
-# treefall disturbance and the census file from it. The [run], [fast], [carbon] and output keys are
+# treefall disturbance and the census file from it. The [run], [fast] and output keys are
 # required by the loader and unused on this path. Paths are relative to the repository root.
 
 [run]
@@ -15,12 +15,14 @@ end_time   = "2300-01-01"
 [fast]
 fast_biophysics_on  = false    # demographics only: no sub-daily biophysics
 dt_fast             = "900s"
+gpp_ref             = 0.3   # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
 
 [demography]
 demography_on             = true
-do_cohort_fissfuse        = true
-do_patch_disturbance      = true
-do_patch_fissfuse         = true
+recruitment_on            = true
+cohort_fusion_on          = true
+patch_disturbance_on      = true
+patch_fusion_on           = true
 max_cohort                = 60
 n_cohort_fusion_iter      = 6
 cohort_size_tol_min       = 0.02
@@ -29,7 +31,7 @@ cohort_lai_cap            = 1.0
 min_cohort_agb            = 1.0e-6
 negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
-enable_cohort_fission     = true
+cohort_fission_on         = true
 n_height_layers           = 16
 max_patch                 = 12
 n_patch_fusion_iter       = 6
@@ -39,13 +41,9 @@ patch_light_maxdev_factor = 1.5
 min_patch_area            = 1.0e-4
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
-
-[disturbance]
-patch_disturbance_rate     = 0.014
+patch_disturbance_rate    = 0.014
 disturbance_survive_height = 10.0
-
-[recruitment]
-min_recruit_size = 1.0e-2
+min_recruit_size          = 1.0e-2
 
 [init]
 init_mode    = 0
@@ -91,7 +89,3 @@ phi_psii         = 0.85    # [--] electron yield of linear transport in low ligh
 #      than left out. ------
 [soil_carbon]
 soil_carbon_on = false
-
-#----- Required by the loader; unused when Python supplies the rates (see the header). ------
-[carbon]
-gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)

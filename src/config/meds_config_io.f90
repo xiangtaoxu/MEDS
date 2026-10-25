@@ -34,6 +34,7 @@ module meds_config_io
    use meds_biophysics_params, only : snow_params_t, aero_params_t
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,   &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
+   use meds_demography_params,     only : demography_params_t
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real, toml_table_count,                        &
                                toml_logical, toml_string, toml_real_array, toml_record_reset,  &
@@ -502,6 +503,47 @@ contains
       s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
    end subroutine load_soil_carbon_params
+
+   !----- [demography] (docs/science/demography.md; docs/configuration.md, "Cohort and patch     !
+   !      fusion"): every key required but the extinction of the light profiles and the patch     !
+   !      tolerance's ceiling. -------------------------------------------------------------------!
+   subroutine load_demography_params(tm, d, m)
+      type(toml_table_t), intent(in)    :: tm
+      type(demography_params_t), intent(inout) :: d
+      type(keymiss_t),    intent(inout) :: m
+      call req_l(tm, 'demography.demography_on',              d%demography_on,              m)
+      call req_l(tm, 'demography.recruitment_on',             d%recruitment_on,             m)
+      call req_l(tm, 'demography.cohort_fusion_on',           d%cohort_fusion_on,           m)
+      call req_l(tm, 'demography.cohort_fission_on',          d%cohort_fission_on,          m)
+      call req_l(tm, 'demography.patch_disturbance_on',       d%patch_disturbance_on,       m)
+      call req_l(tm, 'demography.patch_fusion_on',            d%patch_fusion_on,            m)
+      call req_r(tm, 'demography.min_recruit_size',           d%min_recruit_size,           m)
+      call req_i(tm, 'demography.max_cohort',                 d%max_cohort,                 m)
+      call req_i(tm, 'demography.n_cohort_fusion_iter',       d%n_cohort_fusion_iter,       m)
+      call req_r(tm, 'demography.cohort_size_tol_min',        d%cohort_size_tol_min,        m)
+      call req_r(tm, 'demography.cohort_size_tol_max',        d%cohort_size_tol_max,        m)
+      call req_r(tm, 'demography.cohort_lai_cap',             d%cohort_lai_cap,             m)
+      call req_r(tm, 'demography.split_eps',                  d%split_eps,                  m)
+      call req_r(tm, 'demography.min_cohort_agb',             d%min_cohort_agb,             m)
+      call req_r(tm, 'demography.negligible_nplant',          d%negligible_nplant,          m)
+      call req_r(tm, 'demography.patch_disturbance_rate',     d%patch_disturbance_rate,     m)
+      call req_r(tm, 'demography.disturbance_survive_height', d%disturbance_survive_height, m)
+      call req_i(tm, 'demography.max_patch',                  d%max_patch,                  m)
+      call req_i(tm, 'demography.n_patch_fusion_iter',        d%n_patch_fusion_iter,        m)
+      call req_i(tm, 'demography.n_height_layers',            d%n_height_layers,            m)
+      call req_r(tm, 'demography.patch_light_tol',            d%patch_light_tol,            m)
+      call req_r(tm, 'demography.patch_light_maxdev_factor',  d%patch_light_maxdev_factor,  m)
+      !----- The ceiling is optional: absent, 0.15, or patch_light_tol if larger, so it never       !
+      !      falls below the first pass's tolerance. --------------------------------------------!
+      d%patch_light_tol_max = 0.15_wp
+      if (toml_has(tm, 'demography.patch_light_tol'))                                               &
+         d%patch_light_tol_max = max(0.15_wp, d%patch_light_tol)   ! clamp-ok: the setting's default
+      d%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', d%patch_light_tol_max)
+      d%light_ext_coeff_fusefiss = toml_real(tm, 'demography.light_ext_coeff_fusefiss', 0.5_wp)
+      call req_r(tm, 'demography.min_patch_area',             d%min_patch_area,             m)
+      call req_r(tm, 'demography.conservation_tol',           d%conservation_tol,           m)
+      call req_r(tm, 'demography.growth_memory_days',         d%growth_memory_days,         m)
+   end subroutine load_demography_params
 
 
    !----- [allometry].height_allometry, one name for every PFT or one per PFT, and for        !
@@ -1022,40 +1064,8 @@ contains
       !----- [soil_carbon] (docs/science/soil_carbon.md): every key optional, at its type default. ---!
       call load_soil_carbon_params(tm, cfg%soil_carbon, miss)
 
-      call req_l(tm, 'demography.demography_on',          cfg%demography_on,          miss)
-      call req_l(tm, 'demography.do_cohort_fissfuse',     cfg%do_cohort_fissfuse,     miss)
-      call req_l(tm, 'demography.do_patch_fissfuse',      cfg%do_patch_fissfuse,      miss)
-      call req_l(tm, 'demography.do_patch_disturbance',   cfg%do_patch_disturbance,   miss)
-      call req_i(tm, 'demography.max_cohort',             cfg%max_cohort,             miss)
-      call req_i(tm, 'demography.n_cohort_fusion_iter',   cfg%n_cohort_fusion_iter,   miss)
-      call req_r(tm, 'demography.cohort_size_tol_min',    cfg%cohort_size_tol_min,    miss)
-      call req_r(tm, 'demography.cohort_size_tol_max',    cfg%cohort_size_tol_max,    miss)
-      call req_r(tm, 'demography.cohort_lai_cap',         cfg%cohort_lai_cap,         miss)
-      call req_r(tm, 'demography.min_cohort_agb',         cfg%min_cohort_agb,         miss)
-      call req_r(tm, 'demography.negligible_nplant',      cfg%negligible_nplant,      miss)
-      call req_r(tm, 'demography.split_eps',              cfg%split_eps,              miss)
-      call req_l(tm, 'demography.enable_cohort_fission',  cfg%enable_cohort_fission,  miss)
-      call req_i(tm, 'demography.n_height_layers',        cfg%n_height_layers,        miss)
-      call req_i(tm, 'demography.max_patch',              cfg%max_patch,              miss)
-      call req_i(tm, 'demography.n_patch_fusion_iter',    cfg%n_patch_fusion_iter,    miss)
-      call req_r(tm, 'demography.patch_light_tol',        cfg%patch_light_tol,        miss)
-      call req_r(tm, 'demography.patch_light_maxdev_factor', cfg%patch_light_maxdev_factor, miss)
-      !----- The ceiling is optional: absent, 0.15, or patch_light_tol if larger, so it never       !
-      !      falls below the first pass's tolerance (docs/configuration.md, "Cohort and patch       !
-      !      fusion"). -----------------------------------------------------------------------------!
-      cfg%patch_light_tol_max = 0.15_wp
-      if (toml_has(tm, 'demography.patch_light_tol'))                                               &
-         cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)   ! clamp-ok: the setting's default
-      cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
-      cfg%light_ext_coeff_fusefiss = toml_real(tm, 'demography.light_ext_coeff_fusefiss', 0.5_wp)
-      call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)
-      call req_r(tm, 'demography.conservation_tol',       cfg%conservation_tol,       miss)
-      call req_r(tm, 'demography.growth_memory_days',     cfg%growth_memory_days,     miss)
-
-      call req_r(tm, 'disturbance.patch_disturbance_rate',     cfg%patch_disturbance_rate,     miss)
-      call req_r(tm, 'disturbance.disturbance_survive_height', cfg%disturbance_survive_height, miss)
-
-      call req_r(tm, 'recruitment.min_recruit_size',      cfg%min_recruit_size,       miss)
+      !----- [demography]: the switches and settings of the stand's operators. ---------------!
+      call load_demography_params(tm, cfg%demography, miss)
 
       call req_i(tm, 'init.init_mode',     cfg%init%init_mode,         miss)
       !----- The state file and the census file are required by the mode that starts from them,     !
@@ -1076,16 +1086,17 @@ contains
       cfg%init%reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init%reacclimate_traits)
 
 
-      !----- Carbon growth: the stub GPP of a run without the fast loop, required there only. ---!
+      !----- [fast].gpp_ref, the stub GPP of a run without the fast loop: required there only. ---!
       if (.not. cfg%fast_biophysics_on) then
-         call req_r(tm, 'carbon.gpp_ref', cfg%gpp_ref, miss)
+         call req_r(tm, 'fast.gpp_ref', cfg%gpp_ref, miss)
       else
-         cfg%gpp_ref = toml_real(tm, 'carbon.gpp_ref', cfg%gpp_ref)
+         cfg%gpp_ref = toml_real(tm, 'fast.gpp_ref', cfg%gpp_ref)
       end if
 
-      !----- Light trait plasticity, off by default. ---------------------------------------------!
-      cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
-      cfg%fineroot_turnover_plastic = toml_logical(tm, 'trait_dynamics.fineroot_turnover_plastic', .false.)
+      !----- [trait_dynamics]: light trait plasticity, off by default. --------------------------!
+      cfg%trait_dynamics%trait_plasticity_on       = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
+      cfg%trait_dynamics%fineroot_turnover_plastic =                                                    &
+         toml_logical(tm, 'trait_dynamics.fineroot_turnover_plastic', .false.)
 
       !----- Meteorological forcing, off unless forcing.forcing_on. ------------------------!
       call load_forcing_params(tm, cfg, miss)

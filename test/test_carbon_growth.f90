@@ -102,7 +102,7 @@ program test_carbon_growth
    !=== 3. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, turnover down. =====!
    block
       real(wp) :: sla0, vc0, ll0, ns0
-      cfg%trait_plasticity_on = .true.
+      cfg%trait_dynamics%trait_plasticity_on = .true.
       poly%cohort%overtopping_lai(1) = 4.0_wp                  ! deep shade
       sla0 = poly%cohort%sla(1) ; vc0 = poly%cohort%vcmax25(1) ; ll0 = poly%cohort%leaf_turnover_rate(1)
       ns0  = poly%cohort%nonstructural_carbon(1)
@@ -210,7 +210,7 @@ program test_carbon_growth
       poly%deriv%d_wood_carbon_dt(1)          = 0.01_wp
       poly%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
       poly%deriv%dln_nplant_dt(1)             = 0.0_wp
-      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
+      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
       call check(poly%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
       call check(poly%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area')
       call carbon_to_structure(poly%cohort%pft_table%allom(poly%cohort%pft(1)), poly%cohort%wood_carbon(1),        &
@@ -231,7 +231,7 @@ program test_carbon_growth
       poly%deriv%d_nonstructural_carbon_dt(1) = -poly%cohort%nonstructural_carbon(1) / dt * 1.01_wp
       poly%deriv%dln_nplant_dt(1)             = 0.0_wp
       call check(cohort_bad_field(poly%cohort, 1_ik) == 0_ik, 'applier: the cohort starts in bounds')
-      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
+      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
       call check(poly%cohort%nonstructural_carbon(1) < 0.0_wp, 'applier: a 1 % overdraw is not floored')
       call check(trim(cohort_field_name(cohort_bad_field(poly%cohort, 1_ik))) == 'nonstructural_carbon', &
                  'applier: the bounds guard names the overdrawn pool')
@@ -255,7 +255,7 @@ program test_carbon_growth
       call cohort_deriv_alloc(poly%deriv, poly%cohort%n)
       step%mortality = [0.0_wp]
       call update_cohort_derivatives(poly, step, dt, growth_window_steps(cfg), 1_ik)
-      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
+      call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
       call check(poly%cohort%leaf_carbon(1) == 0.0_wp, 'driver + applier: a rounded full shed lands on 0')
       call check(poly%cohort%nonstructural_carbon(1) < 0.0_wp,                                     &
                  'driver + applier: a 1 % overdraw reaches the applier, not floored on the way')
@@ -294,7 +294,7 @@ program test_carbon_growth
       n_on = 0_ik
       do k = 1_ik, 200_ik
          !----- 200 starting densities across six decades, each aimed exactly at the floor. -------!
-         n0 = cfg%negligible_nplant * 10.0_wp ** (6.0_wp * real(k, wp) / 200.0_wp)
+         n0 = cfg%demography%negligible_nplant * 10.0_wp ** (6.0_wp * real(k, wp) / 200.0_wp)
          call init_bare_ground(poly, cfg, 1_ik)
          call add_cohort(poly, cfg, 1_ik, 2_ik, n0, 3.0_wp)
          call finalize_init(poly)
@@ -303,9 +303,9 @@ program test_carbon_growth
          poly%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
          poly%deriv%d_wood_carbon_dt(1)          = 0.0_wp
          poly%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
-         poly%deriv%dln_nplant_dt(1)             = -(log(n0 / cfg%negligible_nplant) / dt)
-         call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%negligible_nplant)
-         if (poly%cohort%nplant(1) == cfg%negligible_nplant) n_on = n_on + 1_ik
+         poly%deriv%dln_nplant_dt(1)             = -(log(n0 / cfg%demography%negligible_nplant) / dt)
+         call update_cohort_states(poly%cohort, poly%deriv, dt, cfg%demography%negligible_nplant)
+         if (poly%cohort%nplant(1) == cfg%demography%negligible_nplant) n_on = n_on + 1_ik
       end do
       call check(n_on == 200_ik, 'applier: a decline aimed at the floor ends exactly on it')
 
@@ -314,14 +314,14 @@ program test_carbon_growth
       call add_cohort(poly, cfg, 1_ik, 2_ik, 1.0_wp, 60.0_wp)
       call add_cohort(poly, cfg, 1_ik, 2_ik, 1.0_wp, 61.0_wp)
       call finalize_init(poly)
-      poly%cohort%nplant(1) = cfg%negligible_nplant
-      poly%cohort%nplant(2) = nearest(cfg%negligible_nplant, 1.0_wp)
-      call check(all(poly%cohort%nplant(1:2) * poly%cohort%agb(1:2) >= cfg%min_cohort_agb),        &
+      poly%cohort%nplant(1) = cfg%demography%negligible_nplant
+      poly%cohort%nplant(2) = nearest(cfg%demography%negligible_nplant, 1.0_wp)
+      call check(all(poly%cohort%nplant(1:2) * poly%cohort%agb(1:2) >= cfg%demography%min_cohort_agb),        &
                  'cull fixture: both cohorts clear the AGB floor, so only the density floor acts')
       n_cut = poly%cohort%n
       call terminate_cohorts(poly, cfg, shed_water, kills)
       call check(poly%cohort%n == n_cut - 1_ik, 'cull: exactly one cohort removed')
-      call check(poly%cohort%nplant(1) > cfg%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
+      call check(poly%cohort%nplant(1) > cfg%demography%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
    end block
 
    write(*,'(a)') '   PASS'

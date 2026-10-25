@@ -117,11 +117,12 @@ program test_patch
    !    shipped ceiling (0.15) they stay two; under an uncapped schedule, 0.10 x 1.5 per pass     !
    !    (0.76 by the sixth pass), they fuse.                                                      !
    cfg = build_test_config()
-   cfg%max_patch = 1_ik
-   call check_close(cfg%patch_light_tol * cfg%patch_light_tol_mult**(cfg%n_patch_fusion_iter - 1_ik),  &
-                    cfg%patch_light_tol_max, 1.0e-12_wp, 'the last pass must use exactly the ceiling')
+   cfg%demography%max_patch = 1_ik
+   call check_close(cfg%demography%patch_light_tol                                                    &
+                    * cfg%demography%patch_light_tol_mult**(cfg%demography%n_patch_fusion_iter - 1_ik),  &
+                    cfg%demography%patch_light_tol_max, 1.0e-12_wp, 'the last pass must use exactly the ceiling')
    call two_unlike_patches()
-   allocate(light1(cfg%n_height_layers), light2(cfg%n_height_layers))
+   allocate(light1(cfg%demography%n_height_layers), light2(cfg%demography%n_height_layers))
    call patch_light_profile(poly, cfg, 1_ik, light1)
    call patch_light_profile(poly, cfg, 2_ik, light2)
    davg = sum(abs(light1 - light2), mask=(light1 < 1.0_wp - 1.0e-7_wp .or. light2 < 1.0_wp - 1.0e-7_wp)) &
@@ -131,9 +132,9 @@ program test_patch
    call fuse_patches(poly, cfg)
    call check(poly%patch%n == 2_ik, 'patches more different than the ceiling must stay apart above max_patch')
    !----- The uncapped schedule, spelled as a ceiling: 0.10 * 1.5**5 over six passes is a step of 1.5. -!
-   cfg%patch_light_tol_max = 0.10_wp * 1.5_wp**5
+   cfg%demography%patch_light_tol_max = 0.10_wp * 1.5_wp**5
    call derive_parameters(cfg)
-   call check_close(cfg%patch_light_tol_mult, 1.5_wp, 1.0e-12_wp, 'ceiling 0.759375 must give the old 1.5 step')
+   call check_close(cfg%demography%patch_light_tol_mult, 1.5_wp, 1.0e-12_wp, 'ceiling 0.759375 must give the old 1.5 step')
    call two_unlike_patches()
    call fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'without the ceiling the same two patches fuse down to max_patch')
