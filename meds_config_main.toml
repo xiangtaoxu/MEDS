@@ -15,7 +15,7 @@ end_time   = "2250-01-01"      # end, exclusive: a 250-year spin-up
                                #   [region].box_nwse as its own polygon (docs/configuration.md "Regional runs")
 # n_threads = 1                # host threads: the patches of a site run, the polygons of a region; the
                                #   output is the same at any count (docs/configuration.md "Threads")
-# slow_on = true               # false skips the slow tier (growth, mortality, phenology, traits,
+# slow_on = true               # false skips the slow step (growth, mortality, phenology, traits,
                                #   demography, soil carbon): the stand stays as it is, the fast loop runs
 # slow_ledger_on = true        # the slow-step conservation ledger: a table at the end of the run of what
                                #   each slow operator could not account for (changes no result)
@@ -112,7 +112,7 @@ zeta_t           = 0.465      # [-]   Monin-Obukhov scalar-range transition (CLM
 zeta_max_stable  = 0.5        # [-]   cap on the stable zeta of the guess and each sweep (CLM5)
 n_iter_mo        = 20         # [-]   the most Monin-Obukhov sweeps; they stop once u* x temp1 settles to 1e-4
 wc               = 0.5        # [m/s] convective velocity of the first stability guess, eq. (2); the
-                              #   sweeps take it from the buoyancy flux, eq. (3b)
+                              #   sweeps take it from the buoyancy flux, eq. (4)
 ustmin           = 0.10       # [m/s] friction-velocity floor
 ubmin            = 0.65       # [m/s] bulk-wind floor, eq. (2)
 ugbmin           = 0.25       # [m/s] canopy-top and in-canopy wind floor
@@ -132,7 +132,8 @@ t_ref_air        = 273.15     # [K]   reference temperature of the two air prope
 # The stand's structure (docs/science/demography.md; docs/configuration.md "Cohort and patch fusion").
 demography_on             = true     # false: the stand's structure is frozen (growth and mortality run)
 # ---- One switch per operator, each under demography_on. The cull (min_cohort_agb,
-# negligible_nplant) and patch termination (min_patch_area) always run: they bound the blocks. ----
+# negligible_nplant) and patch termination (min_patch_area) have no switch of their own: they run
+# whenever demography_on does, to keep the blocks bounded. ----
 recruitment_on            = true     # monthly: a recruit pool of min_recruit_size founds a cohort
 cohort_fusion_on          = true     # monthly, and yearly after patch fusion: similar cohorts fuse
 cohort_fission_on         = true     # monthly: a cohort above cohort_lai_cap splits
@@ -146,7 +147,7 @@ n_cohort_fusion_iter      = 6        # cohort-fusion passes at most
 cohort_size_tol_min       = 0.02     # [-] height tolerance, a share of the patch's top height, first pass
 cohort_size_tol_max       = 0.10     # [-] its ceiling
 cohort_lai_cap            = 1.0      # [m2/m2] one cohort's LAI at most: split above it, no fusion above it
-split_eps                 = 1.0e-4   # [-] the diameter perturbation of a split
+split_eps                 = 1.0e-4   # [-] a split's relative perturbation of the two halves' wood carbon
 min_cohort_agb            = 1.0e-6   # [kgC/m2] a cohort below this nplant * agb is culled
 negligible_nplant         = 1.0e-8   # [plant/m2] the density mortality stops at and the cull removes
 # ---- Treefall gaps. ----

@@ -1,95 +1,76 @@
 # Development plans
 
-Dated design and implementation records: the account of *how* each MEDS subsystem was built, and
-what is still intended. These are working documents, not user-facing reference. For the science,
-read [`docs/science/`](../science/); for the code layout, [`src/README.md`](../../src/README.md).
+Design and implementation records: how each MEDS subsystem was built, and what is still intended.
+They are working documents, not user-facing reference. For the science, read
+[`docs/science/`](../science/); for the code layout, [`src/README.md`](../../src/README.md).
 
 ## The rule for this directory
 
-**`dev_plans/` holds a document only while it is still doing work** — it has open items, or a
-section that source comments cite by number. Everything else is in
-[`archive/`](archive/) with a tombstone at the top saying what shipped, in which pull request, and
-where the live description now lives.
+A plan stays in `dev_plans/` only while it has open items, or a section that source comments cite by
+number. Every other plan is in [`archive/`](archive/), with a tombstone at the top that says what
+shipped, in which pull requests, and where the live description is.
 
-That is a change of policy, made 2026-09-13. The previous rule kept every document here on the
-grounds that a point-in-time record is *supposed* to go stale, and reserved `archive/` for
-documents whose conclusions were actively misleading. The result was 41 files in one flat
-directory, three of which carried "design-only" headers for work that had merged the same day, and
-no way to tell from a listing which ones still mattered.
-
-**When a plan's last open item ships, give it a tombstone and move it in the same pull request.**
-What changed goes in [`CHANGELOG.md`](../../CHANGELOG.md); what is deferred goes in
+When a plan's last open item ships, give it a tombstone and move it in the same pull request. What
+changed goes in [`CHANGELOG.md`](../../CHANGELOG.md); what is deferred goes in
 [`docs/ROADMAP.md`](../ROADMAP.md).
 
-**Section numbers are never renumbered**, in either directory. Source comments cite the science pages
-for what they cover; about 50 still cite a plan by section, where the plan is the only written record
-of a design rationale (`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §6.3, `MEDS_NUMERICS_SCOPING.md`
-§11). Most cite by bare filename, so a move is safe but a renumber is not.
+Section numbers are never renumbered, in either directory. Code cites a plan by section only where
+the plan is the one written record of a design rationale; most citations use the bare file name, so
+a move is safe and a renumbering is not.
 
 ---
 
-## Live — open items still intended
+## Live: open items
 
-| Document | What is still open |
+| Document | What is open |
 |---|---|
-| [`MEDS_BCI_CENSUS_INIT_PLAN.md`](MEDS_BCI_CENSUS_INIT_PLAN.md) | Written 2026-09-28. The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot instead of a 50-year spin-up, with one PFT for every tree and MEDS's default allometry: a ForestGEO-to-MEDS census tool that only maps trees to patches (`patch_id`, `patch_area`, `nplant`), a header-matched census reader with `patch_area`, MEDS's own fusion at census initialization, `[init]` keys for the initial soil state, and a steady-state soil-carbon start. Builds on the allometry fix of #321. Design only; phases P0–P3 open. |
-| [`MEDS_EFFICIENCY_SWEEP_PLAN.md`](MEDS_EFFICIENCY_SWEEP_PLAN.md) | Written 2026-09-30. A sweep through the open numerics and computational-efficiency issues, from a profile of v0.3.1: the ifx bound-procedure allocations that make more than four threads slower (#325), the forcing files' one-record chunks, the allocator traffic of the fast loop (#188, #195), one field list for the fast-loop state (#146, #190), draining the wood's apoplastic water with embolism (#104), polygon threads for region runs (#183, #310), and the output and forcing cleanups (#311, #312, #270, #275, #299). Phases 0–3, 5, 6 open; Phase 4 moved to a later numerics round. |
-| [`MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md`](MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md) | Written 2026-10-10. Example06 reproduces the Central America regional run of Xu et al. (2016). It starts by designing the PFTs and the phenology, so that one parameter set gives deciduous and evergreen canopies along a rainfall-seasonality gradient. The plan covers what Xu et al. did, what MEDS already has, and an offline test showing that turgor-loss point alone separates the leaf habits under the water cue but not under example02's photoperiod fit. Its PFTs are Xu's four (Ds, D, BD, E): WD and SLA from Xu, hydraulics from Xu's relations as ED2 codes them, Chave (2014) climate-dependent height, and the rest from example05. In the first try all four follow leaf water potential only, and rooting depth deepens with wood density. Phases P0–P5 use ERA5-Land and MODIS only, at the Palo Verde grid cell and then 5–6 gradient cells. §8 outlines the regional run: drop non-vegetated cells first, with a vegetation mask and grid-level masking in region mode. Design only; D1, D5 and D12–D15 settled, the rest open. |
-| [`MEDS_FAST_CALIBRATION_PLAN.md`](MEDS_FAST_CALIBRATION_PLAN.md) | Written and revised 2026-09-29. A fast, crude calibration of the fast-timescale parameters against flux-tower data, with the vegetation structure frozen (`[run].slow_on = false`) and trait plasticity on: 10-day windows restarted from shared states, the Bowen-ratio closure correction, Levenberg–Marquardt with parallel finite-difference Jacobians and priors, the Laplace covariance for a longer-term calibration, the model changes it needs first (hourly SW and LW up, trait re-acclimation at restart, provenance, physics fixes), and gates. BCI first, as part of the example. Design only; the order of the physics fixes is open (§12). |
-| [`MEDS_FAST_CALIBRATION_REVISION_PLAN.md`](MEDS_FAST_CALIBRATION_REVISION_PLAN.md) | Written and approved 2026-10-02. Revises the fast calibration after the BCI GPP diagnosis. Every tower-data filter, fitted key and prior becomes a user setting with a documented default (GPP u* ≥ 0.4, GPP σ 2.5 + 0.15·GPP, night NEE out, `rd_vcmax_ratio` fixed). Default priors come from PFT-level meta-analyses. The fit runs in stages: optics with the two-stream alone, photosynthesis with a canopy of leaf kernels, the coupled energy partition, seasonal water stress, then a joint polish. Uncertainty is a rough Laplace estimate. R1–R5 implemented (#345); R6 run once at BCI, findings in §13 await the owner; cohort-level sunlit/shaded leaves deferred to #343. |
-| [`MEDS_FLUX_TOWER_FORCING_PLAN.md`](MEDS_FLUX_TOWER_FORCING_PLAN.md) | Written 2026-09-28. Forcing from flux-tower data, with Barro Colorado Island as the worked example: the forcing-format changes it needs (UTC only, the measured humidity in the file, the `ED_default`/`ED_ERA5land` names, the rain-timing fix), a shared Python module for the forcing file, the tower tool with its validation gates, longwave gap filling two ways, the BCI example and its tests. Phases P0–P5 open. |
-| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). Runs of a contiguous region in one process, without MPI: month-synchronous compute/IO split, shared forcing month buffer, polygon-dimension output and its performance; site networks run as separate processes. R0 measured (§10.1); R1, the compute/I-O split, R2, region runs (#289), and R3, threads over polygons (b3bd130), implemented. §14 (2026-10-12, updated 2026-10-14 to v0.3.4) replaces R4–R6 with phases RP0–RP7 for region runs that fill one node: allometry as an argument (B2, first), per-polygon config and soil, a cell mask and one module for every spatial map input (`meds_surface_maps.f90`, each product's path in a `[surface]` block, gaps fixed upstream), per-cell inputs read natively through it and a seeded start (`pft.nbg_init_density`), a padded region state file and restart, a recycle-window forcing cache, all output in one padded file set, and a pilot that reruns example 06's 983 cells as regions. OR10–OR17 decided; OR18 awaits the owner; #400 and #401 filed. The non-MPI part of ROADMAP #183. |
-| [`MEDS_ISSUE_SWEEP_PLAN.md`](MEDS_ISSUE_SWEEP_PLAN.md) | Written 2026-10-17. Every open issue (#74–#425) read and its premise checked against `38c715b`: Phase 1 fixes and docs that leave results unchanged, Phase 2 measurements, Phase 3 one batch of result-moving bug fixes with one example rerun, the enhancements to add now (#401, #379) and the rest deferred with triggers; 11 unfiled defects. Revision 3: every decision taken; Phase 1 under way. |
-| [`MEDS_PRODUCTION_INTEGRATOR_PLAN.md`](MEDS_PRODUCTION_INTEGRATOR_PLAN.md) | The numerics roadmap's remainder and the record of what was refuted by measurement. #158 and #159 were closed on 2026-09-30, to revisit with the numerical scheme; #104 is being built as `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3; `psi_leaf` at 900 s was re-measured on 2026-09-30 (#162). E5 has no live issue. |
-| [`MEDS_SPAC_WATER_NETWORK_PLAN.md`](MEDS_SPAC_WATER_NETWORK_PLAN.md) | Written 2026-10-11. Soil and plant water solved as one network per patch: process functions with analytic derivatives (storage in soil layers, pond and plant tissues; Darcy, rhizosphere and xylem flow; transpiration, evaporation, rain, runoff, drainage) and one generic implicit solver (implicit Euler, damped Newton, a Schur solve over groups attached to a shared core, adaptive sub-steps). Replaces the plant and soil solvers, the uptake rescale, the θr caps and floors, the ARK plant re-solve and RK45's in-stage water; fixes the BCI 1994-04-20 NaN, #352's precondition and #104. An independent review (§11) called for a revision before P2; §12 (2026-10-11) answers it item by item (per-store unknowns, supply-limited transpiration held fixed through the energy stages, a filtered error estimate, a pond node, per-store enthalpy) and records the working choices for D1–D8. Implemented 2026-10-12 on `feat/spac-water-solver` (P1–P4); §12.4 records what changed and the measurements. |
+| [`MEDS_BCI_CENSUS_INIT_PLAN.md`](MEDS_BCI_CENSUS_INIT_PLAN.md) | The census start of the BCI example is built. Open: the census-plot figure and the validation gates of §8 that need model runs. |
+| [`MEDS_EFFICIENCY_SWEEP_PLAN.md`](MEDS_EFFICIENCY_SWEEP_PLAN.md) | The sweep's phases 0–3 shipped. Open: the runtime consolidation and region threading of Phase 5 (#310, #183, #400), the cohort axis (#196), and Phase 4, moved to a later numerics round. |
+| [`MEDS_MULTI_SITE_PLAN.md`](MEDS_MULTI_SITE_PLAN.md) | Several sites per polygon, steps S0–S5, is built. Open: the diffuse light of a slope, a site map for a region, lateral water and seed dispersal between sites, and the example (#455). |
+| [`MEDS_PHENOLOGY_SENESCENCE_PLAN.md`](MEDS_PHENOLOGY_SENESCENCE_PLAN.md) | The generic cue model is built. Open: senescence as an up-regulation of the PFT's baseline leaf turnover (#379). |
+| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Region runs are built (§14). Open: patch threads inside a region's polygons (#400), one run container and one loop (#310), reading the next month's forcing during the current step (#407). |
+| [`MEDS_PRODUCTION_INTEGRATOR_PLAN.md`](MEDS_PRODUCTION_INTEGRATOR_PLAN.md) | The numerics roadmap's remainder and the record of what measurement refuted. Open: the `dt_fast` checks (#415) and the closed items to revisit with the numerical scheme (#158, #159). |
+| [`MEDS_STATE_HIERARCHY_PLAN.md`](MEDS_STATE_HIERARCHY_PLAN.md) | The state layer by model hierarchy is built. Open: the follow-ups of §9 (the cohort file's field lists, folding the pool changes into the tendency bundle, the output-only accumulators on the polygon state). |
 
-## Reference — no open items, but cited by section from the code
+## Reference: no open items, cited from code or rules
 
 | Document | Why it stays |
 |---|---|
-| [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions (§1), the straddlers (§5), the placement rules (§6) and §7.6 items 3–4, cited by section from 2 source files; `src/README.md` carries only some of them. §15, the phased remainder, is closed. |
-| [`MEDS_FROZEN_SEAM_CONTRACT.md`](MEDS_FROZEN_SEAM_CONTRACT.md) | The Λ criterion for when freezing a store is admissible, the four seams classified against it, the debit-before-credit rule for rate seams, and the arbitration rule for a shared store — stated nowhere else. Design note, no code (#201); no source comment cites it by section, so it moves to `archive/` once folded into the science pages. |
-| [`MEDS_NUMERICS_SCOPING.md`](MEDS_NUMERICS_SCOPING.md) | §5.1 process mask, §11 bare-array convention, §12.6 ED2 `DTLSM` catalogue, §8b–§8g measurements — §5.1 and §11 cited from 5 source files. Its scheme roadmap is superseded; see its header. |
-| [`MEDS_IO_DESIGN.md`](MEDS_IO_DESIGN.md) | §3–§6 describe the registry, integrators and serializer as built. Cited by section from 4 output modules and `.claude/rules/output.md`. |
-| [`MEDS_IO_V01_PLAN.md`](MEDS_IO_V01_PLAN.md) | The v0.1 diagnostic layer, cited only by `.claude/rules/output.md`; no source comment cites it by section, so it can move to `archive/`. Its deferred list shipped in v0.2.0. |
-
-## Reviews
-
-| Document | |
-|---|---|
-| [`MEDS_CODE_REVIEW_2026-09-27.md`](MEDS_CODE_REVIEW_2026-09-27.md) | The review of `beta` before the v0.3.0 merge: the ranked pre-merge set (three verified must-fix items), the open-issue triage, the documentation drift, the build and test results, the consolidation items deferred to R3, the phased fix plan (§9) and this directory's archive audit (§10). |
+| [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions behind `src/`'s layout; `src/c_api/meds_c_api_demography.f90` cites §7.6. Its phased remainder is closed, and [`src/README.md`](../../src/README.md) is the live description of the layout. |
+| [`MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md`](MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md) | The PFT and phenology design of example 06; example 05's Palo Verde PFT file cites §6. |
+| [`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md`](MEDS_FAST_CALIBRATION_BEST_PRACTICE.md) | The calibration protocol, cited by section from `scripts/calibrate_fast/`. |
+| [`MEDS_FAST_CALIBRATION_PLAN.md`](MEDS_FAST_CALIBRATION_PLAN.md) | The method and the argument for each fitted key's range, cited by `scripts/calibrate_fast/parameters.toml` (§4). |
+| [`MEDS_FLUX_TOWER_FORCING_PLAN.md`](MEDS_FLUX_TOWER_FORCING_PLAN.md) | How the tower forcing conversions were found and validated; example 04's site file cites §2–§3. |
+| [`MEDS_FROZEN_SEAM_CONTRACT.md`](MEDS_FROZEN_SEAM_CONTRACT.md) | The Λ criterion for freezing a store, the debit-before-credit rule and the arbitration rule for a shared store, written nowhere else. Moves to `archive/` once folded into the science pages. |
+| [`MEDS_IO_DESIGN.md`](MEDS_IO_DESIGN.md) | The output registry, integrators and serializer as built; cited by section from the output modules and `.claude/rules/output.md`. |
+| [`MEDS_IO_V01_PLAN.md`](MEDS_IO_V01_PLAN.md) | The diagnostic layer, cited by `.claude/rules/output.md` and `docs/science/diagnostics.md`. |
 
 ## Untracked
 
-`MEDS_CAPI_REORG_DESIGN.md` is a local working document, excluded in `.gitignore` by the author's
-choice. It is referenced once from the migration log; its one load-bearing decision (a single
-`libmeds.so`) is decision #1 of the structure plan and shipped in PR #138. Nothing in a clone
-needs it.
+`MEDS_CAPI_REORG_DESIGN.md` is a local working document, excluded in `.gitignore` by the author. Its one
+load-bearing decision (a single `libmeds.so`) is recorded in the archived structure plan. Nothing in a
+clone needs it.
 
 ---
 
 ## `archive/`
 
-Forty-one documents whose work is done. Each opens with a tombstone: what shipped, in which pull
+Forty-seven documents whose work is done. Each opens with a tombstone: what shipped, in which pull
 request, what changed name on the way in, and where the live description is. Three grades appear:
 
-- **🗃️ ARCHIVED** — complete or superseded. Safe to read as history.
-- **⚰️ RETIRED** — the conclusions are actively wrong. The tombstone says which sections and why.
-  Four documents carry this: `MEDS_INTEGRATOR_PARITY.md` and `MEDS_INTEGRATOR_TEST.md` (both scored
-  against the retired operator-split integrator, inside an oscillation no ledger detected),
-  `MEDS_PHENOLOGY_DESIGN.md` (its tri-state algorithm no longer exists), and
-  `MEDS_COLUMN_HYDROLOGY_DESIGN.md` (one of its "IMPLEMENTED" sections describes code that was
-  later deleted). `MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` is archived with ⚰️ on §9–§11 and §14,
-  overturned the day they were written.
-- **Status header is wrong** — three documents say "design-only" for work that merged within a day
-  of being written: `MEDS_REORG_DESIGN.md`, `MEDS_DRIVER_REORG_DESIGN.md` and
-  `MEDS_CORE_MODULE_REORG_DESIGN.md`. Their tombstones say so first, because anyone reading the
-  header alone gets the history backwards.
+- **🗃️ ARCHIVED**: complete or superseded. Safe to read as history.
+- **⚰️ RETIRED**: the conclusions are wrong. The tombstone says which sections and why. Four
+  documents carry this: `MEDS_INTEGRATOR_PARITY.md` and `MEDS_INTEGRATOR_TEST.md` (scored against the
+  retired operator-split integrator), `MEDS_PHENOLOGY_DESIGN.md` (its tri-state algorithm no longer
+  exists) and `MEDS_COLUMN_HYDROLOGY_DESIGN.md` (one section describes code that was later deleted).
+  `MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` carries ⚰️ on §9–§11 and §14.
+- **Status header is wrong**: `MEDS_REORG_DESIGN.md`, `MEDS_DRIVER_REORG_DESIGN.md` and
+  `MEDS_CORE_MODULE_REORG_DESIGN.md` say "design-only" for work that merged within a day of being
+  written. Their tombstones say so first.
 
-Two files in `archive/` were split out of the structure plan rather than being plans in their own
-right: `MEDS_CODE_STRUCTURE_MIGRATION_LOG.md` (how the 2026-09 reorganization ran) and
-`MEDS_SLOW_LOOP_CONSERVATION_LEDGER.md` (the measurement record behind PRs #132–#137, formerly
-§10.2).
+`MEDS_CODE_STRUCTURE_MIGRATION_LOG.md` and `MEDS_SLOW_LOOP_CONSERVATION_LEDGER.md` were split out of
+the structure plan ([`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md)) rather than being plans of
+their own.
 
-**Line numbers in archived documents are the pre-2026-09 tree.** Two reorganizations have moved
-almost every file since most of them were written.
+Line numbers and module paths in archived documents are from the tree at the time they were written;
+the 2026-09 reorganizations moved almost every file since.

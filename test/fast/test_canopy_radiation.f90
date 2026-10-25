@@ -167,7 +167,7 @@ contains
 
    !=======================================================================================!
    !  EXACTLY-TIED cohorts are CO-DOMINANT, not stacked: cohorts of equal height share one RT      !
-   !  layer (docs/science/canopy_radiation_transfer.md §4, eq. (13)), as `update_overtopping_lai`  !
+   !  layer (docs/science/canopy_radiation_transfer.md §4, eq. (14)), as `update_overtopping_lai`  !
    !  treats them. Recruits tie BIT-EXACTLY -- one scalar `recruit_dbh` for every PFT -- and the   !
    !  sort is stable, so stacking them would put the lower PFT INDEX on top: the lower slot then   !
    !  absorbs 12.6 % less shortwave at zero overstory, rising to 15.1 % under LAI 6.               !
@@ -389,7 +389,7 @@ contains
    !=======================================================================================!
    !  TISSUE LONGWAVE: a cohort's leaves and wood meet the same radiation, share what it takes  !
    !  in by leaf_frac and are each charged their own emission, as tied cohorts share their    !
-   !  layer's (docs/science/canopy_radiation_transfer.md §4, eqs. (13)-(14)). With sky and     !
+   !  layer's (docs/science/canopy_radiation_transfer.md §4, eqs. (14)-(15)). With sky and     !
    !  ground at the leaves' temperature, wood 10 K warmer warms the leaves, and by reciprocity !
    !  it gives them exactly what leaves 10 K warmer give the wood; likewise between two tied   !
    !  cohorts. Charged a share of the cohort's net instead, the cool leaves lost to the warm   !

@@ -1,20 +1,31 @@
 # Leaf phenology
 
-MEDS models leaf phenology in two layers. The **cue kernel** (`meds_plant_phenology`) turns daily
-environmental cues and per-PFT traits into two smoothed **tendencies** in $[0,1]$: a leaf **flush**
-tendency $f$ and a leaf **shed** (senescence) tendency $s$. The **carbon layer** turns the tendencies
-into leaf growth and leaf loss (`leaf_turnover_step`, §5). The kernel's state is the two tendencies
-plus a small **cue memory** (temperature sums, water-potential sums, a running mean of the hours of light),
-carried per cohort and advanced once per day.
+This page explains how MEDS decides when a cohort grows and drops its leaves, from the cues
+(temperature, hours of light, leaf water potential) to the leaf carbon lost and regrown each step.
+It has two layers. The **cue kernel** (`meds_plant_phenology`) turns the cues and per-PFT (plant
+functional type) traits into two smoothed **tendencies** in $[0,1]$: a leaf **flush** tendency $f$ and
+a leaf **shed** (senescence) tendency $s$. The **carbon layer** turns the tendencies into leaf growth
+and leaf loss (`leaf_turnover_step`, §5). The kernel's state is the two tendencies plus a small
+**cue memory** (temperature sums, water-potential sums, a running mean of the hours of light), carried
+per cohort.
 
 One kernel covers every leaf habit. Two per-PFT **cue masks** pick which cues drive flushing and which
 drive senescence, and the habit follows from the parameters: there is no evergreen flag and no global
 phenology scheme switch. An evergreen is a PFT whose senescence stops at a **leaf-cover floor**
 (`min_leaf_cover`), not a different model (§6).
 
+**Timescale and inputs.** The cue kernel runs once per slow step (`[run].dt_slow`, a day by default),
+at the start of the vegetation phase, before trait acclimation and carbon allocation
+(`meds_slow_dynamics`: `vegetation_dynamics`; [`order_of_processes.md`](order_of_processes.md)). Its
+drivers are accumulated by the fast loop over the step's fast steps (see Drivers, below): the site's
+mean air temperature, each cohort's hours of light and its predawn leaf water potential. A slow step
+with no fast steps does not advance the memory. The carbon layer (`leaf_turnover_step`) runs in the
+same slow step, inside the carbon allocation ([`plant_carbon_allocation.md`](plant_carbon_allocation.md)).
+Phenology never reads soil data.
+
 ## 1. The contract: cues → two tendencies → two potential rates
 
-Each day the kernel (i) accumulates the cue memory (§2), (ii) passes each cue through a switch, (iii)
+Each step (of length $dt$ days, the slow step) the kernel (i) accumulates the cue memory (§2), (ii) passes each cue through a switch, (iii)
 combines the switches into a flush signal $`S_{\mathrm{fl}}`$ and a shed signal $`S_{\mathrm{sh}}`$ (§3),
 and (iv) smooths each signal into its tendency (§4). The potential relative rates are
 
@@ -46,11 +57,10 @@ C \mathrel{+}= \max(0,\ T_{\mathrm{sh}} - T)\,dt \ \ \text{(from midsummer on)} 
 
 The warmth sum $W$ (`growing_degree_days`, base `flush_base_temp`) counts all year; the cold sum $C$
 (`cold_degree_days`, base `shed_base_temp`) counts only once days shorten, from the summer solstice.
-Both restart at midwinter. In the southern hemisphere the calendar is shifted by half a year
+Both restart at midwinter (the first step of the northern-equivalent year). In the southern hemisphere the calendar is shifted by half a year
 (`doy_effective`), so the same parameters describe the same seasons. There is no chilling
 requirement: the light gate (below; at a low `par_min`, the photoperiod) does the work chilling was
-meant to do, holding the flush until days are long enough, and adding chilling did not improve the
-fits (§7).
+meant to do, holding the flush until days are long enough (§7).
 
 **Light (`CUE_LIGHT`).** The hours of light $H$ [h day⁻¹]: the time each day the PAR reaching the
 cohort's top exceeds the PFT's `par_min` [µmol m⁻² s⁻¹], as a running mean $`\bar H`$ over
@@ -60,9 +70,9 @@ cohort's top exceeds the PFT's `par_min` [µmol m⁻² s⁻¹], as a running mea
 \bar H \mathrel{+}= w\,(H - \bar H), \qquad w = \min\!\big(1,\ dt/\max(\texttt{light\_window},\,dt)\big) \qquad(4)
 ```
 
-In the coupled model the fast loop counts $H$: each fast step adds its length when the visible light,
-beam plus downward diffuse, reaching the top of the cohort's layer in the two-stream canopy radiation
-exceeds `par_min` in photons. A cohort under others counts fewer hours than one in the sun. A cohort
+The fast loop counts $H$: each fast step adds its length when the visible light, beam plus downward
+diffuse, reaching the top of the cohort's layer in the two-stream canopy radiation exceeds `par_min`
+(converted to photons); the slow step divides the sum by its length in days. A cohort under others counts fewer hours than one in the sun. A cohort
 with no light memory yet (a cold start, a recruit) starts its mean from its first day's hours, so its
 first days do not read as darkness.
 
@@ -71,7 +81,7 @@ One cue serves every PFT, and `par_min` sets what it measures. With a low `par_m
 the extratropical cue of photoperiodic budburst and growth cessation. With a high `par_min` (hundreds
 of µmol m⁻² s⁻¹) it counts the bright hours, with their clouds, their year-to-year swings and the
 cohort's place in the canopy: the cue of tropical leaf exchange in the bright dry season (Kim et al.
-2012). At three sites one such variable, with a fitted threshold, did as well as the better of day
+2012). At three sites one such variable, with a fitted threshold, did about as well as the better of day
 length and running-mean PAR (§7).
 
 **Water (`CUE_WATER`).** Two sums of the predawn leaf water potential $`\psi_{\mathrm{pd}}`$ against the
@@ -87,7 +97,7 @@ sum when the wet switch turns on, the wet sum when the dry switch does. The cros
 a long wet season would otherwise hold the wet switch on and wipe every drought. A brief rain adds
 some wet credit without erasing the drought sum, unlike a consecutive-day counter. $`\psi_{\mathrm{tlp}}`$
 is not a phenology key: it is derived (`tissue_psi_tlp`) from the same pressure–volume curve that anchors
-the leaf's capacity ramp under water stress (`leaf_gas_exchange.md` §4.1), so the cue and the ramp
+the leaf's capacity ramp under water stress ([`leaf_gas_exchange.md`](leaf_gas_exchange.md) §4.1), so the cue and the ramp
 share one threshold.
 
 ## 3. Combining the switches
@@ -150,7 +160,7 @@ S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\
 ```
 
 - **Background turnover** $B$: old leaves replaced while new ones grow, at $`k_{\mathrm{turn}}`$ [yr⁻¹]
-  (the cohort's leaf turnover rate, `leaf_turnover_rate_toc` with light plasticity, `plant_traits.md`
+  (the cohort's leaf turnover rate, `leaf_turnover_rate_toc` with light plasticity, [`plant_traits.md`](plant_traits.md)
   eq. (1)). It is scaled by the **turnover gate** $g$ (`turnover_gate`): the flush tendency $f$ while
   no leaves drop ($`s \le 0.01`$), and 0 while they do. A dormant canopy does not turn over, and the
   leaves a drought takes are not also aged out: background turnover is the leaf loss of a canopy that
@@ -159,7 +169,7 @@ S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\
   $`c_{\min}`$ = `min_leaf_cover`. The two losses add.
 - **Flush cap** $`\Delta_{\mathrm{fl}}`$: the leaf growth demand is $`\min(L_{\mathrm{full}} - L_{\mathrm{post}},\ \Delta_{\mathrm{fl}})`$
   against the post-loss pool $`L_{\mathrm{post}} = L - B - S`$, funded from NPP and then storage by the
-  allocation ladder (`plant_carbon_allocation.md`). Fine roots regrow toward `root_to_leaf_ratio` of
+  allocation ladder ([`plant_carbon_allocation.md`](plant_carbon_allocation.md)). Fine roots regrow toward `root_to_leaf_ratio` of
   the full canopy under the same cap.
 - **Snap to bare**: a dormant canopy (flush rate $`k_{\mathrm{fl}} f \le 10^{-6}`$ day⁻¹) whose
   senescence would leave it below $`c_{\mathrm{bare}}`$ = `bare_leaf_cover` goes bare, when its floor
@@ -169,15 +179,15 @@ S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\
   refilling and shedding.
 
 **Fine roots** do not drop with the leaves. Their length sets the root–soil conductance
-(`plant_hydraulics.md`), so a drop would cut the water uptake a leafless plant needs to rehydrate and
-flush again. They turn over at `fineroot_turnover_rate` under the leaves' gate $g$ — so roots age
-while the canopy flushes and drops nothing, and not during a drop or in dormancy — and regrow under the
-flush cap.
+([`plant_hydraulics.md`](plant_hydraulics.md)), so a drop would cut the water uptake a leafless plant
+needs to rehydrate and flush again. They turn over at `fineroot_turnover_rate` under the leaves' gate
+$g$ (so roots age while the canopy flushes and drops nothing, and not during a drop or in dormancy) and
+regrow under the flush cap.
 
-**Resorption** (`retained_carbon_fraction`, $`f_r`$, default 0.3) returns a share of **all** leaf loss
-$`B + S`$ and all fine-root loss to storage; the litter is $`(1-f_r)`$ of each loss.
+**Resorption** (`retained_carbon_fraction`, $`f_r`$) returns a share of **all** leaf loss $`B + S`$ and
+all fine-root loss to storage ([`plant_carbon_allocation.md`](plant_carbon_allocation.md) §1, eq. (2)).
 
-The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so the Python front end
+The same routine is exposed through the C API (`meds_leaf_turnover_step`), so the Python front end
 (`meds.plant.pheno.leaf_step`) applies exactly the carbon layer's rule.
 
 ## 6. Leaf habits as parameter sets
@@ -186,45 +196,46 @@ The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so th
 |---|---|---|---|---|
 | no cues (default) | – | – | – | always flushing; loses leaves only to background turnover ($`g = 1`$) |
 | temperate deciduous (Harvard) | TEMP + LIGHT | TEMP + LIGHT | 0 | low `par_min`: flush on warmth while days are long; senesce to bare on cold once days shorten |
-| evergreen conifer (Hyytiälä) | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (0.9) | high `par_min`: flush on warmth and many bright hours; autumn needle fall stops at the floor |
-| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (0.27) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |
-| light leaf exchange (BCI) | WATER | LIGHT + WATER | 0.95 | high `par_min`: a water threshold it never reaches; senescence on many bright hours while the canopy refills, so it stays full |
+| evergreen conifer (Hyytiälä) | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (high) | high `par_min`: flush on warmth and many bright hours; autumn needle fall stops at the floor |
+| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (low) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |
+| light leaf exchange (BCI) | WATER | LIGHT + WATER | high | high `par_min`: a water threshold it never reaches; senescence on many bright hours while the canopy refills, so it stays full |
 
 Evergreen and deciduous differ in one number. The emergent leaf lifespan follows from the rates and
-the floor; it is not a parameter of the kernel.
+the floor; it is not a parameter of the kernel. The fitted values of the four habits are in
+[`examples/example02_canopy_phenology`](../../examples/example02_canopy_phenology/README.md).
 
-## 7. Evidence and status
+## 7. Evidence
 
-`examples/example02_canopy_phenology` fits the compiled kernel at four sites, every one with its
-light from ERA5-Land through MEDS's forcing reader:
+[`examples/example02_canopy_phenology`](../../examples/example02_canopy_phenology/README.md) fits the
+compiled kernel at four sites, every one with its light from ERA5-Land through MEDS's forcing reader:
 
-- **Harvard Forest** (temperate deciduous; `par_min` 2, the photoperiod): MODIS LAI, the HF003
-  leaf-fall observations and the HF069 litter baskets.
-- **Hyytiälä** (Scots pine; `par_min` 99): the ICOS monthly needle litter.
-- **Barro Colorado Island** (a light leaf exchanger; `par_min` 1081): GLiMP litter traps. The water
-  driver is a surrogate, the tower's soil water content through a retention curve fitted to the
-  paired soil samples of Kupers et al. (2019).
-- **Palo Verde** (a drought-deciduous dry forest; `par_min` 5, the photoperiod): the monthly leaf litter
-  of Xu et al. (2016) and MODIS LAI. The water driver is hypothetical, the canopy predawn leaf ψ of a
-  MEDS run at the site.
+- **Harvard Forest** (temperate deciduous; a low `par_min`, so the cue is the photoperiod): MODIS LAI,
+  the HF003 leaf-fall observations and the HF069 litter baskets.
+- **Hyytiälä** (Scots pine; a `par_min` of about 100 µmol m⁻² s⁻¹, so the cue is the bright hours): the
+  ICOS monthly needle litter.
+- **Barro Colorado Island** (a light leaf exchanger; a `par_min` of about 1000 µmol m⁻² s⁻¹): GLiMP litter
+  traps. The water driver is a surrogate, the tower's soil water content through a retention curve fitted
+  to the paired soil samples of Kupers et al. (2019).
+- **Palo Verde** (a drought-deciduous dry forest; a low `par_min`, the photoperiod): the monthly leaf
+  litter of Xu et al. (2016) and MODIS LAI. The water driver is the canopy predawn leaf ψ of a MEDS run
+  at the site.
 
 Five results shaped the design (the tests are in `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`
 §8–§13):
 
 - **No chilling.** Removing the chilling requirement changed neither temperate fit.
 - **One light cue, the hours of light above a fitted `par_min`.** Day length and running-mean PAR
-  each fit some sites and fail others: Harvard is best on day length (loss 0.0445 against 0.052 on
-  PAR), Hyytiälä on PAR (0.70 against 1.03) and the BCI leaf exchanger on PAR (0.065 against 0.101).
-  The hours of light with a fitted `par_min` came within 4 % of the better of the two at every site
-  (Harvard 0.046 at 33 µmol m⁻² s⁻¹, Hyytiälä 0.59 at 280, BCI 0.067 at 700; tower PAR), so one
-  variable serves all three. Refitted on ERA5-Land, the deciduous canopies count the photoperiod
-  (at Palo Verde with `par_min` free) and the evergreen ones the bright hours (within bounds that
-  hold them to bright light).
-- **Light makes the drought-deciduous canopy.** At Palo Verde water alone fits poorly (loss 0.064):
-  the leaves fall in December–January, before the water potential drops. The photoperiod alone
-  reaches 0.025 and both cues 0.023, as
-  photoperiodic leaf fall and spring flushing are known in tropical dry forests (Borchert & Rivera
-  2001; Rivera et al. 2002).
+  each fit some sites and fail others: on tower PAR, Harvard is best on day length (loss 0.0445 against
+  0.052 on PAR), Hyytiälä on PAR (0.70 against 1.03) and the BCI leaf exchanger on PAR (0.065 against
+  0.101). The hours of light with a fitted `par_min` came within 4 % of the better of the two at every
+  site (Harvard 0.046 at 33 µmol m⁻² s⁻¹, Hyytiälä 0.59 at 280, BCI 0.067 at 700), so one variable
+  serves all three. Refitted on ERA5-Land, the deciduous canopies count the photoperiod (at Palo Verde
+  with `par_min` free) and the evergreen ones the bright hours (within bounds that hold them to bright
+  light).
+- **Light makes the drought-deciduous canopy.** At Palo Verde water alone fits poorly (loss 0.064): the
+  leaves fall in December–January, before the water potential drops. The photoperiod alone reaches 0.025
+  and both cues 0.023, as photoperiodic leaf fall and spring flushing are known in tropical dry forests
+  (Borchert & Rivera 2001; Rivera et al. 2002).
 - **The flush gate must be sharp where it ends the flush.** A gradual day-length gate (1 per hour) is
   still partly open in October, so the canopy refills while it senesces and a deciduous stand drops
   about 1.9 canopies of leaves a year, which no timing observation shows. Held to one canopy a year,
@@ -235,13 +246,17 @@ Five results shaped the design (the tests are in `docs/dev_plans/MEDS_PHENOLOGY_
   they keep fixed defaults (0.04 per K day for warmth, 0.1 per K day for cold) and the centres are
   fitted.
 
-What is **not** validated: no coupled MEDS run's leaf-area cycle has yet been scored against
-observations; the water cue has been exercised only on a soil surrogate (BCI) and on a MEDS run's
-leaf potential without the shed-to-water feedback (Palo Verde), not on a run's own predawn leaf
-potential with it (see `docs/ROADMAP.md`). The fits capture the mean seasonal cycle; four to five
-scored years per site do not constrain its year-to-year variation.
+**Limits of the evidence.** The fits capture the mean seasonal cycle; four to five scored years per
+site do not constrain its year-to-year variation. These fits exercise the water cue on a soil surrogate
+(BCI) and on a MEDS run's leaf potential without the shed-to-water feedback (Palo Verde). In a coupled
+run the cue reads the run's own predawn leaf potential, feedback included; example 06
+([`examples/example06_regional_run/`](../../examples/example06_regional_run/)) sets such a run's annual
+maximum and minimum leaf area, and its leaf cover, against MODIS across a rainfall gradient, but no
+coupled run's month-by-month leaf-area cycle is scored.
 
-## Parameters (`[phenology]` per-PFT block)
+## Parameters
+
+The `[phenology]` block of the PFT file, one value per PFT for every key.
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -263,12 +278,11 @@ scored years per site do not constrain its year-to-year variation.
 
 The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults (both
 masks 0, so it always flushes and never senesces, and `flush_rate_max` = 0.06667 day⁻¹, about 15 days
-to full leaf); present, every key above is required except the optional water keys. The gate is the
+to full leaf); present, every `[phenology]` key above is required except the optional water keys. The gate is the
 section, not a key in it: gated on one key, a `[phenology]` block that misspelt that key would be
 skipped in silence, and every PFT would run with no cues whatever its leaf habit. A sharpness of 0 is
 rejected (the switch would be a constant 0.5). A key the PFT reference does not list stops the run,
-with the listed key it most likely meant; [`CHANGELOG.md`](../../CHANGELOG.md) lists the keys this
-scheme replaced.
+with the listed key it most likely meant.
 
 ### Drivers
 
@@ -276,10 +290,26 @@ scheme replaced.
 |---|---|---|
 | TEMP | daily-mean air temperature | fast-loop `pheno_tair` reduction |
 | LIGHT | the hours a day the visible light (beam + downward diffuse) reaching the top of the cohort's layer exceeds `par_min` | two-stream `incid_top`, counted per fast step in `light_hours_accum` |
-| WATER | the cohort's predawn (daily-maximum) leaf water potential | `dmax_psi_leaf`, the same value that drives the stomatal stress limb |
+| WATER | the cohort's predawn (daily-maximum) leaf water potential | `dmax_psi_leaf`, the last completed day's maximum, the same value that drives the stomatal stress limb |
 
-No cue reads soil data. All the cue sums and the light mean are per-cohort state and are written to
-restart files.
+The fast loop gathers each driver over its window; the slow step that follows reads them. No cue
+reads soil data. The two tendencies and all the cue sums and the light mean are
+per-cohort state and are written to the state file.
+
+## Code map
+
+| Concept | Routine |
+|---|---|
+| cues → tendencies → potential rates | `meds_plant_phenology`: `phenology_kernel` (+ private `accumulate`, the water switches) |
+| tendencies → leaf loss + flush cap | `meds_plant_phenology`: `leaf_turnover_step`, `turnover_gate` |
+| types (env / state / out; the PFT's traits) | `meds_plant_phenology`: `pheno_env_t`, `pheno_state_t`, `pheno_out_t`; `meds_pft_params`: `phenology_traits_t` (its `leaf_psi_tlp` derived in `meds_pft_derive`) |
+| cue bits | `meds_pft_params`: `CUE_*`, beside the cue masks |
+| helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `doy_effective` |
+| per-cohort advance (slow step) | `meds_slow_state`: `advance_leaf_phenology` |
+| hours of light at each cohort's top | `meds_canopy_radiation`: `rad_out_t%incid_top`; `meds_fast_forcing` (`par_top`); `meds_fast_state`: `accumulate_fast_to_slow` (`light_hours_accum`) |
+| turnover-first carbon demand | `meds_plant_carbon_allocation`: `cohort_carbon_demand` (called from `meds_slow_state`: `compute_carbon_allocation`) |
+| C API | `meds_c_api_phenology`: `meds_phenology_step`, `meds_leaf_turnover_step`, `meds_daylength` |
+| Python front end + example | `meds.plant.pheno`; `examples/example02_canopy_phenology/` |
 
 ## References
 
@@ -292,20 +322,8 @@ restart files.
   dormancy in tropical trees.
 - **Rivera et al. (2002)**, *Trees* 16:445 — increasing day length induces flushing of tropical dry
   forest trees before the rains.
-- **Kim et al. (2012)**, *Glob. Change Biol.* 18:1322 — light-driven leaf phenology in the tropics.
+- **Kim et al. (2012)**, *Glob. Change Biol.* 18:1322 — seasonal carbon and water fluxes of an Amazon
+  rainforest, with a light-controlled leaf phenology in ED2.
+- **Kupers et al. (2019)**, *Sci. Data* 6:63 — dry-season soil water potential maps of the Barro
+  Colorado Island 50-ha plot.
 - ED2 `ED/src/dynamics/phenology_driv.f90`, `phenology_aux.f90`.
-
-## Code map
-
-| Concept | Routine |
-|---|---|
-| cues → tendencies → potential rates | `meds_plant_phenology`: `phenology_kernel` (+ private `accumulate`, the water switches) |
-| tendencies → leaf loss + flush cap | `meds_plant_phenology`: `leaf_turnover_step`, `turnover_gate` |
-| types (env / state / out; the PFT's traits) | `meds_plant_phenology`: `pheno_env_t`, `pheno_state_t`, `pheno_out_t`; `meds_pft_params`: `phenology_traits_t` (its `leaf_psi_tlp` derived in `meds_pft_derive`) |
-| cue bits | `meds_pft_params`: `CUE_*`, beside the cue masks |
-| helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `doy_effective` |
-| per-cohort advance (slow loop) | `meds_slow_state`: `advance_leaf_phenology` |
-| hours of light at each cohort's top | `meds_canopy_radiation`: `solve_band` (`incident`), `rad_out_t%incid_top`; `meds_fast_state`: `accumulate_fast_to_slow` (`light_hours_accum`) |
-| turnover-first carbon demand | `meds_plant_carbon_allocation`: `cohort_carbon_demand` (called from `meds_slow_state`: `compute_carbon_allocation`) |
-| C-API | `meds_c_api_phenology`: `meds_phenology_step`, `meds_leaf_turnover_step`, `meds_daylength` |
-| Python front end + example | `meds.plant.pheno`; `examples/example02_canopy_phenology/` |

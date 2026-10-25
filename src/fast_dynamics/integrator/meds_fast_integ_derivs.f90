@@ -48,7 +48,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! refresh_cas_conductances -- re-solve only the bulk Monin-Obukhov surface layer at a live canopy-  !
    ! air state for the three CAS <-> atmosphere conductances (docs/science/canopy_aerodynamics.md      !
-   ! eq. (5)). The per-cohort boundary layers stay frozen (docs/science/numerical_scheme.md §2), as do !
+   ! eq. (6)). The per-cohort boundary layers stay frozen (docs/science/numerical_scheme.md §2), as do !
    ! the geometry and the reference-level state: only (T_cas, q_cas) is live. Vapour and CO2 reuse the !
    ! heat transfer factor (z0q = z0h), CO2 on the molar capacity at the live humidity.                 !
    !---------------------------------------------------------------------------------------!

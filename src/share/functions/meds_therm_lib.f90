@@ -266,7 +266,7 @@ contains
 
    !----- Canopy-air specific enthalpy [J/kg] from temperature and specific humidity: dry  !
    !      air from 0 K, vapour in the common datum                                         !
-   !      (docs/science/canopy_air_space_biophysics.md §The three CAS twins). -------------!
+   !      (docs/science/canopy_air_space_biophysics.md, the three variables). -------------!
    elemental function cas_temp_to_enthalpy(t_k, shv) result(enth)
       real(wp), intent(in) :: t_k, shv
       real(wp)             :: enth
@@ -282,7 +282,7 @@ contains
 
    !----- Molar density of dry air in moist air [mol/m3], rho (1 - q)/mmdry: the canopy    !
    !      air's CO2 capacity per metre of depth and the scale of its exchange with the     !
-   !      atmosphere (docs/science/canopy_air_space_biophysics.md, the CO2 twin). ---------!
+   !      atmosphere (docs/science/canopy_air_space_biophysics.md, the CO2 variable). -----!
    elemental function cas_molar_density(rho, shv) result(dmol)
       real(wp), intent(in) :: rho, shv
       real(wp)             :: dmol

@@ -1,3 +1,12 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Complete: executed on 2026-10-04.
+>
+> **What shipped:** the clean-up of `scripts/calibrate_fast` in #365: the gates replaced by the
+> validation's verdict and the key table, a failed trial stops the fit, four commands and eight
+> options removed, the modules renamed, D1–D4 as the owner chose.
+>
+> **The live description** is `MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` and
+> `scripts/calibrate_fast/README.md`. Module names and line counts below are from before the rename.
+
 # calibrate_fast: a clean-up review (2026-10-04)
 
 **Status:** executed the same day, on branch `cleanup/calibrate-fast`. The owner took the recommended choice in each of D1–D4 (§6).

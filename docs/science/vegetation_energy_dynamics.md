@@ -1,12 +1,14 @@
 # Vegetation energy dynamics
 
-The per-cohort **leaf and wood** tissue energy balance: how each cohort's canopy surfaces exchange
-radiation, sensible heat, and water vapour with the canopy air space, and how their temperatures are
-relaxed exactly over the step toward their quasi-steady balance, with their own heat capacity.
+The leaf and wood energy balance of each cohort: how its canopy surfaces exchange radiation, sensible
+heat and water vapour with the canopy air space, and how their temperatures relax over a fast step
+toward their quasi-steady balance, with their own heat capacity. The page gives the balance, the
+interception film that is part of each tissue, the exact relaxation, and the tissue energy that is
+the stored state.
 
-This page is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes
+This page is one of the per-store pages under [coupled_biophysics](coupled_biophysics.md), which describes
 the two cross-cutting principles (prognostic internal energy; closed-budget discipline) and how the
-stores are woven each `dt_fast`. Absorbed shortwave and net longwave enter from the radiation kernel
+stores are woven each fast step. Absorbed shortwave and net longwave enter from the radiation kernel
 ([canopy_radiation_transfer](canopy_radiation_transfer.md)); the boundary-layer conductances come from
 the aerodynamics kernel ([canopy_aerodynamics](canopy_aerodynamics.md)); the transpiration demand comes
 from leaf gas exchange ([leaf_gas_exchange](leaf_gas_exchange.md)) and is supply-limited by plant
@@ -19,16 +21,20 @@ hydraulics ([plant_hydraulics](plant_hydraulics.md)).
 `tissue_energy_balance` (`meds_plant_energy`) is the one kernel for a cohort's leaf **or** wood; wood
 is the case without transpiration. Its conductances and absorbed radiation are frozen for the step
 (Category 0, [numerical_scheme](numerical_scheme.md) §2), the saturation terms follow the canopy-air
-state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$. The balance is then
+state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$ (the longwave about the
+tissue's own start-of-step temperature, as explained below). The balance is then
 linear in the tissue's offset $`\Delta T = T - T_{cas}`$: a forcing $`\mathrm{numer}`$ that does not
 depend on $`\Delta T`$, and a coupling conductance $`\mathrm{denom}`$ that multiplies it,
 
 ```math
-\mathrm{numer} = A_{sw} + A_{lw} + Q_{adv} - \mathrm{LE}_{ref}, \qquad
-\mathrm{denom} = h + \mathrm{LE}_{slope} + 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI} \qquad(1)
+\mathrm{numer} = A_{sw} + A_{lw} + S\,(T_0 - T_{cas}) + Q_{adv} - \mathrm{LE}_{ref}, \qquad
+\mathrm{denom} = h + \mathrm{LE}_{slope} + S, \qquad
+S = 4\,\varepsilon\,\sigma\,T_0^3\,\mathrm{AI} \qquad(1)
 ```
 
-$`A_{sw}`$ and $`A_{lw}`$ are the absorbed shortwave and net longwave from the two-stream; $`Q_{adv}`$ is
+$`A_{sw}`$ and $`A_{lw}`$ are the absorbed shortwave and net longwave from the two-stream; $`T_0`$ is
+the tissue's start-of-step temperature, the base of its emission (below), and $`S`$ the emission slope there;
+$`Q_{adv}`$ is
 the enthalpy the sapflow carries in (`q_extra`); $\mathrm{AI}$ is LAI for leaves and WAI for wood, and
 $\varepsilon$ the PFT's leaf or wood emissivity. The sensible coefficient is
 $`h=\rho\,c_p\,g_{bh}\cdot2\,\mathrm{LAI}`$ for leaves (flat plates, both sides, `effarea_heat`) and
@@ -76,29 +82,19 @@ The tissue relaxes toward the zero-inertia offset $`\Delta T_{diag}=\mathrm{nume
 its own heat capacity (next section), and reports its fluxes over the step average, eqs. (5)–(6).
 
 **The emission base.** The two-stream charges each tissue its own emission at its start-of-step
-temperature $`T_0`$ ([canopy_radiation_transfer](canopy_radiation_transfer.md) §4, eq. (14)), so the
-absorbed longwave $`A_{lw}`$ already contains it. The tissue's longwave is linearized about that same
-temperature, its slope taken there:
+temperature $`T_0`$ ([canopy_radiation_transfer](canopy_radiation_transfer.md) §4, eq. (15)), so the
+absorbed longwave $`A_{lw}`$ already contains it. The tissue's net longwave is therefore linearized
+about that same temperature, $`R_{lw}(T) = A_{lw} - S\,(T - T_0)`$, with the slope $`S`$ taken at $`T_0`$.
+Written about $`T_{cas}`$, that is the $`S\,(T_0 - T_{cas})`$ term and the $`S`$ in $`\mathrm{denom}`$ of
+eq. (1). Linearizing about $`T_{cas}`$ instead would charge a tissue warmer than the canopy air an
+emission it never made, and credit a cooler one.
 
-```math
-R_{lw}(T) = A_{lw} - 4\varepsilon\sigma T_0^3\,\mathrm{AI}\,(T - T_0)
-```
-
-`canopy_tissue_energy` passes it to the balance, which is linearized about $`T_{cas}`$, as
-$`A_{lw}+4\varepsilon\sigma T_0^3\,\mathrm{AI}\,(T_0-T_{cas})`$. Linearized about $`T_{cas}`$
-instead, a tissue warmer than the canopy air lost an extra $`4\varepsilon\sigma T^3\,\mathrm{AI}\,(T_0-T_{cas})`$
-it never emitted, and a cooler one gained it. At BCI that put the booked canopy net radiation
-20–25 W/m² below the two-stream's at midday, 4.5–6 W/m² on the daily mean.
-
-$`T_0`$ lags a step, so a warmer leaf raises the next step's base. The step map's gain is the
-slope over the balance's coupling, 0.05–0.3 for a leaf, a contraction. Under `esdirk2` the
-15-minute traces are smoother than with the $`T_{cas}`$ base, not oscillating: the sign of a leaf's
-step-to-step change flips less often, 0.127 of steps against 0.159. An earlier single-pass integrator
-had run to NaN with a lagged base (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5).
+$`T_0`$ lags a step, so a warmer leaf raises the next step's base. The step map's gain, the slope
+over the balance's coupling $`S/\mathrm{denom}`$, is below one: a contraction.
 
 **What the output reports.** The net radiation a run reports is what the tissues' and the ground's
-balances booked over the step: the step mean of the leaves', the wood's and the ground's, b-weighted
-as the ledger's fluxes are, so it is the radiation the column's energy budget closes on. The
+balances booked over the step: the step mean of the leaves', the wood's and the ground's, $b$-weighted
+as the ledger's fluxes are, so it is the radiation the patch's energy budget closes on. The
 two-stream's own net, at the start-of-step temperatures, differs from it by the change in their
 emission within the step. That emission leaves to the sky: the reported upwelling longwave carries it
 (`meds_fast_diag`), so shortwave in − shortwave up + longwave down − longwave up is the reported net
@@ -106,9 +102,10 @@ radiation.
 
 ## The canopy's interception film
 
-Per-cohort **canopy interception** is a separate top→bottom cascade (`intercept_canopy_layer`, in
-`meds_canopy_water`): a capacity-limited bucket with a Beer interception fraction
-$`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`intercept_alpha`, `intercept_k`) and a wetted fraction
+With `[fast].canopy_water_on`, rain and snow are intercepted by a film on each cohort. **Canopy
+interception** is a top-to-bottom cascade (`intercept_canopy_layer`, in `meds_canopy_water`): a
+capacity-limited bucket with a Beer interception fraction
+$`f = \alpha\,(1-e^{-k\,\mathrm{PAI}})`$ (`[fast].intercept_alpha`, `[fast].intercept_k`) and a wetted fraction
 $`\sigma_w = (W/W_{max})^{2/3}`$, each
 cohort's throughfall feeding the next, so the net throughfall reaching the soil top is what the
 infiltration boundary sees. A film left above its capacity, when a cohort sheds leaf area under a full
@@ -118,12 +115,14 @@ fast loop works with them per m² of ground. So a split, a patch fusion or a dis
 cohort's density and leaves its films alone, and the plants that die take their films to the ground
 with their tissue water.
 
-In the fast loop the cascade runs once per `dt_fast`, at the step's start, as capture only; film
+In the fast loop the cascade runs once per fast step, at the step's start, as capture only; film
 evaporation is the energy stages' own flux. Each cohort holds one combined leaf-and-wood bucket, filled
 tallest first and shared between leaf and wood by capacity, and the update reaches both integrators as
-a constant rate whose Euler step over `dt_fast` reproduces it. Under a snowpack nothing is intercepted:
+a constant rate whose Euler step over the fast step reproduces it. Under a snowpack nothing is intercepted:
 the pack takes the rain and the snow. Snowfall below the new-snow threshold forms no pack and joins
-the rain as liquid: the films intercept it, and the rest reaches the pond. The films are clamped at their boundary after the march, not
+the rain as liquid: the films intercept it, and the rest reaches the pond.
+
+The films are clamped at their boundary after the march, not
 inside it. A film evaporates at a conductance frozen at the step's start and only roughly rescaled by
 what it holds, so it can overdraw below zero; left negative, it would create water in the next step's
 interception, so it is floored at zero and the shortfall is booked as a negative outflow, while water
@@ -140,21 +139,20 @@ film's change at $`u_{liq}`$ of the tissue's start-of-step temperature, as it do
 water, and the balance's film terms are taken relative to that, so the tissue, its film and the canopy
 air close exactly. Within a step the tissue's balance runs on the tissue's own heat capacity, and the
 commit reads the temperature back with the end-of-step film, so the film's share of the step's heat is
-a step behind. With the film in the step's capacity, a film far heavier than its tissue that evaporates
-within the step (a falling leaf's, or a stem's at the first rains) would leave its sensible heat to the
-tissue alone: at Palo Verde a nearly leafless cohort's leaf read back at 107 K. A cohort's drip
-leaves at the rain's liquid enthalpy, the throughfall's temperature the pond values it at; the
+a step behind. A film far heavier than its tissue that evaporates within the step (a falling leaf's, or a stem's at
+the first rains) would leave its sensible heat to the tissue alone if it were in the step's capacity;
+the step's balance therefore runs on the tissue's own water, and the film joins at the commit. A cohort's
+drip leaves at the rain's liquid enthalpy, the throughfall's temperature the pond values it at; the
 update's cut at capacity leaves at the tissue's. Water one film passes to the other within a cohort,
 as the cohort's film is re-shared by capacity, leaves the giver at the giver's enthalpy and reaches
-the receiver at it, so the giver is charged nothing: a falling leaf hands its film to its wood. Charged
-the rain's valuation instead, a leaf that had all but fallen (LAI 5e-20) was charged 1.4e-9 W/m²
-against couplings near 1e-17 W/m²/K, and Palo Verde's regrowth stopped. The film stays liquid below 0 °C, as tissue water does. A state file whose
-tissue energies leave out the films it holds is refused at the first fast step, where its cohorts'
-energies and temperatures disagree.
+the receiver at it, so the giver is charged nothing: a falling leaf hands its film to its wood, and a
+leaf with almost no area is not charged for it. The film stays liquid below 0 °C, as tissue water does. The fast loop stops a run whose
+tissue energies leave out the films a cohort holds, since the stored temperatures then disagree with
+the energies.
 
 ## One formulation: the tissue relaxes exactly
 
-There is no diagnostic/prognostic *mode*. The tissue always carries a heat capacity and
+There is no diagnostic/prognostic mode. The tissue always carries a heat capacity and
 `tissue_energy_balance` always relaxes it — **exactly**, because under the Category-0 coefficient
 freeze the equation is linear with a known timescale:
 
@@ -192,13 +190,13 @@ coupling. The reported sensible heat, evaporation and net radiation all use $`\D
 ```math
 H = h\,\Delta T_{\rm avg}, \qquad
 E = \frac{\mathrm{LE}_{ref}+\mathrm{LE}_{slope}\,\Delta T_{\rm avg}}{h_v}, \qquad
-R_{net} = A_{sw} + A_{lw} - 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}\,\Delta T_{\rm avg} \qquad(6)
+R_{net} = A_{sw} + A_{lw} + S\,(T_0 - T_{cas} - \Delta T_{\rm avg}) \qquad(6)
 ```
 
 ($E$ per latent pathway; $`Q_{adv}`$ stays out of $`R_{net}`$ because it is an internal soil-to-plant
-transfer, not a radiative input at the column boundary: the soil's `water_heat_out` has already
+transfer, not a radiative input at the patch boundary: the soil's `water_heat_out` has already
 debited it, and $H$ and $E$ carry it on into the canopy air through $`\Delta T_{\rm avg}`$, so counting
-it in $`R_{net}`$ as well would count it twice in the whole-column ledger). Using one weight for both is
+it in $`R_{net}`$ as well would count it twice in the whole-patch ledger). Using one weight for both is
 what breaks conservation; pairing them closes the balance identically:
 
 ```math
@@ -250,12 +248,13 @@ $`\mathrm{WAI} = n_{plant}\,b_1\,D^{b_2}`$ (`dbh_to_wai`), and the sapwood is th
 $`f_{sap} = \min\big(1,\ b_{1SA}\,D^{b_{2SA}}/(\tfrac{\pi}{4} D^2)\big)`$ of the basal area
 (`sapwood_fraction`), capped at one because a small stem is sapwood throughout. WAI follows the stem
 rather than the leaf area on purpose: a wood area proportional to LAI would make
-$`\tau_{wood}`$ (wood mass over wood area) nearly independent of size and 6–20 times too short, and
+$`\tau_{wood}`$ (wood mass over wood area) nearly independent of size and far too short, and
 would mis-scale the wood's boundary layer, longwave emission and sensible-heat coefficient, which all
 take WAI (eq. (1)).
 
 Sized this way, with a saturated store (`wood_water_sat` = 1 kg per kg of carbon),
-`τ_wood ≈ 600–760 s` and `w_end ≈ 0.22–0.31` at `dt_fast = 900 s` — wood carries **genuine memory**.
+$`\tau_{wood}`$ is of order 600–760 s and $`w_{end}`$ about 0.22–0.31 at `dt_fast = 900 s`: wood carries
+genuine memory.
 
 **Most of the wood's capacity is the sapwood and its water**: dry wood holds 1217 J kg⁻¹ K⁻¹ against
 water's 4186, so the heartwood adds little. And because `w_end` is small for wood while `w_avg` is
@@ -263,16 +262,15 @@ not, **the store's effect lives in the FLUXES, not in the temperature**: "the wo
 not imply "the wood barely matters", and comparing tissue temperatures alone makes the store look
 negligible.
 
-Measured effect, from a 2×2 over (store, longwave) on a 2 h night window (`test_fast_driver`): the store
-leaves the night canopy air **0.85 K warmer**, since leaf and wood carry a heat capacity comparable to
-the canopy air's and pass their stored heat to it as they cool. It also absorbs a third of the
-net-longwave signal (2.44 K without the store, 1.60 K with it), which is why a test that thresholds
-nighttime cooling is pinned against the store-on control.
+At night the store keeps the canopy air warmer, since leaf and wood carry a heat capacity comparable to
+the canopy air's and pass their stored heat to it as they cool; it also absorbs part of the
+net-longwave cooling signal. A test that thresholds nighttime cooling is therefore pinned against the
+store-on control (`test_fast_driver`).
 
 **Why not backward Euler.** BE is the $`w_{\rm end}=w_{\rm avg}=1/(1+x)`$ approximation. A leaf at
-production `dt_fast` has $`x\approx144`$: the exact endpoint weight is $`\sim 5\times10^{-63}`$ against
-BE's $`0.0069`$, and an SDIRK2 tableau gives $`-0.031`$ — a *sign-alternating* artificial memory for a
-mode whose true memory is nil. Under BE the prognostic tissue's only measurable effect would be the
+the default `dt_fast` has $`x`$ of order 100: the exact endpoint weight $`e^{-x}`$ is negligible, against
+BE's $`1/(1+x)`$ of about 0.01, and an SDIRK2 tableau gives a small negative weight — a sign-alternating
+artificial memory for a mode whose true memory is nil. Under BE the prognostic tissue's only measurable effect would be the
 discretisation's own artefact.
 
 Note `denom` **excludes** $`a_{\rm store}`$: it is the coupling conductance — a property of the
@@ -323,7 +321,7 @@ the enthalpy its own water gained ([soil_plant_water](soil_plant_water.md) eq. (
 temperature from that energy, eq. (10), with the water the tissue holds at the end of the step. The
 water gained is thereby mixed in at the start-of-step temperature it was valued at,
 $`T_{end}=(\mathrm{cap}_0\,\bar T+\Delta W\,c_{liq}\,T_0)/\mathrm{cap}_1`$. The next step starts from
-that energy, and the whole-column ledger counts the tissue store as the sum of the energies.
+that energy, and the whole-patch ledger counts the tissue store as the sum of the energies.
 
 **In the slow step.** Matter that a slow operator adds or removes does so at its tissue's temperature.
 That covers tissue grown or shed, and water taken into new leaves, shed to the ground, or held above a
@@ -342,8 +340,7 @@ give.
 makes the tissue store a quantity the model can add up across steps, fusions and splits. Valued
 instead as capacity × temperature, it sits $`W c_{liq} T_{sc}`$ (about 2.4×10⁵ J per kg of water) away
 from the water's datum. The store a step ends with is then not the one the next step begins with: it
-is re-valued by $`\Delta W c_{liq}(T_1-T_0+T_{sc})`$ each step, about 1.7×10⁶ J m⁻² in the quarter
-hour in which wet soil refills dry-season wood at a BCI storm front.
+is re-valued by $`\Delta W c_{liq}(T_1-T_0+T_{sc})`$ each step, large when wet soil refills dry wood.
 
 ---
 

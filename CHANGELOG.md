@@ -144,20 +144,11 @@ site run chooses its cell and reads its maps the way a region does, with no chan
 polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
 no change to any result (#531). The cull's and the treefall's dead carbon reach the soil through the
 litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
-and patch termination merges and re-sorts as patch fusion does (#523). The cull's and the treefall's
-dead carbon reach the soil through the litter and the slow ledger declares them; the slow loop
-converts CO2 with the fast loop's constant; and patch termination merges and re-sorts as patch
-fusion does (#523). The stand's operators have one switch each, and the stand's keys are one
-`[demography]` block (#525). The cull's and the treefall's dead carbon reach the soil through the
-litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
 and patch termination merges and re-sorts as patch fusion does (#523). The stand's operators have
 one switch each, and the stand's keys are one `[demography]` block (#525). The slow tests are one
-per module of the new layout (#528). The cull's and the treefall's dead carbon reach the soil
-through the litter and the slow ledger declares them; the slow loop converts CO2 with the fast
-loop's constant; and patch termination merges and re-sorts as patch fusion does (#523). The stand's
-operators have one switch each, and the stand's keys are one `[demography]` block (#525). The slow
-tests are one per module of the new layout (#528). The soil-carbon state holds its pools as the
-matrix's vector (#529).
+per module of the new layout (#528). The soil-carbon state holds its pools as the matrix's vector
+(#529). Every documentation page and README is checked against the code and rewritten for
+readability, with no change to any result (#542).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -165,8 +156,10 @@ matrix's vector (#529).
   record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
   `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
   are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (on the F tier the per-cohort
-  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
-  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) to its old names.
+  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). The map from every old name to its new one, the per-site statics (`site_area` is
+  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) included, is
+  [`docs/output_renames.md`](https://github.com/xiangtaoxu/MEDS/blob/7223449d/docs/output_renames.md),
+  retired from the documentation in #542.
   - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
     tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
     lists every variable.
@@ -836,6 +829,28 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The documentation is checked against the code** (#542). Every science page, guide and README is
+  checked against the code and rewritten for a modeller: the science pages end Parameters, Code map,
+  References, and example results, stale counts and history leave the reference pages.
+  `docs/ed2_comparison.md` describes the current code (#422), `scripts/prepare_era5/README.md` is
+  new, `docs/ROADMAP.md` lists every open issue, and six finished plans move to
+  `docs/dev_plans/archive/`. Corrected on the pages: `vegetation_energy_dynamics.md` eqs. (1) and (6)
+  linearize the emission about the tissue's start-of-step temperature, as the code does; the
+  boundary-layer conductance ratio in `leaf_gas_exchange.md` is 1.4; `soil_carbon.md` eq. (4) has no
+  nitrogen factor; `order_of_processes.md` follows the code's order; ice saturation is 9, 18 and 26 %
+  below liquid at −10, −20 and −30 °C. Comment lines that cited the wrong equation or key are
+  corrected. No code changes.
+  - `docs/science/column_biophysics.md` is `docs/science/coupled_biophysics.md` ("column" is the soil
+    or snow profile); its sections and equation keep their numbers.
+  - Lettered equations are numbered: `canopy_aerodynamics.md` eqs. (3b), (4)–(10) are (4)–(11), and
+    `canopy_radiation_transfer.md` eqs. (10b), (11)–(15) are (11)–(16); every citation follows.
+  - `docs/output_renames.md` is retired (the naming rule is `docs/science/diagnostics.md` §3), and so is
+    `post_proc/evaluate_ithaca.ipynb`, which needed a run the repository does not hold.
+  - The region runs' file layout moves from `docs/configuration.md` to `diagnostics.md` §3.
+  - CLAUDE.md's compiler traps gain an eighth: ifx's AVX-512 code misreads an array expression over
+    `a(:)%b%c`.
+  - `docs/ROADMAP.md` cites the issues filed with it: #544 and #545 (two defects the review found),
+    #546–#549.
 - **Three gaps a mutation check found are tested** (#541):
   - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
   - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
@@ -898,9 +913,6 @@ matrix's vector (#529).
   `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
   `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
   (`meds_soil_carbon`) is the spin-up's steady state.
-
-### Changed
-
 - **Physics no test reached is tested** (#532):
   - the snow's burial of the canopy and its blend of roughness and displacement;
   - the canopy-air conductances against the log law;

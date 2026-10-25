@@ -1,8 +1,9 @@
 # Demography
 
-MEDS represents a site's vegetation as **cohorts**: plants of one PFT and one size, with a density
-$n$ [plant m⁻²], living in **patches**, pieces of the site's ground that share one disturbance history.
-Demography is how that structure changes over the slow steps:
+MEDS represents a site's vegetation as **cohorts**: plants of one plant functional type (PFT) and one
+size, with a density $n$ [plant m⁻²], living in **patches**, pieces of the site's ground that share one
+disturbance history. This page gives the laws and operators that change that structure over the slow
+steps:
 - plants grow, die and are recruited;
 - treefalls open gaps;
 - fusion, fission, the cull and patch termination keep the number of cohorts and patches bounded,
@@ -26,15 +27,16 @@ Where each step's operators run, and in what order, is in [order_of_processes](o
 
 A cohort's growth is its carbon allocation's ([plant_carbon_allocation](plant_carbon_allocation.md)).
 Demography reads it as a diameter growth rate.
-- Mortality uses the **prospective** rate: the diameter the step's wood growth $`a_{\mathrm{wood}}`$
-  would give, from the allometry's inverse $`D(W)`$ at the cohort's wood carbon $W$:
+- Mortality uses the **prospective** rate $g$ [cm yr⁻¹]: the diameter the step's wood growth
+  $`a_{\mathrm{wood}}`$ would give, from the allometry's inverse $`D(W)`$ at the cohort's wood carbon
+  $W$, less the current diameter $D$, over the step $\Delta t$:
 
   ```math
   g = \frac{D\big(\max(W + a_{\mathrm{wood}},\,0)\big) - D}{\Delta t} \qquad(1)
   ```
 
-- The **growth history** holds the realized rate of each of the last $N$ steps, where $N$ spans
-  `growth_memory_days`. A new sample replaces the oldest. The running mean is
+- The **growth history** holds the realized diameter growth rate of each of the last $N$ steps, where
+  $N$ spans `[demography].growth_memory_days`. A new sample replaces the oldest. The mean is
 
   ```math
   \bar g = \frac{1}{\min(N, n_{\mathrm{s}})}\sum_{k} g_k \qquad(2)
@@ -43,8 +45,9 @@ Demography reads it as a diameter growth rate.
   over the $`n_{\mathrm{s}}`$ samples held.
 - The sum is taken over the buffer itself, not carried as a running total, so a window of zeros
   after a large sample cannot read slightly negative.
-- A new cohort's window is as long as its life.
-- The same window bounds the absolute sink limit on wood growth (plant_carbon_allocation.md eq. (3)).
+- A new cohort's window is as long as its life, up to $N$ steps.
+- The same window bounds the absolute sink limit on wood growth
+  ([plant_carbon_allocation](plant_carbon_allocation.md) eq. (3)).
 
 ### Mortality
 
@@ -59,11 +62,13 @@ m = \gamma + \alpha\,e^{-\beta\,g_{\mathrm{eff}}} \qquad(3)
   prospective rate $g$ before.
 - The average comes from the steps **before** this one: the step's own sample enters the history
   after the rates are taken.
-- $\gamma$, $\alpha$ and $\beta$ are the PFT traits `mort_gamma`, `mort_alpha` and `mort_beta`.
+- $\gamma$, $\alpha$ and $\beta$ are the PFT traits `[pft].mort_gamma`, `[pft].mort_alpha` and
+  `[pft].mort_beta`.
 
 **A cohort with no leaves and no storage** cannot flush again
-(plant_carbon_allocation.md §2, "A cohort with no leaves and no storage"). It dies at least at the rate
-that takes its density to the floor $`n_{\min}`$ (`negligible_nplant`) in one step:
+([plant_carbon_allocation](plant_carbon_allocation.md) §2, "A cohort with no leaves and no storage").
+It dies at least at the rate that takes its density to the floor $`n_{\min}`$
+(`[demography].negligible_nplant`) in one step:
 
 ```math
 m_{\mathrm{floor}} = \frac{\ln\big(\max(n, n_{\min})/n_{\min}\big)}{\Delta t} \qquad(4)
@@ -76,7 +81,7 @@ still has leaves or storage dies at the rate eq. (3) gives.
 
 A cohort's reproduction carbon $r$ [kgC plant⁻¹ per step] is its allocation's reproduction share.
 - Only the share $e$ of it becomes recruits. The rest is dead seed and dead seedling, which falls with
-  the canopy as litter (soil_carbon.md §5).
+  the canopy as litter ([soil_carbon](soil_carbon.md) §5).
 - The share falls with the leaf area index $L_p$ of the cohort's patch: under a deep canopy fewer
   seeds germinate, and fewer seedlings live to the smallest tracked size.
 
@@ -84,33 +89,33 @@ A cohort's reproduction carbon $r$ [kgC plant⁻¹ per step] is its allocation's
   e = e_{\mathrm{pft}}\,\exp(-k_{\mathrm{shade}}\,L_p) \qquad(5)
   ```
 
-  ($`e_{\mathrm{pft}}`$ = `recruit_carbon_efficiency`, $`k_{\mathrm{shade}}`$ = `recruit_shade_decay`).
+  ($`e_{\mathrm{pft}}`$ = `recruit_carbon_efficiency`, $`k_{\mathrm{shade}}`$ = `recruit_shade_decay`; both `[pft]` keys).
 - The recruitment rate of a PFT in a patch [plant m⁻² yr⁻¹] sums its cohorts' contributions and the
-  baseline seed rain $`s_{\mathrm{pft}}`$ (`seed_rain_recruits`):
+  baseline seed rain $`s_{\mathrm{pft}}`$ (`[pft].seed_rain_recruits`):
 
   ```math
   R = s_{\mathrm{pft}} + \sum_{\mathrm{cohorts}} n\,\frac{r}{\Delta t}\,\frac{e}{c_{\min}} \qquad(6)
   ```
 
-- $`c_{\min}`$ is the carbon of one plant at the smallest tracked height (`min_cohort_height`), on
+- $`c_{\min}`$ is the carbon of one plant at the smallest tracked height (`[pft].min_cohort_height`), on
   the PFT's allometry.
-- A PFT with `include_pft = 0` recruits nothing.
+- A PFT with `[pft].include_pft = 0` recruits nothing, seed rain included.
 
 ### Disturbance
 
 Treefall gaps open once a year. The share of each patch's area disturbed, from the yearly rate
-$\lambda$ (`patch_disturbance_rate`) over the one-year interval, is
+$\lambda$ (`[demography].patch_disturbance_rate`) over the one-year interval, is
 
 ```math
 f = 1 - e^{-\lambda \cdot 1\,\mathrm{yr}} \qquad(7)
 ```
 
-A cohort at least `disturbance_survive_height` tall dies in the gap; a shorter one survives into it
-(§4).
+A cohort at least `[demography].disturbance_survive_height` tall dies in the gap; a shorter one
+survives into it (§4).
 
 ## 2. Applying the rates
 
-**Growth and mortality are applied every step**, as tendencies the driver computes from the rates.
+**Growth and mortality are applied every slow step**, as tendencies the driver computes from the rates.
 
 - **The carbon pools are additive.** Each of the four pools moves by its change over the step:
 
@@ -133,8 +138,7 @@ A cohort at least `disturbance_survive_height` tall dies in the gap; a shorter o
     ends exactly on it, so the cull finds it there.
   - A cohort already at or below the floor is not taken lower.
 - **Geometry is never integrated.** Diameter, height, basal area, aboveground biomass and leaf area
-  are derived from the committed carbon after every operator that moves carbon or SLA. Leaf area
-  integrated beside leaf carbon once drifted negative on a leafless cohort.
+  are derived from the committed carbon after every operator that moves carbon or SLA.
 - **Mortality's litter is valued on the new pools.** The live store $`n\,p`$ (density times a
   per-plant pool) changes over the step as
 
@@ -144,18 +148,19 @@ A cohort at least `disturbance_survive_height` tall dies in the gap; a shorter o
 
   - That is growth at the old density, and mortality at the new pools.
   - So the carbon mortality removed is $`(n_0 - n_1)\,p_1`$, every pool of the dying plants. It goes
-    to the patch's litter, split as soil_carbon.md §5 describes.
+    to the patch's litter, split as [soil_carbon](soil_carbon.md) §5 describes.
   - Valuing it on $`p_0`$ would leave the dying plants' growth unaccounted every step: small, but
     one-signed.
   - The density drop is taken from the commit, not recomputed from the hazard, so a cohort the floor
     stopped is not credited with litter for plants still standing.
   - The dying plants' tissue and film water goes to the ground with its enthalpy, down the same
     channel turnover shedding uses.
-- **The recruit pool is credited daily**, $`P \leftarrow P + R\,\Delta t`$ for each PFT and patch.
+- **The recruit pool is credited every slow step**, $`P \leftarrow P + R\,\Delta t`$ for each PFT and
+  patch.
   - Valued at $`c_{\min}`$ per plant, the credit is exactly the establishing share of the
     reproduction carbon the parents were debited that step, plus the seed rain, which arrives from
     outside the site.
-  - A monthly credit from one day's rate would be a 12-point sample that depends on which days are
+  - A monthly credit from one step's rate would be a 12-point sample that depends on which days are
     month boundaries.
 - **Patches age** by one step.
 
@@ -167,8 +172,9 @@ cohort re-sorts.
 
 The monthly operators, in order, are recruitment, fusion, the cull, fission and a re-sort.
 
-**Recruitment.** When a pool reaches `min_recruit_size` plants m⁻², one cohort is founded.
-- Its density is the pool, at `min_cohort_height` on its PFT's allometry, and the pool is reset.
+**Recruitment.** When a pool reaches `[demography].min_recruit_size` plants m⁻², one cohort is
+founded.
+- Its density is the pool, at `[pft].min_cohort_height` on its PFT's allometry, and the pool is reset.
 - A smaller pool carries over, so rare recruiters still establish eventually.
 - The recruit is born in its patch's state: at the canopy-air temperature, its tissues holding the
   water of the top soil layer's potential.
@@ -181,8 +187,9 @@ The monthly operators, in order, are recruitment, fusion, the cull, fission and 
   shading would add one term of a missing process.
 
 **Fusion** keeps the most crowded patch near `max_cohort` cohorts.
-- It runs in passes with a tolerance that grows geometrically from `cohort_size_tol_min` to
-  `cohort_size_tol_max`.
+- It runs in passes, at least one and at most `n_cohort_fusion_iter`. The first pass uses
+  `cohort_size_tol_min`; while a patch still holds more than `max_cohort` cohorts, the next pass raises
+  the tolerance geometrically, toward `cohort_size_tol_max`.
 - Within a patch, a taller cohort absorbs every shorter cohort of its PFT whose height differs by
   less than the tolerance times the patch's top height, unless their combined LAI would reach
   `cohort_lai_cap`.
@@ -200,8 +207,9 @@ The monthly operators, in order, are recruitment, fusion, the cull, fission and 
   - the cohort's water and tissue energy, blended per plant.
 
   The diameter and the rest of the geometry are re-derived from the merged carbon, never averaged.
-- The plastic traits blend on the quantity each is per (plant_traits.md §5). The temperatures follow
-  from the fused energies and heat capacities.
+- The plastic traits blend on the quantity each is per ([plant_traits](plant_traits.md) §5): SLA and
+  the leaf turnover rate on leaf carbon, $V_{\mathrm{cmax25}}$ and $R_{\mathrm{d25}}$ on leaf area.
+  The temperatures follow from the fused energies and heat capacities.
 - The survivor keeps its own growth history and predawn water status. The two cohorts already match
   in height and LAI, so these differ little.
 - Each fusion asserts that carbon, biomass and leaf area are conserved, or stops the run.
@@ -213,8 +221,10 @@ The monthly operators, in order, are recruitment, fusion, the cull, fission and 
 
 A culled cohort's carbon becomes litter and its water goes to the ground.
 
-**Fission** splits a cohort whose LAI exceeds `cohort_lai_cap` into two of half the density.
-- Their wood carbon differs by $`\pm\varepsilon`$ (`split_eps`), and the other pools are equal.
+**Fission** splits a cohort whose LAI exceeds `cohort_lai_cap` into two of half the density, in
+passes that repeat until none exceeds it (at most `n_cohort_fusion_iter`).
+- Their wood carbon differs by a relative $`\pm\varepsilon`$ (`split_eps`), and the other pools are
+  equal.
 - This conserves every pool and the biomass exactly:
   $`\tfrac12 n\,w(1+\varepsilon) + \tfrac12 n\,w(1-\varepsilon) = n\,w`$.
 - The carbon is perturbed, not the diameter. The diameter is derived from the carbon (§2), so the
@@ -224,7 +234,7 @@ A culled cohort's carbon becomes litter and its water goes to the ground.
 
 ## 4. Patches
 
-The patches are kept sorted by site, then by age.
+The patches are kept sorted by site, then oldest first.
 
 The yearly operators, after the month's, are the treefall gaps, then patch fusion and termination
 followed by the cohort operators they call for. Each works within one site: a patch's area is a
@@ -253,13 +263,16 @@ alike.
   ```
 
   with $`L_{\ge h}`$ the leaf area index at and above the layer, and $k$ =
-  `light_ext_coeff_fusefiss`.
+  `light_ext_coeff_fusefiss` (0.5 by default).
 - Two patches are alike when their profiles differ by at most the tolerance on average and by at most
   `patch_light_maxdev_factor` times it in any layer. Layers fully lit in both are not compared.
-- The tolerance grows from `patch_light_tol` to `patch_light_tol_max` over the passes. Two empty
-  patches always fuse.
-- Fusion blends every store on area, which conserves each area-extensive amount, and scales the
-  cohorts' densities by their patch's share of the fused area, which conserves plant number.
+- The tolerance grows geometrically from `patch_light_tol` toward `patch_light_tol_max` over the
+  passes. Two empty patches always fuse.
+- Fusion blends every store, and the age, on area, which conserves each area-extensive amount, and
+  scales the cohorts' densities by their patch's share of the fused area, which conserves plant
+  number.
+- The passes stop once no site holds more than `max_patch` patches. There is at least one, at
+  `patch_light_tol`, and at most `n_patch_fusion_iter`.
 - A pass leaves the cohort block as it is and regroups it once at its end, instead of after every
   fusion.
 
@@ -301,33 +314,34 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 - Cohorts of equal height share one layer and do not shade each other, so the result does not depend
   on their arbitrary order. Recruits are born at one shared size and tie exactly.
 - The radiation puts tied cohorts in one layer too, by the same rule.
-- It is the light environment of the trait plasticity (plant_traits.md eq. (1)) and the competition
-  index of the demography.
+- It is the light environment of the trait plasticity ([plant_traits](plant_traits.md) eq. (1)) and
+  the competition index of the demography.
 - It is refreshed after every step's re-sort and after every calendar restructuring.
 
 ## Parameters
 
 | Key | Meaning |
 |---|---|
-| `[pft]` `mort_gamma`, `mort_alpha`, `mort_beta` | eq. (3) [yr⁻¹, yr⁻¹, yr cm⁻¹] |
-| `[pft]` `recruit_carbon_efficiency`, `recruit_shade_decay` | eq. (5) |
-| `[pft]` `seed_rain_recruits`, `include_pft` | eq. (6) |
-| `[pft]` `min_cohort_height` | the smallest tracked height, at which recruits are born |
-| `[demography]` `growth_memory_days` | the growth history's window, eq. (2) |
-| `[demography]` `negligible_nplant`, `min_cohort_agb` | the density floor (eq. (4)) and the cull (§3) |
-| `[demography]` `max_cohort`, `n_cohort_fusion_iter`, `cohort_size_tol_min`, `cohort_size_tol_max`, `cohort_lai_cap`, `split_eps`, `conservation_tol` | cohort fusion and fission (§3) |
-| `[demography]` `max_patch`, `n_patch_fusion_iter`, `patch_light_tol`, `patch_light_tol_max`, `patch_light_maxdev_factor`, `n_height_layers`, `light_ext_coeff_fusefiss`, `min_patch_area` | patch fusion and termination (§4) |
-| `[demography]` `patch_disturbance_rate`, `disturbance_survive_height` | eq. (7) and the survivors (§4) |
-| `[demography]` `min_recruit_size` | the pool that founds a cohort (§3) |
-| `[demography]` `demography_on`, `recruitment_on`, `cohort_fusion_on`, `cohort_fission_on`, `patch_disturbance_on`, `patch_fusion_on` | one switch per operator, each under `demography_on`; the cull and patch termination always run (§3–§4) |
+| `[pft].mort_gamma`, `mort_alpha`, `mort_beta` | eq. (3) [yr⁻¹, yr⁻¹, yr cm⁻¹] |
+| `[pft].recruit_carbon_efficiency`, `recruit_shade_decay` | eq. (5) |
+| `[pft].seed_rain_recruits`, `include_pft` | eq. (6) |
+| `[pft].min_cohort_height` | the smallest tracked height, at which recruits are born |
+| `[demography].growth_memory_days` | the growth history's window, eq. (2) |
+| `[demography].negligible_nplant`, `min_cohort_agb` | the density floor (eq. (4)) and the cull (§3) |
+| `[demography].max_cohort`, `n_cohort_fusion_iter`, `cohort_size_tol_min`, `cohort_size_tol_max`, `cohort_lai_cap`, `split_eps`, `conservation_tol` | cohort fusion and fission (§3) |
+| `[demography].max_patch`, `n_patch_fusion_iter`, `patch_light_tol`, `patch_light_tol_max`, `patch_light_maxdev_factor`, `n_height_layers`, `light_ext_coeff_fusefiss`, `min_patch_area` | patch fusion and termination (§4) |
+| `[demography].patch_disturbance_rate`, `disturbance_survive_height` | eq. (7) and the survivors (§4) |
+| `[demography].min_recruit_size` | the pool that founds a cohort (§3) |
+| `[demography].demography_on`, `recruitment_on`, `cohort_fusion_on`, `cohort_fission_on`, `patch_disturbance_on`, `patch_fusion_on` | `demography_on` gates every operator below; each of the others switches one. The cull and patch termination have no switch of their own and run with `demography_on` (§3–§4) |
 
 ## Code map
 
 | Concept | Routine |
 |---|---|
-| the demographic laws, eqs. (1), (3)-(7); the founding test and treefall survival | `meds_demography`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `recruit_efficiency`, `npp_to_recruitment`, `founds_cohort`, `disturbed_fraction`, `survives_treefall` |
+| the demographic laws, eqs. (1), (3)–(7); the founding test and treefall survival | `meds_demography`: `npp_to_growth`, `camac_mortality`, `decline_to_floor_mortality`, `recruit_efficiency`, `npp_to_recruitment`, `founds_cohort`, `disturbed_fraction`, `survives_treefall` |
+| $c_{\min}$ | `meds_pft_derive`: `derive_recruit_carbon` |
 | the rates per cohort and patch; the month's founding and the year's treefall decisions | `meds_slow_state`: `cohort_recruit_efficiency`, `compute_vital_rates`, `decide_recruitment`, `decide_disturbance` |
-| the growth history, eq. (2) | `meds_slow_update`: `fill_cohort_deriv` |
+| the growth history, eq. (2) | `meds_slow_update`: `update_cohort_derivatives`, `fill_cohort_deriv`; the window length `growth_window_steps` in `meds_config` |
 | applying growth and mortality, eq. (8) | `meds_slow_update`: `commit_vegetation_step`, `update_cohort_states`, `advance_pool`, `advance_density` |
 | mortality's litter and water, eq. (9); the cull's and the treefall's litter; the recruit pool | `meds_slow_state`: `accumulate_mortality_litter`, `shed_mortality_water`, `kill_litter`; `meds_slow_update`: `accumulate_recruit_pool` |
 | sort, fusion, fission, the cull, recruitment | `meds_slow_update`: `sort_cohorts`, `fuse_cohorts`, `fuse_2_cohorts`, `split_cohorts`, `terminate_cohorts`, `apply_recruitment` |
