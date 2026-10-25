@@ -207,7 +207,7 @@ contains
       dc_pool   = sum(x1) - sum(x0)
       rh_today  = litter_in - dc_pool
       !----- No pool-mass residual: rh_today is defined from the pool change, so it is zero by !
-      !      definition; the independent check is test_soil_biogeochem's (soil_carbon.md §9). !
+      !      definition; the independent check is test_soil_carbon's (soil_carbon.md §9).     !
       !----- lambda: the largest fraction of any pool this step withdraws (soil_carbon_out_t). ---!
       out%lambda_max  = 0.0_wp
       out%lambda_pool = 0_ik

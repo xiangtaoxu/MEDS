@@ -247,7 +247,7 @@ enough. See [`../python/README.md`](../python/README.md).
 
 ```bash
 ctest --test-dir build-dev --output-on-failure          # all of them
-ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one, by regex
+ctest --test-dir build-debug -R slow_update --output-on-failure   # one, by regex
 ```
 
 The suite covers allometry round-trips, carbon and area conservation, container integrity, the

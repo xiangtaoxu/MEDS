@@ -3,8 +3,7 @@
 ! Leaf phenology's wiring (meds_slow_state's advance_leaf_phenology): a two-cohort site    !
 ! through one synthetic Ithaca year; a step with no air temperature is skipped; each cue   !
 ! driver against a hand-computed value; a drought-deciduous and a light-exchanging PFT end !
-! to end (from test_phenology_driver, whose first two sections test_plant_phenology        !
-! covers).                                                                                 !
+! to end.                                                                                  !
 !==========================================================================================!
 module test_slow_step_phenology
    use meds_kinds,              only : wp, ik
@@ -253,10 +252,10 @@ contains
 end module test_slow_step_phenology
 
 !==========================================================================================!
-! The carbon step: a carbon-mode step grows wood and diameter, the driver's guards see the !
-! fast loop's states, the cached wood geometry follows the growth, a shaded cohort         !
-! acclimates and resorbs, the turnover sheds its water, and a restart's re-acclimation     !
-! takes only the storage there is (from test_carbon_growth).                               !
+! The carbon step: a step without the fast loop grows wood and diameter, the driver's      !
+! guards see the fast loop's states, the cached wood geometry follows the growth, a shaded !
+! cohort acclimates and resorbs, the turnover sheds its water, and a restart's re-         !
+! acclimation takes only the storage there is.                                             !
 !==========================================================================================!
 module test_slow_step_carbon
    use meds_kinds,                  only : wp, ik
@@ -293,7 +292,7 @@ contains
       call banner('the carbon step: growth, its geometry, plasticity and the turnover shed')
       cfg = build_test_config()
 
-      !=== 2. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
+      !=== 2. A step without the fast loop grows wood_carbon -> dbh; leaf_area stays leaf_carbon*sla.!
       cfg%gpp_ref = 0.5_wp
       call init_bare_ground(poly, cfg, 1_ik)
       call add_cohort(poly, cfg, 1_ik, 3_ik, 0.1_wp, 20.0_wp)       ! climax cohort
@@ -305,8 +304,8 @@ contains
       call check(poly%cohort%wood_carbon(1) > wood0, 'carbon growth did not add wood_carbon')
       call check(poly%cohort%dbh(1) > dbh0,          'dbh did not increase with wood_carbon (the flip)')
       call check_close(poly%cohort%leaf_area(1), poly%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik),   &
-                       1.0e-9_wp, 'carbon-mode leaf_area /= leaf_carbon*sla')
-      call check(cohort_bad_field(poly%cohort, 1_ik) == 0_ik, 'carbon-mode step left the cohort out of bounds')
+                       1.0e-9_wp, 'leaf_area /= leaf_carbon*sla after a slow-only step')
+      call check(cohort_bad_field(poly%cohort, 1_ik) == 0_ik, 'a slow-only step left the cohort out of bounds')
 
       !----- The driver's checks see the fast loop's states too: a non-finite canopy air or tissue     !
       !      energy is what the integrators commit when even their smallest step fails. ---------------!
@@ -473,7 +472,7 @@ end module test_slow_step_carbon
 !==========================================================================================!
 ! The slow step's paths the ledger cannot see: what the allocator routes out of the slow   !
 ! tier, mortality's water, the litter in lockstep with its patch and with soil carbon off, !
-! and reproduction reaching the recruit pool (from test_slow_ledger).                      !
+! and reproduction reaching the recruit pool.                                              !
 !==========================================================================================!
 module test_slow_step_ledger_paths
    use meds_kinds,              only : wp, ik
@@ -882,8 +881,7 @@ end module test_slow_step_ledger_paths
 
 !==========================================================================================!
 ! Mortality's carbon by pathway: the cull, the treefall, background mortality and the      !
-! death of a cohort with no leaves and no storage, each on its own row (from               !
-! test_mortality_pathways).                                                                !
+! death of a cohort with no leaves and no storage, each on its own row.                    !
 !==========================================================================================!
 module test_slow_step_mortality
    use meds_kinds,               only : wp, ik
@@ -1132,8 +1130,7 @@ end module test_slow_step_mortality
 
 !==========================================================================================!
 ! The soil-carbon seam through the real driver: the daily step's Rh is the fast loop's,    !
-! the pool moves and stays non-negative, and soil carbon off leaves it untouched (from     !
-! test_biogeochem_dynamics).                                                               !
+! the pool moves and stays non-negative, and soil carbon off leaves it untouched.          !
 !==========================================================================================!
 module test_slow_step_seam
    use meds_kinds,               only : wp, ik
@@ -1235,7 +1232,7 @@ contains
              + poly%patch%soil_carbon(1)%passive_carbon
 
       !----- Direction is not asserted (this cohort's turnover litter can outweigh or be outweighed by !
-      !      Rh depending on the seeded pool -- test_soil_biogeochem's INDEPENDENT mass check (Rh        !
+      !      Rh depending on the seeded pool -- test_soil_carbon's INDEPENDENT mass check (Rh        !
       !      recomputed from er*xi_int*K*X0, not from the closure definition) already guarantees          !
       !      dC_pool == litter_in - rh_today to machine precision); this just checks the driver seam      !
       !      actually moved the pool and stayed physical. --------------------------------------------!
@@ -1279,7 +1276,7 @@ end module test_slow_step_seam
 
 !==========================================================================================!
 ! The slow rows' units: each reported rate times the elapsed time is the amount the step   !
-! moved, with and without a fast loop (from test_slow_diag_units).                         !
+! moved, with and without a fast loop.                                                     !
 !==========================================================================================!
 module test_slow_step_diag
    use meds_kinds,               only : wp, ik

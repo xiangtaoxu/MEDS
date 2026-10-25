@@ -617,7 +617,7 @@ contains
 
       ! ---- There is one production Rh authority, the matrix, so the fast/slow seam that exists is
       !      rh_seam_gap (the matrix against the fast loop's accumulation of the SAME matrix), and
-      !      test_biogeochem_dynamics asserts it. Part (b) below builds its own Q10 and moisture
+      !      test_slow_step asserts it. Part (b) below builds its own Q10 and moisture
       !      factors inline.
       dopts = soil_carbon_params_t() ; dopts%decomp_scheme = DECOMP_SCHEME_CENTURY5   ! Q10 temp form
       dopts%rh_q10 = 1.5_wp ; dopts%rh_t_ref = 288.15_wp ; dopts%k_fast = 12.0_wp

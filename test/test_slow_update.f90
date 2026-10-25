@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! The commit: the applier advances only the carbon and derives the geometry from it, the   !
 ! driver's tendency follows the applier's rule, a decline aimed at the floor ends on it,   !
-! and the cull removes the cohort there (from test_carbon_growth).                         !
+! and the cull removes the cohort there.                                                   !
 !==========================================================================================!
 module test_slow_update_commit
    use meds_kinds,              only : wp, ik
@@ -148,7 +148,7 @@ end module test_slow_update_commit
 !==========================================================================================!
 ! Cohort fusion and fission: what each conserves, the tolerance, the lockstep sort, carbon !
 ! and leaf area through a fusion, geometry's one writer, the bounds guard and the growth   !
-! window (from test_fusion_cohort).                                                        !
+! window.                                                                                  !
 !==========================================================================================!
 module test_slow_update_cohorts
    use meds_kinds,           only : wp, ik
@@ -358,7 +358,7 @@ contains
                           1.0e-9_wp, 'wood_carbon*aboveground_frac(pft) /= agb after reorder')
       end do
 
-      !=== 5. CARBON-mode fusion conserves the FOUR prognostic pools: the storage buffer is         !
+      !=== 5. Fusion conserves the FOUR prognostic carbon pools: the storage buffer is            !
       !     nplant-weighted and CARRIED, not snapped back onto allometry (set_cohort_size_from_carbon !
       !     path); the empirical set_cohort_size would reset the pools from size. ====================!
       block
@@ -491,7 +491,7 @@ end module test_slow_update_cohorts
 
 !==========================================================================================!
 ! Treefall gaps: one gap per site, the survivors' density, the donors' remainder, the area !
-! conserved and the diagnostic rows (from test_disturbance).                               !
+! conserved and the diagnostic rows.                                                       !
 !==========================================================================================!
 module test_slow_update_gaps
    use meds_kinds,            only : wp, ik
@@ -685,8 +685,7 @@ end module test_slow_update_gaps
 
 !==========================================================================================!
 ! Patch fusion and termination: plant number and area conserved, a sliver merged rather    !
-! than dropped, the stores riding the patch lockstep, the tolerance ceiling (from          !
-! test_patch).                                                                             !
+! than dropped, the stores riding the patch lockstep, the tolerance ceiling.               !
 !==========================================================================================!
 module test_slow_update_patches
    use meds_kinds,          only : wp, ik
@@ -866,7 +865,7 @@ end module test_slow_update_patches
 
 !==========================================================================================!
 ! A recruit is born in its patch's state: the canopy air's temperature and the top soil    !
-! layer's potential, not a global constant (from test_slow_ledger).                        !
+! layer's potential, not a global constant.                                                !
 !==========================================================================================!
 module test_slow_update_birth
    use meds_kinds,              only : wp, ik
