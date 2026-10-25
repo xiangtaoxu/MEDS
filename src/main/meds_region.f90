@@ -328,12 +328,9 @@ contains
             end if
             if (allocated(site_cfg)) deallocate(site_cfg, site_area)
             if (allocated(pcfg%sites)) call site_configs(pcfg, site_cfg, site_area)
-            poly%id            = ids(p)
-            poly%latitude_deg  = places%lat(p)
-            poly%longitude_deg = places%lon(p)
-            poly%elevation_m   = places%elevation(p)
             call init_polygon(poly, pcfg, polygon_name(run), reg%verbose .and. n == 1_ik, slot(p), reg%now,     &
-                              ok, site_cfg=site_cfg, site_area=site_area)
+                              ok, ids(p), places%lat(p), places%lon(p), places%elevation(p),                &
+                              site_cfg=site_cfg, site_area=site_area)
             if (.not. ok) return
             call polygon_prepare(cfg, reg%met_src, p, poly, run,                                       &
                                  patch_threads=merge(cfg%n_threads, 1_ik, n == 1_ik),               &

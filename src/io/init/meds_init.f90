@@ -37,18 +37,21 @@ module meds_init
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Start `poly`, which arrives with its place (id and location), as cfg%init%init_mode   !
-   ! says. A restart reads row `restart_row` of the restart file and sets `now` to the     !
-   ! file's time; a census reads the census file's rows for the polygon's site(s); bare    !
-   ! ground lays out N_PATCH_INIT patches per site and seeds them. Then each site's        !
-   ! terrain, the canopy-air depth and the soil-carbon spin-up. site_cfg and site_area     !
-   ! give each site of a polygon of several. ok = .false. (with the reason printed, naming !
-   ! `label`) when the start's file cannot serve it.                                       !
+   ! Start `poly` as cfg%init%init_mode says, at its place (polygon_id and location, set   !
+   ! once the start has allocated it). A restart reads row `restart_row` of the restart    !
+   ! file and sets `now` to the file's time; a census reads the census file's rows for the !
+   ! polygon's site(s); bare ground lays out N_PATCH_INIT patches per site and seeds them. !
+   ! Then each site's terrain, the canopy-air depth and the soil-carbon spin-up. site_cfg  !
+   ! and site_area give each site of a polygon of several. ok = .false. (with the reason   !
+   ! printed, naming `label`) when the start's file cannot serve it.                       !
    !---------------------------------------------------------------------------------------!
-   subroutine init_polygon(poly, cfg, label, verbose, restart_row, now, ok, site_cfg, site_area)
+   subroutine init_polygon(poly, cfg, label, verbose, restart_row, now, ok, polygon_id, latitude_deg,     &
+                           longitude_deg, elevation_m, site_cfg, site_area)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
       character(len=*),    intent(in)    :: label        !< the polygon's name, for messages
+      integer(ik),         intent(in)    :: polygon_id   !< the polygon's id: its cell's index, 0 for a site
+      real(wp),            intent(in)    :: latitude_deg, longitude_deg, elevation_m   !< its location
       logical,             intent(in)    :: verbose      !< report the start
       integer(ik),         intent(in)    :: restart_row  !< the polygon's row of the restart file
       type(meds_time_t),   intent(inout) :: now          !< the run's start; a restart's time on return
@@ -104,6 +107,11 @@ contains
          call seed_bare_ground(poly, cfg)
          if (verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
       end select
+      !----- The polygon's place, on the stand the start built (allocating it reset the polygon). -----!
+      poly%id            = polygon_id
+      poly%latitude_deg  = latitude_deg
+      poly%longitude_deg = longitude_deg
+      poly%elevation_m   = elevation_m
 
       !----- Census cohorts sit in an established stand but carry no trait history, so with      !
       !      plasticity on their leaf traits acclimate to their light at once. Bare ground starts !
