@@ -844,6 +844,14 @@ if(MEDS_BUILD_TESTS)
       endif()
    endif()
 
+   #----- The fast integrator (src/fast_dynamics/integrator/), one test per concern, named after it:  #
+   #      its building blocks, its two schemes and the march that drives them, and one fast step end  #
+   #      to end. Each links the fast loop and the shared fast fixture: the column assembled as a run  #
+   #      assembles one, its forcing, its frozen record and the ledger check.                          #
+   add_library(meds_testfastfixture STATIC test/meds_test_fast_fixture.f90)
+   target_link_libraries(meds_testfastfixture PUBLIC meds_fast meds_testsupport)
+   meds_fortran_flags(meds_testfastfixture)
+
    #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
    target_link_libraries(test_column_dynamics PRIVATE meds_model meds_testsupport)
