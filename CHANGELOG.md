@@ -836,6 +836,11 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The tests' config fixture runs on the shipped values, with distinct PFTs** (#538). `build_test_config`
+  said it mirrored the shipped config but ran at `dt_fast` 150 s, `growth_memory_days` 90, a 20 m
+  reproduction height and a storage cushion of 1. It now takes the shipped values. Its three PFTs, which
+  shared one allometry and one set of hydraulics, each have their own, so a test that reads the wrong
+  PFT's traits fails. Two such indexing errors, made on purpose, now fail tests that passed before.
 - **The driver tests** (#537). `test_several_sites` and `test_site_definitions` are `test_sites`. `test_region`
   keeps its 8 region rules, and its other refusals move to the tests of what they check: 13
   `check_main_refuses` cases, `test_maps`, `test_sites`, `test_state_file`, `test_init`. Three duplicates go.
