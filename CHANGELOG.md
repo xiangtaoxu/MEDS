@@ -131,7 +131,10 @@ Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is rea
 one helper groups the cohorts of one height into a layer (#514). A step that fails no longer leaves `meds_main`'s output files open, a run
 that cannot open no longer leaves its C-API slot half built, and a state file written in a month a
 polygon failed in owes the calendar's restructuring (#521). `src/main` checks a step's state in one guard, keeps no
-dead resets and states its own rationale briefly, with no change to any result (#522).
+dead resets and states its own rationale briefly, with no change to any result (#522). The run's status
+codes are `RUN_*`, a run lists its calendar steps once, its output tick is the output library's, and
+a site run chooses its cell and reads its maps the way a region does, with no change to any result
+(#526).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -751,9 +754,19 @@ dead resets and states its own rationale briefly, with no change to any result (
   `[leaf_physiology]` keys are `cfg%leaf_physiology%<key>` (`leaf_physiology_params_t`, in
   `meds_leaf_params`), and `acclimate_site_leaf_tables` takes that record. `meds_numerics` adds
   `equal_height_layers`.
+- **Fortran: the run's status codes, its steps and its start** (#526). `DRIVER_*` are `RUN_*` (the
+  same values: the C API and `meds.model` are unchanged) and the CMake target `meds_driver` is
+  `meds_run`. `polygon_step` takes a `calendar_step_t` (`meds_time`, built by `calendar_step`),
+  `meds_config`'s `site_configs` replaces `meds_region`'s `polygon_sites`, `output_tick`
+  (`meds_output_integrate`) is the polygon's output tick, and `test_c_api_run` takes a work
+  directory.
 
 ### Changed
 
+- **A site run chooses its forcing cell and reads its maps the way a region does** (#526). The cell
+  is chosen once, and each polygon applies its cell's map inputs to its own configuration, so a site
+  run's configuration no longer carries the map's values: the PFT table beside its state files
+  shows the configured `chave_e`, not the cell's. Every output file is the same.
 - **`src/main` cleaned up** (#522), with no change to any result. `check_polygon_state` is the step's
   one guard, its messages word for word the same; `polygon_prepare` no longer resets a freshly
   allocated run record and takes the polygon's cell (`polygon_run_t%cell` goes); no `;` joins.
