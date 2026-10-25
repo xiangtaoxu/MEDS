@@ -92,12 +92,11 @@ The order of the slow step and the calendar boundary is
 [`conservation.md`](../../docs/science/conservation.md), and the slow rows are
 [`diagnostics.md`](../../docs/science/diagnostics.md) §4.
 
-**Tests.** The laws on their own: `test_plant_phenology`, `test_plant_carbon_allocation`,
-`test_plant_trait_dynamics`, `test_soil_biogeochem`. The slow loop on a stand:
-`test_phenology_driver`, `test_carbon_growth`, `test_biogeochem_dynamics`,
-`test_mortality_pathways`, `test_slow_diag_units`, `test_slow_ledger`. The update's operators:
-`test_containers`, `test_fusion_cohort`, `test_patch`, `test_disturbance`. Through the C API:
-`test_c_api_phenology`, `test_c_api_demography`.
+**Tests**, one per module. The processes: `test_plant_phenology` (with its C-API shim),
+`test_plant_carbon_allocation`, `test_plant_traits`, `test_soil_carbon`, `test_demography`. The
+driver: `test_slow_update` (the operators, and the restructuring through the ledger),
+`test_slow_step` (the step through `meds_slow_state` and `meds_slow_dynamics`) and
+`test_slow_ledger`. Through the C API: `test_c_api_demography`.
 
 ## Not here yet
 

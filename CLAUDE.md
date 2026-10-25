@@ -46,7 +46,7 @@ ctest --test-dir build-dev --output-on-failure          # 84 tests, ~110 s; -j 5
 
 # debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
 FC=ifx cmake --preset debug
-ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test by regex
+ctest --test-dir build-debug -R slow_update --output-on-failure   # one test by regex
 ```
 
 Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`

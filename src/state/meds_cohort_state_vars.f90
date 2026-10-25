@@ -852,7 +852,7 @@ contains
    !                                                                                              !
    !      It is centralised but not enforced: a per-cohort fast field left out of this routine    !
    !      compiles clean and is silently wrong at the next fusion. A new field needs a line here  !
-   !      and a witness in test_fusion_cohort. A table the blend iterated would be no safer (the  !
+   !      and a witness in test_slow_update.   A table the blend iterated would be no safer (the  !
    !      compiler cannot check that a table lists every field either) and would be longer than   !
    !      these lines. ---------------------------------------------------------------------------!
    pure subroutine fuse_cohort_fast_state(cohort, recc, donc, np_r, np_d)

@@ -28,7 +28,7 @@ module meds_slow_ledger
    public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
    public :: slow_tissue_energy, slow_co2_handoff, litter_carbon_total
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
-   public :: slow_ledger_heat_open, slow_ledger_heat_close, slow_ledger_soil_check
+   public :: slow_ledger_heat_open, slow_ledger_heat_close, slow_ledger_soil_check, slow_ledger_failures
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
              SLOW_PHASE_TISSUE_WATER
@@ -493,13 +493,7 @@ contains
       !      the per-mark floors; a breach is reported, not fatal (§5). -------------------!
       nbad = 0_ik
       do p = 1_ik, N_SLOW_PHASE
-         if (ledger%n_mark(p) == 0_ik) cycle
-         nbad = nbad + fails(ledger%resid_sum(p)%carbon, ledger%decl_gross(p)%carbon,             &
-                             SLOW_ATOL_CARBON, ledger%store_last%carbon, ledger%n_mark(p))
-         nbad = nbad + fails(ledger%resid_sum(p)%water,  ledger%decl_gross(p)%water,              &
-                             SLOW_ATOL_WATER,  ledger%store_last%water,  ledger%n_mark(p))
-         nbad = nbad + fails(ledger%resid_sum(p)%energy, ledger%decl_gross(p)%energy,             &
-                             SLOW_ATOL_ENERGY, ledger%store_last%energy, ledger%n_mark(p))
+         nbad = nbad + slow_ledger_failures(ledger, p)
       end do
       if (nbad == 0_ik) then
          print '(a)', 'VERDICT: every phase closes within tolerance on all three currencies.'
@@ -521,17 +515,6 @@ contains
       end if
       print '(a)', '=========================================================================='
    contains
-      !----- 1 if this residual breaches the mixed relative/absolute tolerance, else 0. ---!
-      pure integer(ik) function fails(resid, gross, atol_per_mark, store, nmark)
-         real(wp),    intent(in) :: resid, gross, atol_per_mark, store
-         integer(ik), intent(in) :: nmark
-         real(wp) :: tol
-         tol = BUDGET_RTOL_FLUX * abs(gross)                                                       &
-             + real(nmark, wp) * (atol_per_mark + SLOW_ROUNDOFF_FRAC * abs(store))
-         fails = 0_ik
-         if (abs(resid) > tol) fails = 1_ik
-      end function fails
-
       subroutine row(pp, label, s, aa, w, g)
          integer(ik),      intent(in) :: pp
          character(len=*), intent(in) :: label
@@ -541,5 +524,31 @@ contains
                ledger%n_mark(pp)
       end subroutine row
    end subroutine slow_ledger_report
+
+   !----- How many of a phase's three currencies breach eq. (2) of conservation.md §5: the     !
+   !      declared flux's share plus the per-mark floors. 0 for a phase that never ran. ---------!
+   pure integer(ik) function slow_ledger_failures(ledger, p) result(nbad)
+      type(slow_ledger_t), intent(in) :: ledger
+      integer(ik),         intent(in) :: p   !< the phase (SLOW_PHASE_*)
+      nbad = 0_ik
+      if (ledger%n_mark(p) == 0_ik) return
+      nbad = breaches(ledger%resid_sum(p)%carbon, ledger%decl_gross(p)%carbon, SLOW_ATOL_CARBON,      &
+                      ledger%store_last%carbon, ledger%n_mark(p))                                      &
+           + breaches(ledger%resid_sum(p)%water,  ledger%decl_gross(p)%water,  SLOW_ATOL_WATER,       &
+                      ledger%store_last%water,  ledger%n_mark(p))                                      &
+           + breaches(ledger%resid_sum(p)%energy, ledger%decl_gross(p)%energy, SLOW_ATOL_ENERGY,      &
+                      ledger%store_last%energy, ledger%n_mark(p))
+   end function slow_ledger_failures
+
+   !----- 1 if this residual breaches the mixed relative/absolute tolerance, else 0. ---------!
+   pure integer(ik) function breaches(resid, gross, atol_per_mark, store, nmark)
+      real(wp),    intent(in) :: resid, gross, atol_per_mark, store
+      integer(ik), intent(in) :: nmark
+      real(wp) :: tol
+      tol = BUDGET_RTOL_FLUX * abs(gross)                                                          &
+          + real(nmark, wp) * (atol_per_mark + SLOW_ROUNDOFF_FRAC * abs(store))
+      breaches = 0_ik
+      if (abs(resid) > tol) breaches = 1_ik
+   end function breaches
 
 end module meds_slow_ledger

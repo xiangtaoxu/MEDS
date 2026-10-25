@@ -348,6 +348,11 @@ contains
          call check_true('declination near +23.45 deg at the June solstice', solar_declination(172_ik) > 0.40_wp)
          call check_true('declination near -23.45 deg at the December solstice', solar_declination(355_ik) < -0.40_wp)
       end block
+      !----- The day length's polar branches: a polar day at 80 N in June, a polar night in       !
+      !      December, and 12 h at the equator. -----------------------------------------------!
+      call check_true('daylength: a polar day at 80 N in June is ~ 24 h', daylength(80.0_wp, 172_ik) > 23.5_wp)
+      call check_true('daylength: a polar night at 80 N in December is ~ 0 h', daylength(80.0_wp, 355_ik) < 0.5_wp)
+      call check_true('daylength: the equator has ~ 12 h', abs(daylength(0.0_wp, 172_ik) - 12.0_wp) < 0.5_wp)
    end subroutine test_calendar
 
    !----- 10. The sun on a slope: 45 N on the winter solstice, at 0 E (solar noon ~12 UTC). --------!

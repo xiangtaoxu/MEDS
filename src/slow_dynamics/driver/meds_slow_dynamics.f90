@@ -101,8 +101,8 @@ contains
       real(wp), allocatable  :: leaf_carbon_new(:), storage_new(:)
 
       !----- 0. Leaf phenology: advance the leaf tendencies one daily step, before the allocation     !
-      !         reads them (docs/science/plant_phenology.md). A caller with no calendar (the C-API's   !
-      !         carbon mode) omits doy, and the tendencies are not advanced. -----------------------!
+      !         reads them (docs/science/plant_phenology.md). A caller with no calendar (the C API's   !
+      !         slow-only path) omits doy, and the tendencies are not advanced. --------------------!
       if (present(doy)) call advance_leaf_phenology(poly, cfg, doy)
 
       !----- The litter the step opens with, the last boundary's kills, was declared there. ---!

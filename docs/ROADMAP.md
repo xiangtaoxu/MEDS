@@ -406,7 +406,7 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `reconcile_tissue_water_capacity` took the seed and clamp out of the gather. The fifth, a fusion
   policy that cannot omit a field, a table would not deliver either: the compiler cannot check that
   a table lists every field. The policy stays in `fuse_cohort_fast_state`, with a witness per kind
-  in `test_fusion_cohort`.
+  in `test_slow_update`.
 - **One field list for the fast-loop state** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)).
   *Done* (2026-09-30, option B of `MEDS_EFFICIENCY_SWEEP_PLAN.md` Appendix B): `state_to_array`,
   `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each
