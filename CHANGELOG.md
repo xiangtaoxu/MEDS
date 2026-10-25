@@ -751,6 +751,19 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Changed
 
+- **The fast integrator's tests are three, on one fixture** (#527).
+  - `test_column_derivs`, `test_state_combinators`, `test_column_dynamics`, `test_column_esdirk2` and
+    `test_column_rk45` become `test_fast_integ_kernels` (the RHS, the backward-Euler stage, the
+    assembler, every state-vector field), `test_fast_integ_schemes` (ESDIRK2's and RK45's orders, the
+    adaptive march on both) and `test_fast_integ_step` (the column scenarios, each on both schemes).
+  - They share `meds_test_fast_fixture`, assembled as a run assembles a column, in place of three drifted
+    copies of the setup.
+  - Checks that compared a path with itself, or held by construction, go.
+  - New checks:
+    - ESDIRK2 and RK45 agree on a forced day, both closing every ledger;
+    - the error norm `state_wrms_grouped`, the step factor, and RK45's branch of the adaptive march;
+    - in `test_plant_energy`, `canopy_tissue_energy`'s film enthalpies and its tissue longwave, exact at
+      the emission temperature and second order away from it.
 - **The fast-loop process tests are one per module** (#524). Each `processes/` module has its test,
   named after it (`test_canopy_aerodynamics`, `test_canopy_air_space`, `test_canopy_radiation`,
   `test_canopy_water`, `test_leaf_gas_exchange`, `test_plant_energy`, `test_plant_hydraulics`,
@@ -1647,6 +1660,7 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Removed
 
+- **`state_axpy` and `state_size`** (#527), which only tests used; `array_to_state` becomes private.
 - **`snow_energy_step`** (#524), which only the snow tests called, with `snow_out_t`'s `energy_resid` and
   `fliq`, which only it wrote. Eight procedures only tests reached become private: `reduced_wind`,
   `boundary_layer_conductance`, `alloc_rad_out`, `lw_emission_slope`, `latent_pathway`,
