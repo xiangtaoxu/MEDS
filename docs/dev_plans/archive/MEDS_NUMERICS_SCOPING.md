@@ -1,3 +1,15 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Complete; no source comment cites it by section any more.
+>
+> **What shipped:** the shared error-control facility (#65), tolerance unification, the process mask
+> and the sweep harness (#66). The scheme roadmap was never built and was rejected by
+> `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §8. Its measurements (§8b–§8g) and the ED2 `DTLSM` catalogue
+> (§12.6) are kept as a record.
+>
+> **The live description** is `docs/science/numerical_scheme.md` for the scheme, `src/README.md` and
+> `CLAUDE.md` for the kernel conventions (the process mask, bare arrays in kernels).
+>
+> Module paths below predate the 2026-09 reorganization.
+
 # MEDS Fast-Loop Numerics — Scoping & Framework Design
 
 > # 📚 REFERENCE — status rewritten 2026-09-13. Parts of it are superseded; read this first.

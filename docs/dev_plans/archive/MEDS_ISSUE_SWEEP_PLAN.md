@@ -1,3 +1,13 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Complete: the sweep shipped as v0.3.5.
+>
+> **What shipped:** the sweep's Phase 1 fixes and documents, Phase 2 measurements and Phase 3 batch
+> of result-moving fixes (PRs #437, #438, #440, #445, merged into `beta` and released with #446,
+> 2026-10-17), 25 issues closed. Decisions D1–D12 were all taken.
+>
+> **What is deferred** is in `docs/ROADMAP.md` (for example #265 and #379's new turnover form). **The history** is `CHANGELOG.md` `[0.3.5]`.
+>
+> The issue and line references below are against `beta` at `38c715b`.
+
 # MEDS open-issue sweep — plan
 
 **Revision 3, 2026-10-17. Every decision is taken (§6); work under way, decisions made during it are logged in §8.**
