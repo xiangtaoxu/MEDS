@@ -37,7 +37,7 @@ ALLOWED = {"cas_state_t", "snow_state_t", "soil_water_state_t", "soil_energy_sta
            "soil_carbon_state_t",
            "decomp_xi_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_water", "blend_soil_energy",
            "blend_soil_carbon", "blend_decomp_xi", "blend_litter_input", "cas_set_depth",
-           "cas_capacities", "soil_water_store", "soil_energy_store", "pack_pool_vector", "unpack_pool_vector"}
+           "cas_capacities", "soil_water_store", "soil_energy_store"}
 USE = re.compile(r"^\s*use\s*(?:,\s*\w+\s*::\s*|::\s*|\s)\s*(\w+)\s*(,\s*only\s*:(.*))?$", re.I)
 
 

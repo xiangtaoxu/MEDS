@@ -15,13 +15,12 @@ module meds_slow_ledger
    use meds_config,             only : meds_config_t
    use meds_cohort_state_vars,  only : cohort_film_water, cohort_carbon_supply
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store,              &
-                                       pack_pool_vector, litter_input_t
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, litter_input_t
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
-   use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name, soil_carbon_out_t
+   use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_out_t
    use meds_constants,          only : rho_air_ref, umol_2_kgc
    use meds_time,               only : meds_time_t, time_to_string
-   use meds_biogeochem_params,  only : N_SOIL_POOL
+   use meds_biogeochem_params,  only : N_SOIL_POOL, SOIL_POOL_NAME
    implicit none
    private
 
@@ -261,7 +260,7 @@ contains
             ledger%bad_phase = phase
             ledger%bad_patch = ip
             ledger%bad_pool  = k
-            call pack_pool_vector(poly%patch%soil_carbon(ip), x)
+            x = poly%patch%soil_carbon(ip)%carbon
             ledger%bad_value = x(k)
          end if
          return
@@ -310,10 +309,7 @@ contains
 
          !----- The seven CENTURY pools; the lignin is part of the structural pools. ------!
          associate (sc => poly%patch%soil_carbon(ip))
-            store%carbon = store%carbon + a * (sc%fast_grnd_carbon + sc%fast_soil_carbon           &
-                                             + sc%struct_grnd_carbon + sc%struct_soil_carbon       &
-                                             + sc%microbial_carbon + sc%slow_carbon                &
-                                             + sc%passive_carbon)
+            store%carbon = store%carbon + a * sum(sc%carbon)
          end associate
 
          !----- Carbon in transit: the recruit carry-forward pool. ------------------------!
@@ -462,7 +458,7 @@ contains
          write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
                ledger%worst_lignin, ' kgC/m2/day'
          write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
-               ledger%worst_lambda, ' [-]  pool ', trim(soil_carbon_pool_name(ledger%lambda_pool))
+               ledger%worst_lambda, ' [-]  pool ', trim(SOIL_POOL_NAME(ledger%lambda_pool))
          if (ledger%worst_lambda > 0.1_wp)                                                        &
             write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
                         // ' the frozen-pool approximation is degrading; shorten dt_slow.'
@@ -507,7 +503,7 @@ contains
          print '(a)', '--------------------------------------------------------------------------'
          print '(a)', 'IMPOSSIBLE STORE: a phase left a CENTURY pool that cannot exist.'
          print '(5a,i0,a,es12.5)', '   first at phase "', trim(slow_phase_name(ledger%bad_phase)),      &
-               '", pool ', trim(soil_carbon_pool_name(ledger%bad_pool)),                           &
+               '", pool ', trim(SOIL_POOL_NAME(ledger%bad_pool)),                                  &
                ', patch ', ledger%bad_patch, ', value ', ledger%bad_value
          print '(a,i0,a)', '   seen at ', ledger%n_bad, ' operator boundaries in all.'
          print '(a)', '   Conservation says the carbon was accounted for; this says the state is'

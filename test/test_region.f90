@@ -31,6 +31,7 @@
 program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
    use meds_kinds,                 only : wp, ik
+   use meds_biogeochem_params,     only : IP_SLOW
    use meds_test_assert,           only : check_true, test_report
    use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
                                           f_leak_at, NLAT, NLON
@@ -251,7 +252,7 @@ program test_region
    if (.not. ok) error stop 'test_region: the failing region did not open'
    call region_step_month(reg, st)
    call check_true('the month before the failure steps', st == RUN_OK)
-   reg%poly(2)%patch%soil_carbon(1)%slow_carbon = -1.0_wp
+   reg%poly(2)%patch%soil_carbon(1)%carbon(IP_SLOW) = -1.0_wp
    call region_step_month(reg, st)
    call check_true('the month a polygon fails in returns its status', st == RUN_ERR_BOUNDS)
    call check_true('the failed month is consumed: the region moves on', region_done(reg))
@@ -270,7 +271,7 @@ program test_region
                region=.true.)
    call region_open(trim(work)//'/fail1.toml', reg, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the region failing at polygon 1 did not open'
-   reg%poly(1)%patch%soil_carbon(1)%slow_carbon = -1.0_wp
+   reg%poly(1)%patch%soil_carbon(1)%carbon(IP_SLOW) = -1.0_wp
    call region_step_month(reg, st)
    call check_true('the month polygon 1 fails in returns its status', st == RUN_ERR_BOUNDS)
    call region_finalize(reg, st)

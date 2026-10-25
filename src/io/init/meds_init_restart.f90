@@ -12,6 +12,7 @@
 module meds_init_restart
    use iso_c_binding,       only : c_int, c_size_t
    use meds_kinds,          only : wp, ik
+   use meds_biogeochem_params, only : N_SOIL_POOL, SOIL_POOL_NAME
    use meds_constants,      only : n_soil_layer_max, n_snow_layer_max
    use meds_state_defaults, only : is_unset_positive
    use meds_config,         only : meds_config_t, growth_window_steps
@@ -762,7 +763,7 @@ contains
       type(file_row_t), intent(in) :: r
       type(polygon_t),  intent(in) :: poly
       real(wp)    :: buf(poly%patch%n)
-      integer(ik) :: ibuf(poly%patch%n), npat, npft, ip
+      integer(ik) :: ibuf(poly%patch%n), npat, npft, ip, kp
       npat = poly%patch%n
       npft = poly%n_pft
       associate (p => poly%patch)
@@ -806,24 +807,14 @@ contains
          call put_dbl(r, 'soil_w_surface_pa', buf)
          buf = p%soil_water(1:npat)%w_surface_energy
          call put_dbl(r, 'soil_w_surface_enth_pa', buf)
-         !----- 7. Soil carbon. ---------------------------------------------------------------!
-         buf = p%soil_carbon(1:npat)%fast_grnd_carbon
-         call put_dbl(r, 'soilc_fast_grnd_pa', buf)
-         buf = p%soil_carbon(1:npat)%fast_soil_carbon
-         call put_dbl(r, 'soilc_fast_soil_pa', buf)
-         buf = p%soil_carbon(1:npat)%struct_grnd_carbon
-         call put_dbl(r, 'soilc_struct_grnd_pa', buf)
-         buf = p%soil_carbon(1:npat)%struct_soil_carbon
-         call put_dbl(r, 'soilc_struct_soil_pa', buf)
-         buf = p%soil_carbon(1:npat)%microbial_carbon
-         call put_dbl(r, 'soilc_microbial_pa', buf)
-         buf = p%soil_carbon(1:npat)%slow_carbon
-         call put_dbl(r, 'soilc_slow_pa', buf)
-         buf = p%soil_carbon(1:npat)%passive_carbon
-         call put_dbl(r, 'soilc_passive_pa', buf)
-         buf = p%soil_carbon(1:npat)%struct_grnd_lignin
+         !----- 7. Soil carbon: each pool by its name, then the structural pools' lignin. ------!
+         do kp = 1_ik, N_SOIL_POOL
+            buf = p%soil_carbon(1:npat)%carbon(kp)
+            call put_dbl(r, 'soilc_'//trim(SOIL_POOL_NAME(kp))//'_pa', buf)
+         end do
+         buf = p%soil_carbon(1:npat)%lignin(1)
          call put_dbl(r, 'soilc_lignin_grnd_pa', buf)
-         buf = p%soil_carbon(1:npat)%struct_soil_lignin
+         buf = p%soil_carbon(1:npat)%lignin(2)
          call put_dbl(r, 'soilc_lignin_soil_pa', buf)
          !----- 8. Daily slow-to-fast rates. --------------------------------------------------!
          call put_dbl(r, 'shed_water_rate_pa', p%shed_water_rate(1:npat))
@@ -840,7 +831,7 @@ contains
       type(file_row_t), intent(in)    :: r
       type(polygon_t),  intent(inout) :: poly
       real(wp)    :: buf(poly%patch%n)
-      integer(ik) :: ibuf(poly%patch%n), npat, npft, ip
+      integer(ik) :: ibuf(poly%patch%n), npat, npft, ip, kp
       npat = poly%patch%n
       npft = poly%n_pft
       associate (p => poly%patch)
@@ -884,25 +875,15 @@ contains
          p%soil_water(1:npat)%w_surface = buf
          call get_dbl(r, 'soil_w_surface_enth_pa', buf)
          p%soil_water(1:npat)%w_surface_energy = buf
-         !----- 7. Soil carbon. ---------------------------------------------------------------!
-         call get_dbl(r, 'soilc_fast_grnd_pa', buf)
-         p%soil_carbon(1:npat)%fast_grnd_carbon = buf
-         call get_dbl(r, 'soilc_fast_soil_pa', buf)
-         p%soil_carbon(1:npat)%fast_soil_carbon = buf
-         call get_dbl(r, 'soilc_struct_grnd_pa', buf)
-         p%soil_carbon(1:npat)%struct_grnd_carbon = buf
-         call get_dbl(r, 'soilc_struct_soil_pa', buf)
-         p%soil_carbon(1:npat)%struct_soil_carbon = buf
-         call get_dbl(r, 'soilc_microbial_pa', buf)
-         p%soil_carbon(1:npat)%microbial_carbon = buf
-         call get_dbl(r, 'soilc_slow_pa', buf)
-         p%soil_carbon(1:npat)%slow_carbon = buf
-         call get_dbl(r, 'soilc_passive_pa', buf)
-         p%soil_carbon(1:npat)%passive_carbon = buf
+         !----- 7. Soil carbon: each pool by its name, then the structural pools' lignin. ------!
+         do kp = 1_ik, N_SOIL_POOL
+            call get_dbl(r, 'soilc_'//trim(SOIL_POOL_NAME(kp))//'_pa', buf)
+            p%soil_carbon(1:npat)%carbon(kp) = buf
+         end do
          call get_dbl(r, 'soilc_lignin_grnd_pa', buf)
-         p%soil_carbon(1:npat)%struct_grnd_lignin = buf
+         p%soil_carbon(1:npat)%lignin(1) = buf
          call get_dbl(r, 'soilc_lignin_soil_pa', buf)
-         p%soil_carbon(1:npat)%struct_soil_lignin = buf
+         p%soil_carbon(1:npat)%lignin(2) = buf
          !----- 8. Daily slow-to-fast rates. --------------------------------------------------!
          call get_dbl(r, 'shed_water_rate_pa', p%shed_water_rate(1:npat))
          call get_dbl(r, 'shed_water_enth_pa', p%shed_water_enth(1:npat))
