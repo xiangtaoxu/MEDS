@@ -26,8 +26,8 @@ measured range.
 
 ## Two integrators, one dispatch
 
-- **`esdirk2`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a 2×2 Newton
-  arrowhead for the leaf ↔ canopy-air surface solve. The tableau's explicit part is empty, so it is
+- **`esdirk2`** (default) — an L-stable ESDIRK2 on the ARS(2,2,2) tableau, with a direct 2×2 Newton
+  solve for the leaf ↔ canopy-air surface coupling. The tableau's explicit part is empty, so it is
   diagonally implicit, not IMEX.
 - **`rk45`** — adaptive Cash-Karp 5(4), the explicit alternative and the tests' explicit reference.
 

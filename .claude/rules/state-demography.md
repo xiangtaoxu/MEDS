@@ -71,13 +71,13 @@ biomass rather than averaged; patch fusion conserves site-level plant number thr
 and patch area renormalizes to one. Patch **disturbance** conserves area but intentionally does not
 conserve plant number — the killed canopy is the disturbance.
 
-The slow loop carries a site-wide ledger on top of the per-store fast budgets. It catches leaks that
+The slow step carries a site-wide ledger on top of the per-store fast budgets. It catches leaks that
 every fast budget passes, such as growth respiration charged against growth carbon but never
 exhaled. **A closed budget proves bookkeeping, not plausibility.**
 
 ## Order of operations
 
-Every step: growth, then mortality, then patch ageing, and the cohorts are re-sorted by height. The
+Every step: growth, then mortality, then the cohorts are re-sorted by height, then patch ageing. The
 calendar restructuring runs once per boundary, at the start of the next step, after the output has
 read the step that ended (`restructure_stand`; `docs/science/order_of_processes.md`). At a month
 boundary: recruit, then cohort fuse/terminate/split, then sort. At a year boundary, also:

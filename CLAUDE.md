@@ -56,7 +56,7 @@ and each has one label: `unit` (67), `integration` (5), `lint` (10) or `python` 
 (`docs/building.md`, "Running the tests").
 
 Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`
-(dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–36 % faster, for long runs; it builds
+(dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–29 % faster, for long runs; it builds
 `meds_main` and `libmeds.so`, not the tests, whose bit-exact checks it breaks at round-off; the
 failures and production's output against dev's are in `docs/building.md`, "Running the tests"). A
 configure that names no build type builds dev. dev is the reference: compare outputs between commits
@@ -99,7 +99,7 @@ Four rules, applied in order. The long form, with the library graph and a lookup
    nothing past it; ctest `integrator_boundary` checks it.
 2. **A kernel goes where its caller's timescale is**, then in its process module (fast:
    `fast_dynamics/processes/`; slow: `slow_dynamics/processes/`). A kernel called
-   from both tiers is a documented seam, never a folder — there is exactly one.
+   from both timescales is a documented seam, never a folder — there is exactly one.
 3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
    of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,
    `meds_site_state_vars`, `meds_polygon_state_vars`). Parameters are not state.
@@ -111,7 +111,7 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 - **State is a flat site-wide structure of arrays**; adding a per-cohort field means adding it to its
   section of `cohort_block` and of **each lockstep list** in `meds_cohort_state_vars` (one section
   order throughout), every creation site, the fusion policy, and, if it persists, the same section
-  of the restart file (`meds_init_restart`: define, write, read). Patch fields: the same, in
+  of the state file (`meds_init_restart`: define, write, read). Patch fields: the same, in
   `meds_patch_state_vars`.
 - **Persistent ids** are stamped at creation and carried through every sort, fusion and compaction.
   Never reused.
@@ -155,7 +155,7 @@ mathematical and unit-conversion constants and the kinds, in `meds_constants` an
 case: they read as symbols in a formula (`grav`, `rho_h2o`, `day_sec`, `wp`). Every other named constant
 is UPPER case, public or private, module-level or local: a selector code, an index or a flag, with one
 prefix per family (`SOIL_RETENTION_VG`, `INTEG_ESDIRK2`), and a number chosen in the code, a tolerance, a
-floor, a table size or a fitted coefficient (`RWC_FLOOR`, `HYDRO_TABLE_NTAB`). A constant keeps its name
+floor, a table size or a fitted coefficient (`RWC_FLOOR`, `KIRCHHOFF_TABLE_NTAB`). A constant keeps its name
 when another module starts to use it. ctest `constants_named` (`scripts/lint/check_constant_case.py`)
 enforces it.
 
