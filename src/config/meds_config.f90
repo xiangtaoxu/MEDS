@@ -24,7 +24,7 @@ module meds_config
    use meds_pft_derive,         only : derive_leaf_params, derive_pft_tables
    use meds_soil_hydr_lib,      only : soil_texture_t, soil_texture_to_hydraulics, SOIL_RETENTION_VG
    use meds_therm_lib,          only : soil_texture_to_thermal
-   use meds_fast_params,        only : INTEG_ESDIRK2, CTRL_I
+   use meds_fast_params,        only : INTEG_ESDIRK2
    use meds_soil_params,        only : soil_params_t, soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER, &
                                        ANNUAL_DAMPING_DEPTH
    use meds_soil_derive,        only : soil_layers, build_soil_profile, map_layer_texture
@@ -81,12 +81,9 @@ module meds_config
       real(wp)    :: dt_fast                              !< [s] sub-daily step
       real(wp)    :: gpp_ref = 0.0_wp                     !< [kgC/m2 leaf/yr] the stub GPP, loop off
       integer(ik) :: time_integrator     = INTEG_ESDIRK2  !< INTEG_ESDIRK2 | INTEG_RK45
-      logical     :: esdirk2_adaptive    = .true.         !< adaptive sub-steps; .false.: esdirk2_fixed_substep
-      integer(ik) :: esdirk2_fixed_substep = 4_ik         !< sub-steps per dt_fast when not adaptive
       real(wp)    :: rtol                = 2.0e-3_wp      !< [-] relative tolerance of every group (esdirk2's
                                                             !<     default; rk45 takes RK45_RTOL)
       real(wp)    :: atol_scale          = 1.0_wp         !< [-] multiplier on every group's atol
-      integer(ik) :: step_controller     = CTRL_I         !< CTRL_I | CTRL_PI
       real(wp)    :: water_atol          = 1.0e-4_wp      !< [-] the water network's absolute tolerance
       real(wp)    :: soil_energy_budget_atol = 1.0e-2_wp  !< [K] the soil heat's budget stop; not a step tolerance
       logical     :: debug_error         = .false.        !< a budget breach stops the run; else it is reported

@@ -6,7 +6,7 @@
 !   1. ESDIRK2 (esdirk2_step) on the kernel record: second order on the decoupled CO2      !
 !      twin; at least first order on the coupled soil-top temperature; plant water         !
 !      physical and the embedded estimate bounded at the shipped 900 s; a day of the       !
-!      adaptive march, with the I and the PI controllers, stays bounded.                   !
+!      adaptive march stays bounded.                                                       !
 !   2. ESDIRK2's ADAPTIVE MARCH (adaptive_march): a tighter rtol takes more steps, both    !
 !      agree with a fine fixed march, and the adaptive march is the cheaper.               !
 !   3. RK45 (rk45_step) on the kernel record: fifth order on the CO2 twin and on the       !
@@ -19,7 +19,7 @@
 program test_fast_integ_schemes
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : tiny_num
-   use meds_fast_params,        only : CTRL_PI, INTEG_ESDIRK2, INTEG_RK45, RK45_RTOL
+   use meds_fast_params,        only : INTEG_ESDIRK2, INTEG_RK45, RK45_RTOL
    use meds_therm_lib,          only : cas_enthalpy_to_temp, cas_temp_to_enthalpy
    use meds_soil_heat,          only : soil_layer_temp
    use meds_fast_integ_types,   only : march_state_t, frozen_t, error_control_t, surface_tend_t, boundary_flux_t, &
@@ -66,7 +66,7 @@ contains
       type(frozen_t)        :: frozen
       type(error_control_t) :: ec
       real(wp)    :: e1, e2, e4, p_lo, p_hi, tref, errnorm, tcas
-      integer(ik) :: step, ns, nr, ns2, nr2
+      integer(ik) :: step, ns, nr
       logical     :: physical
       print '(a)', 'test_esdirk2:'
       call kernel_record(col%site, col%cfg%pft%hydraulics, N, y, frozen)
@@ -129,19 +129,12 @@ contains
       call check_true('esdirk2_step: the embedded estimate is bounded at dt = 900 s (< 50 tolerance units)',       &
                       errnorm < 50.0_wp, errnorm)
 
-      !----- Stiffness: a day of the adaptive march stays physical and bounded, with the I controller and, !
-      !      on the same window, the PI controller, which takes its own step sequence. -------------------!
+      !----- Stiffness: a day of the adaptive march stays physical and bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
       call adaptive_march(INTEG_ESDIRK2, y, frozen, col%site, N, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, col%ws, ns, nr)
       tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive ESDIRK2, 24 h: steps = ', ns, ', rejects = ', nr
       call check_true('adaptive_march (ESDIRK2): a day stays bounded (280 < T_cas < 320 K)',                       &
-                      tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
-      ec%controller = CTRL_PI
-      call adaptive_march(INTEG_ESDIRK2, y, frozen, col%site, N, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, col%ws, ns2, nr2)
-      tcas = cas_enthalpy_to_temp(ytmp%cas_enthalpy, ytmp%cas_shv)
-      print '(a,i0,a,i0)', '   PI controller, 24 h: steps = ', ns2, ', rejects = ', nr2
-      call check_true('adaptive_march (ESDIRK2, PI controller): a day stays bounded (280 < T_cas < 320 K)',        &
                       tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
    end subroutine test_esdirk2
 

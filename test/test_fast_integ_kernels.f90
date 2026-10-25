@@ -838,19 +838,19 @@ contains
       print '(a)', 'test_step_factor:'
       ec%p_order = 1_ik
       call check('step_control_factor: a first-order estimate 4 tolerances off halves the step',                  &
-                 step_control_factor(4.0_wp, -1.0_wp, ec), 0.5_wp * ec%safety, 1.0e-12_wp)
+                 step_control_factor(4.0_wp, ec), 0.5_wp * ec%safety, 1.0e-12_wp)
       ec%p_order = RK45_P_ORDER
       call check('step_control_factor: RK45''s fourth-order estimate 32 tolerances off halves the step',          &
-                 step_control_factor(2.0_wp ** (RK45_P_ORDER + 1_ik), -1.0_wp, ec), 0.5_wp * ec%safety, 1.0e-12_wp)
+                 step_control_factor(2.0_wp ** (RK45_P_ORDER + 1_ik), ec), 0.5_wp * ec%safety, 1.0e-12_wp)
       ec%fmin = 0.1_wp
       ec%fmax = 10.0_wp
       call check_true('step_control_factor: the control''s own limits bound it (an exact step, a wild one)',      &
-                      step_control_factor(0.0_wp, -1.0_wp, ec) == ec%fmax                                          &
-                      .and. step_control_factor(1.0e30_wp, -1.0_wp, ec) == ec%fmin,                                &
-                      step_control_factor(0.0_wp, -1.0_wp, ec))
+                      step_control_factor(0.0_wp, ec) == ec%fmax                                          &
+                      .and. step_control_factor(1.0e30_wp, ec) == ec%fmin,                                &
+                      step_control_factor(0.0_wp, ec))
       do j = 1_ik, size(fac, kind=ik)
          err = 10.0_wp ** (-6.0_wp + 0.3_wp * real(j - 1_ik, wp))
-         fac(j) = step_control_factor(err, -1.0_wp, ec)
+         fac(j) = step_control_factor(err, ec)
       end do
       call check_true('step_control_factor: a larger error never gives a larger step', all(fac(2:) <= fac(:39)),   &
                       maxval(fac(2:) - fac(:39)))

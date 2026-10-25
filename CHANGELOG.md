@@ -1808,6 +1808,11 @@ matrix's vector (#529).
 
 ### Removed
 
+- **The PI step controller and ESDIRK2's fixed sub-steps** (#530): `[fast].step_controller`,
+  `[fast].esdirk2_adaptive` and `[fast].esdirk2_fixed_substep`, with `CTRL_I`, `CTRL_PI`, the PI gains and
+  `fixed_march`. Only tests ran either option. The fast loop marches ESDIRK2 adaptively under the integral
+  controller, as before by default, and results are bit-identical. A config that still names one of the
+  keys is refused as an unknown key; the example configs drop their `esdirk2_adaptive = true`.
 - **`state_axpy` and `state_size`** (#527), which only tests used; `array_to_state` becomes private.
 - **`snow_energy_step`** (#524), which only the snow tests called, with `snow_out_t`'s `energy_resid` and
   `fliq`, which only it wrote. Eight procedures only tests reached become private: `reduced_wind`,

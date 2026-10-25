@@ -2,8 +2,8 @@
 !==========================================================================================!
 ! meds_fast_integ_control -- the fast loop's error control, shared by both schemes so a    !
 ! target accuracy means the same on each: the grouped error norm state_wrms_grouped and    !
-! the step factor step_control_factor (I or PI controller). The march state mixes units,   !
-! so each entry's error is scaled by its group's (rtol, atol) (the seven groups of         !
+! the step factor step_control_factor (the integral controller). The march state mixes     !
+! units, so each entry's error is scaled by its group's (rtol, atol) (the seven groups of  !
 ! meds_fast_integ_types; the films and the pond carry none). The run's error control is    !
 ! built from [fast] (build_error_control), with its budget stops; default_error_control    !
 ! serves the tests (docs/science/numerical_scheme.md eqs. (3)-(4)). water_scales sets the  !
@@ -13,9 +13,8 @@
 module meds_fast_integ_control
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : tiny_num, rho_h2o
-   use meds_numerics,    only : adaptive_step_update, clamp
+   use meds_numerics,    only : adaptive_step_update
    use meds_config,      only : meds_config_t
-   use meds_fast_params, only : CTRL_PI
    use meds_fast_integ_types,  only : march_state_t, tol_set_t, error_control_t, GRP_THETA, fast_static_state_t, POND, &
                                 state_to_array, state_entry_rules
    use meds_soil_params, only : soil_profile_t
@@ -54,7 +53,6 @@ contains
       type(meds_config_t), intent(in) :: cfg
       type(error_control_t)           :: ec
       ec%tols       = build_tol_set(cfg)
-      ec%controller = cfg%step_controller
       ec%debug_error = cfg%debug_error
       ec%soil_energy_budget_atol = cfg%soil_energy_budget_atol * cfg%atol_scale
    end function build_error_control
@@ -107,23 +105,16 @@ contains
    end function state_wrms_grouped
 
    !---------------------------------------------------------------------------------------!
-   ! Step-size factor from the normalised error err (<= 1 is within tolerance) and the previous !
-   ! accepted step's err_prev, docs/science/numerical_scheme.md eq. (4): the I controller       !
-   ! (adaptive_step_update, exponent -1/(p+1)) on CTRL_I or a first step, else Gustafsson's PI, !
-   ! whose memory of err_prev damps the step oscillation on stiff transients. Both errors are   !
-   ! floored at tiny_num, so an exact step gives fmax rather than Inf.                          !
+   ! Step-size factor from the normalised error err (<= 1 is within tolerance),                 !
+   ! docs/science/numerical_scheme.md eq. (4): the integral controller adaptive_step_update,   !
+   ! exponent -1/(p+1). The error is floored at tiny_num, so an exact step gives fmax rather    !
+   ! than Inf.                                                                                  !
    !---------------------------------------------------------------------------------------!
-   pure function step_control_factor(err, err_prev, ec) result(fac)
-      real(wp),              intent(in) :: err, err_prev
+   pure function step_control_factor(err, ec) result(fac)
+      real(wp),              intent(in) :: err
       type(error_control_t), intent(in) :: ec
-      real(wp) :: fac, e, ep
-      if (ec%controller /= CTRL_PI .or. err_prev <= 0.0_wp) then
-         fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax, ec%p_order)
-      else
-         e  = max(err,      tiny_num)
-         ep = max(err_prev, tiny_num)
-         fac = clamp(ec%safety * e**(-ec%pi_alpha) * ep**(ec%pi_beta), ec%fmin, ec%fmax)
-      end if
+      real(wp) :: fac
+      fac = adaptive_step_update(max(err, tiny_num), ec%safety, ec%fmin, ec%fmax, ec%p_order)
    end function step_control_factor
 
    !----- Each water store's scale [kg/m2], against which its tolerances are set: a soil layer's or  !
