@@ -1,14 +1,39 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_fast_driver -- the SITE-LEVEL fast-biophysics driver over the state-hub-owned per-patch   !
-! reservoirs. Builds a two-patch site (one vegetated, one bare ground), seeds the reservoirs,     !
-! and runs the fast loop:                                                                        !
-!   1. CONSERVATION: every patch's whole-column energy + water budgets close (n_fail == 0) --     !
-!      the fast loop conserves over the reservoirs the state hub owns, for a VEGETATED and a      !
-!      BARE (zero-cohort) patch alike.                                                            !
-!   2. ACTIVITY: the reservoirs evolve (CAS warms under the absorbed shortwave; soil responds).   !
-!   3. STEPPER WIRING + GATE: advance_one_step runs the fast loop only when fast_biophysics_on;   !
-!      with the gate off the reservoirs are untouched.                                            !
+! test_fast_driver -- the polygon's fast loop over one slow step (meds_fast_dynamics:      !
+! fast_dynamics; docs/science/order_of_processes.md §3) and the stepper that runs it       !
+! (meds_stepper: advance_one_step). Every block runs on one day of hourly weather at       !
+! Ithaca (write_diurnal_forcing), read through meds_met as a run reads it: one source for  !
+! the test, and a fresh cursor for each block.                                             !
+!   1. CONSERVATION AND ACTIVITY (fast_dynamics): over a day window, every whole-column    !
+!      budget closes on a vegetated and on a bare patch, and the canopy air moves.         !
+!   2. A COHORT'S START AND ITS ROUND TRIP: a cohort starts at its patch's canopy-air      !
+!      temperature and top-soil potential (init_fast_state); its leaf water is read,       !
+!      evolved and written back window after window (gather_patch, scatter_patch); its     !
+!      gross GPP reaches the slow step (accumulate_fast_to_slow).                          !
+!   3. THE GATE (advance_one_step): the fast loop runs only when fast_biophysics_on, and   !
+!      the slow step sets the canopy-air depth to the tallest cohort plus a freeboard      !
+!      (refresh_canopy_depth).                                                             !
+!   4. THE FAST->SLOW HANDOFF (advance_one_step): with no stub GPP, a step with the fast   !
+!      loop on ends with more carbon than one with it off, and the window's maintenance    !
+!      respiration is positive (accumulate_fast_to_slow).                                  !
+!   5. THE FORCING THROUGH THE WINDOW (sample_window, record_substep, fold_window): a      !
+!      night window makes no GPP and counts no light, a day window makes both; the FAST    !
+!      tier stages each sub-step's sample, each patch's row and the active soil layers;    !
+!      the polygon block holds the step-mean forcing; net longwave cools the night canopy  !
+!      air. Then the patch loop (docs/science/numerical_scheme.md §6a): identical patches  !
+!      see one met stream and no loop-carried warm start, and 4 threads reproduce 1        !
+!      exactly.                                                                            !
+!   6. CANOPY ORDER (patch_forcing's apply_rt_forcing; canopy_aerodynamics): an overstory  !
+!      cohort makes more GPP per leaf area than the understory it shades.                  !
+!   7. UNEQUAL PATCHES (ensure_step_data): the step data take the largest patch, so a      !
+!      later patch with more cohorts runs, and so does a bare one.                         !
+!   8. THE SEAM (settle_tissue_water, then fast_dynamics): the water above a collapsed     !
+!      leaf's new saturation goes to the ground before the fast loop, whose budgets then   !
+!      close; a leafless cohort keeps its wood water.                                      !
+!   9. SPLIT INVARIANCE AND THE LEAFLESS LEAF (fast_dynamics, end to end): one cohort and  !
+!      two at half density reach the same temperatures and GPP per plant; a leafless leaf  !
+!      takes its wood's temperature, and the budgets close.                                !
 !==========================================================================================!
 program test_fast_driver
    use meds_kinds,               only : wp, ik
@@ -40,25 +65,50 @@ program test_fast_driver
    use iso_c_binding,            only : c_int, c_size_t, c_double
    use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   character(len=*), parameter :: FORCING_FILE = 'test_fast_driver_forcing.nc'
+   !----- The windows, on the forcing file's one day: a night (02-04 UTC, no sun), the late       !
+   !      morning (15-17 UTC), solar noon (17-19 UTC) and the afternoon (19-21 UTC). -----------!
+   type(meds_time_t), parameter :: NIGHT     = meds_time_t(2020_ik, 7_ik, 1_ik, 2_ik)
+   type(meds_time_t), parameter :: DAY       = meds_time_t(2020_ik, 7_ik, 1_ik, 15_ik)
+   type(meds_time_t), parameter :: NOON      = meds_time_t(2020_ik, 7_ik, 1_ik, 17_ik)
+   type(meds_time_t), parameter :: AFTERNOON = meds_time_t(2020_ik, 7_ik, 1_ik, 19_ik)
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    type(run_ledgers_t) :: ledgers      !< never activated: the coupled steps book nothing
+   type(met_source_t)  :: src          !< the forcing file, opened once, as a run opens it
+   type(met_cursor_t)  :: cur          !< a block's cursor on it, as a run gives each polygon one
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: NSL = 10_ik
    type(meds_config_t)  :: cfg
    type(polygon_t)      :: poly
    type(soil_profile_t) :: test_profile   !< the site's soil column (use_test_column)
-   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, theta1_1, mass0_leaf, mass1_leaf, mass2_leaf
+   real(wp)    :: we, ww, t_cas0, t_cas1, theta0_1, mass0_leaf, mass1_leaf, mass2_leaf
    real(wp)    :: t_leaf0, t_wood0
    real(wp)    :: cbal0, cbal1
    integer(ik) :: n_budget_fail
 
-   call banner('site-level fast-biophysics loop (state-hub reservoirs)')
+   call banner('the fast-loop driver and the stepper, on a forcing file')
 
    cfg = build_test_config()
    cfg%fast_biophysics_on = .true.
    cfg%dt_fast            = 150.0_wp
    cfg%n_fast_per_slow    = 48_ik           ! 48 x 150 s = 2 h of fast integration per slow step
+
+   !----- The forcing: a MEDS forcing file at Ithaca, its CO2 from the config, not the file  !
+   !      (docs/science/forcing.md §12). --------------------------------------------------------!
+   call write_diurnal_forcing(FORCING_FILE)
+   cfg%forcing%forcing_on     = .true.
+   cfg%forcing%format         = MET_BACKEND_DEFAULT
+   cfg%forcing%path           = FORCING_FILE
+   cfg%forcing%grid_index     = 1_ik
+   cfg%forcing%timestep       = 3600.0_wp
+   cfg%forcing%avg_convention = METAVG_END
+   cfg%forcing%sw_partition   = SWPART_CLEARIDX
+   cfg%forcing%latitude       = 42.44_wp
+   cfg%forcing%longitude      = -76.50_wp
+   cfg%forcing%recycle        = .false.
+   cfg%forcing%co2_const      = 415.0_wp
+   call met_open(src, cfg%forcing)
 
    !----- The test's soil column. ---------------------------------------------------------!
    call geometric_layer_bottoms(2.0_wp, NSL, 3.0_wp, test_bottoms)
@@ -80,19 +130,23 @@ program test_fast_driver
    !      hold at the top soil layer's potential, so the fast loop's first touch reads a real store,  !
    !      not a sentinel to seed. --------------------------------------------------------------------!
    mass0_leaf = poly%cohort%leaf_water_mass(1)
-   t_leaf0    = poly%cohort%leaf_temp(1) ; t_wood0 = poly%cohort%wood_temp(1)
+   t_leaf0    = poly%cohort%leaf_temp(1)
+   t_wood0    = poly%cohort%wood_temp(1)
 
-   !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
-   call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
-   t_cas1    = poly%patch%cas(1)%can_temp
-   theta1_1  = poly%patch%soil_water(1)%theta(1)
-   mass1_leaf = poly%cohort%leaf_water_mass(1)       ! lazy-init seeded THIS call, then evolved once
+   !=== 1. CONSERVATION AND ACTIVITY: the fast loop over the day window. =====================!
+   call site_cursor(cur)
+   call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY, worst_energy=we, worst_water=ww,  &
+                      n_budget_fail=n_budget_fail)
+   t_cas1     = poly%patch%cas(1)%can_temp
+   mass1_leaf = poly%cohort%leaf_water_mass(1)       ! the birth water, evolved over one window
 
    call check(n_budget_fail == 0_ik, 'whole-column budgets closed on every patch (n_fail == 0)')
    call check(we < 1.0e-3_wp, 'whole-column energy residual tiny')
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(poly%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
+
+   !=== 2. A COHORT'S START AND ITS ROUND TRIP. ==============================================!
    call check_close(mass0_leaf, tissue_psi_to_water(top_soil_psi(test_profile, theta0_1),                           &
                     cfg%pft%hydraulics%pft(1)%leaf_curve, poly%cohort%leaf_carbon(1)),                  &
                     1.0e-12_wp, 'a cohort starts with its leaf water at its patch''s top-soil potential')
@@ -101,31 +155,35 @@ program test_fast_driver
               'a cohort starts at its patch''s canopy-air temperature')
    call check(mass1_leaf > 0.0_wp .and. mass1_leaf /= mass0_leaf,                                 &
               'the fast loop evolved the birth water and wrote it back')
-   !----- A SECOND call starts from mass1_leaf, so its own evolution is a clean round-trip proof:   !
+   !----- The NEXT window starts from mass1_leaf, so its own evolution is a clean round-trip proof: !
    !      the fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back   !
    !      (persist) onto the SoA, not just a local/scratch copy. -----------------------------------!
-   call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+   call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=NOON, worst_energy=we, worst_water=ww, &
+                      n_budget_fail=n_budget_fail)
    mass2_leaf = poly%cohort%leaf_water_mass(1)
    call check(abs(mass2_leaf - mass1_leaf) > 1.0e-9_wp,                                           &
               'per-cohort leaf water mass evolved + persisted on the cohort block (2nd fast_dynamics call)')
    !----- Fast->slow carbon bridge: the vegetated cohort accumulated positive GROSS GPP. -------!
    call check(poly%cohort%gpp_accum(1) > 0.0_wp, 'fast loop accumulated positive gross GPP (fast->slow bridge)')
 
-   !=== 3. Stepper wiring + gate. The gate is cfg%fast_biophysics_on. ========================!
+   !=== 3. Stepper wiring + gate. The gate is cfg%fast_biophysics_on; the forcing is there   !
+   !    either way. ==========================================================================!
    block
       real(wp) :: t_before
       !----- Gate OFF (fast_biophysics_on = .false.): the fast loop must NOT run. ------------------!
       cfg%fast_biophysics_on = .false.
       call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
-      call advance_one_step(poly, cfg, ledgers)     ! gate off -> fast loop skipped
+      call site_cursor(cur)
+      call advance_one_step(poly, cfg, ledgers, met_src=src, met_cur=cur, step_start=DAY)   ! gate off -> fast loop skipped
       call check_close(poly%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true.): the hook fires, reservoirs change. -----------!
       cfg%fast_biophysics_on = .true.
       call init_fast_state(poly, cfg)
       t_before = poly%patch%cas(1)%can_temp
-      call advance_one_step(poly, cfg, ledgers)
+      call site_cursor(cur)
+      call advance_one_step(poly, cfg, ledgers, met_src=src, met_cur=cur, step_start=DAY)
       call check(abs(poly%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
 
@@ -149,10 +207,11 @@ program test_fast_driver
       end block
    end block
 
-   !=== 4. END-TO-END fast->slow handoff via the stepper. The SAME carbon-mode site is advanced  !
-   !    with the fast loop OFF then ON, with gpp_ref = 0 so the stub adds nothing. Turnover is    !
-   !    identical between the two, so more carbon under fast-ON is EXACTLY the fast GPP flowing    !
-   !    through gpp_accum into carbon growth -- the fast->slow bridge, isolated from turnover.  ===!
+   !=== 4. END-TO-END fast->slow handoff via the stepper. The SAME site is advanced over the    !
+   !    same day window with the fast loop OFF then ON, with gpp_ref = 0 so the stub adds        !
+   !    nothing. Turnover is identical between the two, so more carbon under fast-ON is EXACTLY  !
+   !    the fast GPP flowing through gpp_accum into carbon growth -- the fast->slow bridge,      !
+   !    isolated from turnover. ==================================================================!
    cfg%gpp_ref       = 0.0_wp
 
    cfg%fast_biophysics_on = .false.                    ! stub GPP = 0; carbon change is pure turnover
@@ -160,7 +219,8 @@ program test_fast_driver
    call use_test_column(poly)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
-   call advance_one_step(poly, cfg, ledgers)
+   call site_cursor(cur)
+   call advance_one_step(poly, cfg, ledgers, met_src=src, met_cur=cur, step_start=DAY)
    cbal0 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
 
@@ -170,7 +230,8 @@ program test_fast_driver
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(poly)
    call init_fast_state(poly, cfg)
-   call advance_one_step(poly, cfg, ledgers)
+   call site_cursor(cur)
+   call advance_one_step(poly, cfg, ledgers, met_src=src, met_cur=cur, step_start=DAY)
    cbal1 = poly%cohort%leaf_carbon(1) + poly%cohort%fineroot_carbon(1)                          &
          + poly%cohort%wood_carbon(1) + poly%cohort%nonstructural_carbon(1)
 
@@ -182,47 +243,31 @@ program test_fast_driver
               .and. poly%cohort%root_resp_accum(1) > 0.0_wp,                                        &
               'fast loop accumulated positive leaf/stem/root maintenance respiration')
 
-   !=== 5. FORCING-DRIVEN diurnal cycle, end to end. Drive the SAME fast loop from a real             !
-   !    MEDS forcing NetCDF (SW peaks ~17 UTC at Ithaca). A 2 h NIGHT window (02-04 UTC, SW=0) must   !
-   !    accumulate ~0 GPP; a 2 h DAY window (15-17 UTC, high SW) must accumulate clearly more -- i.e. !
-   !    the forcing's diurnal shortwave really propagates through met_instant -> the fast loop.  =====!
+   !=== 5. The diurnal cycle, end to end (SW peaks ~17 UTC at Ithaca). A 2 h NIGHT window        !
+   !    (02-04 UTC, SW=0) must accumulate ~0 GPP; a 2 h DAY window (15-17 UTC, high SW) must      !
+   !    accumulate clearly more -- i.e. the forcing's diurnal shortwave really propagates through !
+   !    met_instant -> the fast loop.  ==========================================================!
    block
-      type(met_source_t) :: drv
-      type(met_cursor_t) :: cur
       real(wp)           :: gpp_night, gpp_day, tcas_n, light_night, light_day
       real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the thread-invariance check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_soil_profile(cfg%soil, test_profile)            ! the site's column from [soil] from here on
-      call write_diurnal_forcing('test_fast_driver_forcing.nc')
-      cfg%forcing%forcing_on   = .true.
-      cfg%forcing%format      = MET_BACKEND_DEFAULT
-      cfg%forcing%path         = 'test_fast_driver_forcing.nc'
-      cfg%forcing%grid_index   = 1_ik ; cfg%forcing%timestep = 3600.0_wp
-      cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
-      cfg%forcing%latitude = 42.44_wp ; cfg%forcing%longitude = -76.50_wp
-      cfg%forcing%recycle = .false.
-      cfg%forcing%co2_const = 415.0_wp          ! CO2 comes from config, not the file (docs/science/forcing.md §12)
 
       call init_bare_ground(poly, cfg, 1_ik)
 
       call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
-      call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
-                           cfg%forcing%longitude,                            &
-                           cfg%forcing%elevation)
+      call site_cursor(cur)
 
       call init_fast_state(poly, cfg)
-      call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur,               &
-                               step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=NIGHT)    ! 02-04 UTC (night)
       gpp_night = poly%cohort%gpp_accum(1)
       light_night = poly%cohort%light_hours_accum(1)
       tcas_n    = poly%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_state(poly, cfg)
-      call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur,               &
-                               step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY)      ! 15-17 UTC (day)
       gpp_day = poly%cohort%gpp_accum(1)
       light_day = poly%cohort%light_hours_accum(1)
 
@@ -235,22 +280,21 @@ program test_fast_driver
          type(output_buffers_t) :: ob
          type(met_cursor_t)     :: cur2
          type(met_forcing_t)    :: m
-         type(meds_time_t)      :: t0, ts
+         type(meds_time_t)      :: ts
          real(wp)    :: sum_t, sum_q, sum_pb, sum_cz, sum_sw, w
          integer(ik) :: isub
          logical     :: exact
-         t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
          poly%diag%active = .true.
          ob%fast_on = .true.
          call init_fast_state(poly, cfg)
-         call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
-         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, &
-                              cfg%forcing%elevation)
+         call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY, out_bufs=ob)
+         call site_cursor(cur2)
          sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; sum_sw = 0.0_wp
          exact = .true.
          do isub = 1_ik, cfg%n_fast_per_slow
-            ts = time_advance_seconds(t0, (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
-            call met_advance(drv, cur2, ts) ; m = met_instant(drv, cur2, ts)
+            ts = time_advance_seconds(DAY, (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
+            call met_advance(src, cur2, ts)
+            m = met_instant(src, cur2, ts)
             sum_t = sum_t + m%air_temp * cfg%dt_fast ; sum_q = sum_q + m%air_shv * cfg%dt_fast
             sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
             sum_sw = sum_sw + m%sw_down() * cfg%dt_fast
@@ -310,13 +354,12 @@ program test_fast_driver
                     'a 15-17 UTC summer window at Ithaca has the sun high (mean cos zenith > 0.5)')
          poly%diag%active = .false.
       end block
-      call met_close(drv)
 
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
       call check(gpp_day > 1.0e-7_wp,   'day forcing window -> positive GPP')
       call check(gpp_day > 10.0_wp * max(gpp_night, 1.0e-30_wp), 'GPP tracks the diurnal shortwave (day >> night)')
       !----- The phenology light count: no step of the night window has PAR above par_min, every   !
-      !      step of the mid-afternoon window does, so the cohort counts 0 h and the window's hours. !
+      !      step of the day window does, so the cohort counts 0 h and the window's hours.           !
       call check(light_night == 0.0_wp, 'night window -> no hours of light counted')
       call check(abs(light_day - cfg%n_fast_per_slow * cfg%dt_fast / 3600.0_wp) < 1.0e-9_wp, &
                  'day window -> every fast step counted as light (the window''s hours)')
@@ -329,7 +372,6 @@ program test_fast_driver
       !    asserts they get identical GPP: the met stream is site-uniform, so any per-patch divergence       !
       !    means the reader's state leaked across the patch loop. -------------------------------------------!
       block
-         type(met_source_t) :: drv3
          type(met_cursor_t) :: cur3
          real(wp) :: g1, g2, g3
          call init_bare_ground(poly, cfg, 3_ik)
@@ -338,14 +380,9 @@ program test_fast_driver
          call add_cohort(poly, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
-         call met_open(drv3, cfg%forcing)
-         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude,      &
-                              cfg%forcing%longitude,                            &
-                              cfg%forcing%elevation)
+         call site_cursor(cur3)
          call init_fast_state(poly, cfg)
-         call fast_dynamics(poly, cfg, met_src=drv3, met_cur=cur3,             &
-                            step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
-         call met_close(drv3)
+         call fast_dynamics(poly, cfg, met_src=src, met_cur=cur3, step_start=DAY)
          g1 = poly%cohort%gpp_accum(poly%patch%cohort_offset(1))
          g2 = poly%cohort%gpp_accum(poly%patch%cohort_offset(2))
          g3 = poly%cohort%gpp_accum(poly%patch%cohort_offset(3))
@@ -376,7 +413,6 @@ program test_fast_driver
       !    type through a STATIC mold that every thread writes, and the kernel libraries' local arrays    !
       !    sit in static storage without -auto; see docs/building.md.) -----------------------------------!
       block
-         type(met_source_t)  :: drv4
          type(met_cursor_t)  :: cur4
          real(wp) :: h1, h2, h3
          call init_bare_ground(poly, cfg, 3_ik)
@@ -385,14 +421,9 @@ program test_fast_driver
          call add_cohort(poly, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(poly, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(poly)
-         call met_open(drv4, cfg%forcing)
-         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude,      &
-                              cfg%forcing%longitude,                            &
-                              cfg%forcing%elevation)
+         call site_cursor(cur4)
          call init_fast_state(poly, cfg)
-         call fast_dynamics(poly, cfg, met_src=drv4, met_cur=cur4,                     &
-                            step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), patch_threads=4_ik)
-         call met_close(drv4)
+         call fast_dynamics(poly, cfg, met_src=src, met_cur=cur4, step_start=DAY, patch_threads=4_ik)
          h1 = poly%cohort%gpp_accum(poly%patch%cohort_offset(1))
          h2 = poly%cohort%gpp_accum(poly%patch%cohort_offset(2))
          h3 = poly%cohort%gpp_accum(poly%patch%cohort_offset(3))
@@ -429,12 +460,9 @@ program test_fast_driver
    !    (Left hydraulically limited, the taller cohort's more negative psi_leaf would legitimately     !
    !    close its stomata and INVERT the GPP ranking -- correct physics, but it masks the wiring.) ===!
    block
-      type(met_source_t) :: drv
-      type(met_cursor_t) :: cur
       integer(ik)        :: itall, ishort, ii
       real(wp)           :: gpp_la_top, gpp_la_under
       real(wp), parameter :: LAI_EACH = 2.0_wp
-      ! forcing cfg + the diurnal NetCDF are still in place from block 5.
       cfg%pft%wstress_psi_open  = -50.0_wp                        ! neutralize hydraulic stress (beta==1),
       cfg%pft%wstress_psi_close = -100.0_wp                       !   so the LIGHT/gb ordering drives GPP
       call derive_parameters(cfg)                                ! the leaf table takes them
@@ -449,15 +477,10 @@ program test_fast_driver
       do ii = 1_ik, poly%cohort%n
          poly%cohort%nplant(ii) = LAI_EACH / max(poly%cohort%leaf_area(ii), 1.0e-9_wp)
       end do
-      call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
-                           cfg%forcing%longitude,                            &
-                           cfg%forcing%elevation)
+      call site_cursor(cur)
 
       call init_fast_state(poly, cfg)
-      call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur,               &
-                               step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
-      call met_close(drv)
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY)      ! 15-17 UTC (day)
 
       itall = 1_ik ; ishort = 1_ik                               ! locate the tallest / shortest cohort
       do ii = 2_ik, poly%cohort%n
@@ -481,8 +504,6 @@ program test_fast_driver
    !    traps; here we assert every cohort gets a finite positive day GPP. The trailing BARE patch  !
    !    (patch3, 0 cohorts) also exercises apply_rt_forcing's empty-canopy path under forcing.  ====!
    block
-      type(met_source_t) :: drv
-      type(met_cursor_t) :: cur
       integer(ik)        :: ii, ncoh_all
       real(wp)           :: gpp_min
       call build_soil_profile(cfg%soil, test_profile)            ! the site's column from [soil] from here on
@@ -493,14 +514,9 @@ program test_fast_driver
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp, 12.0_wp)
       call add_cohort(poly, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
       call finalize_init(poly)                                   ! patch 3 keeps 0 cohorts (bare)
-      call met_open(drv, cfg%forcing)
-      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude,      &
-                           cfg%forcing%longitude,                            &
-                           cfg%forcing%elevation)
+      call site_cursor(cur)
       call init_fast_state(poly, cfg)
-      call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur,               &
-                               step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
-      call met_close(drv)
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY)      ! 15-17 UTC (day)
       ncoh_all = poly%cohort%n
       gpp_min  = huge(1.0_wp)
       do ii = 1_ik, ncoh_all
@@ -511,22 +527,23 @@ program test_fast_driver
       write(*,'(a,i0,a,es10.3,a)') '   (multi-patch cohorts=', ncoh_all, '  min day GPP=', gpp_min, ' kgC/plant)'
    end block
 
-   !=== 8. SEAM CONTINUITY: a forced leaf-carbon collapse between two fast_dynamics calls (an        !
+   !=== 8. SEAM CONTINUITY: a forced leaf-carbon collapse between two fast_dynamics windows (an      !
    !    operator that drops leaf carbon without its water) must not reach the fast loop as a          !
    !    supersaturated store: settle_tissue_water, which the stepper runs before the fast loop, sheds  !
    !    the water above the new ceiling to the ground, and the fast loop then closes its budgets. ====!
    block
       real(wp) :: mass_before, leaf_carbon_before
 
-      cfg%forcing%forcing_on = .false.     ! plain constant-forcing path (isolate from blocks 5-7)
       call init_bare_ground(poly, cfg, 1_ik)
       call use_test_column(poly)
       call add_cohort(poly, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(poly)
       call init_fast_state(poly, cfg)
+      call site_cursor(cur)
 
-      !----- One normal call evolves the birth water (the round trip block 1 exercises). ----------!
-      call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+      !----- One normal window evolves the birth water (the round trip block 2 exercises). --------!
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY, worst_energy=we, worst_water=ww, &
+                         n_budget_fail=n_budget_fail)
       mass_before        = poly%cohort%leaf_water_mass(1)
       leaf_carbon_before = poly%cohort%leaf_carbon(1)
       call check(mass_before > 0.0_wp, 'seam test: the leaves hold water before the forced collapse')
@@ -543,7 +560,8 @@ program test_fast_driver
                        * poly%cohort%leaf_carbon(1), 1.0e-12_wp,                                    &
                        'seam test: the settle capped the leaf water at its new saturation')
       call check(poly%patch%shed_water_rate(1) > 0.0_wp, 'seam test: the excess went to the ground')
-      call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
+      call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=NOON, worst_energy=we, worst_water=ww, &
+                         n_budget_fail=n_budget_fail)
       call check(n_budget_fail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
       call check(poly%cohort%leaf_water_mass(1) < 0.5_wp*mass_before,                               &
                  'seam test: leaf water mass dropped sharply (the excess was shed), not left at the old value')
@@ -564,10 +582,14 @@ program test_fast_driver
          call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          !----- ONE short sub-step: a re-seed from the soil puts the store back to 100% -- a 2% drop   !
          !      this check sees. -------------------------------------------------------------------!
-         dt_fast_save = cfg%dt_fast ; nsub_save = cfg%n_fast_per_slow
-         cfg%dt_fast = 60.0_wp ; cfg%n_fast_per_slow = 1_ik
-         call fast_dynamics(poly, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
-         cfg%dt_fast = dt_fast_save ; cfg%n_fast_per_slow = nsub_save
+         dt_fast_save = cfg%dt_fast
+         nsub_save    = cfg%n_fast_per_slow
+         cfg%dt_fast         = 60.0_wp
+         cfg%n_fast_per_slow = 1_ik
+         call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=AFTERNOON, worst_energy=we,  &
+                            worst_water=ww, n_budget_fail=n_budget_fail)
+         cfg%dt_fast         = dt_fast_save
+         cfg%n_fast_per_slow = nsub_save
          wood_after = poly%cohort%wood_water_mass(1)
          write(*,'(a,es10.3,a,es10.3,a)') '   (dormant seam: wood water set ', wood_set, ' -> ', wood_after, &
                ' kg/plant after one 60 s step)'
@@ -591,14 +613,11 @@ program test_fast_driver
    !    same tree without leaves: its leaf temperature is its wood's (a bud sits on its twig), and the !
    !    budgets close. ================================================================================!
    block
-      type(met_source_t) :: drv
-      type(met_cursor_t) :: cur
       integer(ik)        :: icase, nfail(3)
       real(wp)           :: t_leaf(3), t_wood(3), t_cas(3), gpp(3), d_split
       real(wp), parameter :: NPLANT_THIN = 0.002_wp, DBH_THIN = 20.0_wp
       real(wp), parameter :: HOLD_OFF = 1.0e6_wp     ! tolerances no step error reaches
       real(wp)           :: rtol0, atol_scale0
-      cfg%forcing%forcing_on = .true.
       rtol0 = cfg%rtol ; atol_scale0 = cfg%atol_scale
       cfg%rtol = HOLD_OFF ; cfg%atol_scale = HOLD_OFF
       call build_soil_profile(cfg%soil, test_profile)            ! the site's column from [soil] from here on
@@ -618,13 +637,9 @@ program test_fast_driver
             call set_cohort_size_from_carbon(poly%cohort, 1_ik)
             call hold_cohort_tissue_temps(poly%cohort, 1_ik)
          end if
-         call met_open(drv, cfg%forcing)
-         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude,        &
-                              cfg%forcing%elevation)
+         call site_cursor(cur)
          call init_fast_state(poly, cfg)
-         call fast_dynamics(poly, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
-                            n_budget_fail=nfail(icase))
-         call met_close(drv)
+         call fast_dynamics(poly, cfg, met_src=src, met_cur=cur, step_start=DAY, n_budget_fail=nfail(icase))
          t_leaf(icase) = poly%cohort%leaf_temp(poly%cohort%n) ; t_wood(icase) = poly%cohort%wood_temp(poly%cohort%n)
          t_cas(icase)  = poly%patch%cas(1)%can_temp          ; gpp(icase)    = poly%cohort%gpp_accum(poly%cohort%n)
          if (icase == 2_ik) call check(poly%cohort%leaf_temp(1) == poly%cohort%leaf_temp(2) .and.              &
@@ -644,6 +659,7 @@ program test_fast_driver
       cfg%rtol = rtol0 ; cfg%atol_scale = atol_scale0
    end block
 
+   call met_close(src)
    write(*,'(a)')          '   PASS'
    write(*,'(a,f7.2,a,f7.2,a)') '   (patch-1 CAS temp ', t_cas0, ' -> ', t_cas1, ' K)'
    write(*,'(a,es10.3,a,es10.3,a)') '   (worst whole-column resid: energy=', we, ' J/m2  water=', ww, ' kg/m2)'
@@ -657,6 +673,12 @@ contains
       p%site%surface(1)%soil_profile = test_profile
       p%site%surface(1)%theta_start  = 0.30_wp
    end subroutine use_test_column
+
+   !----- A fresh cursor on the forcing file at the site, as a run gives each polygon one. --------!
+   subroutine site_cursor(c)
+      type(met_cursor_t), intent(out) :: c
+      call met_cursor_init(src, c, 1_ik, cfg%forcing%latitude, cfg%forcing%longitude, cfg%forcing%elevation)
+   end subroutine site_cursor
 
    !----- Write a 1-day hourly (time=25, grid=1) MEDS forcing NetCDF with a diurnal shortwave    !
    !      (peaks ~17 UTC at Ithaca) so the fast loop sees a real day/night cycle.                 !
