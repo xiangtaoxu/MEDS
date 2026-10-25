@@ -50,6 +50,10 @@ A key that parses and does nothing is worse than one that is absent: `[forcing] 
 `config_keys_listed` holds the two references equal to the keys the loader reads, so a new key is
 listed when it is added.
 
+A key set twice in one file stops the run too, naming the key and the file: TOML forbids it, and the
+second value would otherwise be ignored in silence. Each `[[sites]]` table's keys are its own, so two
+tables may each set the same key.
+
 Every run that writes a state writes `<output_dir>/<prefix>_pft_parameters.csv` — one row per PFT
 with every per-PFT trait actually used. It is a provenance record: what the run really did, not what
 you meant.

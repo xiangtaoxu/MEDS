@@ -27,6 +27,7 @@
 #                              fails every "<= 0" test, so the check must state what holds (Release
 #                              builds only: a Debug build traps the NaN at that comparison)
 #   toml_unclosed_string       a string value with no closing quote, which would otherwise read as ""
+#   toml_duplicate_key         a key set twice ([soil] depth), which TOML forbids
 #   init_census_missing        a census file that is not there (init mode 1)
 #   init_census_empty          a census file with no row for the site
 #   init_restart_missing       a state file that is not there (init mode 2)
@@ -167,6 +168,9 @@ elseif(CASE STREQUAL "toml_unclosed_string")
    replace_or_fail(text "\nenabled *= *false" "\nenabled = true" "[output] enabled")
    replace_or_fail(text "\nio_config *= *\"\"[^\n]*" "\nio_config = \"my_variables.txt" "[output] io_config")
    set(expects "cannot parse string[^\n]*for key \"output\\.io_config\"")
+elseif(CASE STREQUAL "toml_duplicate_key")
+   replace_or_fail(text "\ndepth *= *([0-9.]+)" "\ndepth = \\1\ndepth = 3.0" "[soil] depth")
+   set(expects "soil\\.depth[^\n]*twice")
 elseif(CASE MATCHES "^hydraulics_")
    #----- The PFT file's copy beside the run, with one trait made impossible for every PFT. --------#
    file(READ "${SOURCE_DIR}/meds_config_pft.toml" pft)
