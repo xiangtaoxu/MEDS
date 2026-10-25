@@ -35,29 +35,33 @@
 !  18. AQUIFER         : the head-driven bottom is two-way and settles to hydrostatic equilibrium. !
 !  19. FROZEN TOP      : the ice impedes the rain's infiltration; the freezing curve's suction      !
 !                        fills a frozen layer to saturation, not past it; the water closes.        !
+!  20. FROZEN SURFACE  : the dry surface layer reads the liquid and dsl_theta_init of the ice     !
+!                        (water_derivs), so it forms below dsl_theta_init of the pores the ice     !
+!                        leaves (CLM5's effective porosity); above that the layer evaporates as    !
+!                        one with no dry surface layer, at its liquid's potential.                 !
 !==========================================================================================!
 program test_water_network
    use meds_test_assert, only : check_true, check_close, check_int, test_report
    use, intrinsic :: iso_fortran_env, only : int64
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num, n_soil_layer_max
+   use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num, n_soil_layer_max, grav, r_wv, p_std
    use meds_linear_algebra,  only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_fast_integ_types,  only : fast_static_state_t, water_drive_t, water_work_t, tol_set_t,                    &
                                 ensure_static_capacity, POND, WOOD, LEAF, GRP_THETA, N_WORK, WORK_WATER_NSUB,   &
                                 WORK_WATER_REJECT, WORK_WATER_NFAIL
    use meds_fast_state,  only : derive_cohort_terms
-   use meds_fast_integ_derivs, only : set_water_state
+   use meds_fast_integ_derivs, only : set_water_state, water_derivs
    use meds_fast_integ_backward_euler, only : water_step, water_jacobian_error
    use meds_plant_hydr_lib, only : water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
    use meds_pft_derive,     only : build_kirchhoff_table
    use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head, soil_ice_state,  &
                                     soil_liquid_capacity
-   use meds_therm_lib,       only : internal_energy_liquid, liquid_energy_to_temp
+   use meds_therm_lib,       only : internal_energy_liquid, liquid_energy_to_temp, sat_specific_humidity
    use meds_pft_params,    only : hydraulics_table_t
    use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_soil_water,    only : ground_evap_env_t
+   use meds_soil_water,    only : ground_evap_env_t, ground_evaporation_setup
    implicit none
 
    !----- A stand on the fixture soil: its cohorts (the static state the gather would build), what !
@@ -616,6 +620,7 @@ contains
       call test_pond_subfreezing_inflow()
       call test_aquifer()
       call test_frozen_top()
+      call test_frozen_surface_evaporation()
       soil = clay
    end subroutine test_column_scenarios
 
@@ -897,6 +902,47 @@ contains
       call check_close('frozen top: cryosuction, change in store = - drainage', total_water(frozen) - w0, -drained, &
                        1.0e-10_wp * w0)
    end subroutine test_frozen_top
+
+   !=======================================================================================!
+   !----- The loam's top layer frozen, holding 0.20 of ice, under dry air at 268 K (docs/science/     !
+   !      soil_biophysics.md, "Frozen soil"). The dry surface layer reads the liquid and            !
+   !      dsl_theta_init of the ice, so it forms once the liquid falls below dsl_theta_init of the  !
+   !      pores the ice leaves, d (theta_sat - theta_ice). With the liquid 0.02 above that, the     !
+   !      layer evaporates as one with no dry surface layer, rho (alpha q_sat - q_air) / r_aero,     !
+   !      alpha being Philip's humidity at its liquid's potential on the full pore space and q_sat  !
+   !      over liquid; 0.02 below it, a dry surface layer holds it back. Reading the liquid alone,  !
+   !      a dry surface layer would already form at the first; reading all the water, none at the  !
+   !      second. ------------------------------------------------------------------------------!
+   subroutine test_frozen_surface_evaporation()
+      type(soil_params_t)  :: opts
+      type(stand_t)        :: col
+      real(wp), parameter  :: THETA_ICE = 0.20_wp, OFFSET = 0.02_wp, T_GROUND = 268.0_wp, Q_AIR = 1.0e-4_wp
+      real(wp) :: theta(10), onset, theta_liq, head, e(2), e_free(2), dum(0)
+      integer(ik) :: k
+      onset = opts%dsl_theta_init * (soil%theta_sat(1) - THETA_ICE)
+      do k = 1_ik, 2_ik
+         theta_liq = onset + merge(OFFSET, -OFFSET, k == 1_ik)
+         theta = 0.30_wp
+         theta(1) = theta_liq + THETA_ICE
+         call make_column(col, theta)
+         col%drive%ground%t_ground = T_GROUND
+         col%drive%ground%q_air    = Q_AIR
+         col%drive%ice(1) = soil_ice_state(soil%layer_curve(1), THETA_ICE)
+         call set_water_state(col%static, soil, hyd, theta, col%drive%ice, 0.0_wp, 0.0_wp, dum, dum, col%water)
+         call ground_evaporation_setup(soil, opts, col%drive%ground)
+         call water_derivs(col%static, soil, opts, hyd, col%drive, col%water%state%tau_soil, col%water%state%tau_coh, &
+                           col%water%ev(1), col%water%sys, .false.)
+         e(k) = col%water%ev(1)%evap
+         head = soil_theta_to_head(SOIL_RETENTION_VG, theta_liq, soil%theta_sat(1), soil%theta_res(1),              &
+                                   soil%curve_par_a(1), soil%curve_par_n(1))
+         e_free(k) = col%drive%ground%rho_air * (exp(head * grav / (r_wv * T_GROUND))                               &
+                     * sat_specific_humidity(T_GROUND, p_std) - Q_AIR) / col%drive%ground%r_aero
+      end do
+      call check_close('frozen surface: liquid above d of the pores the ice leaves evaporates with no dry layer',     &
+                       e(1), e_free(1), 1.0e-9_wp * e_free(1))
+      call check_true('frozen surface: liquid below it is held back by a dry surface layer', e(2) < 0.9_wp * e_free(2), &
+                      e(2) / e_free(2))
+   end subroutine test_frozen_surface_evaporation
 
    !=======================================================================================!
    !     Small helpers.                                                                     !
