@@ -845,7 +845,7 @@ if(MEDS_BUILD_TESTS)
    add_library(meds_testfastfixture STATIC test/meds_test_fast_fixture.f90)
    target_link_libraries(meds_testfastfixture PUBLIC meds_fast meds_testsupport)
    meds_fortran_flags(meds_testfastfixture)
-   foreach(t fast_integ_kernels)
+   foreach(t fast_integ_kernels fast_integ_schemes)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testfastfixture)
       meds_fortran_flags(test_${t})
@@ -857,12 +857,6 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_column_dynamics PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_dynamics)
    add_test(NAME column_dynamics COMMAND test_column_dynamics)
-
-   #----- Pure fast-loop RHS; links meds_model for meds_fast_integ_derivs.                    #
-   add_executable(test_column_derivs test/test_column_derivs.f90)
-   target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
-   meds_fortran_flags(test_column_derivs)
-   add_test(NAME column_derivs COMMAND test_column_derivs)
 
    #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 path through fast_step. -------------------#
    add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)

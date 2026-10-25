@@ -23,6 +23,9 @@
 !   8. ANNUAL DAMPING: the amplitude of an annual surface wave decays with depth as        !
 !      exp(-z/d), d = sqrt(2 alpha/omega), the semi-infinite analytic solution, under the  !
 !      deep-temperature anchor and not under the insulated base, which reflects the wave.  !
+!   9. THE TENDENCY (soil_energy_time_deriv): the explicit tendency the RK45 stages read   !
+!      is the dt -> 0 limit of the backward-Euler step, with heat let in at the top, water  !
+!      heat leaving every layer and a temperature gradient driving every face.             !
 ! The soil's thermal conductivity and heat capacity are test_therm_lib's.                  !
 !==========================================================================================!
 program test_soil_heat
@@ -30,7 +33,7 @@ program test_soil_heat
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : rho_h2o, t_3ple, pi, n_soil_layer_max
    use meds_soil_heat,      only : soil_heat_env_t, soil_heat_out_t, soil_energy_step_implicit, soil_layer_energy,   &
-                                   soil_layer_energy_slope, soil_layer_temp
+                                   soil_layer_energy_slope, soil_layer_temp, soil_energy_time_deriv
    use meds_patch_state_vars, only : soil_energy_state_t
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,    only : soil_profile_t, soil_params_t, ENERGY_BC_DIRICHLET
@@ -49,6 +52,7 @@ program test_soil_heat
    call test_oversaturated_layer()
    call test_mass_change_neutrality()
    call test_soil_annual_damping()
+   call test_soil_tendency()
 
    call test_report('test_soil_heat')
 
@@ -480,5 +484,36 @@ contains
          z(k) = soil%z_node(k)
       end do
    end subroutine damping_profile
+
+   !----- 9. The explicit tendency (soil_energy_time_deriv) is the dt -> 0 limit of the backward-Euler !
+   !      step (soil_energy_step_implicit): one 0.01 s step from a column cooling by 0.6 K a layer,   !
+   !      120 W/m2 let in at the top and 3 W/m3 of water heat leaving every layer, moves each layer's  !
+   !      energy by its tendency to O(dt). -------------------------------------------------------!
+   subroutine test_soil_tendency()
+      real(wp), parameter :: DT = 1.0e-2_wp
+      type(soil_profile_t)      :: soil
+      type(soil_heat_env_t)     :: forcing
+      type(soil_energy_state_t) :: col, col0
+      type(soil_params_t)       :: opts
+      type(soil_heat_out_t)     :: flux
+      real(wp)    :: dedt(n_soil_layer_max), worst
+      integer(ik) :: k
+      print '(a)', 'test_soil_tendency:'
+      call soil_setup(soil, forcing)
+      forcing%g_top = 120.0_wp
+      forcing%water_heat_out(1:10) = 3.0_wp
+      do k = 1_ik, 10_ik
+         col%soil_energy(k) = temp_to_internal_energy(soil%dry_heat_capacity(k), forcing%soil_water(k) * rho_h2o,     &
+                                                      291.0_wp - 0.6_wp * real(k - 1_ik, wp), 1.0_wp)
+      end do
+      col0 = col
+      call soil_energy_time_deriv(col0, forcing, soil, opts, dedt)
+      call soil_energy_step_implicit(col, forcing, soil, opts, DT, flux)
+      worst = 0.0_wp
+      do k = 1_ik, 10_ik
+         worst = max(worst, abs((col%soil_energy(k) - col0%soil_energy(k)) / DT - dedt(k)) / max(abs(dedt(k)), 1.0_wp))
+      end do
+      call check_true('the tendency is the backward-Euler step''s dt -> 0 limit (O(dt))', worst < 1.0e-2_wp, worst)
+   end subroutine test_soil_tendency
 
 end program test_soil_heat
