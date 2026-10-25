@@ -137,7 +137,8 @@ worst values; the demographic laws make the founding and treefall decisions the 
 cull's and the treefall's dead carbon reach the soil through the litter and the slow ledger declares
 them; the slow loop converts CO2 with the fast loop's constant; and patch termination merges and
 re-sorts as patch fusion does (#523). The stand's operators have one switch each, and the stand's keys
-are one `[demography]` block (#525). The slow tests are one per module of the new layout (#528).
+are one `[demography]` block (#525). The slow tests are one per module of the new layout (#528). The
+soil-carbon state holds its pools as the matrix's vector (#529).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -808,9 +809,17 @@ are one `[demography]` block (#525). The slow tests are one per module of the ne
   `slow_diag_units`; `carbon_growth` is split among `plant_carbon_allocation`, `slow_step` and
   `slow_update`; `plant_phenology` holds `c_api_phenology`; `plant_trait_dynamics` is `plant_traits`
   and `soil_biogeochem` is `soil_carbon`. `demography` is new.
+- **Fortran: the soil-carbon pools by index** (#529). `soil_carbon_state_t` holds `carbon(N_SOIL_POOL)`
+  and `lignin(2)`: `%slow_carbon` is `%carbon(IP_SLOW)`, and so on for each pool, and
+  `%struct_grnd_lignin` / `%struct_soil_lignin` are `%lignin(1)` / `%lignin(2)`. `pack_pool_vector` and
+  `unpack_pool_vector` are gone: read and write `%carbon`. `soil_carbon_pool_name(k)` is
+  `SOIL_POOL_NAME(k)` in `meds_biogeochem_params`. Restart files keep their variable names and load.
 
 ### Changed
 
+- **The soil-carbon state is the matrix's vector** (#529), with no change to any result. The kernels
+  read and write `%carbon` as it is, without packing it into an array and back, and the pool names
+  are one table beside the pool indices; the restart reads and writes the pools in one loop.
 - **One slow test per module** (#528), the tests only. Each module of `driver/` and `processes/` has
   its test, and a test that merged into another keeps its fixture as a private module of its new
   file. `test_demography` checks each demographic law by a property it must have, and
