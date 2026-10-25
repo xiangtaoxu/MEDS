@@ -138,11 +138,11 @@ resorption), and with `mean_root_exudate_py` they sum to the carbon entering poo
 `build_litter_input` maps those six numbers onto the matrix source term — four carbon streams into $u$,
 two lignin fluxes alongside — and does **no** chemistry of its own, since the splits are per-cohort
 decisions made before summing to the patch. So **only pools 1–4 ever receive litter**; microbial, slow
-and passive are fed by transfers alone. Carbon arrives by two routes: turnover/shed and continuous
-background mortality accumulate into `patch%litter_in` and enter through $u$, while **cull-termination
-and disturbance kills** add necromass *directly* onto `patch%soil_carbon`, through the same
-`necromass_to_litter` split, so the boundary's dead carbon reaches the pools at once rather than with the
-next day's step.
+and passive are fed by transfers alone. Carbon arrives by **one route**: turnover and shedding,
+background mortality, and the plants a calendar boundary's cull and treefall kill all accumulate into
+`patch%litter_in` through `add_necromass`, and enter through $u$ at the next daily step. Once that step
+has taken it up the accumulator is emptied, so a boundary's dead carbon reaches the pools with the
+step after it.
 
 ## 6. The daily step, and why it consumes an accumulated integral
 
@@ -200,9 +200,9 @@ the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\x
 eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
 like, into `decomp_xi%rh_fast`, both reset once per slow step. Within a step the daily
 `soil_carbon_step` is the **only** change to the real pools, debiting them with exactly that
-$`\xi^{\mathrm{int}}`$ (it returns the new pools, and `meds_slow_update` writes them); at a calendar boundary the demography's operators also add the culled and
-killed plants' litter to them, and patch fusion and the treefall gaps blend them on area
-([demography](demography.md) §3–§4).
+$`\xi^{\mathrm{int}}`$ (it returns the new pools, and `meds_slow_update` writes them); at a calendar
+boundary patch fusion and the treefall gaps blend them on area ([demography](demography.md) §4), and
+the plants the boundary kills reach them through the litter (§5).
 
 The day's total fast Rh therefore equals the daily pool debit **by construction**, and
 $`\texttt{rh\_seam\_gap} = R_h^{\mathrm{day}} - \sum_k R_h(t_k)\Delta t_k \approx 0`$ is an

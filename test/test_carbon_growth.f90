@@ -11,7 +11,7 @@ program test_carbon_growth
    use meds_polygon_state_vars, only : polygon_t
    use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives, commit_trait_carbon
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_slow_state, only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
+   use meds_slow_state, only : kill_report_t, advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
                                slow_step_data_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step, run_ledgers_t
@@ -19,6 +19,7 @@ program test_carbon_growth
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   type(kill_report_t)  :: kills   !< what the cull and the treefall killed
    real(wp), allocatable :: leaf_new(:), storage_new(:)   !< the traits' leaf and storage carbon
    type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    type(run_ledgers_t) :: ledgers      !< never activated: the coupled steps book nothing
@@ -318,7 +319,7 @@ program test_carbon_growth
       call check(all(poly%cohort%nplant(1:2) * poly%cohort%agb(1:2) >= cfg%min_cohort_agb),        &
                  'cull fixture: both cohorts clear the AGB floor, so only the density floor acts')
       n_cut = poly%cohort%n
-      call terminate_cohorts(poly, cfg, shed_water)
+      call terminate_cohorts(poly, cfg, shed_water, kills)
       call check(poly%cohort%n == n_cut - 1_ik, 'cull: exactly one cohort removed')
       call check(poly%cohort%nplant(1) > cfg%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
    end block

@@ -19,7 +19,7 @@ module meds_slow_ledger
                                        pack_pool_vector, litter_input_t
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
    use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name, soil_carbon_out_t
-   use meds_constants,          only : rho_air_ref
+   use meds_constants,          only : rho_air_ref, umol_2_kgc
    use meds_time,               only : meds_time_t, time_to_string
    use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
@@ -29,7 +29,6 @@ module meds_slow_ledger
    public :: slow_tissue_energy, slow_co2_handoff, litter_carbon_total
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: slow_ledger_heat_open, slow_ledger_heat_close, slow_ledger_soil_check
-   public :: KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
              SLOW_PHASE_TISSUE_WATER
@@ -47,9 +46,6 @@ module meds_slow_ledger
    integer(ik), parameter :: SLOW_PHASE_TISSUE_WATER = 9_ik  !< tissue water above capacity shed, before the fast loop
    integer(ik), parameter :: N_SLOW_PHASE        = 9_ik
 
-   !----- Carbon of one micromole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. It puts the !
-   !      canopy air's CO2 in the currency of the plant and soil pools. -------------------!
-   real(wp), parameter :: KGC_PER_UMOL_C = 1.2e-8_wp
    !----- The tolerance, eq. (2) of conservation.md §5: an absolute floor per mark, plus   !
    !      the relative test on the declared flux that the fast budgets use. ---------------!
    real(wp), parameter :: SLOW_ATOL_CARBON = 1.0e-12_wp   !< [kgC/m2] per mark
@@ -309,7 +305,7 @@ contains
             call cas_capacities(rho_air_ref, cas%can_shv, cas%can_depth, dmol, cap_mass, cap_mol)
             store%water  = store%water  + a * cap_mass * cas%can_shv
             store%energy = store%energy + a * cap_mass * cas%can_enthalpy
-            store%carbon = store%carbon + a * cap_mol  * cas%can_co2 * KGC_PER_UMOL_C
+            store%carbon = store%carbon + a * cap_mol  * cas%can_co2 * umol_2_kgc
          end associate
 
          !----- The seven CENTURY pools; the lignin is part of the structural pools. ------!
@@ -399,7 +395,7 @@ contains
       integer(ik) :: ip
       c = 0.0_wp
       do ip = 1_ik, poly%patch%n
-         c = c + patch_polygon_area(poly, ip) * poly%patch%slow_co2_rate(ip) * KGC_PER_UMOL_C * cfg%dt_slow
+         c = c + patch_polygon_area(poly, ip) * poly%patch%slow_co2_rate(ip) * umol_2_kgc * cfg%dt_slow
       end do
    end function slow_co2_handoff
 
