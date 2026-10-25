@@ -19,8 +19,9 @@ relation is computed outside the model (`scripts/pft_traits`) and written into t
 missing file is also a hard error. There is no `build_config` and no defaults path: derived
 quantities come from the derive routines, and no PFT trait is derived from another.
 
-**Tests get their config from `build_test_config()` in `test/meds_test_support.f90`** — the only
-place "default" values live in code.
+**Tests get their config from `build_test_config()` in `test/meds_test_support.f90`** — a fixture
+built in code, not read from a TOML file. It takes the shipped values except where its header says
+(distinct per-PFT allometry and hydraulics, and no files); a test that needs another value sets it.
 
 ## The absent-key trap
 

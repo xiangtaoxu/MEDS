@@ -53,10 +53,11 @@ module meds_test_fast_fixture
    public :: frozen_record, all_ledgers_closed, kernel_record
    public :: N_COH, NSL, DT_FAST, STEPS_PER_HOUR, STEPS_PER_DAY, T0, THETA0, LAT, SIM_DATE, SHV_AIR
 
-   !----- The column: one cohort over a 10-layer soil, stepped at 150 s (the tests' own dt_fast;   !
-   !      the shipped one is 900 s). Durations and times of day are written in hours and turned   !
-   !      into steps here, so a change of DT_FAST keeps what each test covers: step i of a day    !
-   !      runs at (i - 1/2)*DT_FAST after midnight, and the sun follows the clock. ----------------!
+   !----- The column: one cohort over a 10-layer soil, stepped at 150 s, the step its checks were  !
+   !      computed at (the shipped dt_fast is 900 s; a check that needs it passes it itself).      !
+   !      Durations and times of day are written in hours and turned into steps here, so a change  !
+   !      of DT_FAST keeps what each test covers: step i of a day runs at (i - 1/2)*DT_FAST after  !
+   !      midnight, and the sun follows the clock. ------------------------------------------------!
    integer(ik), parameter :: N_COH = 1_ik
    integer(ik), parameter :: NSL   = 10_ik
    real(wp),    parameter :: DT_FAST = 150.0_wp           !< [s]
@@ -87,6 +88,8 @@ contains
    subroutine make_fast_column(col)
       type(fast_column_t), intent(out) :: col
       col%cfg = build_test_config()
+      col%cfg%dt_fast         = DT_FAST          ! the column's step, not the fixture's shipped 900 s
+      col%cfg%n_fast_per_slow = STEPS_PER_DAY
       !----- The test soil: the loam these checks were computed on, in geometric layers that thicken !
       !      with depth (meds_test_soil_grid), given as an explicit list of bottoms. ----------------!
       col%cfg%soil = soil_params_t()

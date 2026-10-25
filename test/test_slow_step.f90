@@ -826,7 +826,7 @@ contains
          end if
       end if
       call init_bare_ground(st, c, 1_ik)
-      !----- 40 cm => ~25 m, clear of the reproduction height (20 m): a cohort below it allocates  !
+      !----- 40 cm => ~25 m, clear of the 13.9 m reproduction height: a cohort below it allocates  !
       !      NOTHING to reproduction, and the seed-loss assertion would then be vacuously true.  --!
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
       call finalize_init(st)
