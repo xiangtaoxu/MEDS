@@ -634,12 +634,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_params_config)
    add_test(NAME params_config COMMAND test_params_config)
 
-   #----- Field-coverage of the fast state vector's combinators. ---------------------------#
-   add_executable(test_state_combinators test/test_state_combinators.f90)
-   target_link_libraries(test_state_combinators PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_state_combinators)
-   add_test(NAME state_combinators COMMAND test_state_combinators)
-
    #----- The slow-loop site conservation ledger: store coverage + declaration arithmetic. ------#
    add_executable(test_slow_ledger test/test_slow_ledger.f90)
    target_link_libraries(test_slow_ledger PRIVATE meds_model meds_testsupport)
@@ -851,6 +845,12 @@ if(MEDS_BUILD_TESTS)
    add_library(meds_testfastfixture STATIC test/meds_test_fast_fixture.f90)
    target_link_libraries(meds_testfastfixture PUBLIC meds_fast meds_testsupport)
    meds_fortran_flags(meds_testfastfixture)
+   foreach(t fast_integ_kernels)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_testfastfixture)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 
    #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
