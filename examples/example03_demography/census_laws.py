@@ -34,9 +34,9 @@ FIELDS = ("dbh", "height", "nplant", "leaf_area", "overtopping_lai", "pft", "own
 class CensusLaws:
     def __init__(self, main_config):
         with open(main_config, "rb") as fh:
-            disturbance = tomllib.load(fh)["disturbance"]
-        self.treefall_rate = disturbance["patch_disturbance_rate"]
-        self.treefall_height = disturbance["disturbance_survive_height"]
+            demography = tomllib.load(fh)["demography"]
+        self.treefall_rate = demography["patch_disturbance_rate"]
+        self.treefall_height = demography["disturbance_survive_height"]
         with open(COEFFICIENTS) as fh:
             laws = json.load(fh)
         self.g = np.array([laws["growth"][k] for k in ("g_min", "g_max", "D0", "k", "b")]).T   # [pft, 5]
