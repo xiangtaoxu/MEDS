@@ -77,7 +77,7 @@ option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note ab
 option(MEDS_OPENMP "Compile the patch (one polygon) and polygon (several) parallelism; serial if the compiler has none" ON)
 #      ON BY DEFAULT. The thread count is a RUNTIME setting ([run].n_threads, default 1), so an OpenMP
 #      build still runs serially until a config asks for threads, and its output is byte-identical at
-#      any thread count. Only an OpenMP build lets test_fast_loop's 4-thread check test anything: in a
+#      any thread count. Only an OpenMP build lets test_fast_driver's 4-thread check test anything: in a
 #      serial build the directives are comments and it passes trivially. The price is the automatic-
 #      locals flag on every target, measured in docs/building.md "Parallel builds". -DMEDS_OPENMP=OFF
 #      builds serial; a compiler with no Fortran OpenMP falls back to serial with a warning.
@@ -604,12 +604,21 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fast_loop tissue_energy slow_update slow_step)
+   foreach(t containers tissue_energy slow_update slow_step)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- The fast loop's driver (src/fast_dynamics/driver) and the stepper that runs it, on a  #
+   #      forcing file the test writes in a directory of its own in the build tree.            #
+   add_executable(test_fast_driver test/test_fast_driver.f90)
+   target_link_libraries(test_fast_driver PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_fast_driver)
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/fast_driver)
+   add_test(NAME fast_driver COMMAND test_fast_driver
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/fast_driver)
 
    #----- How a run's polygon starts: the census reader and every reason it refuses a file, and  #
    #      the initial soil state. ----------------------------------------------------------------#

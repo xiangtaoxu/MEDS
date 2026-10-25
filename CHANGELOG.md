@@ -836,6 +836,9 @@ matrix's vector (#529).
 
 ### Changed
 
+- **`test_fast_loop` is `test_fast_driver`, and every block runs on forcing** (#536). Five blocks ran on the
+  reference climate of a run without forcing. They now run on the test's diurnal forcing file, with all
+  56 checks kept, and the header lists every section.
 - **The slow side's remaining tests** (#535). The decomposition chemistry moves from `test_soil_carbon` to
   `test_respiration`, whose fast/slow-seam section now runs a diurnal day through the src routines rather
   than retyping the laws. Thermal acclimation (`acclimate_leaf_photo_table` and the sites' tables) and
@@ -1823,6 +1826,8 @@ matrix's vector (#529).
 
 ### Removed
 
+- **`fast_dynamics`' `met_fixed` argument** (#536), which nothing in production passed. A run without
+  forcing still steps on the reference climate.
 - **Storage maintenance** (#534): `[pft].storage_turnover_rate`, the cohort row `CO_STORAGE_RESP` and the
   output `mean_storage_resp_py`. No shipped PFT set the rate, which defaulted to 0, and only tests ran it.
   `plant_carbon_allocation.md` drops its eq. (2), and the later equations are renumbered. Results are
