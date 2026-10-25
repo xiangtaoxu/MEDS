@@ -9,11 +9,12 @@
 ! at or above its threshold, drops the empty one, and leaves the kept cells grouped by chunk the way !
 ! the forcing reader needs them.                                                                    !
 !                                                                                          !
-! The [maps] inputs: a run cell the soil maps leave empty is named; every value is read at        !
-! its own cell; a column layer takes the map layers it overlaps, weighted by the overlap, and below  !
-! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map !
-! (the anchor's distance is docs/science/soil_biophysics.md eq. (13)): a leaky base drains at its    !
-! cell's f_leak, a free one at 1 and a sealed one at 0, and a leaky f_leak outside (0, 1] is refused. !
+! The [maps] inputs: a run cell the soil maps leave empty is named, in a 2-D map and in a layered    !
+! one; every value is read at its own cell; a column layer takes the map layers it overlaps,         !
+! weighted by the overlap, and below the deepest map layer that layer's soil; the bottom boundary    !
+! and the thermal anchor follow the map (the anchor's distance is docs/science/soil_biophysics.md    !
+! eq. (13)): a leaky base drains at its cell's f_leak, a free one at 1 and a sealed one at 0, and a  !
+! leaky f_leak outside (0, 1] is refused.                                                            !
 ! The work directory is the first argument.                                                          !
 !==========================================================================================!
 program test_maps
@@ -240,6 +241,15 @@ program test_maps
    call check_true('a leaky base with f_leak = 0 is refused, naming the cell',                          &
                    index(msg, 'f_leak is not in (0, 1] at the cell (25.00, 120.00) (row 2, col 15), '//   &
                          'whose base is leaky') > 0)
+
+   !----- A run cell a layered map leaves empty is named too: a texture map without sand at       !
+   !      (row 1, col 0), read at the first box's 15 cells, whose depths the depth map gives. -----!
+   call write_surface_maps(trim(work)//'/surface_gap', gap=[1_ik, 0_ik])
+   opts%soil_depth_map   = trim(work)//'/surface/soil_depth.nc'
+   opts%soil_texture_map = trim(work)//'/surface_gap/soil_texture.nc'
+   call read_map_inputs(opts, grid, masked, inp, msg)
+   call check_true('a run cell a layered map leaves empty is named, with the variable',                  &
+                   index(msg, 'sand has no value at the cell (35.00, -180.00) (row 1, col 0)') > 0)
 
    call test_report('test_maps')
 

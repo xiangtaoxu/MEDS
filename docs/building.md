@@ -273,7 +273,7 @@ so the two sides of such a check can be compiled differently and part in the las
 | `plant_hydraulics` | gfortran | transpiration's derivative matches finite differences | the same, 5.8e-15 | 1e-15 | FMA under LTO |
 | `python_api` | ifx | `meds.model` writes `meds_main`'s output bit for bit | 101 of 301 variables differ, by up to 1.3e-12 of a variable's largest value (patch sensible heat), the near-zero conservation residuals aside | exact | IPO |
 | `python_api` | gfortran | `meds.model` writes `meds_main`'s output bit for bit | 104 of 301 variables differ, by up to 9.5e-14 (patch sensible heat), the residuals aside | exact | FMA under LTO |
-| `several_sites` | ifx | each of two identical sites holds the one-site stand's plant carbon | 9.696054 against 9.696198 kgC m⁻² after 60 days, 1.5e-5 relative; the two sites agree with each other to 2e-16 | 1e-12 relative | AVX-512 vectorisation |
+| `sites` | ifx | each of two identical sites holds the one-site stand's plant carbon | 9.696054 against 9.696198 kgC m⁻² after 60 days, 1.5e-5 relative; the two sites agree with each other to 2e-16 | 1e-12 relative | AVX-512 vectorisation |
 
 The causes come from building each part of production on its own: IPO alone, the CPU target alone,
 and each with fused multiply-add (FMA) turned off (`-no-fma`, `-ffp-contract=off`).

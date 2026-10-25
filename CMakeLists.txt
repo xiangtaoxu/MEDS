@@ -482,10 +482,11 @@ meds_fortran_flags(meds_main)
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
    enable_testing()
-   #----- Assertions only, depending on nothing but a kind. Kept separate from meds_testsupport  #
-   #      because many tests deliberately link ONE narrow library each to keep that layer             #
-   #      standalone-buildable, and they must be able to assert without linking the whole model.   #
-   add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90)
+   #----- Assertions, the soil grid and the derived configs (meds_test_run), depending on nothing #
+   #      but a kind. Kept separate from meds_testsupport because many tests deliberately link ONE  #
+   #      narrow library each to keep that layer standalone-buildable, and they must be able to     #
+   #      assert without linking the whole model.                                                  #
+   add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90 test/meds_test_run.f90)
    target_link_libraries(meds_testassert PUBLIC meds_share)
    meds_fortran_flags(meds_testassert)
 
@@ -558,18 +559,23 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_config_keys)
    add_test(NAME config_keys COMMAND test_config_keys)
    #----- meds_main refuses a run it cannot start and names the cause: unknown, moved or misplaced  #
-   #      keys; RK45 at a loose tolerance; a value that is not a number or a string with no closing #
-   #      quote; plastic fine roots without plastic traits; impossible hydraulic traits; a NaN soil #
-   #      layer; a census or state                                                                  #
+   #      keys, a choice none of its key's, keys a setting makes inapplicable; RK45 at a loose      #
+   #      tolerance; a value that is not a number, a string with no closing quote or a key set      #
+   #      twice; a sub-daily record across two slow steps; io_config lines the selection refuses; a #
+   #      Chave E map no PFT uses; plastic fine roots without plastic traits; impossible hydraulic  #
+   #      traits; a NaN soil layer; a census or state                                               #
    #      file that is missing or empty. Each case is a one-day run in its own build-tree           #
    #      directory; the script explains the cases. A Debug build traps the NaN at the comparison   #
    #      that refuses it, so that case runs in the other builds.                                    #
-   set(refused_cases config_unknown_keys config_rk45_loose_rtol config_malformed_value hydraulics_pv_traits
-                     hydraulics_vulnerability init_census_missing init_census_empty init_restart_missing)
+   set(refused_cases config_unknown_keys config_bad_choice config_inapplicable_keys config_rk45_loose_rtol
+                     config_malformed_value output_fast_window io_config_coarse_on_f io_config_fast_on_coarse
+                     io_config_true_off io_config_no_match io_config_tie io_config_tier_none io_config_axis
+                     maps_chave_e hydraulics_pv_traits hydraulics_vulnerability init_census_missing
+                     init_census_empty init_restart_missing)
    if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
       list(APPEND refused_cases soil_nan_layer)
    endif()
-   list(APPEND refused_cases toml_unclosed_string config_fineroot_plastic)
+   list(APPEND refused_cases toml_unclosed_string toml_duplicate_key config_fineroot_plastic)
    foreach(case IN LISTS refused_cases)
       add_test(NAME ${case}_refused
                COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
@@ -660,13 +666,13 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_run COMMAND test_c_api_run ${CMAKE_CURRENT_BINARY_DIR}/c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
-   #      A run's sites from [[sites]]: derived from example 04's config, it runs from that example's
-   #      directory and writes under the build tree; meds_main checks what a config may not hold.
-   add_executable(test_site_definitions test/test_site_definitions.f90)
-   target_link_libraries(test_site_definitions PRIVATE meds_testsupport meds_run)
-   meds_fortran_flags(test_site_definitions)
-   add_test(NAME site_definitions
-            COMMAND test_site_definitions ${CMAKE_CURRENT_BINARY_DIR}/site_definitions $<TARGET_FILE:meds_main>
+   #      A polygon of several sites: its sites from [[sites]], their files, a census, their stands,
+   #      threads and state file, and what meds_main refuses. Its configs derive from example 04's,
+   #      so it runs from that example's directory; it writes only under the build tree.
+   add_executable(test_sites test/test_sites.f90)
+   target_link_libraries(test_sites PRIVATE meds_testsupport meds_run)
+   meds_fortran_flags(test_sites)
+   add_test(NAME sites COMMAND test_sites ${CMAKE_CURRENT_BINARY_DIR}/work/sites $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
    #      A region against its site runs, on the synthetic archive.
@@ -878,12 +884,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_state_file)
    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
    add_test(NAME state_file COMMAND test_state_file WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
-
-   #----- A polygon of several sites: its stands, threads and state file (links the IO layer). #
-   add_executable(test_several_sites test/test_several_sites.f90)
-   target_link_libraries(test_several_sites PRIVATE meds_model meds_output_stream meds_testsupport)
-   meds_fortran_flags(test_several_sites)
-   add_test(NAME several_sites COMMAND test_several_sites)
 
    #----- Every test stops at 10 minutes. The longest takes about 1.5 in a Debug build, so a test   #
    #      that hangs, or slows by an order of magnitude, fails instead of holding the suite.         #
