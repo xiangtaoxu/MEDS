@@ -145,7 +145,7 @@ contains
       integer(ik) :: nwin, i
       print '(a)', '-- 4. another growth-window length --'
       cfg_short = cfg
-      cfg_short%growth_memory_days = cfg%growth_memory_days / 3.0_wp
+      cfg_short%demography%growth_memory_days = cfg%demography%growth_memory_days / 3.0_wp
       nwin = growth_window_steps(cfg_short)
       call check_true('the window is shorter', nwin < growth_window_steps(cfg), real(nwin, wp))
       call read_restart_file(back, cfg_short, FILE_A, rt, found, polygon=1_ik)

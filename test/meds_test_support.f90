@@ -45,20 +45,35 @@ contains
       cfg%time_integrator    = INTEG_ESDIRK2
       cfg%start_time = meds_time_t(2000_ik, 1_ik, 1_ik)
       cfg%end_time   = meds_time_t(2100_ik, 1_ik, 1_ik)
-      cfg%demography_on = .true.
-      cfg%do_cohort_fissfuse = .true. ; cfg%do_patch_fissfuse = .true. ; cfg%do_patch_disturbance = .true.
+      cfg%demography%demography_on = .true.
+      cfg%demography%recruitment_on = .true.
+      cfg%demography%cohort_fusion_on = .true.
+      cfg%demography%cohort_fission_on = .true.
+      cfg%demography%patch_disturbance_on = .true.
+      cfg%demography%patch_fusion_on = .true.
 
-      cfg%max_cohort = 60_ik ; cfg%n_cohort_fusion_iter = 6_ik
-      cfg%cohort_size_tol_min = 0.02_wp ; cfg%cohort_size_tol_max = 0.10_wp
-      cfg%cohort_lai_cap = 1.0_wp ; cfg%min_cohort_agb = 1.0e-6_wp
-      cfg%negligible_nplant = 1.0e-8_wp ; cfg%split_eps = 1.0e-4_wp ; cfg%enable_cohort_fission = .true.
+      cfg%demography%max_cohort = 60_ik
+      cfg%demography%n_cohort_fusion_iter = 6_ik
+      cfg%demography%cohort_size_tol_min = 0.02_wp
+      cfg%demography%cohort_size_tol_max = 0.10_wp
+      cfg%demography%cohort_lai_cap = 1.0_wp
+      cfg%demography%min_cohort_agb = 1.0e-6_wp
+      cfg%demography%negligible_nplant = 1.0e-8_wp
+      cfg%demography%split_eps = 1.0e-4_wp
 
-      cfg%n_height_layers = 16_ik ; cfg%max_patch = 12_ik ; cfg%n_patch_fusion_iter = 6_ik
-      cfg%patch_light_tol = 0.10_wp ; cfg%patch_light_tol_max = 0.15_wp ; cfg%patch_light_maxdev_factor = 1.5_wp
-      cfg%min_patch_area = 1.0e-4_wp
+      cfg%demography%n_height_layers = 16_ik
+      cfg%demography%max_patch = 12_ik
+      cfg%demography%n_patch_fusion_iter = 6_ik
+      cfg%demography%patch_light_tol = 0.10_wp
+      cfg%demography%patch_light_tol_max = 0.15_wp
+      cfg%demography%patch_light_maxdev_factor = 1.5_wp
+      cfg%demography%min_patch_area = 1.0e-4_wp
 
-      cfg%patch_disturbance_rate = 0.014_wp ; cfg%disturbance_survive_height = 10.0_wp
-      cfg%growth_memory_days = 90.0_wp ; cfg%min_recruit_size = 1.0e-2_wp ; cfg%conservation_tol = 0.001_wp
+      cfg%demography%patch_disturbance_rate = 0.014_wp
+      cfg%demography%disturbance_survive_height = 10.0_wp
+      cfg%demography%growth_memory_days = 90.0_wp
+      cfg%demography%min_recruit_size = 1.0e-2_wp
+      cfg%demography%conservation_tol = 0.001_wp
 
       cfg%init%init_mode = INIT_BARE ; cfg%init%restart_file = '' ; cfg%init%census_file = '' ; cfg%init%pft_config = ''
       cfg%output%state_file_dir = '.' ; cfg%output%state_file_prefix = 'test'
@@ -164,7 +179,7 @@ contains
          root_beta = 0.1_wp, root_depth_b1 = 1.1140580_wp, root_depth_b2 = 0.4223014_wp,             &
          specific_root_length = 2.0e4_wp, fine_root_radius = 2.5e-4_wp)
       cfg%pft%hydro%wood_kmax = [ 5.340397027887704_wp, 3.2683981418222547_wp, 1.7692398658114543_wp ]
-      cfg%light_ext_coeff_fusefiss = 0.5_wp
+      cfg%demography%light_ext_coeff_fusefiss = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config
 

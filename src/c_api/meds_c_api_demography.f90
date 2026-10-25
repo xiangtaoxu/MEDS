@@ -212,7 +212,7 @@ contains
          !      operators, so it does the same. `seed_c` is the ledger's external-import report and !
          !      has no consumer here.                                                               !
          call accumulate_recruit_pool(poly, cfg, rec, cfg%dt_years, seed_c)
-         call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%negligible_nplant)
+         call update_cohort_states(poly%cohort, poly%deriv, cfg%dt_years, cfg%demography%negligible_nplant)
          !----- From here on the step is the carbon path's: sort every step (as vegetation_dynamics  !
          !      does), age the patches, and restructure on the calendar's boundaries with the same   !
          !      restructure_stand that meds_advance_slow calls, which ends by refreshing the         !

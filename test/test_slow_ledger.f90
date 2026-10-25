@@ -224,7 +224,7 @@ contains
       call init_bare_ground(st, c, 1_ik)
       call refresh_canopy_depth(st, c, no_ledger)
       st%patch%recruit_pool(:, 1) = 0.0_wp
-      st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
+      st%patch%recruit_pool(2, 1) = 5.0_wp * c%demography%min_recruit_size
       lg = slow_ledger_t() ; lg%active = .true.
       call slow_ledger_open(lg, st, c)
       call restructure_stand(st, c, .true., .false., lg)
@@ -249,7 +249,7 @@ contains
 
       !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.
+      c%demography%demography_on      = .false.
       c%pft%pheno(:)%shed_rate_max = 1.0_wp          ! [1/day]: the whole canopy in one day
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
@@ -311,7 +311,7 @@ contains
       real(wp) :: w_plant0, w_plant1, psi_leaf, psi_wood
       c = build_test_config()
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.
+      c%demography%demography_on      = .false.
       c%pft%fineroot_turnover_rate(:) = 0.0_wp      ! no fine-root shed: only the fill moves water
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
@@ -388,7 +388,7 @@ contains
       integer(ik)         :: k
       c = build_test_config()
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.
+      c%demography%demography_on      = .false.
       c%pft%recruit_carbon_efficiency(:) = repro_eff
       if (present(shade_decay)) c%pft%recruit_shade_decay(:) = shade_decay
       c%pft%seed_rain_recruits(:)      = 0.0_wp
@@ -433,8 +433,8 @@ contains
 
       c = build_test_config()
       c%fast_biophysics_on   = .true.
-      c%demography_on        = .true.        ! the structural operators are the point here
-      c%do_patch_disturbance = .true.
+      c%demography%demography_on        = .true.        ! the structural operators are the point here
+      c%demography%patch_disturbance_on = .true.
       c%soil_carbon%soil_carbon_on       = .true.        ! the only consumer of the accumulator
       call init_bare_ground(st, c, 2_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
@@ -488,7 +488,7 @@ contains
       type(slow_ledger_t) :: lg
       c = build_test_config()
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.        ! one step of growth, turnover and mortality, no restructuring
+      c%demography%demography_on      = .false.        ! one step of growth, turnover and mortality, no restructuring
       c%soil_carbon%soil_carbon_on     = soil_carbon_on
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
@@ -524,7 +524,7 @@ contains
       real(wp) :: tis0, tis1, shed0, shed1
       c = build_test_config()
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.        ! isolate the commit from the structural operators
+      c%demography%demography_on      = .false.        ! isolate the commit from the structural operators
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
       call finalize_init(st)
@@ -693,7 +693,7 @@ contains
       type(polygon_t)     :: st
       c = build_test_config()
       c%fast_biophysics_on = .true.
-      c%demography_on      = .false.        ! isolate allocation from the structural operators
+      c%demography%demography_on      = .false.        ! isolate allocation from the structural operators
       c%soil_carbon%soil_carbon_on     = .true.
       c%pft%growth_resp_factor(:)      = g_resp
       c%pft%recruit_carbon_efficiency(:) = repro_eff
@@ -748,7 +748,7 @@ contains
       type(slow_store_t) :: before, after
       integer(ik) :: n0
       !----- Drive cohort 2 below the density floor so the cull takes it, and nothing else. ------!
-      poly%cohort%nplant(2)   = 0.5_wp * cfg%negligible_nplant
+      poly%cohort%nplant(2)   = 0.5_wp * cfg%demography%negligible_nplant
       poly%cohort%leaf_temp(2) = 291.0_wp ; poly%cohort%wood_temp(2) = 289.0_wp
       n0          = poly%cohort%n
       shed_before = poly%patch%shed_water_rate(1)

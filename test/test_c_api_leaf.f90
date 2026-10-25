@@ -189,7 +189,7 @@ contains
       call meds_canopy_plastic(3_c_int, pft3, lai_above, vc, rd)
       call check(all(vc > 0.0_c_double) .and. all(rd > 0.0_c_double), 'C-API canopy: plastic capacities are positive')
       call check(vc(2) <= vc(1) .and. vc(3) <= vc(2), 'C-API canopy: Vcmax25 does not rise with the leaf area above')
-      if (.not. cfg%trait_plasticity_on) then
+      if (.not. cfg%trait_dynamics%trait_plasticity_on) then
          call check(all(vc == cfg%pft%vcmax25(1)) .and. all(rd == cfg%pft%rd25(1)),                           &
                     'C-API canopy: with plasticity off, the PFT''s own capacities')
       end if

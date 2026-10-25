@@ -146,7 +146,7 @@ contains
       write(m, '(i0)') mode
       s = '[run]'//nl//'start_time = "'//start//'"'//nl//'end_time = "'//end//'"'//nl//            &
           'dt_slow = "1d"'//nl//'[fast]'//nl//'fast_biophysics_on = false'//nl//                   &
-          '[carbon]'//nl//'gpp_ref = 0.3'//nl//                                                    &
+          'gpp_ref = 0.3'//nl//                                                                    &
           '[forcing]'//nl//'forcing_on = false'//nl//                                              &
           '[init]'//nl//'init_mode = '//trim(m)//nl//'restart_file = "'//restart//'"'//nl//         &
           '[output]'//nl//'state_file_dir = "'//trim(work)//'"'//nl//'state_file_prefix = "sites"'//nl// &

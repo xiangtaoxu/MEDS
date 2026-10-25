@@ -317,8 +317,9 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 | `[demography]` `negligible_nplant`, `min_cohort_agb` | the density floor (eq. (4)) and the cull (§3) |
 | `[demography]` `max_cohort`, `n_cohort_fusion_iter`, `cohort_size_tol_min`, `cohort_size_tol_max`, `cohort_lai_cap`, `split_eps`, `conservation_tol` | cohort fusion and fission (§3) |
 | `[demography]` `max_patch`, `n_patch_fusion_iter`, `patch_light_tol`, `patch_light_tol_max`, `patch_light_maxdev_factor`, `n_height_layers`, `light_ext_coeff_fusefiss`, `min_patch_area` | patch fusion and termination (§4) |
-| `[disturbance]` `patch_disturbance_rate`, `disturbance_survive_height` | eq. (7) and the survivors (§4) |
-| `[recruitment]` `min_recruit_size` | the pool that founds a cohort (§3) |
+| `[demography]` `patch_disturbance_rate`, `disturbance_survive_height` | eq. (7) and the survivors (§4) |
+| `[demography]` `min_recruit_size` | the pool that founds a cohort (§3) |
+| `[demography]` `demography_on`, `recruitment_on`, `cohort_fusion_on`, `cohort_fission_on`, `patch_disturbance_on`, `patch_fusion_on` | one switch per operator, each under `demography_on`; the cull and patch termination always run (§3–§4) |
 
 ## Code map
 
