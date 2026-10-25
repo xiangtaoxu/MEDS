@@ -7,6 +7,8 @@
 #   config_unknown_keys        a misspelt key, a key that moved block, and a [region] block in a site run
 #   config_rk45_loose_rtol     RK45 at a tolerance looser than it can integrate (fast.rtol > 1e-4)
 #   config_malformed_value     a value the reader cannot parse as the number its key takes
+#   config_fineroot_plastic    fine roots turning over with the leaves' plastic rate
+#                              (fineroot_turnover_plastic) while trait plasticity is off
 #   hydraulics_pv_traits       a leaf elastic modulus below |pi0|, whose turgor-loss point is not
 #                              negative, in a PFT file that sets its stress points by hand
 #   hydraulics_vulnerability   a xylem psi50 above zero
@@ -62,6 +64,12 @@ elseif(CASE STREQUAL "config_rk45_loose_rtol")
 elseif(CASE STREQUAL "config_malformed_value")
    replace_or_fail(text "\ndepth *= *[0-9.]+" "\ndepth = two" "[soil] depth")
    set(expects "cannot parse real for key \"soil\\.depth\"" "raw value: \"two\"" "malformed configuration value")
+elseif(CASE STREQUAL "config_fineroot_plastic")
+   #----- Trait plasticity off, whatever the reference says, and the fine roots plastic. ---------#
+   string(REGEX REPLACE "\n#? *trait_plasticity_on *=[^\n]*" "" text "${text}")
+   replace_or_fail(text "\n# *fineroot_turnover_plastic *= *false" "\nfineroot_turnover_plastic = true"
+                   "[trait_dynamics] fineroot_turnover_plastic = false, commented out")
+   set(expects "trait_dynamics\\.fineroot_turnover_plastic needs trait_plasticity_on = true")
 elseif(CASE STREQUAL "soil_nan_layer")
    replace_or_fail(text "\nsolid_conductivity *= *[0-9.eE+-]+" "\nsolid_conductivity = nan" "[soil] solid_conductivity")
    set(expects "soil conductivities must be positive \\(a map layer needs sand or clay\\)")

@@ -45,6 +45,7 @@ program test_therm_lib
                                 precip_phase, lapse_air_temperature, lapse_pressure, lapse_specific_humidity,     &
                                 specific_humidity_to_vpd
    implicit none
+   real(wp), parameter :: SCAN_LO = 5.0_wp, SCAN_HI = 55.0_wp   !< [C] the optimum scan's range
 
    call test_temperature_response()
    call test_datum()
@@ -90,18 +91,22 @@ contains
       topt_warm = peak_temperature(ds_warm)
       call check_true('the thermal optimum moves up with growth temperature (> 1 K over 20 K)',                &
                       topt_warm > topt_cold + 1.0_wp, topt_warm - topt_cold)
+      call check_true('both optima lie inside the scan, not at its ends',                                       &
+                      min(topt_cold, topt_warm) > t_kelvin + SCAN_LO .and. max(topt_cold, topt_warm) < t_kelvin + SCAN_HI, &
+                      topt_warm - t_kelvin)
    end subroutine test_temperature_response
 
-   !----- The peak of the peaked response [K] by a scan at 0.05 K, so the optimum is measured from   !
-   !      the function rather than derived from a formula the test would check against itself. ---!
+   !----- The peak of the peaked response [K] by a scan at 0.05 K over [SCAN_LO, SCAN_HI] C, so the  !
+   !      optimum is measured from the function rather than derived from a formula the test would  !
+   !      check against itself; the scan reaches well past a warm-grown stand's optimum (38 C). ----!
    pure real(wp) function peak_temperature(ds) result(t_opt)
       real(wp), intent(in) :: ds   !< [J/mol/K] the entropy term
       real(wp)    :: t, k, k_best
       integer(ik) :: j
       k_best = -1.0_wp
       t_opt  = 0.0_wp
-      do j = 0_ik, 600_ik
-         t = t_kelvin + 5.0_wp + 0.05_wp * real(j, wp)
+      do j = 0_ik, nint((SCAN_HI - SCAN_LO) / 0.05_wp, ik)
+         t = t_kelvin + SCAN_LO + 0.05_wp * real(j, wp)
          k = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds, t)
          if (k > k_best) then
             k_best = k

@@ -151,7 +151,7 @@ ratio follow the growth temperature (Kattge & Knorr 2007):
 
 with $T_g$ in °C. $`\Delta S`$ sets where the response **peaks**, so a warm-grown stand runs a higher
 optimum: measured across a 20 K range of growth temperature, the $V_{cmax}$ optimum moves from
-**28.2 °C** (grown at 10 °C) to **35.0 °C** (grown at 30 °C).
+**28.2 °C** (grown at 10 °C) to **38.2 °C** (grown at 30 °C).
 
 Three things about this are deliberate:
 

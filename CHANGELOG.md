@@ -836,6 +836,11 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The slow side's remaining tests** (#535). The decomposition chemistry moves from `test_soil_carbon` to
+  `test_respiration`, whose fast/slow-seam section now runs a diurnal day through the src routines rather
+  than retyping the laws. Thermal acclimation (`acclimate_leaf_photo_table` and the sites' tables) and
+  `fineroot_turnover_plastic` are tested, the latter's refusal without plasticity included.
+  `test_therm_lib`'s optimum scan reaches 55 °C.
 - **The soil-carbon state is the matrix's vector** (#529), with no change to any result. The kernels
   read and write `%carbon` as it is, without packing it into an array and back, and the pool names
   are one table beside the pool indices; the restart reads and writes the pools in one loop.
@@ -1901,6 +1906,8 @@ matrix's vector (#529).
 
 ### Fixed
 
+- **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`
+  §2 and `ed2_comparison.md`. The 35.0 °C was where a test's temperature scan ended.
 - **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
   water over 250 kg/m³, so at another density the first window's canopy burial and snow cover read the
   wrong depth: 0.160 m where 40 kg/m² at 350 kg/m³ is 0.114 m. The depth is now the water over `rho_snow`.
