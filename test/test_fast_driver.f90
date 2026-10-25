@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_fast_loop -- the SITE-LEVEL fast-biophysics driver over the state-hub-owned per-patch     !
+! test_fast_driver -- the SITE-LEVEL fast-biophysics driver over the state-hub-owned per-patch   !
 ! reservoirs. Builds a two-patch site (one vegetated, one bare ground), seeds the reservoirs,     !
 ! and runs the fast loop:                                                                        !
 !   1. CONSERVATION: every patch's whole-column energy + water budgets close (n_fail == 0) --     !
@@ -10,7 +10,7 @@
 !   3. STEPPER WIRING + GATE: advance_one_step runs the fast loop only when fast_biophysics_on;   !
 !      with the gate off the reservoirs are untouched.                                            !
 !==========================================================================================!
-program test_fast_loop
+program test_fast_driver
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t, derive_parameters
    use meds_soil_derive,         only : build_profile_hydraulics, build_profile_thermal, top_soil_psi,       &
@@ -193,10 +193,10 @@ program test_fast_loop
       real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the thread-invariance check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_soil_profile(cfg%soil, test_profile)            ! the site's column from [soil] from here on
-      call write_diurnal_forcing('test_fast_loop_forcing.nc')
+      call write_diurnal_forcing('test_fast_driver_forcing.nc')
       cfg%forcing%forcing_on   = .true.
       cfg%forcing%format      = MET_BACKEND_DEFAULT
-      cfg%forcing%path         = 'test_fast_loop_forcing.nc'
+      cfg%forcing%path         = 'test_fast_driver_forcing.nc'
       cfg%forcing%grid_index   = 1_ik ; cfg%forcing%timestep = 3600.0_wp
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
       cfg%forcing%latitude = 42.44_wp ; cfg%forcing%longitude = -76.50_wp
@@ -709,4 +709,4 @@ contains
       st = nc_close(ncid) ; call nc_check(st,'cl')
    end subroutine write_diurnal_forcing
 
-end program test_fast_loop
+end program test_fast_driver

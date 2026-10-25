@@ -263,7 +263,7 @@ not, **the store's effect lives in the FLUXES, not in the temperature**: "the wo
 not imply "the wood barely matters", and comparing tissue temperatures alone makes the store look
 negligible.
 
-Measured effect, from a 2×2 over (store, longwave) on a 2 h night window (`test_fast_loop`): the store
+Measured effect, from a 2×2 over (store, longwave) on a 2 h night window (`test_fast_driver`): the store
 leaves the night canopy air **0.85 K warmer**, since leaf and wood carry a heat capacity comparable to
 the canopy air's and pass their stored heat to it as they cool. It also absorbs a third of the
 net-longwave signal (2.44 K without the store, 1.60 K with it), which is why a test that thresholds

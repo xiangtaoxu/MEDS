@@ -117,4 +117,4 @@ in `src/share/functions/` in `test_therm_lib`, `test_optics_lib`, `test_plant_hy
 one test per concern on the shared fixture `meds_test_fast_fixture`: `test_fast_integ_kernels` (the right-hand
 sides, the backward-Euler stage, the state vector and the error control), `test_fast_integ_schemes` (ESDIRK2,
 RK45 and the adaptive march) and `test_fast_integ_step` (one fast step end to end). The driver:
-`test_fast_loop`.
+`test_fast_driver`.
