@@ -26,6 +26,9 @@
 !      norm reads 1 at one tolerance unit in every entry it counts, leaves out what the      !
 !      march does not integrate, and is not diluted by the cohorts; the step factor takes   !
 !      the order and the limits from the error control.                                     !
+!   7. THE WATER NETWORK'S STORES (set_water_state, water_derivs): on a column of a PFT 1   !
+!      and a PFT 2 tree, each cohort's wood and leaves sit at the potential their water     !
+!      has on its own PFT's curves, and hold that water.                                    !
 ! The scheme-level properties (observed orders, the adaptive march) are                    !
 ! test_fast_integ_schemes'; whole steps are test_fast_integ_step's.                        !
 !==========================================================================================!
@@ -42,13 +45,17 @@ program test_fast_integ_kernels
    use meds_fast_integ_types,  only : surface_state_t, surface_tend_t, march_state_t, march_tend_t, frozen_t,      &
                                       error_control_t, tol_set_t, fast_dynamic_state_t, GRP_ENTH, GRP_SHV,         &
                                       GRP_CO2, GRP_SE, GRP_THETA, state_init, state_sub, state_err_diff,           &
-                                      zero_like, state_accum, state_extrap, state_to_array, state_entry_rules
-   use meds_fast_integ_derivs, only : surface_derivs, march_derivs
+                                      zero_like, state_accum, state_extrap, state_to_array, state_entry_rules,     &
+                                      ensure_output_capacity, ensure_forcing_capacity, WOOD, LEAF
+   use meds_fast_integ_derivs, only : surface_derivs, march_derivs, set_water_state, water_derivs
    use meds_fast_integ_backward_euler, only : backward_euler_stage, advance_plant_water
    use meds_fast_integ_rk45,   only : rk45_step, RK45_P_ORDER
    use meds_fast_integ_control, only : build_tol_set, build_error_control, state_wrms_grouped, step_control_factor
    use meds_fast_integ_update, only : unpack_column_state
-   use meds_test_fast_fixture, only : fast_column_t, make_fast_column, kernel_record
+   use meds_plant_hydr_lib,    only : tissue_psi_to_water, tissue_water_to_psi
+   use meds_fast_state,        only : static_state_fixture
+   use meds_test_fast_fixture, only : fast_column_t, make_fast_column, kernel_record, reset_column, set_noon_forcing, &
+                                      frozen_record
    use meds_test_assert,       only : check, check_true, test_report
    implicit none
 
@@ -69,6 +76,7 @@ program test_fast_integ_kernels
    call test_tolerance_set()
    call test_error_norm()
    call test_step_factor()
+   call test_water_curves_per_pft()
 
    call test_report('test_fast_integ_kernels')
 
@@ -855,6 +863,69 @@ contains
       call check_true('step_control_factor: a larger error never gives a larger step', all(fac(2:) <= fac(:39)),   &
                       maxval(fac(2:) - fac(:39)))
    end subroutine test_step_factor
+
+   !=======================================================================================!
+   ! 7. THE WATER NETWORK'S STORES (meds_fast_integ_derivs: set_water_state, water_derivs) !
+   !=======================================================================================!
+
+   !----- Each cohort's wood and leaves are read on its own PFT's pressure-volume curves (docs/        !
+   !      science/soil_plant_water.md §1). The fixture's 20 cm tree, once of PFT 1 and once of PFT 2,  !
+   !      in one column, each holding the water of PSI_WOOD in its wood and of PSI_LEAF in its leaves  !
+   !      on its own curves: the network's state made from that water and evaluated there puts every   !
+   !      store at its potential, holding its water. The fixture's PFTs differ in every curve          !
+   !      parameter, so PFT 2's wood water read on PFT 1's curve sits at another potential. The step's !
+   !      drive (the soil's ice, the ground, the stomata's demand) is the frozen build's. -------------!
+   subroutine test_water_curves_per_pft()
+      integer(ik), parameter :: N = 2_ik
+      integer(ik), parameter :: PFTS(N) = [1_ik, 2_ik]
+      real(wp),    parameter :: PSI_WOOD = -0.6_wp, PSI_LEAF = -1.2_wp   ! [MPa]
+      type(fast_column_t) :: two
+      type(frozen_t)      :: fz
+      type(march_state_t) :: ys
+      real(wp)            :: leaf_w(N), wood_w(N), psi_off
+      character(len=5)    :: tag
+      integer(ik)         :: i, nsl
+      print '(a)', 'test_water_curves_per_pft:'
+      two = col
+      call static_state_fixture(two%static, two%cfg%pft, PFTS, [20.0_wp, 20.0_wp], [0.0224_wp, 0.0224_wp],          &
+                                two%site%soil_profile)
+      two%static%geom%veg_height   = col%static%geom%veg_height
+      two%static%geom%opencan_frac = col%static%geom%opencan_frac
+      two%static%geom%snowfac      = col%static%geom%snowfac
+      two%static%z_top             = col%static%z_top
+      call ensure_output_capacity(two%out, N, .false.)
+      call ensure_forcing_capacity(two%forcing, N)
+      two%forcing%abs_sw_wood = 0.0_wp
+      two%forcing%abs_lw_wood = 0.0_wp
+      call reset_column(two)
+      call set_noon_forcing(two)
+      call frozen_record(two, fz, ys)
+      nsl = two%site%soil_profile%n_active
+      associate (s => two%static, hyd => two%cfg%pft%hydraulics, water => two%ws%water)
+         do i = 1_ik, N
+            wood_w(i) = tissue_psi_to_water(PSI_WOOD, hyd%pft(PFTS(i))%wood_curve, s%bwood_water(i))
+            leaf_w(i) = tissue_psi_to_water(PSI_LEAF, hyd%pft(PFTS(i))%leaf_curve, s%bleaf(i))
+         end do
+         call set_water_state(s, two%site%soil_profile, hyd, two%dynamic%soil_water%theta(1:nsl),                    &
+                              fz%water_drive%ice(1:nsl), 0.0_wp, 0.0_wp, leaf_w, wood_w, water)
+         call water_derivs(s, two%site%soil_profile, two%site%soil, hyd, fz%water_drive, water%state%tau_soil,       &
+                           water%state%tau_coh, water%ev(1), water%sys, .false.)
+         do i = 1_ik, N
+            write(tag, '(a,i0)') 'PFT ', s%pft(i)
+            call check('water_derivs: '//tag//'''s wood at its water''s potential on its own curve',                &
+                       water%ev(1)%psi_coh(WOOD, i), PSI_WOOD, 1.0e-9_wp)
+            call check('water_derivs: '//tag//'''s wood holds its water', water%ev(1)%water_coh(WOOD, i),             &
+                       wood_w(i) * s%nplant(i), 1.0e-12_wp * wood_w(i) * s%nplant(i))
+            call check('water_derivs: '//tag//'''s leaves at their water''s potential on their own curve',           &
+                       water%ev(1)%psi_coh(LEAF, i), PSI_LEAF, 1.0e-9_wp)
+            call check('water_derivs: '//tag//'''s leaves hold their water', water%ev(1)%water_coh(LEAF, i),          &
+                       leaf_w(i) * s%nplant(i), 1.0e-12_wp * leaf_w(i) * s%nplant(i))
+         end do
+         psi_off = tissue_water_to_psi(wood_w(2), hyd%pft(PFTS(1))%wood_curve, s%bwood_water(2)) - PSI_WOOD
+         call check_true('water_derivs: PFT 2''s wood water read on PFT 1''s curve sits at another potential',        &
+                         abs(psi_off) > 0.01_wp, psi_off)
+      end associate
+   end subroutine test_water_curves_per_pft
 
    elemental logical function ieee_ok(x)
       real(wp), intent(in) :: x
