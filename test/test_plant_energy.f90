@@ -10,17 +10,42 @@
 !   3. THIN TISSUE (eqs. (1), (8)): energy closes at every area index, halving the area    !
 !      halves every flux and keeps the temperature, and a tissue with no area takes the    !
 !      temperature of what it grows from.                                                  !
+!   4. THE CANOPY'S FILMS (canopy_tissue_energy, eq. (2)): energy is conserved across the  !
+!      canopy, its films capturing, passing between leaf and wood and evaporating, with    !
+!      heat stores and the plant water's heat; rain captured at a tissue's own temperature !
+!      brings it no heat and warmer rain warms it; a film passed from leaf to wood charges !
+!      the giver nothing and brings the receiver the giver's enthalpy; an evaporating film !
+!      costs its tissue the vapour's enthalpy at the canopy air less the liquid's at the   !
+!      tissue's start-of-step temperature.                                                 !
+!   5. THE TISSUE'S LONGWAVE (canopy_tissue_energy; "The emission base"): linearized about  !
+!      the tissue's own start-of-step temperature, it is the exact Stefan-Boltzmann        !
+!      balance when the tissue ends there, and second order in the distance from it.       !
 !==========================================================================================!
 program test_plant_energy
    use meds_test_assert,  only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_constants,    only : cp_air, latent_heat_vap, stefan_boltzmann, pi
-   use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t
+   use meds_therm_lib,    only : enthalpy_vapor, internal_energy_liquid, sat_specific_humidity,                     &
+                                 sat_specific_humidity_temp_deriv
+   use meds_canopy_water, only : canopy_water_out_t
+   use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t, plant_energy_env_t, canopy_tissue_energy
    implicit none
+
+   !----- The canopy air the canopy tests run under. -------------------------------------------!
+   real(wp), parameter :: T_CAS = 298.0_wp, Q_CAS = 0.012_wp, P_AIR = 101325.0_wp, RHO_AIR = 1.2_wp
+   !----- The longwave test's leaf: its shortwave, its area, emissivity and sensible coupling, and the  !
+   !      longwave it absorbs, two sides under 285 K surroundings. -----------------------------------!
+   real(wp), parameter :: LEAF_SW = 300.0_wp, LEAF_LAI = 2.0_wp, LEAF_EMISS = 0.97_wp, LEAF_H = 40.0_wp
+   real(wp), parameter :: LEAF_LW_IN = 2.0_wp * 0.97_wp * stefan_boltzmann * 285.0_wp ** 4
 
    call test_veg_exponential()
    call test_veg_energy_diagnostic_wetted()
    call test_veg_energy_thin_tissue()
+   call test_canopy_energy_closes()
+   call test_film_capture()
+   call test_film_transfer()
+   call test_film_evaporation()
+   call test_tissue_longwave()
 
    call test_report('test_plant_energy')
 
@@ -238,5 +263,296 @@ contains
                                  latent_pathway_t(slope=20.0_wp*a, ref=40.0_wp*a), 0.4_wp, T_CAS, T_PARENT,      &
                                  a_store, T0, dtt, ts, tr, fe, h_out, rn)
    end subroutine thin_tissue
+
+   !=======================================================================================!
+   ! 4. THE CANOPY'S FILMS (canopy_tissue_energy). A film is part of its tissue's energy, at  !
+   ! the tissue's start-of-step liquid enthalpy u0 (as the commit values its change); its     !
+   ! capture brings the rain's liquid enthalpy, its evaporation takes the vapour's at the     !
+   ! canopy air's temperature, and water passed between a cohort's two films leaves the giver !
+   ! at the giver's enthalpy. Then film, tissue and canopy air close with no slack           !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (2)).                                    !
+   !=======================================================================================!
+
+   !----- Two cohorts with everything on: radiation, sensible heat, heat stores, the plant water's  !
+   !      heat, partly wet films capturing rain and passing water leaf to wood in one cohort and   !
+   !      wood to leaf in the other, transpiration held at the network's or free. What enters (the !
+   !      net radiation, the plant water's heat, the captured rain's liquid enthalpy) less what    !
+   !      leaves into the canopy air (sensible heat, the vapour's enthalpy) is what the tissues    !
+   !      store: their heat, cap*(T - T0), and their films' change at u0. ------------------------!
+   subroutine test_canopy_energy_closes()
+      type(plant_energy_env_t) :: env
+      type(canopy_water_out_t) :: film
+      real(wp) :: worst, resid, scale
+      integer(ik) :: mode
+      print '(a)', 'test_canopy_energy_closes:'
+      worst = 0.0_wp
+      do mode = 1_ik, 2_ik
+         call canopy_inputs(2_ik, env, film)
+         env%h_coeff_leaf  = [30.0_wp, 20.0_wp]
+         env%g_transp_leaf = [0.006_wp, 0.004_wp]
+         env%abs_sw        = [300.0_wp, 150.0_wp]
+         env%abs_lw        = [-40.0_wp, -20.0_wp]
+         env%lai           = [3.0_wp, 1.5_wp]
+         env%h_coeff_w     = [8.0_wp, 5.0_wp]
+         env%abs_sw_wood   = [20.0_wp, 10.0_wp]
+         env%abs_lw_wood   = [-5.0_wp, -3.0_wp]
+         env%wai           = [0.6_wp, 0.3_wp]
+         env%leaf_hcap_per_dt = [5.0_wp, 3.0_wp]
+         env%wood_hcap_per_dt = [60.0_wp, 40.0_wp]
+         env%t_leaf0 = [301.0_wp, 299.0_wp]
+         env%t_wood0 = [299.5_wp, 300.5_wp]
+         env%qwflux_wl  = [2.0_wp, 1.0_wp]
+         env%q_wood_net = [-1.5_wp, 0.5_wp]
+         env%transp_held = mode == 1_ik
+         env%transp_net  = [3.0e-5_wp, 1.5e-5_wp]
+         film%f_wet_c     = [0.3_wp, 0.6_wp]
+         film%g_film_leaf = [0.02_wp, 0.01_wp]
+         film%g_film_w    = [0.004_wp, 0.002_wp]
+         film%rain_liquid_enthalpy = internal_energy_liquid(293.0_wp)
+         film%transfer_lw    = [5.0e-6_wp, -4.0e-6_wp]               ! leaf -> wood in one, wood -> leaf in the other
+         film%intercept_leaf = [2.0e-5_wp, 1.0e-5_wp] - film%transfer_lw
+         film%intercept_wood = [1.0e-5_wp, 6.0e-6_wp] + film%transfer_lw
+         call canopy_closure(env, film, resid, scale)
+         worst = max(worst, abs(resid) / scale)
+      end do
+      call check_true('canopy_tissue_energy: energy is conserved across the canopy, its films included '//        &
+                      '(transpiration held and free)', worst < 1.0e-12_wp, worst)
+   end subroutine test_canopy_energy_closes
+
+   !----- The canopy's energy residual: what entered less what left less what was stored. -------!
+   subroutine canopy_closure(env, film, resid, scale)
+      type(plant_energy_env_t), intent(in)  :: env
+      type(canopy_water_out_t), intent(in)  :: film
+      real(wp),                 intent(out) :: resid, scale
+      real(wp) :: tl(size(env%lai)), tw(size(env%lai)), tr(size(env%lai)), fl(size(env%lai)), fw(size(env%lai))
+      real(wp) :: h, qw, transp, fe, rnet, u_l0(size(env%lai)), u_w0(size(env%lai)), gain, loss, stored
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      u_l0 = internal_energy_liquid(env%t_leaf0)
+      u_w0 = internal_energy_liquid(env%t_wood0)
+      gain   = rnet + sum(env%qwflux_wl + env%q_wood_net)                                                       &
+               + sum(film%intercept_leaf + film%intercept_wood) * film%rain_liquid_enthalpy
+      loss   = h + qw
+      stored = sum(env%leaf_hcap_per_dt * (tl - env%t_leaf0) + env%wood_hcap_per_dt * (tw - env%t_wood0))       &
+               + sum((film%intercept_leaf - fl) * u_l0 + (film%intercept_wood - fw) * u_w0)
+      resid = gain - loss - stored
+      scale = abs(rnet) + sum(abs(env%qwflux_wl) + abs(env%q_wood_net)) + abs(h) + abs(qw)                       &
+              + sum(abs(film%intercept_leaf) + abs(film%intercept_wood)) * film%rain_liquid_enthalpy
+   end subroutine canopy_closure
+
+   !----- Rain captured at a tissue's own temperature brings it no heat: capture on both tissues of a   !
+   !      cohort at 300 K, the rain at 300 K, leaves both temperatures as they are with no capture,   !
+   !      only the films growing; rain at 310 K warms both. ------------------------------------------!
+   subroutine test_film_capture()
+      type(plant_energy_env_t) :: env
+      type(canopy_water_out_t) :: film
+      real(wp) :: tl0(1), tw0(1), tl(1), tw(1), tr(1), fl(1), fw(1), h, qw, transp, fe, rnet
+      print '(a)', 'test_film_capture:'
+      call one_wet_cohort(env, film, 300.0_wp, 300.0_wp)
+      call run_canopy(env, film, tl0, tw0, tr, fl, fw, h, qw, transp, fe, rnet)
+      film%intercept_leaf = 1.0e-5_wp
+      film%intercept_wood = 1.0e-5_wp
+      film%rain_liquid_enthalpy = internal_energy_liquid(300.0_wp)
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      call check('canopy_tissue_energy: rain captured at the tissues'' own temperature brings them no heat',       &
+                 max(abs(tl(1) - tl0(1)), abs(tw(1) - tw0(1))), 0.0_wp, 1.0e-12_wp)
+      film%rain_liquid_enthalpy = internal_energy_liquid(310.0_wp)
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      call check_true('canopy_tissue_energy: warmer rain warms the leaf and the wood that capture it',              &
+                      tl(1) > tl0(1) .and. tw(1) > tw0(1), min(tl(1) - tl0(1), tw(1) - tw0(1)))
+   end subroutine test_film_capture
+
+   !----- A film passed from leaf to wood (no net capture) leaves the leaf at the leaf's enthalpy and   !
+   !      reaches the wood at the leaf's: with leaf and wood at one temperature it moves neither, and   !
+   !      from a warmer leaf it leaves the leaf as it was and warms the wood. ----------------------!
+   subroutine test_film_transfer()
+      type(plant_energy_env_t) :: env
+      type(canopy_water_out_t) :: film
+      real(wp) :: tl0(1), tw0(1), tl(1), tw(1), tr(1), fl(1), fw(1), h, qw, transp, fe, rnet
+      print '(a)', 'test_film_transfer:'
+      call one_wet_cohort(env, film, 300.0_wp, 300.0_wp)
+      call run_canopy(env, film, tl0, tw0, tr, fl, fw, h, qw, transp, fe, rnet)
+      call pass_leaf_to_wood(film, 5.0e-6_wp)
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      call check('canopy_tissue_energy: a film passed between tissues at one temperature moves neither',           &
+                 max(abs(tl(1) - tl0(1)), abs(tw(1) - tw0(1))), 0.0_wp, 1.0e-12_wp)
+      call one_wet_cohort(env, film, 305.0_wp, 300.0_wp)
+      call run_canopy(env, film, tl0, tw0, tr, fl, fw, h, qw, transp, fe, rnet)
+      call pass_leaf_to_wood(film, 5.0e-6_wp)
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      call check('canopy_tissue_energy: the warmer leaf giving its film is charged nothing for it', tl(1), tl0(1),  &
+                 1.0e-12_wp)
+      call check_true('canopy_tissue_energy: the wood receiving it gains the leaf''s warmer water', tw(1) > tw0(1), &
+                      tw(1) - tw0(1))
+   end subroutine test_film_transfer
+
+   subroutine pass_leaf_to_wood(film, rate)
+      type(canopy_water_out_t), intent(inout) :: film
+      real(wp),                 intent(in)    :: rate   !< [kg/m2/s]
+      film%transfer_lw    = rate
+      film%intercept_leaf = -rate
+      film%intercept_wood = rate
+   end subroutine pass_leaf_to_wood
+
+   !----- An evaporating film costs its tissue the vapour's enthalpy at the canopy air less the liquid's !
+   !      at the tissue's start-of-step temperature, the rest being the film's own: a wood with only its !
+   !      film's pathway (no radiation, no sensible heat), fully wet, loses heat cap*(T - T0) per       !
+   !      kilogram evaporated of exactly h_vapour(T_cas) - u_liquid(T0), from 2 K above the canopy air  !
+   !      and 3 K below it. ---------------------------------------------------------------------!
+   subroutine test_film_evaporation()
+      type(plant_energy_env_t) :: env
+      type(canopy_water_out_t) :: film
+      real(wp) :: tl(1), tw(1), tr(1), fl(1), fw(1), h, qw, transp, fe, rnet, t0, per_kg, worst
+      integer(ik) :: k
+      print '(a)', 'test_film_evaporation:'
+      worst = 0.0_wp
+      do k = 1_ik, 2_ik
+         t0 = merge(T_CAS + 2.0_wp, T_CAS - 3.0_wp, k == 1_ik)
+         call canopy_inputs(1_ik, env, film)
+         env%t_leaf0 = t0
+         env%t_wood0 = t0
+         env%wood_hcap_per_dt = 50.0_wp
+         film%f_wet_c = 1.0_wp
+         film%g_film_w = 0.004_wp
+         call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+         per_kg = -env%wood_hcap_per_dt(1) * (tw(1) - t0) / fw(1)
+         worst = max(worst, abs(per_kg - (enthalpy_vapor(T_CAS) - internal_energy_liquid(t0)))                     &
+                            / (enthalpy_vapor(T_CAS) - internal_energy_liquid(t0)))
+      end do
+      call check_true('canopy_tissue_energy: an evaporating film costs its tissue h_vapour(T_cas) - u_liquid(T0)',  &
+                      worst < 1.0e-10_wp, worst)
+   end subroutine test_film_evaporation
+
+   !=======================================================================================!
+   ! 5. THE TISSUE'S LONGWAVE. The two-stream's abs_lw is the tissue's net longwave with it   !
+   ! emitting at its start-of-step temperature t0, abs_lw = LW_in - eps sigma A t0^4, and the !
+   ! balance carries the emission's change linearized about t0. One leaf (LAI 2, no latent,   !
+   ! no heat store) in sun and a 298 K canopy air: when the tissue ends at t0, the            !
+   ! linearization is exact and its temperature solves the Stefan-Boltzmann balance           !
+   !   abs_sw + LW_in - eps sigma A T^4 - h (T - T_cas) = 0,                                  !
+   ! found here by bisection, independently; t0 a distance d from there gives a temperature   !
+   ! off by O(d^2), the linearization's error. A linearization about the canopy air's         !
+   ! temperature instead is off at first order, and not exact anywhere but at T_cas.          !
+   !=======================================================================================!
+   subroutine test_tissue_longwave()
+      real(wp) :: t_star, t_fix, t, e(3), p1, p2, rnet, lo, hi, mid
+      integer(ik) :: k
+      print '(a)', 'test_tissue_longwave:'
+      lo = 250.0_wp
+      hi = 350.0_wp
+      do k = 1_ik, 200_ik
+         mid = 0.5_wp * (lo + hi)
+         if (exact_balance(mid) > 0.0_wp) then
+            lo = mid
+         else
+            hi = mid
+         end if
+      end do
+      t_star = 0.5_wp * (lo + hi)
+      !----- Start the emission at the canopy air and let it follow the tissue to where they meet. ------!
+      t_fix = T_CAS
+      do k = 1_ik, 20_ik
+         call leaf_in_sun(t_fix, t, rnet)
+         t_fix = t
+      end do
+      call leaf_in_sun(t_fix, t, rnet)
+      call check('canopy_tissue_energy: at its emission temperature the tissue solves the exact balance', t, t_star, &
+                 1.0e-8_wp)
+      call check('canopy_tissue_energy: there its net radiation is the exact emission''s', rnet,                    &
+                 LEAF_SW + LEAF_LW_IN - LEAF_EMISS * stefan_boltzmann * LEAF_LAI * t ** 4, 1.0e-9_wp * LEAF_SW)
+      do k = 1_ik, 3_ik
+         call leaf_in_sun(t_star + 2.0_wp / 2.0_wp ** (k - 1_ik), t, rnet)
+         e(k) = abs(t - t_star)
+      end do
+      p1 = log(e(1) / e(2)) / log(2.0_wp)
+      p2 = log(e(2) / e(3)) / log(2.0_wp)
+      print '(a,3es10.3,a,2f6.2)', '   temperature error at t0 - T* = 2, 1, 0.5 K:', e, ' ; order', p1, p2
+      call check_true('canopy_tissue_energy: the linearized longwave is second order in t0 - T',                    &
+                      abs(p1 - 2.0_wp) < 0.2_wp .and. abs(p2 - 2.0_wp) < 0.2_wp, p2)
+   end subroutine test_tissue_longwave
+
+   !----- The exact balance's residual at T. -----------------------------------------------------!
+   pure real(wp) function exact_balance(t) result(g)
+      real(wp), intent(in) :: t
+      g = LEAF_SW + LEAF_LW_IN - LEAF_EMISS * stefan_boltzmann * LEAF_LAI * t ** 4 - LEAF_H * (t - T_CAS)
+   end function exact_balance
+
+   !----- The leaf emitting at t0: its temperature and net radiation from canopy_tissue_energy. --------!
+   subroutine leaf_in_sun(t0, t_leaf, rnet)
+      real(wp), intent(in)  :: t0
+      real(wp), intent(out) :: t_leaf, rnet
+      type(plant_energy_env_t) :: env
+      type(canopy_water_out_t) :: film
+      real(wp) :: tl(1), tw(1), tr(1), fl(1), fw(1), h, qw, transp, fe
+      call canopy_inputs(1_ik, env, film)
+      env%lai = LEAF_LAI
+      env%leaf_emiss = LEAF_EMISS
+      env%abs_sw = LEAF_SW
+      env%h_coeff_leaf = LEAF_H
+      env%t_leaf0 = t0
+      env%abs_lw = LEAF_LW_IN - LEAF_EMISS * stefan_boltzmann * LEAF_LAI * t0 ** 4
+      call run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      t_leaf = tl(1)
+   end subroutine leaf_in_sun
+
+   !----- One cohort, partly wet, with leaf and wood exchanging sensible heat and longwave and holding  !
+   !      heat, at the given start-of-step temperatures; no capture. ------------------------------!
+   subroutine one_wet_cohort(env, film, t_leaf0, t_wood0)
+      type(plant_energy_env_t), intent(out) :: env
+      type(canopy_water_out_t), intent(out) :: film
+      real(wp),                 intent(in)  :: t_leaf0, t_wood0
+      call canopy_inputs(1_ik, env, film)
+      env%h_coeff_leaf = 30.0_wp
+      env%g_transp_leaf = 0.005_wp
+      env%abs_sw = 250.0_wp
+      env%abs_lw = -30.0_wp
+      env%lai = 2.5_wp
+      env%h_coeff_w = 8.0_wp
+      env%abs_sw_wood = 15.0_wp
+      env%abs_lw_wood = -4.0_wp
+      env%wai = 0.5_wp
+      env%leaf_hcap_per_dt = 4.0_wp
+      env%wood_hcap_per_dt = 50.0_wp
+      env%t_leaf0 = t_leaf0
+      env%t_wood0 = t_wood0
+      film%f_wet_c = 0.5_wp
+      film%g_film_leaf = 0.02_wp
+      film%g_film_w = 0.004_wp
+      film%rain_liquid_enthalpy = internal_energy_liquid(290.0_wp)
+   end subroutine one_wet_cohort
+
+   !----- n cohorts with nothing on: every coefficient, flux, film and heat store zero, the tissues at  !
+   !      the canopy air's temperature with the shipped emissivities, transpiration free. ----------!
+   subroutine canopy_inputs(n, env, film)
+      integer(ik),              intent(in)  :: n
+      type(plant_energy_env_t), intent(out) :: env
+      type(canopy_water_out_t), intent(out) :: film
+      allocate(env%h_coeff_leaf(n), env%g_transp_leaf(n), env%abs_sw(n), env%abs_lw(n), env%lai(n),            &
+               env%h_coeff_w(n), env%abs_sw_wood(n), env%abs_lw_wood(n), env%wai(n), env%leaf_hcap_per_dt(n),  &
+               env%wood_hcap_per_dt(n), env%t_leaf0(n), env%t_wood0(n), env%qwflux_wl(n), env%q_wood_net(n),   &
+               env%transp_net(n), env%leaf_emiss(n), env%wood_emiss(n), source=0.0_wp)
+      env%t_leaf0 = T_CAS
+      env%t_wood0 = T_CAS
+      env%leaf_emiss = 0.97_wp
+      env%wood_emiss = 0.90_wp
+      env%transp_held = .false.
+      allocate(film%f_wet_c(n), film%g_film_leaf(n), film%g_film_w(n), film%intercept_leaf(n),                   &
+               film%intercept_wood(n), film%transfer_lw(n), source=0.0_wp)
+      film%rain_liquid_enthalpy = internal_energy_liquid(T_CAS)
+   end subroutine canopy_inputs
+
+   !----- canopy_tissue_energy under the test canopy air. ------------------------------------------!
+   subroutine run_canopy(env, film, tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+      type(plant_energy_env_t), intent(in)  :: env
+      type(canopy_water_out_t), intent(in)  :: film
+      real(wp),                 intent(out) :: tl(:), tw(:), tr(:), fl(:), fw(:), h, qw, transp, fe, rnet
+      tl = 0.0_wp
+      tw = 0.0_wp
+      tr = 0.0_wp
+      fl = 0.0_wp
+      fw = 0.0_wp
+      call canopy_tissue_energy(env, film, T_CAS, Q_CAS, sat_specific_humidity(T_CAS, P_AIR),                    &
+                                sat_specific_humidity_temp_deriv(T_CAS, P_AIR), RHO_AIR, size(env%lai, kind=ik), &
+                                tl, tw, tr, fl, fw, h, qw, transp, fe, rnet)
+   end subroutine run_canopy
 
 end program test_plant_energy
