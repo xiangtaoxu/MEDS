@@ -1,16 +1,10 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_litter_partition -- the necromass -> litter-destination split.                        !
-!                                                                                          !
-! This is a biogeochemical LAW (it partitions dead plant carbon into the CENTURY litter pools, !
-! docs/science/soil_carbon.md §5), so it is filed with the slow soil kernels, and the library  !
-! graph carries the edge to the demography operators that call it.                             !
-!                                                                                          !
-! necromass_to_litter takes plain scalars, so it stays callable from the demographic engine's  !
-! termination / disturbance kills (which add the six outputs straight onto a soil_carbon_t).   !
-! add_necromass is the driver's form: it adds the same split to a litter_input_t and records    !
-! the carbon by the tissue it came from, so the litter diagnostics and the soil input are one   !
-! accumulation.                                                                                 !
+! meds_litter_partition -- dead plant carbon to litter (docs/science/soil_carbon.md §5).   !
+!   * necromass_to_litter -- the split, on plain scalars, so the demography operators'     !
+!       kills can also call it and add its six outputs straight onto a soil_carbon_t.      !
+!   * add_necromass       -- the slow driver's form: adds the split to a litter_input_t and !
+!       records the carbon by tissue, so the litter diagnostics and soil input are one sum. !
 !==========================================================================================!
 module meds_litter_partition
    use meds_kinds,              only : wp
@@ -23,17 +17,11 @@ module meds_litter_partition
 contains
 
    !=======================================================================================!
-   !  NECROMASS -> LITTER-DESTINATION split (docs/science/soil_carbon.md §5). Every input is a       !
-   !  per-area carbon AMOUNT [kgC/m2], already converted from the per-plant cohort pools via         !
-   !  nplant; every PFT input is a plain scalar trait. Each tissue goes where it is:                 !
-   !    - canopy (leaves, and the flowers, fruit and seed of reproduction): all ABOVE ground,        !
-   !      labile/structural by f_labile_leaf;                                                         !
-   !    - fine roots: all BELOW ground, by f_labile_leaf (no separate root trait);                    !
-   !    - wood (stem + coarse roots) and storage (non-structural carbon, held in the sapwood and the   !
-   !      coarse roots): above/below by aboveground_frac, the woody split; wood labile/structural by   !
-   !      f_labile_stem, storage by f_labile_leaf.                                                    !
-   !  Only the STRUCTURAL streams carry lignin (struct_lignin_frac of each). Pass 0 for a channel     !
-   !  that does not apply (the turnover call has no wood or storage).                                 !
+   !  Split per-area dead carbon [kgC/m2] by tissue: canopy (leaves and reproduction) all  !
+   !  above ground and fine roots all below, both labile by f_labile_leaf; wood and storage !
+   !  above/below by aboveground_frac, wood labile by f_labile_stem and storage by         !
+   !  f_labile_leaf. Only the structural streams carry lignin. Pass 0 for a tissue that    !
+   !  does not apply (the turnover call has no wood or storage).                           !
    !=======================================================================================!
    pure subroutine necromass_to_litter(canopy_c, root_c, wood_c, storage_c,                          &
                                        f_labile_leaf, f_labile_stem, aboveground_frac, lignin_frac,   &
@@ -61,9 +49,8 @@ contains
    end subroutine necromass_to_litter
 
    !=======================================================================================!
-   !  Add one group of dead plant tissue [kgC/m2] to a patch's litter accumulator: the pool    !
-   !  streams the soil reads (necromass_to_litter, reproduction going with the canopy), and the !
-   !  same carbon by the tissue it came from, which the litter diagnostics report.             !
+   !  Add one group of dead tissue [kgC/m2] to a patch's litter accumulator: the pool      !
+   !  streams (reproduction going with the canopy) and the same carbon by tissue.          !
    !=======================================================================================!
    pure subroutine add_necromass(lit, leaf_c, root_c, wood_c, storage_c, repro_c,                   &
                                  f_labile_leaf, f_labile_stem, aboveground_frac, lignin_frac)

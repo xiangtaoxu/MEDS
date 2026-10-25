@@ -168,7 +168,9 @@ Three things about this are deliberate:
   leaf rather than air temperature (see `docs/ROADMAP.md`).
 
 The running mean is prognostic and slow, so it is written to the state file: rebuilding a month of
-memory after every restart would make the acclimated optimum jump. It is applied by refreshing the
+memory after every restart would make the acclimated optimum jump. A mean not yet seeded takes the
+first day's value outright, so the optimum starts from the site's own climate rather than relaxing
+toward it from an arbitrary origin over the first month. It is applied by refreshing the
 per-PFT leaf table once per slow step from the **config** reference coefficients, which are never
 overwritten — so the refresh is idempotent. `thermal_acclimation` requires the peaked form; with the
 Arrhenius form there is no $`\Delta S`$ to shift and the loader refuses rather than letting the flag

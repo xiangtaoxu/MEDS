@@ -1,29 +1,13 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_sink_limitation -- how much new tissue a plant can make in a step, whatever its carbon.  !
-!                                                                                          !
-! Carbon supply is not the only limit on growth: the meristems divide and expand cells at a     !
-! bounded rate, however much carbon the leaves fix (sink limitation; Körner 2015). This module   !
-! holds that limit on wood growth, in two forms, each a per-PFT trait and each off at zero:      !
-!                                                                                          !
-!   * RELATIVE (`pft.max_relative_growth_rate`, 1/yr): wood carbon grows by at most this        !
-!     fraction of itself a year.                                                            !
-!   * ABSOLUTE (`pft.max_absolute_growth_rate`, cm/yr): the stem diameter grows by at most this  !
-!     much a year, times dbh^`pft.max_absolute_growth_exponent` (dbh in cm; exponent 0 by        !
-!     default, a fixed width of new wood). The cambium lays down a bounded width of wood, so the  !
-!     most wood a step can build scales with the stem's surface rather than its mass; at BCI the  !
-!     upper quantiles of census diameter growth rise about as dbh^0.5 at a given light.          !
-!     The cap is a RATE OVER THE GROWTH WINDOW (growth_memory_days, the one mortality averages     !
-!     growth over), not over each step: a stem that grew nothing through a dry season may make up  !
-!     the year's diameter in the wet season. The caller passes what the stem has already grown in  !
-!     the window, from the cohort's growth ring buffer.                                          !
-!                                                                                          !
-! With both set, the tighter one applies. This is where a more mechanistic sink would go -- one  !
-! that responds to temperature or water.                                                     !
-!                                                                                          !
-! plant_carbon_allocation builds wood up to the limit returned here; the carbon it cannot use    !
-! leaves the plant as root exudate, charged the same growth respiration as tissue              !
-! (docs/science/plant_carbon_allocation.md §2 "Sink limitation of wood growth", eq. (4)).      !
+! meds_sink_limitation -- the most wood a cohort can build in a step, whatever its carbon: !
+! the meristems divide and expand cells at a bounded rate (sink limitation; Körner 2015).  !
+! growth_sink_limitation returns the tighter of two per-PFT limits, each off at zero:      !
+!   * relative: wood carbon grows by at most max_relative_growth_rate of itself a year;    !
+!   * absolute: the diameter grows by at most max_absolute_growth_rate x                   !
+!     dbh^max_absolute_growth_exponent a year (dbh in cm), a budget over the growth window. !
+! plant_carbon_allocation builds wood up to the limit and exudes the rest from the roots   !
+! (docs/science/plant_carbon_allocation.md §2, "Sink limitation of wood growth", eq. (4)). !
 !==========================================================================================!
 module meds_sink_limitation
    use meds_kinds,         only : wp
@@ -38,15 +22,11 @@ module meds_sink_limitation
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! The sink-limited wood growth of one step [kgC/plant]: the most wood carbon the plant can  !
-   ! build in dt_yr years. The relative limit is max_relative_growth_rate x wood_carbon x dt.   !
-   ! The absolute limit is a budget over the growth window: the diameter may grow by            !
-   ! max_absolute_growth_rate x dbh^max_absolute_growth_exponent x window_yr, less what it has   !
-   ! already grown in the window (grown_in_window), and the limit is the wood carbon between the  !
-   ! diameter now and that diameter, on the model's own allometry, so a step it binds brings the  !
-   ! window's growth to exactly the cap. window_yr = dt_yr and grown_in_window = 0 is a per-step  !
-   ! cap. A rate of zero or less turns its limit off; with both off there is no limit (huge),    !
-   ! which is the default.                                                                     !
+   ! The sink-limited wood growth of one step [kgC/plant]. The absolute limit is the wood  !
+   ! carbon, on the model's own allometry, between today's diameter and today's plus the   !
+   ! window's budget less grown_in_window, so a step it binds brings the window's growth   !
+   ! to exactly the cap; window_yr = dt_yr with grown_in_window = 0 is a per-step cap.     !
+   ! With both limits off the result is huge(1.0_wp): no limit.                            !
    !---------------------------------------------------------------------------------------!
    elemental pure function growth_sink_limitation(allom, wood_carbon, dbh, wood_density,                &
                                                   max_relative_growth_rate,                          &

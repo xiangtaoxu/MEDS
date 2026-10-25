@@ -53,6 +53,9 @@ closed: the phase that declares the CO₂ efflux is the phase where the pool has
 still sees the post-maintenance reserve, so maintenance is paid before growth is funded from it —
 ED2's ordering.
 
+The clamp in eq. (2) is on the fraction, not the amount: a large $`k_s\,\Delta t`$ cannot charge more
+than the pool holds, and a negative product cannot charge less than nothing and so create storage.
+
 ### Leaf and fine-root resorption
 
 A fraction $`f_r`$ = `retained_carbon_fraction` of **all** leaf and fine-root loss returns to the

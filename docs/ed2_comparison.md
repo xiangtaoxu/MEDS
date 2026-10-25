@@ -506,6 +506,37 @@ the integrators of §3.1–3.2 and the biophysics of §2.3, is listed here.
 - **Carbon bookkeeping** (`meds_fast_state`). Gross GPP and the maintenance losses are summed apart
   over the day and netted by the daily allocator, as ED2 does.
 
+### 4.10 Where the slow loop's forms come from
+
+The slow-loop code in `src/slow_dynamics` states MEDS's own rationale in its comments and its science
+pages. What it takes from ED2 is listed here.
+
+- **The slow driver.** `meds_vegetation_dynamics` plays the part of ED2's `veg_dynamics_driver`. Leaf
+  phenology runs inside the slow loop, as ED2's `phenology_driv` runs inside its vegetation dynamics.
+- **Storage upkeep** (`plant_carbon_allocation.md` eq. (2)).
+  - Its form is ED2's `growth_balive`: a fractional turnover of the pool per year, with no
+    temperature dependence.
+  - It is charged before the demand and the allocation, as ED2's `apply_maintenance` runs ahead of
+    growth.
+- **Allocation** (`meds_plant_carbon_allocation`).
+  - It covers ED2's `growth_balive` and `structural_growth` in one daily step.
+  - It follows FATES's PARTEH hypothesis 1 ("allometrically guided, carbon only"): every pool has an
+    allometric target, and the residual builds wood.
+- **Soil carbon** (`meds_soil_biogeochem`).
+  - The seven pools are ED2's CENTURY set, and the network is ED2's `update_C_and_N_pools`,
+    reorganized as a carbon matrix.
+  - The `euler` step is ED2's forward Euler.
+  - The above-ground pools take the surface temperature and the below-ground ones the active layer's,
+    as ED2's `A_decomp` and `B_decomp`.
+- **Cohort and patch fusion and fission** (`meds_demography_cohort_fusefiss`,
+  `meds_demography_patch_fusefiss`).
+  - They are ED2's `fuse_fiss_utils`; `new_fuse_cohorts` and `new_fuse_patches` keep ED2's names.
+  - Patch fusion compares ED2's cumulative-LAI light profiles (`patch_pft_size_profile`).
+- **Treefall disturbance** (`apply_patch_disturbance`). The survivorship is ED2's treefall: cohorts
+  at or above the survival height die in the gap, and the understory survives into it.
+- **Light plasticity** (`meds_plant_trait_dynamics`). It ports ED2's `update_cohort_plastic_trait`
+  (Lloyd et al. 2010).
+
 ---
 
 ## 5. Quick checklist: what an ED2 user will find missing

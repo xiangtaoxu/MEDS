@@ -1,22 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_demography_cohort_fusefiss -- COHORT numerical-resolution control for the adaptive cohort      !
-! discretization (the cohort half of the ED2 fuse_fiss_utils analogue) plus cohort RECRUITMENT.  !
-! Driven by ARITHMETIC, not ecology: keep the per-patch cohort count bounded and the             !
-! representation conservative WITHOUT changing what the ecosystem does.                          !
-!                                                                                          !
-!   Sorting        -- cohorts tallest-first within each patch (height desc, DBH desc tie). The  !
-!                     order is load-bearing for the overtopping sweep and the fusion scans.     !
-!   Cohort fusion  -- receptor (taller) absorbs same-PFT donors of similar HEIGHT unless the    !
-!   /fission          merged cohort LAI exceeds the cap; split a cohort whose LAI exceeds it.   !
-!                     The four carbon pools are conserved, and with them AGB and leaf area:     !
-!                     fused/split diameters are re-derived from the conserved wood carbon,      !
-!                     never averaged.                                                           !
-!   Termination    -- cull cohorts below the density/AGB floors.                                !
-!   Recruitment    -- apply_recruitment: accumulate the supplied per-(PFT,patch) recruit        !
-!                     density and spawn min-size cohorts (a HOST structural process).           !
-! The PATCH half (sort_patches, patch fusion, disturbance) is the sibling module                !
-! meds_demography_patch_fusefiss, which depends on this one (patch fusion re-sorts cohorts).          !
+! meds_demography_cohort_fusefiss -- the cohort operators (docs/science/demography.md §3). !
+! sort_cohorts keeps each patch's cohorts tallest first. Fusion (new_fuse_cohorts,         !
+! fuse_2_cohorts), fission (split_cohorts, for a cohort over the LAI cap) and the cull     !
+! (terminate_cohorts) keep the cohort count bounded without changing what the stand does.  !
+! apply_recruitment founds new cohorts from the recruit pool. What each conserves and      !
+! hands to the slow ledger is demography.md §5; the patch operators are                    !
+! meds_demography_patch_fusefiss.                                                          !
 !==========================================================================================!
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
@@ -43,7 +33,8 @@ module meds_demography_cohort_fusefiss
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Sort cohorts within every patch slice: height descending, DBH descending on ties.      !
+   ! Sort each patch's cohorts tallest first: height descending, diameter descending on    !
+   ! ties. The overtopping LAI and the fusion scans rely on the order (demography.md §3).  !
    !---------------------------------------------------------------------------------------!
    subroutine sort_cohorts(poly)
       type(polygon_t), intent(inout) :: poly
@@ -99,7 +90,9 @@ contains
    end function max_cohort_count
 
    !---------------------------------------------------------------------------------------!
-   ! Cohort fusion with geometric tolerance relaxation.                                     !
+   ! Cohort fusion in passes, the tolerance growing geometrically from                     !
+   ! cohort_size_tol_min, until no patch holds more than max_cohort cohorts; a negative    !
+   ! max_cohort fuses every same-PFT pair (demography.md §3).                              !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_cohorts(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -141,13 +134,10 @@ contains
             i0 = patch%cohort_offset(ip)
             i1 = i0 + patch%cohort_count(ip) - 1_ik
             if (i1 < i0) cycle
-            !----- The tolerance is a share of the patch's TOP height (cohorts are sorted tallest  !
-            !      first), so it scales with the stand: in a 3 m regrowth stand two cohorts merge   !
-            !      only within about 6 cm, and one that has pulled ahead keeps its place in the     !
-            !      light, while a 30 m forest merges within about 0.6 m. Tied to the PFT's maximum  !
-            !      height instead, it would fold each month's recruits into a young stand's        !
-            !      leaders and re-merge the halves of every split, and a dense stand could never    !
-            !      form the size hierarchy it thins by. ------------------------------------------!
+            !----- The tolerance is a share of the patch's top height (its first cohort), so it !
+            !      scales with the stand: a cohort that pulls ahead in a young stand keeps its  !
+            !      place in the light, and a dense stand can form the size hierarchy it thins   !
+            !      by (demography.md §3). ------------------------------------------------------!
             h_top = cohort%height(i0)
             do recc = i0, i1 - 1_ik
                if (.not. alive(recc)) cycle
@@ -174,9 +164,9 @@ contains
    end subroutine fuse_pass
 
    !---------------------------------------------------------------------------------------!
-   ! Merge donor cohort into receptor, conserving plant number and the four carbon pools (so     !
-   ! AGB and leaf area). The fused per-plant pools are nplant-weighted means; the diameter and   !
-   ! the rest of the geometry are re-derived from them (set_cohort_size_from_carbon).            !
+   ! Merge cohort donc into recc. Plant number and the four carbon pools are conserved     !
+   ! (each pool a density-weighted mean per plant), and with them biomass and leaf area;   !
+   ! the geometry is re-derived from the merged carbon, never averaged (demography.md §3). !
    !---------------------------------------------------------------------------------------!
    subroutine fuse_2_cohorts(poly, recc, donc, conservation_tol)
       type(polygon_t), intent(inout) :: poly
@@ -192,23 +182,14 @@ contains
          nd      = cohort%nplant(donc)
          ntot    = nr + nd
          agb_tot = nr * cohort%agb(recc) + nd * cohort%agb(donc)     ! [kgC/m2] conserved
-         !----- The fast-loop-owned state fuses by its DECLARED per-field policy, in one place  !
-         !      (meds_cohort_state_vars%fuse_cohort_fast_state): nplant-weighted for every per-plant !
-         !      amount, the tissue energies and films among them; the temperatures follow from the   !
-         !      fused energies. Enumerating it here would let a field drift from its                 !
-         !      declared convention. The dynamic leaf traits stay here: they are slow-loop state,      !
-         !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
-         !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
-         !      vcmax25 and rd25 are per leaf area, so leaf area weights them; sla is leaf area per    !
-         !      leaf CARBON, so leaf carbon weights it and the fused cohort shows the leaf area its    !
-         !      two parents showed; leaf_turnover_rate is the share of the leaf CARBON lost a year,    !
-         !      so leaf carbon weights it and the fused cohort turns over the leaf carbon its two      !
-         !      parents did (docs/science/plant_traits.md §5). -------------------------------------!
+         !----- The fast-loop state fuses by the policy fuse_cohort_fast_state declares per field   !
+         !      (each per-plant amount, the tissue energies among them, density-weighted). The leaf !
+         !      traits are set before the geometry is re-derived, since sla maps leaf carbon to     !
+         !      leaf area; each blends on the quantity it is per (plant_traits.md §5). -------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
-         !----- The tissue heat capacities the diagnostic temperatures fuse on, taken BEFORE          !
-         !      fuse_cohort_fast_state blends the survivor's tissue water into them: the same          !
-         !      weights the prognostic temperatures fuse on. ----------------------------------------!
+         !----- The tissue heat capacities before fuse_cohort_fast_state blends the water into   !
+         !      them: the diagnostic temperatures fuse on the weights the prognostic ones do. ---!
          call cohort_tissue_heat_capacity(cohort, recc, hlr, hwr)
          call cohort_tissue_heat_capacity(cohort, donc, hld, hwd)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
@@ -217,21 +198,15 @@ contains
          cohort%rd25(recc)    = pair_mean(cohort%rd25(recc),    wr, cohort%rd25(donc),    wd)
          cohort%leaf_turnover_rate(recc) = pair_mean(cohort%leaf_turnover_rate(recc), cr,                &
                                                      cohort%leaf_turnover_rate(donc), cd)
-         !----- Fast-loop DIAGNOSTIC accumulators, handed leaf area (wr, wd), nplant (nr, nd) and the  !
-         !      tissue heat capacities. Which weight applies is declared per field in                 !
-         !      meds_diag_vars (CO_FUSION_KIND), not decided here. ------------------------------------------!
+         !----- The diagnostic rows fuse on leaf area, density or heat capacity, as meds_diag_vars !
+         !      declares per field (CO_FUSION_KIND). ----------------------------------------------!
          call fuse_cohort_diag(cohort%diag,  recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
          call fuse_cohort_diag(cohort%sdiag, recc, donc, wr, wd, nr, nd, hlr, hld, hwr, hwd)
-         !----- The survivor keeps its own moving-average growth history (ring buffer + accum  !
-         !      + count + growth_avg are left untouched); the donor's is discarded with it. ---!
-         !----- Same convention for the predawn water status. Fusion requires the two cohorts to  !
-         !      already match on height and LAI, so they sit in the same light and rooting        !
-         !      environment and their predawn potentials agree closely; survivor-keeps is a       !
-         !      smaller approximation here than the height/LAI similarity test already tolerates. !
+         !----- The survivor keeps its own growth history and predawn water status: the two !
+         !      cohorts already match in height and LAI, so these differ little. -----------!
          cohort%nplant(recc) = ntot
-         !----- Conserve the four PROGNOSTIC carbon pools (nplant-weighted) FIRST, THEN derive     !
-         !      geometry from the conserved wood_carbon anchor. set_cohort_size_from_carbon takes   !
-         !      the pools as INPUTS (does NOT overwrite them, unlike set_cohort_size).              !
+         !----- The four carbon pools, density-weighted, then the geometry from them;       !
+         !      set_cohort_size_from_carbon reads the pools and leaves them as they are. ---!
          lc_tot = nr * cohort%leaf_carbon(recc)          + nd * cohort%leaf_carbon(donc)
          fc_tot = nr * cohort%fineroot_carbon(recc)      + nd * cohort%fineroot_carbon(donc)
          wc_tot = nr * cohort%wood_carbon(recc)          + nd * cohort%wood_carbon(donc)
@@ -243,16 +218,15 @@ contains
          call set_cohort_size_from_carbon(poly%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
          !----- The merged tissues' temperatures, from the energies fused above and the merged masses. !
          call set_cohort_tissue_temps(poly%cohort, recc)
-         !----- Carbon-pool conservation guard (per pool, density). ------------------------!
-         !      The pools are non-negative, so each density total is also its magnitude.        !
+         !----- Each pool's conservation, asserted; the pools are non-negative, so each total is !
+         !      also its magnitude. -------------------------------------------------------------!
          if (.not. (conserved(lc_tot, ntot*cohort%leaf_carbon(recc),          lc_tot, conservation_tol) .and. &
                     conserved(fc_tot, ntot*cohort%fineroot_carbon(recc),      fc_tot, conservation_tol) .and. &
                     conserved(wc_tot, ntot*cohort%wood_carbon(recc),          wc_tot, conservation_tol) .and. &
                     conserved(nc_tot, ntot*cohort%nonstructural_carbon(recc), nc_tot, conservation_tol)))    &
             error stop 'fuse_2_cohorts: carbon-pool conservation violated'
-         !----- AGB- and leaf-area-density conservation guards (agb = p_aboveground_frac*wood_carbon  !
-         !      and leaf_area = sla*leaf_carbon, with nplant*wood_carbon, nplant*leaf_carbon and the  !
-         !      leaf-carbon-weighted sla conserved above). -------------------------------------------!
+         !----- Biomass (a share of the wood carbon) and leaf area (sla x leaf carbon) follow from !
+         !      the pools and the leaf-carbon-weighted sla, conserved above; asserted too. --------!
          agb_new = cohort%nplant(recc) * cohort%agb(recc)
          if (.not. conserved(agb_tot, agb_new, agb_tot, conservation_tol)) then
             write(*,'(a,2es24.16)') ' fuse_2_cohorts: AGB before, after ', agb_tot, agb_new
@@ -267,7 +241,8 @@ contains
    end subroutine fuse_2_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Split every cohort whose LAI density exceeds the cap, iterating until none do.          !
+   ! Split every cohort whose LAI exceeds cohort_lai_cap into two of half the density,     !
+   ! repeating until none does (demography.md §3).                                         !
    !---------------------------------------------------------------------------------------!
    subroutine split_cohorts(poly, cfg)
       type(polygon_t),  intent(inout) :: poly
@@ -293,10 +268,9 @@ contains
                if (cohort%nplant(i) * cohort%leaf_area(i) <= cfg%cohort_lai_cap) cycle
                cohort%nplant(i) = 0.5_wp * cohort%nplant(i)
                m = m + 1_ik
-               !----- Perturb the wood_carbon ANCHOR +/-eps (NOT dbh); the leaf/fineroot/            !
-               !      nonstructural pools stay identical in both daughters. This conserves ALL four    !
-               !      pools + AGB EXACTLY (0.5n*wc*(1+eps)+0.5n*wc*(1-eps)=n*wc) and is immune to the   !
-               !      hgt_max cap (no dbh-renorm approximation).  ------------------------------------!
+               !----- The wood carbon, not the diameter, moves by +/-eps and the other pools stay !
+               !      equal, so every pool and the biomass are conserved exactly, even where the  !
+               !      height is capped (demography.md §3). ---------------------------------------!
                wc0 = cohort%wood_carbon(i)
                call copy_cohort(cohort, m, i)           ! copies halved nplant + params + pools
                cohort%wood_carbon(i) = wc0 * (1.0_wp + eps)
@@ -311,8 +285,8 @@ contains
             cohort%n = m
             agb_after  = sum(cohort%nplant(1:m) * cohort%agb(1:m))
          end associate
-         !----- The '-eps' daughters (slots n0+1..m) are NEW cohorts -> fresh global ids; the !
-         !      '+eps' half kept slot i and its parent id (the continuation).                 !
+         !----- The '-eps' daughters (slots n0+1..m) are new cohorts and take new ids; the !
+         !      '+eps' half keeps slot i and its parent's id. -----------------------------!
          do i = n0 + 1_ik, m
             call assign_cohort_id(poly, i)
          end do
@@ -324,22 +298,16 @@ contains
    end subroutine split_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Cull cohorts below the AGB-density floor, and cohorts at or below the absolute density      !
-   ! floor. The applier stops a cohort's decline exactly AT negligible_nplant (it never takes a   !
-   ! density below it), so a cohort that has died out sits on the floor, not under it: the test  !
-   ! must include equality, or such a cohort would be kept for ever. The ENTIRE                   !
-   ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed        !
-   ! outright, unlike a turnover shed) becomes litter in its own patch's soil-carbon pools when   !
-   ! [soil_carbon].soil_carbon_on (default on; docs/science/soil_carbon.md §5) -- added           !
-   ! directly onto the named fields, since this module cannot link biogeochemistry                !
-   ! (necromass_to_litter takes plain scalars).                                                   !
+   ! The cull: remove the cohorts whose n x AGB is below min_cohort_agb, and those at or   !
+   ! below the density floor; mortality stops a cohort exactly on the floor, so the test   !
+   ! includes equality. A culled cohort's water goes to the ground, and all its carbon to  !
+   ! its patch's litter when soil carbon is on (demography.md §3; soil_carbon.md §5).      !
    !---------------------------------------------------------------------------------------!
    subroutine terminate_cohorts(poly, cfg, water_shed)
       type(polygon_t),  intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      !----- What the cull HANDED ON, for the caller to declare to the slow ledger                !
-      !      (meds_slow_ledger). Reported rather than declared here because the demography library  !
-      !      does not link the ledger: the engine applies, the driver accounts. -------------------!
+      !----- What the cull handed on, for the caller to declare to the slow ledger, which this !
+      !      library does not link (conservation.md §3). --------------------------------------!
       real(wp), optional, intent(out) :: water_shed  !< [kg/m2 site] tissue + film water -> the ground
       logical, allocatable :: keep(:)
       integer(ik)          :: i, n, pf, ip
@@ -357,25 +325,18 @@ contains
                       (cohort%nplant(i) > cfg%negligible_nplant)
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
-            !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !
-            !      shedding already uses -- one verified path, not a second mechanism. Its tissue  !
-            !      HEAT is a change in thermal MASS and is declared with the rest of the phase's,  !
-            !      by the caller, since fusion and fission change it too and they are one          !
-            !      mechanism. ---------------------------------------------------------------------!
+            !----- The culled cohort's water goes to the ground down the channel turnover        !
+            !      shedding uses (conservation.md §3). The heat of its tissues is a thermal-mass !
+            !      change the caller declares with the phase's (conservation.md §4). ------------!
             w_cohort = cohort_tissue_water(cohort, i) + cohort_film_water(cohort, i)
             patch%shed_water_rate(ip) = patch%shed_water_rate(ip) + w_cohort / max(cfg%dt_slow, tiny_num)
             patch%shed_water_enth(ip) = patch%shed_water_enth(ip)                                   &
                                       + cohort%nplant(i) * cohort_water_enthalpy(cohort, i) / max(cfg%dt_slow, tiny_num)
             w_tot = w_tot + patch_polygon_area(poly, ip) * w_cohort
-            !----- The CULL pathway's carbon. BEFORE the soil_carbon_on cycle below, for the          !
-            !      same reason the water above is: a cohort dropping off the tracked size floor is a  !
-            !      demographic event, and it still happened when the soil pools are off. The cull     !
-            !      runs inside the cohort restructuring, which permutes the COHORT axis and leaves    !
-            !      the patch axis alone, so patch slot `ip` is the one this cohort's diagnostics      !
-            !      belong to and still will be after compact_cohort_block.                            !
-            !      A rate [kgC/m2/yr] times the step's weight in seconds -- the block's contract.     !
-            !      `dt_slow` is the weight one slow step accumulates; the cull fires on a             !
-            !      month boundary and the output layer's temporal fold handles the rest.              !
+            !----- The cull's mortality carbon, a rate [kgC/m2/yr] times the step's seconds, on    !
+            !      the cohort's patch, which the cohort restructuring leaves in place              !
+            !      (diagnostics.md §4, "The slow rows"). It is written before the soil-carbon test !
+            !      because the cull happens with the soil pools off too. --------------------------!
             if (patch%diag%active)                                                                 &
                patch%diag%v(PA_MORT_C_CULL, ip) = patch%diag%v(PA_MORT_C_CULL, ip)                 &
                   + (cohort%nplant(i) * (cohort%leaf_carbon(i) + cohort%fineroot_carbon(i)         &
@@ -405,36 +366,19 @@ contains
    end subroutine terminate_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Spawn from the carry-forward recruit pool: when a pool reaches `min_recruit_size`, ONE new  !
-   ! cohort is born at the shared minimum cohort height (the smallest tracked size) and the pool  !
-   ! is reset; otherwise it carries over, so rare recruiters still establish eventually. A HOST   !
-   ! structural process -- it changes the cohort count -- so it lives with the cohort fuse/fission !
-   ! housekeeping.                                                                                 !
-   !                                                                                          !
-   ! The pool is CREDITED DAILY by the driver (accumulate_recruit_pool) and CONSUMED monthly here. !
-   ! Crediting it here from the one day's recruitment rate, scaled up to the month, would take a   !
-   ! 12-point sample of a quantity the model computes every day and make the pool's carbon         !
-   ! depend on which days are month boundaries. ---------------------------------------------------!
+   ! Recruitment: a recruit pool that reaches min_recruit_size founds one cohort at the    !
+   ! smallest tracked height and is reset; a smaller pool carries over. The driver credits !
+   ! the pool daily (accumulate_recruit_pool) and this consumes it monthly (demography.md  !
+   ! §2-§3). It changes the cohort count, so it lives with the cohort operators.           !
    !---------------------------------------------------------------------------------------!
    subroutine apply_recruitment(poly, cfg, carbon_drawn, heat_drawn, water_drawn)
       type(polygon_t),     intent(inout) :: poly
       type(meds_config_t), intent(in)    :: cfg
-      !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
-      !      to the slow ledger. Recruitment is a stand-in for everything between a seed and         !
-      !      a 2 m sapling -- germination, and the seedling's own photosynthesis, transpiration and !
-      !      energy balance -- none of which this model represents, because it tracks no cohort     !
-      !      below `min_cohort_height`. The carbon and heat a recruit arrives with are therefore    !
-      !      genuinely EXTERNAL: they were fixed and absorbed by a size class outside the model.    !
-      !      Drawing them from the free atmosphere rather than from this patch's canopy air is      !
-      !      deliberate -- crediting the CAS with seedling uptake while representing none of the    !
-      !      seedling's respiration, transpiration or shading would add one term of a missing       !
-      !      process and call it an improvement.                                                    !
-      !                                                                                          !
-      !      Only the part the model did NOT already pay for is external: `recruit_pool` carries    !
-      !      reproduction carbon valued at `carbon_min` per plant, and that much IS debited from    !
-      !      the parents (or, for seed rain, declared as it arrives). The remainder of the          !
-      !      endowment is the draw. A recruit is born holding its tissue water (init_cohort), drawn !
-      !      from outside as its carbon and heat are, for the same reason. ---------------------------!
+      !----- What the recruits drew from outside the model, for the caller to declare to the   !
+      !      slow ledger: their carbon beyond the carbon_min per plant the pool paid for, and  !
+      !      their tissues' heat and water. Recruitment stands in for the sizes below          !
+      !      min_cohort_height, which the model does not represent, so the draw comes from the !
+      !      free atmosphere, not the canopy air (demography.md §3; conservation.md §3). ------!
       real(wp), optional,  intent(out)   :: carbon_drawn  !< [kgC/m2 site]
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
       real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
@@ -448,15 +392,15 @@ contains
       np = poly%patch%n
       if (np < 1_ik) return
 
-      !----- Count pools that have reached the spawn threshold. ---------------------------!
+      !----- Count the pools that have reached min_recruit_size. --------------------------!
       nspawn = 0_ik
       do ip = 1_ik, np
          do pf = 1_ik, poly%n_pft
             if (poly%patch%recruit_pool(pf, ip) >= cfg%min_recruit_size) nspawn = nspawn + 1_ik
          end do
       end do
-      !----- No pool reached the spawn threshold: nothing is born, so nothing is drawn (the seed    !
-      !      rain is declared daily, as it arrives, by accumulate_recruit_pool). -------------------!
+      !----- No pool reached it: nothing is born, so nothing is drawn (the seed rain is declared !
+      !      daily, as it arrives, by accumulate_recruit_pool). ---------------------------------!
       if (nspawn == 0_ik) then
          if (present(carbon_drawn)) carbon_drawn = c_tot
          return
@@ -478,8 +422,8 @@ contains
                                          poly%site%surface(patch%owner_site(ip)), t_birth, psi_birth)
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
                                 t_birth, psi_birth)
-               !----- The external draw: everything the new cohort holds, less the reproduction    !
-               !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
+               !----- The draw: everything the new cohort holds, less the reproduction carbon the !
+               !      pool paid for at carbon_min per plant. -------------------------------------!
                c_min = min_cohort_carbon(cohort%pft_table%allom(pf), pft%min_cohort_height, pft%wood_density(pf))
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
@@ -497,7 +441,7 @@ contains
       if (present(heat_drawn))   heat_drawn   = e_tot
       if (present(water_drawn))  water_drawn  = w_tot
 
-      !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
+      !----- Each new cohort takes a new id. ----------------------------------------------!
       do k = n_before + 1_ik, poly%cohort%n
          call assign_cohort_id(poly, k)
       end do
