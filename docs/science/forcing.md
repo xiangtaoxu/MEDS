@@ -172,10 +172,9 @@ disaggregates the loaded bracket to the instant, so it is safe to sample ahead o
 loop. A run starting before the first record either
 hard-errors (`start_clamp = "error"`, the default) or holds the first record (`"hold"`); a non-recycling run past
 the last record clamps to the final interval. Without a forcing source the fast loop reads one fixed
-record at every sub-step, the `met_forcing_t` defaults unless the caller passes its own (`met_fixed`):
-a reference climate at 288 K and 0.008 kg/kg, whose four shortwave streams sum to 400 W m⁻² with the
-sun 60° from the zenith ($`\cos z`$ = 0.5) and 380 W m⁻² of longwave, so the canopy radiation runs as it
-does on forcing, and whose CO₂ is the run's (§12).
+record at every sub-step, the `met_forcing_t` defaults: a reference climate at 288 K and 0.008 kg/kg, whose
+four shortwave streams sum to 400 W m⁻² with the sun 60° from the zenith ($`\cos z`$ = 0.5) and 380 W m⁻² of
+longwave, so the canopy radiation runs as it does on forcing, and whose CO₂ is the run's (§12).
 
 **No step reads a file.** Everything a step's sub-samples need is in memory before the step starts
 ([order of processes](order_of_processes.md) §1): a MEDS forcing file's records for the recycle window or the run

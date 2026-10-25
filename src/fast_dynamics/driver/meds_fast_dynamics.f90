@@ -78,7 +78,7 @@ contains
    !=======================================================================================!
    subroutine fast_dynamics(poly, cfg, met_src, met_cur, step_start, worst_energy, worst_water,  &
                             n_budget_fail, out_bufs, run_energy_budget, run_water_budget,      &
-                            run_face_budget, met_fixed, patch_threads)
+                            run_face_budget, patch_threads)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t), optional, intent(in)    :: met_src       !< the run's forcing source (read-only here)
@@ -92,9 +92,6 @@ contains
       type(budget_t), optional, intent(inout) :: run_energy_budget, run_water_budget
       !----- The per-layer face-closure ledger, folded the same way: it sees a vertical misplacement. -!
       type(budget_t), optional, intent(inout) :: run_face_budget
-      !----- The air above the canopy at every sub-step of a run without a forcing source; absent, the   !
-      !      reference climate, met_forcing_t's defaults. --------------------------------------------!
-      type(met_forcing_t), optional, intent(in) :: met_fixed
       !----- Threads for the patch loop: [run].n_threads in a one-polygon run, else 1 (the default). --!
       integer(ik),         optional, intent(in) :: patch_threads
 
@@ -127,18 +124,14 @@ contains
       logical     :: do_forcing, do_fast
 
       !----- Live forcing drives the sub-steps when it is on and a source, cursor and step time are   !
-      !      given; otherwise every sub-step reads one record: met_fixed, or met_forcing_t's defaults,  !
-      !      the reference climate, at the run's CO2 (docs/science/forcing.md §2, §12). -------------!
+      !      given; otherwise every sub-step reads met_forcing_t's defaults, the reference climate,   !
+      !      at the run's CO2 (docs/science/forcing.md §2, §12). -------------------------------------!
       do_forcing = cfg%forcing%forcing_on .and. present(met_src) .and. present(met_cur)          &
                    .and. present(step_start)
       met_ref = met_forcing_t()
-      if (present(met_fixed)) then
-         met_ref = met_fixed
-      else
-         met_ref%co2 = cfg%forcing%co2_const
-         if (cfg%forcing%co2_source == CO2_SOURCE_FILE .and. present(met_src) .and. present(step_start))    &
-            met_ref%co2 = met_co2(met_src, step_start)
-      end if
+      met_ref%co2 = cfg%forcing%co2_const
+      if (cfg%forcing%co2_source == CO2_SOURCE_FILE .and. present(met_src) .and. present(step_start))    &
+         met_ref%co2 = met_co2(met_src, step_start)
       npatch   = poly%patch%n
       nsub     = cfg%n_fast_per_slow
       n_thread = 1_ik
