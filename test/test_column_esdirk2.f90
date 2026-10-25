@@ -4,10 +4,10 @@
 ! `esdirk2`) into fast_step (docs/science/numerical_scheme.md §3).                                     !
 !   A. GPP PARITY: build_frozen runs the SAME frozen pre-pass under both schemes, so gpp_coh    !
 !      from the ESDIRK2 path is bit-identical to RK45's on step 1 (identical initial state).           !
-!   B. PHYSICAL: a 24-step dry-window march under INTEG_ESDIRK2 keeps the CAS / soil / leaf / psi state    !
+!   B. PHYSICAL: a 6-hour dry-window march under INTEG_ESDIRK2 keeps the CAS / soil / leaf / psi state  !
 !      finite, bounded, and sub-saturated (the integrator + unpack are correct end to end).            !
-!   C-E. the fixed-substep path, the leaf<->CAS Newton switch, psi_leaf convergence in dt_fast, and    !
-!      the seven conservation budgets over a 24 h dry march.                                           !
+!   C-E. the fixed-substep path, psi_leaf convergence in dt_fast, and the seven conservation budgets   !
+!      over a 24 h dry march.                                                                          !
 !   F. PRECIP>0: a wet march runs, wets the soil, and closes the budgets (ENERGY to machine            !
 !      precision through the boundary water-enthalpy advection, WATER at the ledger tolerance).        !
 !==========================================================================================!
@@ -201,8 +201,7 @@ contains
    !      exactly (docs/science/vegetation_energy_dynamics.md eqs. (3)-(4)), on ESDIRK2 and RK45.       !
    !      Two assertions:                                                                               !
    !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !
-   !            radiation both enter it, since surface_derivs does not fold wood into                   !
-   !            coh_rnet when the frozen diagnostic inputs are zeroed;                                  !
+   !            radiation both enter it;                                                                !
    !        (b) wood LAGS the canopy air through the diel cycle, which is the feature.                  !
    subroutine test_wood_prognostic(integ, tag)
       integer(ik),      intent(in) :: integ

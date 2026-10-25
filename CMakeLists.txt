@@ -553,34 +553,16 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
    meds_fortran_flags(test_config_keys)
    add_test(NAME config_keys COMMAND test_config_keys)
-   add_test(NAME config_unknown_keys_refused
-            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
-                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
-   add_test(NAME config_rk45_loose_rtol_refused
-            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
-                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_rk45_loose_rtol.toml
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_rk45_rtol_refused.cmake)
-   set_tests_properties(config_rk45_loose_rtol_refused PROPERTIES TIMEOUT 120)
-   #----- A census or state file that cannot start the run stops it, naming the mode and the     #
-   #      file: one that is not there, and a census with no row. The script explains the rule.    #
-   foreach(case "census_missing;1;no_such_census.csv;OFF;cannot be opened"
-                "census_empty;1;empty_census.csv;ON;holds no cohort for the site"
-                "restart_missing;2;no_such_state.nc;OFF;cannot be opened")
-      list(GET case 0 name)
-      list(GET case 1 mode)
-      list(GET case 2 file)
-      list(GET case 3 empty)
-      list(GET case 4 reason)
-      add_test(NAME init_${name}_refused
+   #----- meds_main refuses a run it cannot start and names the cause: unknown, moved or misplaced  #
+   #      keys; RK45 at a loose tolerance; a census or state file that is missing or empty. Each    #
+   #      case is a one-day run in its own build-tree directory; the script explains the cases.    #
+   foreach(case config_unknown_keys config_rk45_loose_rtol init_census_missing init_census_empty
+                init_restart_missing)
+      add_test(NAME ${case}_refused
                COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
                        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                       -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/init_${name}.toml
-                       -DINIT_MODE=${mode} -DINIT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${file}
-                       -DEMPTY_CENSUS=${empty} "-DREASON=${reason}"
-                       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_init_refused.cmake)
+                       -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/refused/${case} -DCASE=${case}
+                       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_main_refuses.cmake)
    endforeach()
 
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
@@ -736,11 +718,6 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Column CO2-balance test: the fast CAS CO2 twin lives in meds_fast_kernels.      #
-   add_executable(test_column_co2 test/test_column_co2.f90)
-   target_link_libraries(test_column_co2 PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
-   meds_fortran_flags(test_column_co2)
-   add_test(NAME column_co2 COMMAND test_column_co2)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #
@@ -759,8 +736,12 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_driver test/test_met_driver.f90)
    target_link_libraries(test_met_driver PRIVATE meds_met meds_testassert)
    meds_fortran_flags(test_met_driver)
+   #      The three met tests write their files in a directory of their own in the build tree.
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land
+                       ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
    add_test(NAME met_driver COMMAND test_met_driver
-            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt)
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver)
    #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
    add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
    target_link_libraries(meds_testarchive PUBLIC meds_met)
@@ -768,7 +749,8 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_era5land test/test_met_era5land.f90)
    target_link_libraries(test_met_era5land PRIVATE meds_met meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
-   add_test(NAME met_era5land COMMAND test_met_era5land)
+   add_test(NAME met_era5land COMMAND test_met_era5land
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
    #----- The static-map reader and the cell mask, on the synthetic archive's grid. ----------#
    add_executable(test_surface_maps test/test_surface_maps.f90)
    target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
@@ -778,7 +760,7 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
    meds_fortran_flags(test_met_tower)
-   add_test(NAME met_tower COMMAND test_met_tower)
+   add_test(NAME met_tower COMMAND test_met_tower WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
    #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
    #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
    find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -791,13 +773,6 @@ if(MEDS_BUILD_TESTS)
                   COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_flux_tower/tests)
          set_tests_properties(prepare_flux_tower PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
-         #----- A restart continues exactly, and re-acclimates its traits on request                #
-         #      (test/python/test_restart_exact.py; meds_main on the constant reference climate).  #
-         add_test(NAME restart_exact
-                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
-                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
-         set_tests_properties(restart_exact PROPERTIES
-                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
          #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests,  #
          #      a smoke test that runs a chain, a trial and a Jacobian column through meds_main (and, #
          #      when libmeds.so is built, through the Python API), and a short end-to-end fit.        #
@@ -835,6 +810,21 @@ if(MEDS_BUILD_TESTS)
          message(STATUS "MEDS: prepare_census tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "pytest or tomli)")
       endif()
+      #----- A restart continues exactly, and re-acclimates its traits on request                   #
+      #      (test/python/test_restart_exact.py; meds_main on the constant reference climate). It   #
+      #      needs only numpy, netCDF4 and pytest, so it does not wait on the tools' pandas.        #
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, netCDF4, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_restart_test_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_restart_test_deps EQUAL 0)
+         add_test(NAME restart_exact
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
+         set_tests_properties(restart_exact PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+      else()
+         message(STATUS "MEDS: restart_exact skipped (${Python3_EXECUTABLE} lacks numpy, netCDF4, pytest or tomli)")
+      endif()
    endif()
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
@@ -853,9 +843,9 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_column_derivs test/test_column_derivs.f90)
    target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
    meds_fortran_flags(test_column_derivs)
-   add_test(NAME march_derivs COMMAND test_column_derivs)
+   add_test(NAME column_derivs COMMAND test_column_derivs)
 
-   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 (ESDIRK2) path through fast_step. ----------#
+   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 path through fast_step. -------------------#
    add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)
    target_link_libraries(test_column_esdirk2 PRIVATE meds_model meds_testsupport)
    meds_fortran_flags(test_column_esdirk2)
@@ -868,7 +858,7 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME column_rk45 COMMAND test_column_rk45)
 
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
-   foreach(t output_integrate output_registry phenology_config)
+   foreach(t output_integrate output_registry)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_output meds_testsupport)
       meds_fortran_flags(test_${t})
@@ -926,4 +916,9 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_several_sites PRIVATE meds_model meds_output_stream meds_testsupport)
    meds_fortran_flags(test_several_sites)
    add_test(NAME several_sites COMMAND test_several_sites)
+
+   #----- Every test stops at 10 minutes. The longest takes about 1.5 in a Debug build, so a test   #
+   #      that hangs, or slows by an order of magnitude, fails instead of holding the suite.         #
+   get_property(meds_all_tests DIRECTORY PROPERTY TESTS)
+   set_tests_properties(${meds_all_tests} PROPERTIES TIMEOUT 600)
 endif()

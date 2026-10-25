@@ -29,9 +29,11 @@ module meds_test_support
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Build a COMPLETE test configuration in code. The model itself has no built-in defaults  !
-   ! (every parameter comes from TOML), so the test fixtures live here, explicitly. Mirrors    !
-   ! the canonical shipped config; pass dt_slow [s] to vary the slow-process timestep.          !
+   ! Build a COMPLETE test configuration in code: a fixture, explicit so that no test depends  !
+   ! on the shipped TOML files or on the loaders' type defaults. Its values are the tests' own !
+   ! and differ from the shipped config in places (dt_fast 150 s against 900 s,               !
+   ! growth_memory_days 90 against 365, min_repro_height, storage_cushion); a test that needs  !
+   ! a shipped value sets it. Pass dt_slow [s] to vary the slow-process timestep.              !
    !---------------------------------------------------------------------------------------!
    function build_test_config(dt_slow) result(cfg)
       real(wp), intent(in), optional :: dt_slow
@@ -111,7 +113,8 @@ contains
          p%katul_lambda25   = [ 600.0_wp, 800.0_wp, 350.0_wp ]
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
-         !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
+         !----- Carbon-dynamics traits (the tests' values: min_repro_height and storage_cushion !
+         !      differ from meds_config_pft.toml). --------------------------------------------!
          p%sla                    = [ 16.0_wp, 13.0_wp, 10.0_wp ]
          !----- Canopy-element geometry. --------------------------------------------------!
          p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]

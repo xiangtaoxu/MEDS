@@ -34,7 +34,7 @@ program test_state_roundtrip
       poly%cohort%sla(i)     = sla_set ; poly%cohort%vcmax25(i) = vc_set
       poly%cohort%rd25(i)    = rd_set  ; poly%cohort%leaf_turnover_rate(i) = turnover_set
       !----- Per-cohort hydraulics/temperature, stamped to distinct NON-sentinel values so a           !
-      !      round-trip that fails to persist them (leaving the lazy-init 0 / LEAF_TEMP_INIT) is caught. !
+      !      round-trip that fails to persist them (leaving a fresh cohort's values) is caught.        !
       poly%cohort%leaf_water_mass(i) = 0.0123_wp + 0.001_wp * real(i, wp)
       poly%cohort%wood_water_mass(i) = 0.0456_wp + 0.001_wp * real(i, wp)
       poly%cohort%leaf_temp(i)       = 291.5_wp + real(i, wp)
@@ -104,7 +104,7 @@ program test_state_roundtrip
       call check_close(poly2%cohort%wood_water_mass(i), poly%cohort%wood_water_mass(i), 1.0e-12_wp, &
                         'wood_water_mass recovered from state (not re-seeded)')
       call check_close(poly2%cohort%leaf_temp(i), poly%cohort%leaf_temp(i), 1.0e-9_wp, &
-                        'leaf_temp recovered from state (not reset to LEAF_TEMP_INIT)')
+                        'leaf_temp recovered from state (not reset to a fresh cohort''s)')
       call check_close(poly2%cohort%wood_temp(i), poly%cohort%wood_temp(i), 1.0e-9_wp, &
                         'wood_temp recovered from state')
       !----- Without these a mid-drought restart re-seeds predawn psi from surface soil (reads as       !
@@ -155,9 +155,9 @@ program test_state_roundtrip
       call check_close(poly2%patch%soil_water(i)%w_surface, poly%patch%soil_water(i)%w_surface, 1.0e-12_wp,       &
                        'pond mass recovered from state')
       call check_close(poly2%patch%soil_water(i)%w_surface_energy, poly%patch%soil_water(i)%w_surface_energy, 1.0e-3_wp, &
-                       'pond ENTHALPY recovered from state (the writer used to put an unassigned column)')
+                       'pond ENTHALPY recovered from state')
       call check_close(poly2%patch%shed_water_rate(i), poly%patch%shed_water_rate(i), 1.0e-18_wp,          &
-                       'shed_water_rate recovered from state (was not persisted)')
+                       'shed_water_rate recovered from state')
       call check_close(poly2%patch%shed_water_enth(i), poly%patch%shed_water_enth(i), 1.0e-15_wp,          &
                        'shed_water_enth recovered from state')
    end do

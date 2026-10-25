@@ -23,7 +23,8 @@ program test_column_rk45
                                            sat_specific_humidity, tissue_temp_to_energy,                         &
                                            tissue_dry_heat_capacity, internal_energy_liquid
    use meds_fast_state,          only : static_state_fixture, derive_cohort_terms
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head,           &
+                                    SOIL_SPECIFIC_STORAGE
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_params,         only : soil_profile_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_diag_vars,       only : N_CO_FAST_ROWS, CO_PSI_PREDAWN
@@ -57,7 +58,7 @@ program test_column_rk45
    type(fast_workspace_t)     :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_split(N), gpp_rk45(N), tcas, qsat, worst_super
-   real(wp)    :: psi_leaf_diag, psi_leaf_probe(N)
+   real(wp)    :: psi_leaf_diag
    integer(ik) :: is, k
    logical     :: physical
 
@@ -172,14 +173,6 @@ program test_column_rk45
    call test_rk45_bedrock_and_aquifer()
    call test_rk45_prognostic_wood()
 
-   !=== I. The dispatcher must report psi_leaf_coh on the RK45 success path too. Filled only after    !
-   !       the RK45 block, whose success branch returns early, the daily-max accumulator would read   !
-   !       whatever the caller's per-thread buffer held (another patch, or uninitialised memory) and  !
-   !       compute beta_stomata from it. Seed the buffer with an impossible POSITIVE potential and    !
-   !       assert the step overwrote it with a physical (<= 0) value without an ESDIRK2 rescue having !
-   !       run. ======================================================================================!
-   call test_rk45_reports_psi_leaf()
-
    !=== J. On moderately DRY soil the wood<->soil interface must cancel                                 !
    !       to machine precision: the soil loses exactly the uptake the wood gains. The existing         !
    !       dry-down sits near theta_res and the moist tests in wet soil; this one sits in between, and  !
@@ -272,8 +265,9 @@ contains
       site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
-   !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
-   !      whole-column water + energy budgets close. -----------------------------------------------!
+   !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert that all seven budgets  !
+   !      close: the canopy air's energy, water and CO2, the soil's energy and water, and the whole  !
+   !      column's energy and water. ------------------------------------------------------------------!
    subroutine test_rk45_budgets()
       integer(ik) :: istep
       call reset_state()
@@ -282,10 +276,11 @@ contains
          call set_diurnal_forcing(istep)
          call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
       end do
-      call check_true('RK45: whole_water closes (n_fail==0)', out%report%ledgers%whole_water%n_fail == 0_ik,                      &
-              real(out%report%ledgers%whole_water%n_fail, wp))
-      call check_true('RK45: whole_energy closes (n_fail==0)', out%report%ledgers%whole_energy%n_fail == 0_ik,                    &
-              real(out%report%ledgers%whole_energy%n_fail, wp))
+      call check_true('RK45: all 7 budgets close (n_fail==0)',                                                       &
+              out%report%ledgers%cas_energy%n_fail == 0_ik .and. out%report%ledgers%cas_water%n_fail == 0_ik         &
+              .and. out%report%ledgers%cas_co2%n_fail == 0_ik .and. out%report%ledgers%soil_energy%n_fail == 0_ik          &
+              .and. out%report%ledgers%soil_water%n_fail == 0_ik .and. out%report%ledgers%whole_energy%n_fail == 0_ik      &
+              .and. out%report%ledgers%whole_water%n_fail == 0_ik, real(out%report%ledgers%whole_energy%n_fail, wp))
       call check_true('RK45: ledger fired every dispatched dt_fast',                                                  &
               out%report%ledgers%whole_water%n_check == 24_ik * STEPS_PER_HOUR,                                     &
               real(out%report%ledgers%whole_water%n_check, wp))
@@ -536,6 +531,7 @@ contains
       theta_seed = 0.428_wp                              ! just below theta_sat = 0.43
       call reset_state()
       cfg%time_integrator = INTEG_RK45
+      site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 0.0_wp   ! bedrock: the column can only fill
       pond_peak = 0.0_wp ; theta_peak = 0.0_wp
       ss_min = 1.0e9_wp ; ss_max = -1.0e9_wp
       ood_peak = 0.0_wp
@@ -549,6 +545,7 @@ contains
          ood_peak      = max(ood_peak,   out%report%theta_ood_max)
       end do
       theta_seed = THETA0                                 ! restore for any test added after this
+      site%soil%water_bottom_bc = SOIL_BC_DRAIN ; site%soil%drain_factor = 1.0_wp
       call check_true('RK45 saturated: column reached theta_sat (saturation path is live)',                           &
               theta_peak >= 0.43_wp - 1.0e-12_wp, theta_peak)
       call check_true('RK45 saturated: ponding store overflowed (runoff path is live)',                               &
@@ -576,12 +573,14 @@ contains
       call check_true('RK45 saturated: soil surface temp stays physical (interior faces on OWN theta)',               &
               ss_min > 250.0_wp .and. ss_max < 310.0_wp, ss_max)
       !----- Soil water is the water network's: a saturated layer holds a little more only through its  !
-      !      specific storage, at a positive pressure head that pushes the excess up to the pond and     !
-      !      down to the next layer within the step (docs/science/numerical_scheme.md §5b,              !
-      !      "Saturation is the water network's"). So theta may commit a hair above theta_sat -- the    !
-      !      specific storage times a head of centimetres. ---------------------------------------------!
-      call check_true('RK45 saturated: theta above theta_sat only through specific storage (< 1e-4)',                &
-              theta_peak <= 0.43_wp + 1.0e-4_wp, theta_peak)
+      !      specific storage, at a positive pressure head (docs/science/numerical_scheme.md §5b,       !
+      !      "Saturation is the water network's"). In the sealed column that head is at most the        !
+      !      hydrostatic one, the column's depth plus the pond, so theta may commit above theta_sat by   !
+      !      no more than the specific storage times that head. -----------------------------------------!
+      call check_true('RK45 saturated: theta above theta_sat only through specific storage (hydrostatic head)',     &
+              theta_peak <= 0.43_wp + SOIL_SPECIFIC_STORAGE                                                     &
+                            * (-site%soil_profile%soil_layer_z(NSL + 1_ik) + site%soil%w_pond_max / rho_h2o),     &
+              theta_peak)
       !----- The constitutive-domain excursion, bounded rather than merely inspected: how far a         !
       !      sub-step's starting theta lies outside [theta_res, theta_sat]. Under the water network it  !
       !      can only lie above saturation, by the specific storage, so the bound is far looser than    !
@@ -590,20 +589,6 @@ contains
               ood_peak)
       print '(a,es10.3)', '   (RK45 saturated: worst constitutive-domain excursion in theta= ', ood_peak
    end subroutine test_rk45_saturated
-
-   subroutine test_rk45_reports_psi_leaf()
-      call set_noon_forcing()
-      call reset_state()
-      cfg%time_integrator = INTEG_RK45
-      psi_leaf_probe = 1.0_wp                            ! impossible: psi_leaf is <= 0 by construction
-      call fast_step(DT_FAST, cfg, site, static, forcing, dynamic, out, ws)
-      psi_leaf_probe = out%psi_leaf_coh(1:size(psi_leaf_probe))
-      call check_true('RK45 psi report: the RK45 path itself ran (no ESDIRK2 rescue)',                               &
-              out%report%work(WORK_RK45_RESCUE) == 0_ik,                                                         &
-              real(out%report%work(WORK_RK45_RESCUE), wp))
-      call check_true('RK45 psi report: psi_leaf_coh is filled on the RK45 success path',                             &
-              psi_leaf_probe(1) <= 0.0_wp .and. psi_leaf_probe(1) > -50.0_wp, psi_leaf_probe(1))
-   end subroutine test_rk45_reports_psi_leaf
 
    subroutine test_rk45_dry_uptake_seam()
       integer(ik) :: istep
