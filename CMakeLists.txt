@@ -589,12 +589,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_params_config)
    add_test(NAME params_config COMMAND test_params_config)
 
-   #----- Field-coverage of the fast state vector's combinators. ---------------------------#
-   add_executable(test_state_combinators test/test_state_combinators.f90)
-   target_link_libraries(test_state_combinators PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_state_combinators)
-   add_test(NAME state_combinators COMMAND test_state_combinators)
-
    #----- The slow-loop site conservation ledger: store coverage + declaration arithmetic. ------#
    add_executable(test_slow_ledger test/test_slow_ledger.f90)
    target_link_libraries(test_slow_ledger PRIVATE meds_model meds_testsupport)
@@ -799,29 +793,19 @@ if(MEDS_BUILD_TESTS)
       endif()
    endif()
 
-   #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
-   add_executable(test_column_dynamics test/test_column_dynamics.f90)
-   target_link_libraries(test_column_dynamics PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_column_dynamics)
-   add_test(NAME column_dynamics COMMAND test_column_dynamics)
-
-   #----- Pure fast-loop RHS; links meds_model for meds_fast_integ_derivs.                    #
-   add_executable(test_column_derivs test/test_column_derivs.f90)
-   target_link_libraries(test_column_derivs PRIVATE meds_model meds_testassert)
-   meds_fortran_flags(test_column_derivs)
-   add_test(NAME column_derivs COMMAND test_column_derivs)
-
-   #----- INTEG_ESDIRK2 wiring test: the coupled ESDIRK2 path through fast_step. -------------------#
-   add_executable(test_column_esdirk2 test/test_column_esdirk2.f90)
-   target_link_libraries(test_column_esdirk2 PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_column_esdirk2)
-   add_test(NAME column_esdirk2 COMMAND test_column_esdirk2)
-
-   #----- INTEG_RK45 wiring test: the ED2-faithful adaptive Cash-Karp RK45 path. --------------#
-   add_executable(test_column_rk45 test/test_column_rk45.f90)
-   target_link_libraries(test_column_rk45 PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_column_rk45)
-   add_test(NAME column_rk45 COMMAND test_column_rk45)
+   #----- The fast integrator (src/fast_dynamics/integrator/), one test per concern, named after it:  #
+   #      its building blocks, its two schemes and the march that drives them, and one fast step end  #
+   #      to end. Each links the fast loop and the shared fast fixture: the column assembled as a run  #
+   #      assembles one, its forcing, its frozen record and the ledger check.                          #
+   add_library(meds_testfastfixture STATIC test/meds_test_fast_fixture.f90)
+   target_link_libraries(meds_testfastfixture PUBLIC meds_fast meds_testsupport)
+   meds_fortran_flags(meds_testfastfixture)
+   foreach(t fast_integ_kernels fast_integ_schemes fast_integ_step)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_testfastfixture)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
 
    #----- Diagnostic-output netCDF-free core: integrator kernels + registry (state-free of C). #
    foreach(t output_integrate output_registry)

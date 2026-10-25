@@ -11,7 +11,7 @@
 ! water_flows_t, water_work_t). The march state's fields are listed once, in               !
 ! state_to_array, array_to_state, tend_to_array and state_entry_rules; the combinators     !
 ! work on the flat array and never name a field. A new state field goes in those four, the !
-! type, pack_march_start, unpack_column_state and test_state_combinators. The module sits  !
+! type, pack_march_start, unpack_column_state and test_fast_integ_kernels. The module sits !
 ! below every other integrator module (docs/science/numerical_scheme.md §2-§3).            !
 !==========================================================================================!
 module meds_fast_integ_types
@@ -59,7 +59,6 @@ module meds_fast_integ_types
    public :: state_init, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight
    public :: clamp_cas, diagnose_soil_temps, at_temp_bound, STATE_TEMP_MIN, STATE_TEMP_MAX
-   public :: state_size, array_to_state, state_axpy   ! used only by the tests
 
    !----- The temperature bounds of a march state [K]: clamp_cas holds a stage's canopy air inside  !
    !      them, and a march that ends at one has railed (at_temp_bound). -----------------------------!
@@ -807,15 +806,10 @@ contains
    ! The state's fields, listed once. The integrator's bookkeeping works on one flat array per     !
    ! state; the three routines below are the only ones that name march_state_t's fields, and     !
    ! state_entry_rules the only one that says how each is treated. Fortran cannot check that a     !
-   ! field is listed, so test_state_combinators runs every field through every combinator.         !
+   ! field is listed, so test_fast_integ_kernels runs every field through every combinator.        !
    ! Layout: CAS enthalpy, humidity, CO2 | soil energy (1:nsl) | soil water (1:nsl) |             !
    !   per cohort: leaf, wood water | per cohort: leaf, wood film | pond: water, enthalpy         !
    !=======================================================================================!
-   pure integer(ik) function state_size(n, nsl) result(m)
-      integer(ik), intent(in) :: n, nsl
-      m = 5_ik + 2_ik*nsl + 4_ik*n
-   end function state_size
-
    pure subroutine state_to_array(y, n, nsl, v)
       type(march_state_t), intent(in)  :: y
       integer(ik),          intent(in)  :: n, nsl
@@ -963,21 +957,8 @@ contains
       call array_to_state(v, n, nsl, y_stage)
    end subroutine state_init
 
-   !----- y_stage = y + a*k; a stage of several k's is state_init and repeated state_accum. ------!
-   pure subroutine state_axpy(y, a, k, n, nsl, y_stage)
-      type(march_state_t), intent(in)    :: y
-      real(wp),             intent(in)    :: a
-      type(march_tend_t),  intent(in)    :: k
-      integer(ik),          intent(in)    :: n, nsl
-      type(march_state_t), intent(inout) :: y_stage
-      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), vk(5_ik + 2_ik*nsl + 4_ik*n)
-      call state_to_array(y, n, nsl, vy)
-      call tend_to_array(k, n, nsl, vk)
-      vy = vy + a * vk
-      call array_to_state(vy, n, nsl, y_stage)
-   end subroutine state_axpy
-
-   !----- y_stage = y_stage + a*k, in place. ------------------------------------------------------!
+   !----- y_stage = y_stage + a*k, in place; a stage of several k's is state_init and repeated      !
+   !      state_accum. ---------------------------------------------------------------------------!
    pure subroutine state_accum(y_stage, a, k, n, nsl)
       type(march_state_t), intent(inout) :: y_stage
       real(wp),             intent(in)    :: a

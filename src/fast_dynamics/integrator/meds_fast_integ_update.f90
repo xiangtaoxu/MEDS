@@ -284,7 +284,7 @@ contains
       dynamic%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       dynamic%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
       !----- The pond (w_surface, w_surface_energy) is left out on purpose: each scheme commits it from  !
-      !      the water network, so writing it here would commit it twice (test_state_combinators). ---!
+      !      the water network, so writing it here would commit it twice (test_fast_integ_kernels). -!
    end subroutine unpack_column_state
 
 end module meds_fast_integ_update
