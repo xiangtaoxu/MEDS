@@ -104,8 +104,9 @@ contains
       e%psi = psi                         ! supply-side: what beta_stomata keys on
    end function make_env
 
-   !----- The same C3 trait set the Python wrapper ships as its defaults (meds/plant/leaf.py), !
-   !      so this test and the Python path exercise the same numbers. -------------------------!
+   !----- A fixed C3 trait set for the shim's pass-through checks. The Python wrapper ships its !
+   !      own defaults (meds/plant/leaf.py), which differ in theta_j, psi_open, psi_close and   !
+   !      phi_psii. ------------------------------------------------------------------------------!
    pure function c3_defaults() result(q)
       type(leaf_args_c)   :: q
       q%pathway = int(PATH_C3, c_int)

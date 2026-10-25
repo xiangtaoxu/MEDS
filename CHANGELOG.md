@@ -769,6 +769,12 @@ change to any result (#516).
 
 ### Changed
 
+- **One script checks the runs `meds_main` refuses** (#518), `test/check_main_refuses.cmake`, with five
+  cases: unknown config keys, an RK45 `rtol` too loose, a missing or empty census, and a missing restart.
+  Each is a one-day run in a directory of the build tree; the three scripts it replaces ran the reference
+  config's whole window in the source tree. Every ctest has a 600 s time limit; `march_derivs` is
+  `column_derivs` again, after its file; `test_several_sites` runs 30 days, not 60; and the met tests
+  write their files in the build tree, not the repository root.
 - **The slow loop is a `driver/` and a flat `processes/`** (#516), with no change to any result on
   gfortran. Each slow process is one module named after its science page, and the drivers have one
   job each: `meds_slow_dynamics` orders a step and marks the ledger, `meds_slow_state` reads the
@@ -1638,6 +1644,9 @@ change to any result (#516).
 
 ### Removed
 
+- **`test_phenology_config` and `test_column_co2`** (#518). The first's section checks join
+  `test_config_keys`, and the canopy-air CO₂ update joins `test_surface_energy`. The wood-timescale check
+  (8εσT³) and the `G_top` identity go: neither checked the model.
 - **The process mask, the probe and the uncoupled stage** (#480): `apply_process_mask` and
   `mask_is_full`, `write_fast_probe`, the uncoupled backward-Euler pass of `column_be_stage`, the
   strict floor-step stop, and the LAI-split radiation and `reference_met` of a run without forcing.
@@ -1703,6 +1712,15 @@ change to any result (#516).
 
 ### Fixed
 
+- **Tests that did not test what they said** (#518).
+  - `restart_exact` was skipped without pandas, which it does not use. It now checks its own dependencies.
+  - `test_column_rk45`'s "sealed" saturated column drained. It is sealed now, and its θ bound is hydrostatic.
+    Its budget test asserts all seven ledgers, not two, and its leaf-potential check, which could not fail,
+    goes.
+  - `test_canopy_radiation`'s guard against ED2's bug B1 checked only that the cohorts' scattering differed.
+    Under diffuse light, the lower cohort's absorption now follows its own PFT and not that of a near-bare
+    cohort above it.
+  - The comments of seven tests and of the test fixture say what they do now.
 - **The ifx Debug test suite took 77 minutes** (#517), against 3 before the frozen-soil Newton.
   `soil_energy_step_implicit` handed `thomas_solve` the expression `-now%res`, so every Newton iteration
   copied it to a temporary array, and the Debug build's `-check all` printed a warning for each copy:

@@ -15,8 +15,8 @@
 !      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
 !      flat-plate value 0.6 Re^0.5 alpha/l, Re = u l/nu, with the air's 20 C nu and alpha.       !
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
-!      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
-!      in the open-canopy limit.                                                                 !
+!      the closed-crown extinction; gbw = gbh_2_gbw*gbh; and ggnet == ggbare in the open-canopy   !
+!      limit.                                                                                    !
 !   6. OPEN CANOPY: the ground conductance is the bare-ground value at an open fraction W = 1    !
 !      (a patch with no leaf or wood area), the dense-canopy value at W = 0, and rises            !
 !      monotonically between; W = exp(-(LAI + WAI)). On a bare patch the soil's conductance and   !

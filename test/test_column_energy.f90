@@ -1,6 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_energy -- unit tests for the soil THERMAL column + shared enthalpy inverter. !
+! test_column_energy -- unit tests for the soil THERMAL column and the liquid/ice enthalpy !
+! inverter. The soil column itself reads its temperature off its freezing curve (6-7); the !
+! inverter (1, 9) is the one snow and the start-up use.                                    !
 !   1. INVERTER round-trip (liquid + ice) and CONTINUITY at u_freeze/u_melt (temp =        !
 !      t_3ple).                                                                            !
 !   2. CLAUSIUS slope d(e_sat)/dT vs finite difference; and the ICE saturation branch:     !

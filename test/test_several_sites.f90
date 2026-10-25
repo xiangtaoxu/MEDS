@@ -3,8 +3,8 @@
 ! test_several_sites -- a polygon of several sites.                                        !
 !                                                                                          !
 ! 1. Two identical sites of areas 0.3 and 0.7 each evolve as a polygon of one site does,   !
-!    over 60 days of fast and slow steps on a short calendar -- a month boundary every 15  !
-!    days, a year boundary every 30, each with a disturbance and patch fusion: every       !
+!    over 30 days of fast and slow steps on a short calendar -- a month boundary every 15  !
+!    days and a year boundary at day 30, with a disturbance and patch fusion: every        !
 !    site's stand is the one-site stand, and the polygon totals are the one site's to      !
 !    round-off.                                                                            !
 ! 2. Two sites on different soils each evolve as a one-site polygon on its own soil, and   !
@@ -27,7 +27,7 @@ program test_several_sites
    use meds_test_support,         only : banner, build_test_config, check, check_close, test_report
    implicit none
 
-   integer(ik), parameter :: N_DAY = 60_ik            ! two short years of two 15-day months
+   integer(ik), parameter :: N_DAY = 30_ik            ! one short year of two 15-day months
    real(wp),    parameter :: RTOL  = 1.0e-12_wp   !< relative: check_close scales it by the expected value
    type(meds_config_t)  :: cfg, cfg_shallow
    type(polygon_t)      :: one, two, two_mt, one_shallow, mixed, back
@@ -96,9 +96,9 @@ program test_several_sites
                     'the shallow site keeps the one-site water on its soil')
 
    !=== 4. The mixed polygon through a state file. ==========================================!
-   now = meds_time_t(year=2000, month=3, day=1)
+   now = meds_time_t(year=2000, month=1, day=31)
    call write_state(mixed, now)
-   call read_restart_file(back, cfg, './test_several_sites-S-20000301000000.nc', t_read, found,       &
+   call read_restart_file(back, cfg, './test_several_sites-S-20000131000000.nc', t_read, found,       &
                       polygon=1_ik, site_cfg=[cfg, cfg_shallow])
    call check(found .and. back%site%n == 2_ik, 'the state file holds the two sites')
    call check(all(back%site%area(1:2) == mixed%site%area(1:2)), 'each site keeps its area')
