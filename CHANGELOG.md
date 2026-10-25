@@ -751,6 +751,16 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Changed
 
+- **Physics no test reached is tested** (#532):
+  - the snow's burial of the canopy and its blend of roughness and displacement;
+  - the canopy-air conductances against the log law;
+  - ground evaporation and the VPD at the air's pressure;
+  - evaporation from frozen ground, ice on the aquifer face, and the frozen dry layer's porosity;
+  - a patch with no cohorts;
+  - the wood's share of the reported net radiation;
+  - `meds_apply_rates`;
+  - the initial snowpack;
+  - `meds_main`'s refusal of impossible hydraulic traits, a NaN soil layer and a malformed value.
 - **The fast integrator's tests are three, on one fixture** (#527).
   - `test_column_derivs`, `test_state_combinators`, `test_column_dynamics`, `test_column_esdirk2` and
     `test_column_rk45` become `test_fast_integ_kernels` (the RHS, the backward-Euler stage, the
