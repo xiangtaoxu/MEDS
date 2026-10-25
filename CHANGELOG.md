@@ -144,20 +144,11 @@ site run chooses its cell and reads its maps the way a region does, with no chan
 polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
 no change to any result (#531). The cull's and the treefall's dead carbon reach the soil through the
 litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
-and patch termination merges and re-sorts as patch fusion does (#523). The cull's and the treefall's
-dead carbon reach the soil through the litter and the slow ledger declares them; the slow loop
-converts CO2 with the fast loop's constant; and patch termination merges and re-sorts as patch
-fusion does (#523). The stand's operators have one switch each, and the stand's keys are one
-`[demography]` block (#525). The cull's and the treefall's dead carbon reach the soil through the
-litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
 and patch termination merges and re-sorts as patch fusion does (#523). The stand's operators have
 one switch each, and the stand's keys are one `[demography]` block (#525). The slow tests are one
-per module of the new layout (#528). The cull's and the treefall's dead carbon reach the soil
-through the litter and the slow ledger declares them; the slow loop converts CO2 with the fast
-loop's constant; and patch termination merges and re-sorts as patch fusion does (#523). The stand's
-operators have one switch each, and the stand's keys are one `[demography]` block (#525). The slow
-tests are one per module of the new layout (#528). The soil-carbon state holds its pools as the
-matrix's vector (#529).
+per module of the new layout (#528). The soil-carbon state holds its pools as the matrix's vector
+(#529). Every documentation page and README is checked against the code and rewritten for
+readability, with no change to any result (#542).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -836,6 +827,17 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The documentation is checked against the code** (#542). Every science page, guide and README is
+  checked against the code and rewritten for a modeller: the science pages end Parameters, Code map,
+  References, and example results, stale counts and history leave the reference pages.
+  `docs/ed2_comparison.md` describes the current code (#422), `scripts/prepare_era5/README.md` is
+  new, `docs/ROADMAP.md` lists every open issue, and six finished plans move to
+  `docs/dev_plans/archive/`. Corrected on the pages: `vegetation_energy_dynamics.md` eqs. (1) and (6)
+  linearize the emission about the tissue's start-of-step temperature, as the code does; the
+  boundary-layer conductance ratio in `leaf_gas_exchange.md` is 1.4; `soil_carbon.md` eq. (4) has no
+  nitrogen factor; `order_of_processes.md` follows the code's order; ice saturation is 9, 18 and 26 %
+  below liquid at −10, −20 and −30 °C. Comment lines that cited the wrong equation or key are
+  corrected. No code changes.
 - **Three gaps a mutation check found are tested** (#541):
   - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
   - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
@@ -898,9 +900,6 @@ matrix's vector (#529).
   `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
   `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
   (`meds_soil_carbon`) is the spin-up's steady state.
-
-### Changed
-
 - **Physics no test reached is tested** (#532):
   - the snow's burial of the canopy and its blend of roughness and displacement;
   - the canopy-air conductances against the log law;
