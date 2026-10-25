@@ -146,9 +146,8 @@ module meds_diag_vars
    integer(ik), parameter, public :: CO_NPP_REPRO    = 38_ik  !< [kgC/plant/yr]  NPP to reproduction
    !----- 9. Carbon losses ----------------------------------------------------------------------!
    integer(ik), parameter, public :: CO_GROWTH_RESP  = 39_ik  !< [kgC/plant/yr]  growth respiration
-   integer(ik), parameter, public :: CO_STORAGE_RESP = 40_ik  !< [kgC/plant/yr]  storage maintenance respiration
-   integer(ik), parameter, public :: CO_EXUDATE      = 41_ik  !< [kgC/plant/yr]  root exudate (carbon the growth sink could not use)
-   integer(ik), parameter, public :: N_CO_ROWS       = 41_ik
+   integer(ik), parameter, public :: CO_EXUDATE      = 40_ik  !< [kgC/plant/yr]  root exudate (carbon the growth sink could not use)
+   integer(ik), parameter, public :: N_CO_ROWS       = 40_ik
 
    !----- Fusion kind of each cohort row. The leaf and wood temperatures fuse on the heat capacity   !
    !      of their tissue, as their prognostic twins do (fuse_cohort_fast_state), so a fused        !
@@ -167,7 +166,7 @@ module meds_diag_vars
         FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE,                               &   ! 6. The leaf solve's other inputs
         FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                                                             &   ! 7. Growth and mortality
         FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                               &   ! 8. Carbon allocation
-        FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE                                                              ]   ! 9. Carbon losses
+        FSK_EXTENSIVE, FSK_EXTENSIVE                                                                             ]   ! 9. Carbon losses
 
    !==========================================================================================!
    !  PER-PATCH diagnostic fields. The fast loop fills the fast rows once per (patch, sub-step)  !

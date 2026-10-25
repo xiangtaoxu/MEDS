@@ -334,7 +334,7 @@ entries are formed there for a reason:
 
 The slow operators write their own rows into the same blocks: litterfall by tissue, recruitment,
 mortality carbon by pathway and disturbed area on the patch rows; the allocation's split, growth
-respiration, storage upkeep, exudate, diameter and biomass growth and mortality on the cohort rows.
+respiration, exudate, diameter and biomass growth and mortality on the cohort rows.
 
 - **A patch row's weight is time.** The block's weight is the summed sub-step length in seconds, and
   the reader returns value over weight. So a slow row adds its rate, in the units the registry

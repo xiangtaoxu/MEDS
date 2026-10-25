@@ -44,7 +44,7 @@ Demography reads it as a diameter growth rate.
 - The sum is taken over the buffer itself, not carried as a running total, so a window of zeros
   after a large sample cannot read slightly negative.
 - A new cohort's window is as long as its life.
-- The same window bounds the absolute sink limit on wood growth (plant_carbon_allocation.md eq. (4)).
+- The same window bounds the absolute sink limit on wood growth (plant_carbon_allocation.md eq. (3)).
 
 ### Mortality
 

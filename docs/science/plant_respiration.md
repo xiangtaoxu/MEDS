@@ -168,8 +168,7 @@ All four limbs reach the canopy air space as part of the biotic CO₂ source dri
 $`[\mathrm{\mu mol\,m^{-2}\,ground\,s^{-1}}]`$, positive toward the canopy air. The three sub-daily limbs
 are exhaled in the very sub-step that computes them. Growth respiration cannot be — it is known only once a
 day — so the allocator commits the per-patch total as `slow_co2_rate`, a frozen rate the *next* fast window
-emits, exactly the handoff the shed-tissue water uses. The storage maintenance of
-`plant_carbon_allocation.md` eq. (2) rides the same rate. That rate carries an opposite-signed starvation
+emits, exactly the handoff the shed-tissue water uses. That rate carries an opposite-signed starvation
 correction (`growth_resp - deficit`): when storage could not fund the maintenance the fast loop had already
 reported, the over-report is netted back here rather than by rewriting the previous step. Real maintenance
 respiration is limited by the substrate the plant has, so a maintenance flux no pool could pay is read as
@@ -184,9 +183,8 @@ canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophy
 - **No thermal acclimation of respiration** — no running-mean-temperature reference shift for any
   tissue: the 25 °C baselines are fixed traits, and the kernels carry no acclimation-temperature
   argument (photosynthetic capacity does acclimate, `leaf_gas_exchange.md` §"Thermal acclimation").
-- **No reproductive-tissue maintenance**, and storage maintenance off by default — seed carbon respires
-  nothing; the non-structural pool pays a fractional turnover (`storage_turnover_rate`, default 0,
-  `plant_carbon_allocation.md` eq. (2)) that leaves through `slow_co2_rate` (§6).
+- **No reproductive-tissue or storage maintenance** — seed carbon and the non-structural pool respire
+  nothing.
 - **No per-layer root biomass** — the temperature response is resolved by layer (§3), but the fine-root
   pool is one per-plant pool spread over the layers by the root profile, not a prognostic pool per layer.
 - **No substrate or moisture limitation of maintenance respiration** — it runs at the temperature-set rate

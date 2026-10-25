@@ -244,10 +244,9 @@ module meds_pft_params
       !----- Allocation targets (docs/science/plant_carbon_allocation.md §2). -------------!
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio
       real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf + fine-root target
-      !----- Resorption, storage upkeep (docs/science/plant_carbon_allocation.md §1). -----!
+      !----- Resorption (docs/science/plant_carbon_allocation.md §1). --------------------!
       real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] share of leaf and fine-root loss resorbed
-      real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover, charged as respiration
-      !----- Sink limits, 0 = off (docs/science/plant_carbon_allocation.md eq. (4)). ------!
+      !----- Sink limits, 0 = off (docs/science/plant_carbon_allocation.md eq. (3)). ------!
       real(wp),    allocatable :: max_relative_growth_rate(:) !< [1/yr] maximum relative growth rate of wood
       real(wp),    allocatable :: max_absolute_growth_rate(:) !< [cm/yr] maximum diameter growth of a 1 cm stem
       real(wp),    allocatable :: max_absolute_growth_exponent(:) !< [--] its scaling with dbh [cm]

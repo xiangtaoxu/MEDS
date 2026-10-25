@@ -76,7 +76,7 @@ contains
    ! A cohort's growth window as the sink limit sees it this step: the diameter already grown   !
    ! in it [cm] and its length [yr] with this step in it. Once the history is full, this step's !
    ! sample replaces the oldest; a new cohort's window is as long as its life                   !
-   ! (docs/science/plant_carbon_allocation.md eq. (4); demography.md eq. (2)).                  !
+   ! (docs/science/plant_carbon_allocation.md eq. (3); demography.md eq. (2)).                  !
    !---------------------------------------------------------------------------------------!
    pure subroutine growth_window_so_far(count, accum, oldest, n_window, dt_yr, window_yr, grown)
       integer(ik), intent(in)  :: count       !< samples in the ring buffer
@@ -244,7 +244,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Growth (construction) respiration [kgC/plant] = g x the carbon actually built this    !
-   ! step (docs/science/plant_carbon_allocation.md eq. (5)). A tissue- or                  !
+   ! step (docs/science/plant_carbon_allocation.md eq. (4)). A tissue- or                  !
    ! temperature-dependent construction cost would replace this one form.                  !
    !---------------------------------------------------------------------------------------!
    elemental pure function growth_respiration(npp_growth, growth_resp_factor) result(rg)

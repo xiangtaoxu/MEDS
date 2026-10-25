@@ -111,7 +111,7 @@ page does not list.
 | `mean_npp_storage_py` | `npp_storage_site` | M Y | polygon | kgC/m2/yr |
 | `mean_npp_repro_py` | `npp_repro_site` | M Y | polygon | kgC/m2/yr |
 | `mean_growth_resp_py` | `growth_resp_site` | M Y | polygon | kgC/m2/yr |
-| `mean_storage_resp_py` | `storage_resp_site` | M Y | polygon | kgC/m2/yr |
+| (retired: storage maintenance was removed) | `storage_resp_site` | M Y | polygon | kgC/m2/yr |
 | `mean_root_exudate_py` | `root_exudate_site` | M Y | polygon | kgC/m2/yr |
 | `mean_nee_py` | `nee_site`, `nee_fast` | F D M Y | polygon | umol/m2/s |
 | `mean_nee_pa` | `nee_patch`, `nee_patch_fast` | F D M | patch | umol/m2/s |

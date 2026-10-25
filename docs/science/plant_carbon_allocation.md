@@ -23,39 +23,6 @@ carbon) $`C_{store}`$, three demands (leaf and fine root, each already net of th
 which the driver subtracts beforehand: `plant_phenology.md` §5 and §5 below; and the deficit toward the
 storage target) and the reproduction fraction `repro_frac`; wood takes the residual.
 
-### Storage maintenance (charged first)
-
-The non-structural pool is charged a **fractional turnover** each step, before the ladder below runs:
-
-```math
-M_s = C_{store} \cdot \min\!\bigl(1,\ k_s\,\Delta t\bigr) \qquad(2)
-```
-
-with $`k_s`$ = `storage_turnover_rate` [yr⁻¹] per PFT. It is ED2's `growth_balive.f90` form, and like
-ED2 it carries **no temperature dependence** — ED2 sets its `maintenance_temp_dep` to 1 here and
-leaves the temperature form commented out as "experimental and arbitrary", so adopting one would go
-beyond the reference rather than follow it.
-
-Without it, storage would be the one live carbon pool that costs nothing to hold: a cohort could
-carry an arbitrarily large reserve for free.
-
-**Default $`k_s = 0`$** (no storage maintenance; whether to turn it on by default is open, see
-`docs/ROADMAP.md`). ED2's own values are temperate broadleaf **0.6243**, temperate grass and conifer
-**0**, tropical non-grass **1/6**, tropical grass **1/3** — so zero is a legitimate ED2 setting, not an
-absence of physics. The charge
-is substantial where it is turned on: at ED2's temperate-broadleaf rate an Ithaca run loses 35 % of
-GPP and 43 % of AGB over five years from cold start, because the drain compounds through stand
-development.
-
-$`M_s`$ is **netted into the step's storage tendency**, not written to the pool directly. That is the
-standing rule (the driver computes, the engine applies) and it is also what keeps the carbon ledger
-closed: the phase that declares the CO₂ efflux is the phase where the pool has to drop. The allocator
-still sees the post-maintenance reserve, so maintenance is paid before growth is funded from it —
-ED2's ordering.
-
-The clamp in eq. (2) is on the fraction, not the amount: a large $`k_s\,\Delta t`$ cannot charge more
-than the pool holds, and a negative product cannot charge less than nothing and so create storage.
-
 ### Leaf and fine-root resorption
 
 A fraction $`f_r`$ = `retained_carbon_fraction` of **all** leaf and fine-root loss returns to the
@@ -66,7 +33,7 @@ senescence of `leaf_turnover_step` (`plant_phenology.md` §5, eq. (9)), and $R$ 
 \Delta C_{leaf} = -(B + S), \qquad
 \Delta C_{root} = -R, \qquad
 \Delta C_{store} \mathrel{+}= f_r (B + S + R), \qquad
-\text{litter} = (1-f_r)(B + S + R) \qquad(3)
+\text{litter} = (1-f_r)(B + S + R) \qquad(2)
 ```
 
 **Each pool loses the full loss either way.** Crediting storage while removing only the litter
@@ -143,7 +110,7 @@ It has two forms, each a per-PFT trait that is off at zero; with both set the ti
 
 ```math
 a_{\mathrm{wood}}^{\max} = \min\!\Big(r_{\max}\,C_{\mathrm{wood}}\,\Delta t,\;\;
-W\big(D + \max(g_{\max}D^{c}\,T - \Delta D_T,\,0)\big) - W(D)\Big) \qquad(4)
+W\big(D + \max(g_{\max}D^{c}\,T - \Delta D_T,\,0)\big) - W(D)\Big) \qquad(3)
 ```
 
 The first is **relative**: $`r_{\max}`$ is the PFT's `max_relative_growth_rate` [yr⁻¹] and
@@ -163,7 +130,7 @@ than to a large tree. At BCI the upper quantiles of census diameter growth at a 
 as $`D^{0.5}`$ (example 05), between a size-independent width ($`c=0`$) and the relative form ($`c\approx1`$). When the residual would build more than that, the kernel builds
 $`a_{\mathrm{wood}}^{\max}`$ and turns the rest of the residual into **root exudate**,
 $`E = C_{\mathrm{resid}}/(1+g) - a_{\mathrm{wood}}^{\max}`$. Making and exporting exudate costs the same
-$`(1+g)`$ per unit as tissue, so growth respiration (eq. (5)) is the same whether or not the limit binds;
+$`(1+g)`$ per unit as tissue, so growth respiration (eq. (4)) is the same whether or not the limit binds;
 the limit only changes where the carbon ends up. The driver puts $E$ in the patch's below-ground labile
 litter (`labile_soil`), where soil respiration returns it to the air. A
 cohort below the limit is unaffected, so the limit only bites where carbon is plentiful (open-grown
@@ -211,7 +178,7 @@ that growth respiration reduces the carbon available for growth, which changes t
 built are $`a_{\mathrm{leaf}},a_{\mathrm{root}},a_{\mathrm{wood}},a_{\mathrm{repro}}`$ and the exudate is $E$, then
 
 ```math
-R_g = g\,(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + E) \qquad(5)
+R_g = g\,(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + E) \qquad(4)
 ```
 
 A charge on the whole pre-allocation balance would also bill the carbon bound for storage, which builds
@@ -238,14 +205,14 @@ driver forms the net leaf/root change $`\mathrm{npp}_{\mathrm{leaf}}=a_{\mathrm{
 (and likewise for root). The **growth-side** budget the kernel closes on every call is
 
 ```math
-\big(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + \mathrm{npp}_{\mathrm{store}} + E\big) \;-\; \mathrm{deficit} \;=\; (G - R_m) \;-\; R_g \qquad(6)
+\big(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + \mathrm{npp}_{\mathrm{store}} + E\big) \;-\; \mathrm{deficit} \;=\; (G - R_m) \;-\; R_g \qquad(5)
 ```
 
 with `deficit` the unpaid maintenance on the starving branch (it *adds back* — carbon the plant owes but
 has not yet removed from any pool) and $E$ the root exudate of the sink limit (zero without one). Adding the
-driver's terms closes the whole plant: the **plant-pool change = GPP − (maintenance + storage maintenance +
+driver's terms closes the whole plant: the **plant-pool change = GPP − (maintenance +
 growth respiration) − litter − exudate − reproduction**, where the litter is the unresorbed share of the
-shed, $`(1-f_r)(\ell_{\mathrm{leaf}}+\ell_{\mathrm{root}})`$ (eq. (3)). The driver puts it in the patch's
+shed, $`(1-f_r)(\ell_{\mathrm{leaf}}+\ell_{\mathrm{root}})`$ (eq. (2)). The driver puts it in the patch's
 litter, from which the soil-carbon pools and $`R_h`$ follow (`soil_carbon.md`).
 
 ## Parameters (per-PFT traits consumed)
@@ -257,8 +224,7 @@ litter, from which the soil-carbon pools and $`R_h`$ follow (`soil_carbon.md`).
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_{\mathrm{repro}}`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
 | — | `min_repro_height` [m] | the height a cohort reproduces from |
-| $`k_s`$ | `storage_turnover_rate` (optional, default 0 = off) | storage maintenance, eq. (2) [yr⁻¹] |
-| $`f_r`$ | `retained_carbon_fraction` (optional, default 0.3) | share of leaf and fine-root loss resorbed to storage, eq. (3) |
+| $`f_r`$ | `retained_carbon_fraction` (optional, default 0.3) | share of leaf and fine-root loss resorbed to storage, eq. (2) |
 | $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |
 | $`g_{\max}`$ | `max_absolute_growth_rate` (optional, default 0 = off) | sink limit on the diameter growth of a 1 cm stem [cm yr⁻¹], a budget over the growth window; the residual above it is exuded |
 | $T$ | `growth_memory_days` (`[demography]`) | the window the absolute limit (and mortality's growth average) runs over |

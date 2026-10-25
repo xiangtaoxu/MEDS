@@ -1185,8 +1185,6 @@ contains
       call req_pa(tp, 'pft.root_to_leaf_ratio',     cfg%pft%root_to_leaf_ratio,     npft, miss)
       call req_pa(tp, 'pft.storage_cushion',        cfg%pft%storage_cushion,        npft, miss)
       call req_pa(tp, 'pft.growth_resp_factor',     cfg%pft%growth_resp_factor,     npft, miss)
-      !----- Storage maintenance: optional, 0 (off) by default. --------------------------!
-      call opt_pa(tp, 'pft.storage_turnover_rate', cfg%pft%storage_turnover_rate,  npft, miss)
       !----- Leaf and fine-root resorption: optional, 0.3 by default. --------------------!
       call opt_pa(tp, 'pft.retained_carbon_fraction', cfg%pft%retained_carbon_fraction, npft, miss)
       call req_pa(tp, 'pft.leaf_turnover_rate_toc', cfg%pft%leaf_turnover_rate_toc, npft, miss)
@@ -1297,7 +1295,7 @@ contains
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,aboveground_frac,storage_cushion,growth_resp_factor,'      &
-           //'storage_turnover_rate,retained_carbon_fraction,'                                     &
+           //'retained_carbon_fraction,'                                                           &
            //'leaf_turnover_rate_toc,fineroot_turnover_rate,'                                &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
@@ -1310,10 +1308,10 @@ contains
            //'root_depth_b1,root_depth_b2,specific_root_length,fine_root_radius'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 92 items: i0 + 8 + i0 + 2 + i0 + 46 + i0 + 32. Keep the format in step with       !
+            !----- 91 items: i0 + 8 + i0 + 2 + i0 + 45 + i0 + 32. Keep the format in step with       !
             !      the header and the list: a shorter format reuses its last group, printing a       !
             !      real into an integer slot and dropping the trailing columns. ---------------------!
-            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,46(",",es15.8),",",i0,32(",",es15.8))') &
+            write(u,'(i0,8(",",es15.8),",",i0,2(",",es15.8),",",i0,45(",",es15.8),",",i0,32(",",es15.8))') &
                  pf, p%wood_density(pf), p%allom(pf)%hgt_max,                                           &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1326,7 +1324,7 @@ contains
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(p, pf),     &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%allom(pf)%aboveground_frac,                     &
-                 p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
+                 p%storage_cushion(pf), p%growth_resp_factor(pf),                                     &
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_turnover_rate_toc(pf),                                                       &
                  p%fineroot_turnover_rate(pf),                                                        &

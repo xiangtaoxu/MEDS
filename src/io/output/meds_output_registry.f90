@@ -59,7 +59,7 @@ module meds_output_registry
                                     PY_PSURF, PY_WIND, PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,       &
                                     PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR, PY_RAINF,           &
                                     CO_DDBH_DT, CO_DAGB_DT, CO_MORT_RATE, CO_NPP_LEAF, CO_NPP_FINEROOT,           &
-                                    CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, CO_STORAGE_RESP,   &
+                                    CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP,                    &
                                     CO_EXUDATE, PA_LITTER_LEAF, PA_LITTER_FINEROOT, PA_MORT_C_BACKGROUND,         &
                                     PA_MORT_C_CULL, PA_MORT_C_DISTURB, PA_LITTER_STRUCT, PA_LITTER_WOOD,          &
                                     PA_LITTER_REPRO, PA_RECRUIT_NPLANT, PA_DISTURB_AREA
@@ -595,8 +595,6 @@ contains
                         GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_NPP_REPRO, weight=W_NPLANT, flux=.true.)
       call add_variable(reg, 'mean_growth_resp_py', 'growth respiration', 'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN, GRP_CARBON,       &
                         MON_YR, FLD_C_DIAG0 + CO_GROWTH_RESP, weight=W_NPLANT, flux=.true.)
-      call add_variable(reg, 'mean_storage_resp_py', 'storage maintenance respiration', 'kgC/m2/yr', DIM_SCALAR, AGG_TMEAN,     &
-                        GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_STORAGE_RESP, weight=W_NPLANT, flux=.true.)
       call add_variable(reg, 'mean_root_exudate_py', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_DIAG0 + CO_EXUDATE, weight=W_NPLANT, flux=.true.)
       !----- The polygon's demographic rates, the terms that make the AGB trajectory: d(agb)/dt  !

@@ -88,7 +88,7 @@ would hide it. The declared terms:
   the density before the commit, the density it accumulated on, and it takes the allocator's own branch
   (the fixed `gpp_ref` of a run without the fast loop included), so it declares what the allocator
   consumed rather than what a fast loop would have supplied.
-- **The CO₂ owed to the canopy air** (grow+mortality, out): the growth respiration and storage upkeep,
+- **The CO₂ owed to the canopy air** (grow+mortality, out): the growth respiration,
   less the starvation deficit (plant_respiration.md §6). It leaves the plants in this window and
   reaches the canopy air in the next fast window.
 - **The litter** (grow+mortality, cohort fuse/fiss, disturbance and patch fuse/term, out; soil carbon,

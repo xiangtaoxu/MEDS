@@ -107,7 +107,6 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost: th
 # retained_carbon_fraction = [0.3, 0.3, 0.3]       # [--] OPTIONAL (default 0.3): share of all leaf and fine-root
 #                                                  #      loss resorbed to storage rather than littered
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
-# storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
 # max_relative_growth_rate = [0.0, 0.0, 0.0]       # [1/yr] sink limit on wood growth per unit wood carbon
 # max_absolute_growth_rate = [0.0, 0.0, 0.0]       # [cm/yr] sink limit on diameter growth of a 1 cm stem;
 #                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
