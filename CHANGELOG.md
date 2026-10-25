@@ -1728,6 +1728,11 @@ one helper groups the cohorts of one height into a layer (#514).
     Under diffuse light, the lower cohort's absorption now follows its own PFT and not that of a near-bare
     cohort above it.
   - The comments of seven tests and of the test fixture say what they do now.
+- **The ifx Debug test suite took 77 minutes** (#517), against 3 before the frozen-soil Newton.
+  `soil_energy_step_implicit` handed `thomas_solve` the expression `-now%res`, so every Newton iteration
+  copied it to a temporary array, and the Debug build's `-check all` printed a warning for each copy:
+  millions of lines in the `region` and `several_sites` tests. The right-hand side is now a named array.
+  Results are bit-identical, and the Debug suite takes 178 s.
 - **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
   targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
   `-j 16`). The shims now compile in one target.
