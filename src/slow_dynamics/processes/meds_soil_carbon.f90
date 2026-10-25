@@ -16,8 +16,7 @@
 !==========================================================================================!
 module meds_soil_carbon
    use meds_kinds,             only : wp, ik
-   use meds_patch_state_vars,  only : litter_input_t, soil_carbon_state_t, pack_pool_vector,             &
-                                      unpack_pool_vector
+   use meds_patch_state_vars,  only : litter_input_t, soil_carbon_state_t
    use meds_biogeochem_params, only : N_SOIL_POOL, soil_carbon_params_t, DECOMP_STEP_EXPM,               &
                                       IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL,        &
                                       IP_MICR, IP_SLOW, IP_PASSIVE
@@ -31,7 +30,7 @@ module meds_soil_carbon
    public :: soil_carbon_out_t
    public :: necromass_to_litter, add_necromass, build_litter_input, soil_carbon_step
    public :: solve_soil_carbon_steady_state
-   public :: soil_carbon_bad_pool, soil_carbon_pool_name, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
+   public :: soil_carbon_bad_pool, SOILC_MAX_PLAUSIBLE, SOILC_NEG_TOL
 
    !----- One daily step's result: the new pools, which the caller commits, and its     !
    !      carbon-mass checks (soil_carbon.md §7, §9). ----------------------------------!
@@ -155,9 +154,9 @@ contains
       integer(ik) :: i, j
 
       call decomposition_transfer_matrix(pools, params, a_mat, k_diag, er)
-      call pack_pool_vector(pools, x0)
-      lig0(1) = pools%struct_grnd_lignin
-      lig0(2) = pools%struct_soil_lignin
+      x0 = pools%carbon
+      lig0(1) = pools%lignin(1)
+      lig0(2) = pools%lignin(2)
 
       !----- Per-pool day-integrated decay fraction d_j = xi_int_j * K_j [-]. -------------!
       do j = 1_ik, N_SOIL_POOL
@@ -198,9 +197,9 @@ contains
 
       !----- The new state, which the caller commits. ---------------------------------------------!
       out%pools = pools
-      call unpack_pool_vector(x1, out%pools)
-      out%pools%struct_grnd_lignin = lig1(1)
-      out%pools%struct_soil_lignin = lig1(2)
+      out%pools%carbon = x1
+      out%pools%lignin(1) = lig1(1)
+      out%pools%lignin(2) = lig1(2)
 
       !----- carbon-mass audit (both solvers): rh_today = litter_in - dC_pool (transfers cancel). --!
       litter_in = sum(u)
@@ -239,7 +238,7 @@ contains
       real(wp)    :: x_ss(N_SOIL_POOL)
       call steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)
       pools_ss = soil_carbon_state_t()                       ! zero all (inert pools + lignin stay 0)
-      call unpack_pool_vector(x_ss, pools_ss)
+      pools_ss%carbon = x_ss
    end subroutine solve_soil_carbon_steady_state
 
    !----- Solve M[active]*x = -u[active] on the active sub-block by LU with partial pivoting. ---!
@@ -330,7 +329,7 @@ contains
       integer(ik)                     :: k
       real(wp)    :: x(N_SOIL_POOL)
       integer(ik) :: j
-      call pack_pool_vector(pools, x)
+      x = pools%carbon
       k = 0_ik
       do j = 1_ik, N_SOIL_POOL
          !----- NaN first, and alone, by classification: a comparison with a NaN can raise IEEE !
@@ -346,29 +345,5 @@ contains
          end if
       end do
    end function soil_carbon_bad_pool
-
-   !----- Name for the index soil_carbon_bad_pool returns, so a failure message is readable. -----!
-   pure function soil_carbon_pool_name(k) result(nm)
-      integer(ik), intent(in) :: k
-      character(len=16)       :: nm
-      select case (k)
-      case (IP_FAST_GRND)
-         nm = 'fast_grnd'
-      case (IP_FAST_SOIL)
-         nm = 'fast_soil'
-      case (IP_STRUCT_GRND)
-         nm = 'struct_grnd'
-      case (IP_STRUCT_SOIL)
-         nm = 'struct_soil'
-      case (IP_MICR)
-         nm = 'microbial'
-      case (IP_SLOW)
-         nm = 'slow'
-      case (IP_PASSIVE)
-         nm = 'passive'
-      case default
-         nm = '(none)'
-      end select
-   end function soil_carbon_pool_name
 
 end module meds_soil_carbon

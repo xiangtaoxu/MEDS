@@ -225,13 +225,7 @@ contains
       tot = 0.0_wp
       associate (p => g_run(h)%poly(1)%patch)
          do ip = 1_ik, p%n
-            tot = tot + patch_polygon_area(g_run(h)%poly(1), ip) * (p%soil_carbon(ip)%fast_grnd_carbon &
-                                    + p%soil_carbon(ip)%fast_soil_carbon                        &
-                                    + p%soil_carbon(ip)%struct_grnd_carbon                      &
-                                    + p%soil_carbon(ip)%struct_soil_carbon                      &
-                                    + p%soil_carbon(ip)%microbial_carbon                        &
-                                    + p%soil_carbon(ip)%slow_carbon                             &
-                                    + p%soil_carbon(ip)%passive_carbon)
+            tot = tot + patch_polygon_area(g_run(h)%poly(1), ip) * sum(p%soil_carbon(ip)%carbon)
          end do
       end associate
       v = real(tot, c_double)

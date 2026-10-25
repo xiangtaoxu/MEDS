@@ -30,15 +30,15 @@ The state is `soil_carbon_state_t`, ordered litter → SOM → passive. The seve
 CENTURY set exactly, and the litter half is a **metabolic/structural × above/below** cross — chemistry
 on one axis, position on the other (above/below is carried so a future fire class can burn the top).
 
-| `IP_*` | pool | field | $K$ default $`[\mathrm{yr^{-1}}]`$ | gets litter | $\xi$ temperature |
+| `IP_*` | pool | name (`SOIL_POOL_NAME`) | $K$ default $`[\mathrm{yr^{-1}}]`$ | gets litter | $\xi$ temperature |
 |---|---|---|---|---|---|
-| `IP_FAST_GRND` 1 | metabolic litter, above | `fast_grnd_carbon` | `k_fast` 11.0 | yes | surface |
-| `IP_FAST_SOIL` 2 | metabolic litter, below | `fast_soil_carbon` | `k_fast` 11.0 | yes | active layer |
-| `IP_STRUCT_GRND` 3 | structural litter + CWD, above | `struct_grnd_carbon` | `k_struct` 4.5 | yes | surface |
-| `IP_STRUCT_SOIL` 4 | structural litter + CWD, below | `struct_soil_carbon` | `k_struct` 4.5 | yes | active layer |
-| `IP_MICR` 5 | microbial SOM | `microbial_carbon` | `k_micr` 0.0 | no | active layer |
-| `IP_SLOW` 6 | slow / humified SOM | `slow_carbon` | `k_slow` 0.2 | no | active layer |
-| `IP_PASSIVE` 7 | passive SOM | `passive_carbon` | `k_pass` 0.0 | no | active layer |
+| `IP_FAST_GRND` 1 | metabolic litter, above | `fast_grnd` | `k_fast` 11.0 | yes | surface |
+| `IP_FAST_SOIL` 2 | metabolic litter, below | `fast_soil` | `k_fast` 11.0 | yes | active layer |
+| `IP_STRUCT_GRND` 3 | structural litter + CWD, above | `struct_grnd` | `k_struct` 4.5 | yes | surface |
+| `IP_STRUCT_SOIL` 4 | structural litter + CWD, below | `struct_soil` | `k_struct` 4.5 | yes | active layer |
+| `IP_MICR` 5 | microbial SOM | `microbial` | `k_micr` 0.0 | no | active layer |
+| `IP_SLOW` 6 | slow / humified SOM | `slow` | `k_slow` 0.2 | no | active layer |
+| `IP_PASSIVE` 7 | passive SOM | `passive` | `k_pass` 0.0 | no | active layer |
 
 A pool is **active** when $`K_j>0`$. Under the default `DECOMP_SCHEME_ED2` (ED2 schemes 0–4) microbial
 and passive are inert, leaving **three active chemistries** — fast, structural, slow;
@@ -47,11 +47,11 @@ switches topology and temperature form, **not** the rate constants, which come f
 default to the scheme 0–4 values. Dead wood has no pool of its own: it enters the structural pools
 through `f_labile_stem`, ED2's convention.
 
-The structural pools carry a **lignin sub-tracer** `struct_grnd_lignin` / `struct_soil_lignin`, bounded
+The structural pools carry a **lignin sub-tracer**, `lignin(1)` above ground and `lignin(2)` below, bounded
 $`0\le L_s\le C_s`$. It is not an eighth pool — its carbon is already counted inside the structural
 pools, so it stays outside the mass vector and keeps its own balance (§6). There is no nitrogen
-(§10). `pack_pool_vector` / `unpack_pool_vector` marshal the named fields to and from the length-7
-array the kernels use.
+(§10). The state holds the pools as that vector, `carbon(N_SOIL_POOL)` by `IP_*` index, so the kernels
+read and write it directly.
 
 ## 3. The transfer matrix, and the respired complement
 
@@ -323,8 +323,8 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | daily pool advance (Euler / EXPM) + audits | `meds_soil_carbon`: `soil_carbon_step` |
 | instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_respiration`: `heterotrophic_respiration` |
 | steady state (SASU) | `meds_soil_carbon`: `solve_soil_carbon_steady_state` |
-| pool plausibility | `meds_soil_carbon`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_soil_carbon`: `soil_carbon_out_t`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_state_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
+| pool plausibility | `meds_soil_carbon`: `soil_carbon_bad_pool` |
+| pools, indices, audit/diagnostic records | `meds_soil_carbon`: `soil_carbon_out_t`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_state_t` (`carbon(N_SOIL_POOL)`, `lignin(2)`) / `decomp_xi_t` / `litter_input_t` in `meds_patch_state_vars`; the pool names `SOIL_POOL_NAME` in `meds_biogeochem_params` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
 | daily driver, seam guard, ledger | `meds_slow_state`: `advance_soil_carbon`; `meds_slow_update`: `commit_soil_carbon`; the run's worst seam checks in `meds_slow_ledger`: `slow_ledger_soil_check` |
 | litter accumulation | `meds_slow_state`: `compute_carbon_allocation`, `accumulate_mortality_litter`; kills in `meds_slow_update`: `terminate_cohorts`, `apply_patch_disturbance` |

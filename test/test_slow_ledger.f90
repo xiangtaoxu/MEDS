@@ -26,10 +26,8 @@ program test_slow_ledger
    use meds_soil_derive,        only : build_profile_hydraulics, soil_layers, build_soil_profile,           &
                                        soil_start_theta, top_soil_psi
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars, only : cas_set_depth, patch_physical_state, litter_input_t, pack_pool_vector, &
-                                     unpack_pool_vector
-   use meds_biogeochem_params, only : N_SOIL_POOL
-   use meds_soil_carbon,     only : soil_carbon_pool_name
+   use meds_patch_state_vars, only : cas_set_depth, patch_physical_state, litter_input_t
+   use meds_biogeochem_params,  only : N_SOIL_POOL, IP_SLOW, SOIL_POOL_NAME
    use meds_soil_params,        only : soil_profile_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_cohort_state_vars,  only : init_cohort, set_cohort_size_from_carbon, hold_cohort_tissue_temps
@@ -90,7 +88,7 @@ program test_slow_ledger
    poly%patch%cas(1)%can_enthalpy = 2.9e5_wp
    poly%patch%cas(1)%can_co2      = 400.0_wp
    poly%patch%cas(1)%can_depth    = 20.0_wp
-   poly%patch%soil_carbon(1)%slow_carbon = 3.0_wp
+   poly%patch%soil_carbon(1)%carbon(IP_SLOW) = 3.0_wp
    poly%patch%recruit_pool(:,1)          = 0.0_wp
    poly%cohort%leaf_water_mass(1:2) = 0.02_wp
    poly%cohort%wood_water_mass(1:2) = 0.05_wp
@@ -117,7 +115,7 @@ program test_slow_ledger
       call moves_carbon(trim(LIVE_POOL(which))//' carbon', perturb_live_c, poly%cohort%nplant(1) * 0.5_wp)
    end do
    do which = 1_ik, N_SOIL_POOL
-      call moves_carbon('CENTURY '//trim(soil_carbon_pool_name(which)), perturb_necromass, 1.0_wp)
+      call moves_carbon('CENTURY '//trim(SOIL_POOL_NAME(which)), perturb_necromass, 1.0_wp)
    end do
    !----- Tissue HEAT and canopy CO2 have no closed-form expectation worth restating here (they  !
    !      are the store's own formulae); assert only that they reach the total, which is the     !
@@ -578,9 +576,9 @@ contains
    end subroutine perturb_live_c
    subroutine perturb_necromass()
       real(wp) :: x(N_SOIL_POOL)
-      call pack_pool_vector(poly%patch%soil_carbon(1), x)
+      x = poly%patch%soil_carbon(1)%carbon
       x(which) = x(which) + 1.0_wp
-      call unpack_pool_vector(x, poly%patch%soil_carbon(1))
+      poly%patch%soil_carbon(1)%carbon = x
    end subroutine perturb_necromass
    subroutine perturb_tissue_energy()
       select case (which)

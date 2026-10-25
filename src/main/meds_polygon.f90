@@ -29,9 +29,9 @@ module meds_polygon
    use meds_slow_update,            only : refresh_canopy_depth, max_cohort_count
    use meds_slow_state,             only : acclimate_site_leaf_tables
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_biogeochem_params,      only : N_SOIL_POOL
+   use meds_biogeochem_params,      only : N_SOIL_POOL, SOIL_POOL_NAME
    use meds_soil_carbon,            only : solve_soil_carbon_steady_state, build_litter_input,      &
-                                           soil_carbon_bad_pool, soil_carbon_pool_name
+                                           soil_carbon_bad_pool
    use meds_respiration,            only : decomposition_transfer_matrix
    use meds_met_types,          only : met_source_t, met_cursor_t
    use meds_met,             only : met_cursor_init
@@ -268,7 +268,7 @@ contains
                if (kk /= 0_ik) then
                   write(*,'(a)') ' ERROR: a CENTURY soil-carbon pool is physically impossible.'
                   if (len_trim(run%label) > 0) write(*,'(2a)') '        ', trim(run%label)
-                  write(*,'(3a,i0,a,i0)') '        pool ', trim(soil_carbon_pool_name(kk)),        &
+                  write(*,'(3a,i0,a,i0)') '        pool ', trim(SOIL_POOL_NAME(kk)),               &
                         ', patch ', ii, ' of ', poly%patch%n
                   write(*,'(2a)')  '        date ', time_to_string(now)
                   write(*,'(a)') '        A carbon pool is a mass: it cannot be negative, and the'
@@ -395,9 +395,7 @@ contains
          poly%patch%soil_carbon(ipp) = pools_ss
       end do
       if (verbose) write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',               &
-         pools_ss%fast_grnd_carbon + pools_ss%fast_soil_carbon + pools_ss%struct_grnd_carbon +   &
-         pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
-         pools_ss%passive_carbon, ' kgC/m2'
+         sum(pools_ss%carbon), ' kgC/m2'
    end subroutine soil_carbon_steady
 
    !----- Create the output directory if it does not exist (a run-level convenience). The engine   !

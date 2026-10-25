@@ -18,7 +18,7 @@ module meds_respiration
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : pi, tiny_num, yr_day
    use meds_therm_lib,         only : peaked_arrhenius_scale
-   use meds_patch_state_vars,  only : soil_carbon_state_t, pack_pool_vector
+   use meds_patch_state_vars,  only : soil_carbon_state_t
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND,      &
                                       IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    implicit none
@@ -132,8 +132,8 @@ contains
       rel     = min(1.0_wp, max(0.0_wp, (theta_active - theta_dry) / max(theta_sat - theta_dry, tiny_num)))
       f_water = decomp_water_factor(rel, params)
 
-      f_lig_g = lignin_fraction(pools%struct_grnd_lignin, pools%struct_grnd_carbon)
-      f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
+      f_lig_g = lignin_fraction(pools%lignin(1), pools%carbon(IP_STRUCT_GRND))
+      f_lig_s = lignin_fraction(pools%lignin(2), pools%carbon(IP_STRUCT_SOIL))
       brake_g = exp(-params%e_lignin * f_lig_g)
       brake_s = exp(-params%e_lignin * f_lig_s)
 
@@ -209,8 +209,8 @@ contains
       k_diag(IP_PASSIVE)     = params%k_pass   / yr_day
 
       !----- The structural pools' respired fractions, lignin-weighted. ----------------------------!
-      f_lig_g = lignin_fraction(pools%struct_grnd_lignin, pools%struct_grnd_carbon)
-      f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
+      f_lig_g = lignin_fraction(pools%lignin(1), pools%carbon(IP_STRUCT_GRND))
+      f_lig_s = lignin_fraction(pools%lignin(2), pools%carbon(IP_STRUCT_SOIL))
       er_stg  = (1.0_wp - f_lig_g) * params%er_struct_nonlig + f_lig_g * params%er_struct_lig
       er_sts  = (1.0_wp - f_lig_s) * params%er_struct_nonlig + f_lig_s * params%er_struct_lig
 
@@ -266,7 +266,7 @@ contains
       type(soil_carbon_state_t), intent(in) :: pools                                                 !< [kgC/m2]
       real(wp) :: rh, x(N_SOIL_POOL), er_j                                                     !< [kgC/m2/day] Rh
       integer(ik) :: j
-      call pack_pool_vector(pools, x)
+      x = pools%carbon
       rh = 0.0_wp
       do j = 1_ik, N_SOIL_POOL
          er_j = -sum(a_mat(:, j))                    ! column sum of A is -er_j (a_jj=-1)
