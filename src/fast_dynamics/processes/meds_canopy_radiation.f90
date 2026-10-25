@@ -20,7 +20,7 @@ module meds_canopy_radiation
 
    public :: ground_optics
    public :: canopy_radiation
-   public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env, alloc_rad_out
+   public :: rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env
    public :: layer_beam_sources   ! used only by the tests
 
    !----- The largest single-scatter albedo a layer takes, off conservative scattering (omega =    !

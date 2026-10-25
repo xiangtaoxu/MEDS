@@ -1,25 +1,24 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_canopy_radiation -- unit tests for the canopy two-stream RT library                 !
-! (src/fast_dynamics/processes; docs/science/canopy_radiation_transfer.md).                !
+! test_canopy_radiation -- the canopy two-stream (meds_canopy_radiation;                   !
+! docs/science/canopy_radiation_transfer.md).                                              !
 !                                                                                          !
-! Checks the physical invariants that a correct two-stream must satisfy:                     !
+! Checks the physical invariants that a correct two-stream must satisfy (canopy_radiation,   !
+! ground_optics, and layer_beam_sources for a thin layer's scattering):                     !
 !   1. ENERGY CONSERVATION  (per shortwave band): absorbed + net-ground + reflected = incident.!
 !   2. BEER'S LAW           : a single black cohort under a direct beam attenuates as exp(-k L).!
 !   3. ZERO-LAI ALBEDO      : an empty canopy has albedo = ground albedo.                       !
-!   4. LEAF-ANGLE LIMITS     : bf hits its limits (uniform LAD -> 0.5, planophile -> 1,          !
-!                              erectophile -> 0), and a narrow LIDF still sums to one.              !
-!   5. MULTI-PFT PATCH       : energy conserves, and each cohort's diffuse light follows its OWN    !
+!   4. MULTI-PFT PATCH       : energy conserves, and each cohort's diffuse light follows its OWN    !
 !                              PFT's optics, not the top cohort's (the guard against ED2 bug B1 of  !
 !                              docs/ed2_comparison.md).                                              !
-!   6. LONGWAVE EQUILIBRIUM  : an isothermal canopy+ground+sky has ~zero net thermal absorption.    !
-!   7. DELTA LIDF            : a zero-spread leaf-angle distribution gives finite Beta (p, q).      !
-!   8. COHORT ORDER          : the upper of two equal cohorts absorbs more and sees the top light.  !
-!   9. TIED COHORTS          : equal-height cohorts share one layer, whatever their order.          !
-!  10. CUTTING              : one LAI-5 cohort and five LAI-1 cohorts of a PFT give the same light; !
+!   5. LONGWAVE EQUILIBRIUM  : an isothermal canopy+ground+sky has ~zero net thermal absorption.    !
+!   6. COHORT ORDER          : the upper of two equal cohorts absorbs more and sees the top light.  !
+!   7. TIED COHORTS          : equal-height cohorts share one layer, whatever their order.          !
+!   8. CUTTING              : one LAI-5 cohort and five LAI-1 cohorts of a PFT give the same light; !
 !                             a thin layer's scattered beam is the single-scatter split.            !
-!  11. TISSUE LONGWAVE      : leaves and wood, or two tied cohorts, exchange longwave reciprocally,  !
+!   9. TISSUE LONGWAVE      : leaves and wood, or two tied cohorts, exchange longwave reciprocally,  !
 !                             each charged its own emission.                                        !
+! The leaf-angle distribution and its moments are test_optics_lib's.                       !
 !==========================================================================================!
 program test_canopy_radiation
    use meds_test_assert, only : check, check_true, test_report
@@ -27,20 +26,18 @@ program test_canopy_radiation
    use meds_constants,      only : stefan_boltzmann
    use meds_canopy_radiation, only : rad_env_t, rad_out_t, alloc_rad_env, ground_optics_env_t
    use meds_pft_params,   only : rad_pft_optics_t, RAD_VIS, RAD_NIR, RAD_LW, N_RAD_BAND_DEFAULT
-   use meds_optics_lib,     only : beta_lidf, leaf_bf, gfun_direct, N_LEAF_CLASS
+   use meds_optics_lib,     only : gfun_direct
    use meds_pft_derive,     only : derive_rad_optics, moments_to_beta_params
    use meds_canopy_radiation, only : canopy_radiation, ground_optics, layer_beam_sources
    implicit none
 
    real(wp), parameter :: TOL = 1.0e-9_wp
 
-   call test_leaf_angle_limits()
    call test_energy_conservation()
    call test_beers_law()
    call test_zero_lai_albedo()
    call test_multi_pft()
    call test_longwave_equilibrium()
-   call test_lidf_delta()
    call test_cohort_order()
    call test_tied_cohorts_codominant()
    call test_cutting_invariance()
@@ -49,16 +46,6 @@ program test_canopy_radiation
    call test_report('test_canopy_radiation')
 
 contains
-
-   !----- A delta leaf-angle distribution (std_deg = 0) must give FINITE Beta (p, q): the variance !
-   !      floor keeps kappa finite, where mt(1-mt)/0 would give a NaN LIDF. ----------------------!
-   subroutine test_lidf_delta()
-      real(wp) :: p, q
-      print '(a)', 'test_lidf_delta:'
-      call moments_to_beta_params(45.0_wp, 0.0_wp, p, q)     ! mean=45deg -> mt=0.5; std=0 -> vt floored
-      call check('delta LIDF p finite (variance floored)', p, 124999.5_wp, 1.0e-3_wp)
-      call check('delta LIDF q finite (variance floored)', q, 124999.5_wp, 1.0e-3_wp)
-   end subroutine test_lidf_delta
 
    !----- Build a 2-PFT, 3-band optics table (VIS/NIR/LW) with a chosen leaf-angle mean. ------!
    subroutine build_optics(mean_deg, opt)
@@ -109,41 +96,6 @@ contains
    end subroutine build_forcing
 
    !=======================================================================================!
-   subroutine test_leaf_angle_limits()
-      real(wp) :: p, q, bf
-      real(wp) :: lidf(N_LEAF_CLASS)
-      print '(a)', '[1] leaf-angle distribution limits'
-      !----- Uniform inclination (Beta(1,1)): <cos^2> = 0.5 exactly. ------------------------!
-      lidf = beta_lidf(1.0_wp, 1.0_wp) ; bf = leaf_bf(lidf)
-      call check('bf(uniform LAD)', bf, 0.5_wp, 2.0e-2_wp)
-      !----- Strongly planophile (small mean angle): bf -> ~1 (near-horizontal). ------------!
-      call moments_to_beta_params(8.0_wp, 6.0_wp, p, q)
-      lidf = beta_lidf(p, q) ; bf = leaf_bf(lidf)
-      if (bf > 0.90_wp) then
-         print '(a,f7.4)', '  ok   : bf(planophile) > 0.90   got ', bf
-      else
-         call check_true('bf(planophile) > 0.90', .false., bf)
-      end if
-      !----- Strongly erectophile (near-vertical): bf -> ~0. --------------------------------!
-      call moments_to_beta_params(82.0_wp, 6.0_wp, p, q)
-      lidf = beta_lidf(p, q) ; bf = leaf_bf(lidf)
-      if (bf < 0.10_wp) then
-         print '(a,f7.4)', '  ok   : bf(erectophile) < 0.10  got ', bf
-      else
-         call check_true('bf(erectophile) < 0.10', .false., bf)
-      end if
-      !----- Narrow distributions, whose unnormalized density underflows, still sum to one; a  !
-      !      spread of 0 at 45 deg puts the leaf area in the 40-50 deg class. -----------------!
-      call moments_to_beta_params(64.0_wp, 3.0_wp, p, q)
-      lidf = beta_lidf(p, q)
-      call check('LIDF sums to one (64 +- 3 deg)', sum(lidf), 1.0_wp, 1.0e-12_wp)
-      call moments_to_beta_params(45.0_wp, 0.0_wp, p, q)
-      lidf = beta_lidf(p, q)
-      call check('LIDF sums to one (45 +- 0 deg)', sum(lidf), 1.0_wp, 1.0e-12_wp)
-      call check_true('45 +- 0 deg in its class', lidf(5) > 0.99_wp, lidf(5))
-   end subroutine test_leaf_angle_limits
-
-   !=======================================================================================!
    subroutine test_energy_conservation()
       type(rad_pft_optics_t) :: opt
       type(rad_env_t)    :: f
@@ -152,7 +104,7 @@ contains
       integer(ik) :: pft(NC), b
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
       integer :: ih
-      print '(a)', '[2] shortwave energy conservation (4 cohorts)'
+      print '(a)', '[1] shortwave energy conservation (4 cohorts)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft  = [1_ik, 2_ik, 1_ik, 2_ik]
@@ -187,7 +139,7 @@ contains
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
       integer :: ih
-      print '(a)', '[8] cohort order: top of two equal-LAI cohorts absorbs more than the bottom'
+      print '(a)', '[6] cohort order: top of two equal-LAI cohorts absorbs more than the bottom'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik, 1_ik] ; lai = [2.0_wp, 2.0_wp] ; wai = [0.0_wp, 0.0_wp] ; tcan = 298.0_wp  ! idx1=bottom, idx2=top
@@ -227,7 +179,7 @@ contains
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
       real(wp) :: a_pft1, a_pft2, b_pft1, b_pft2, total_a, total_b
-      print '(a)', '[9] exactly-tied cohorts are co-dominant, not stacked'
+      print '(a)', '[7] exactly-tied cohorts are co-dominant, not stacked'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       !----- slots 1,2 tie exactly; slot 3 is a real overstory, the regime where the bias is worst. -!
@@ -279,7 +231,7 @@ contains
       integer(ik) :: pft1(1), pft5(5)
       real(wp)    :: hgt1(1), hgt5(5), lai1(1), lai5(5), wai1(1), wai5(5), t1(1), t5(5)
       real(wp)    :: up, dn, intercept
-      print '(a)', '[10] cutting invariance (one LAI-5 cohort against five LAI-1 cohorts)'
+      print '(a)', '[8] cutting invariance (one LAI-5 cohort against five LAI-1 cohorts)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.87_wp, 290.0_wp, 298.0_wp, f)
       pft1 = 1_ik ; hgt1 = 20.0_wp ; lai1 = 5.0_wp ; wai1 = 0.5_wp ; t1 = 298.0_wp
@@ -312,7 +264,7 @@ contains
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), kdir, gee, absorbed_vis, expect
       integer :: ih
       real(wp) :: elai
-      print '(a)', '[3] Beers law (single black cohort, direct beam)'
+      print '(a)', '[2] Beers law (single black cohort, direct beam)'
       call build_optics(45.0_wp, opt)
       call build_forcing(1.0_wp, 290.0_wp, 298.0_wp, f)
       !----- Black leaves: force VIS single-scatter albedo to ~0 by zeroing spectra. --------!
@@ -342,7 +294,7 @@ contains
       integer(ik) :: pft(NC)
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
       integer :: ih
-      print '(a)', '[4] zero-LAI canopy has albedo = ground albedo'
+      print '(a)', '[3] zero-LAI canopy has albedo = ground albedo'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik] ; lai = [0.0_wp] ; wai = [0.0_wp] ; tcan = 298.0_wp
@@ -362,7 +314,7 @@ contains
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
       real(wp) :: a_own1, a_own2, a_top1, a_top2
       integer :: ih
-      print '(a)', '[5] multi-PFT patch: conservation, and each cohort on its own optics (ED2 bug B1)'
+      print '(a)', '[4] multi-PFT patch: conservation, and each cohort on its own optics (ED2 bug B1)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.6_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik, 2_ik] ; lai = [1.5_wp, 1.5_wp] ; wai = 0.15_wp ; tcan = 298.0_wp
@@ -411,7 +363,7 @@ contains
       real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet, max_tissue
       integer :: ih
       real(wp), parameter :: TEQ = 300.0_wp
-      print '(a)', '[6] longwave radiative equilibrium (isothermal -> zero net absorption)'
+      print '(a)', '[5] longwave radiative equilibrium (isothermal -> zero net absorption)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.5_wp, TEQ, TEQ, f)          ! sky and soil both at Teq
       pft  = [1_ik, 2_ik, 1_ik] ; lai = [2.0_wp, 1.0_wp, 0.5_wp] ; wai = 0.1_wp * lai
@@ -446,7 +398,7 @@ contains
       real(wp)    :: hgt1(1), lai1(1), wai1(1), hgt2(2), lai2(2), wai2(2)
       real(wp)    :: net, gain_a, gain_b
       real(wp), parameter :: T_COOL = 295.0_wp, T_WARM = 305.0_wp
-      print '(a)', '[11] tissue longwave: each tissue charged its own emission'
+      print '(a)', '[9] tissue longwave: each tissue charged its own emission'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.5_wp, T_COOL, T_COOL, f)          ! sky and soil at the cool temperature
       pft1 = 1_ik ; hgt1 = 10.0_wp ; lai1 = 3.0_wp ; wai1 = 0.6_wp

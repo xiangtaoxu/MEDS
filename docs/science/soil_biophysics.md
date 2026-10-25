@@ -301,7 +301,7 @@ $`T^n`$) for the RK45 integrator; ESDIRK2's implicit stages take the backward-Eu
 latent heat into the step. A layer reaching freezing then overshoots in temperature, and the
 conservative commit puts the latent heat back only afterwards, so the freezing front depended on
 $`\Delta t`$. With Newton on the energies, a five-layer column frozen from the top for two days gives the
-same profile with 30-minute and 1-minute steps, to 0.007 K (`test_column_energy`).
+same profile with 30-minute and 1-minute steps, to 0.007 K (`test_soil_heat`).
 
 The conductivity is Johansen's, made ice-aware (`soil_thermal_conductivity`, `meds_therm_lib`). With the
 relative saturation $`S_r=\theta/\theta_{sat}`$, floored at 0.05 where the logarithm leaves its range of

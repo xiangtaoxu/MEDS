@@ -9,19 +9,22 @@
 !      a cloud term that only adds, and the clearness index's night sentinel;                  !
 !   3. the beam on a slope: level ground keeps its beam, no beam stays none, and the beam      !
 !      normal to a low sun is held at the solar constant.                                      !
+!   4. the longwave at another height (forcing.md §8): the file's longwave scales by the       !
+!      clear-sky emissivity times T^4, so a warmer, moister site gets more, and dz = 0 none.  !
 !==========================================================================================!
 program test_radiation_lib
    use meds_test_assert,   only : check, check_true, test_report
    use meds_kinds,         only : wp
    use meds_radiation_lib, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,  &
                                   partition_shortwave, clearness_index, clear_sky_emissivity,            &
-                                  synthesize_lwdown, slope_beam_factor
+                                  synthesize_lwdown, slope_beam_factor, lapse_longwave
    implicit none
 
    call test_sw_partition()
    call test_sw_partition_weissnorman()
    call test_lwdown_synthesis()
    call test_slope_beam()
+   call test_lapse_longwave()
 
    call test_report('test_radiation_lib')
 
@@ -131,5 +134,20 @@ contains
                       abs(slope_beam_factor(100.0_wp, 0.01_wp, 0.5_wp) - S0 * 0.5_wp / 100.0_wp) < 1.0e-9_wp)
 
    end subroutine test_slope_beam
+
+   !----- 4. The longwave at a site 500 m below its cell, warmer, moister and at a higher pressure. --!
+   subroutine test_lapse_longwave()
+      real(wp), parameter :: T0 = 285.0_wp, P0 = 95000.0_wp, Q0 = 0.007_wp
+      real(wp), parameter :: T1 = 288.25_wp, P1 = 100600.0_wp, Q1 = 0.0078_wp
+      real(wp) :: lw1
+      print '(a)', '-- 4. the longwave at another height --'
+      lw1 = lapse_longwave(300.0_wp, LW_CLEAR_BRUTSAERT, T0, Q0, P0, T1, Q1, P1)
+      call check('file longwave scales by eps*T^4', lw1,                                           &
+                 300.0_wp * clear_sky_emissivity(LW_CLEAR_BRUTSAERT, T1, Q1, P1) * T1**4           &
+                          / (clear_sky_emissivity(LW_CLEAR_BRUTSAERT, T0, Q0, P0) * T0**4), 1.0e-9_wp)
+      call check_true('the warmer, moister site gets more longwave', lw1 > 300.0_wp, lw1 - 300.0_wp)
+      call check('dz = 0 leaves longwave unchanged',                                               &
+                 lapse_longwave(300.0_wp, LW_CLEAR_IDSO, T0, Q0, P0, T0, Q0, P0), 300.0_wp, 1.0e-9_wp)
+   end subroutine test_lapse_longwave
 
 end program test_radiation_lib

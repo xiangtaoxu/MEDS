@@ -17,7 +17,7 @@ module meds_plant_energy
 
    public :: plant_energy_env_t, latent_pathway_t
    public :: tissue_energy_balance, canopy_tissue_energy, commit_tissue_energy
-   public :: sensible_heat_coeff, lw_emission_slope, leaf_transp_coeff, leaf_film_coeff, latent_pathway
+   public :: sensible_heat_coeff, leaf_transp_coeff, leaf_film_coeff
    public :: tissue_hcap_per_dt
    public :: EFFAREA_HEAT, EFFAREA_EVAP, EFFAREA_TRANSP
 

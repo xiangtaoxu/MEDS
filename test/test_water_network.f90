@@ -10,7 +10,8 @@
 !                        round-off, step by step.                                                 !
 !   4. PLANT ONLY      : a soil too deep for the stand to draw down: under a steady demand the    !
 !                        plant's steady state carries the transpiration through every path.        !
-!   5. SOIL ONLY       : no cohorts, a sealed bottom: the column relaxes to hydrostatic equilibrium. !
+!   5. SOIL ONLY       : no cohorts, a sealed bottom: the column drains nothing and relaxes to      !
+!                        hydrostatic equilibrium.                                                  !
 !   6. STIFF EXCHANGE  : a wet, densely rooted stand whose wood-soil exchange takes a fraction of   !
 !                        a second costs a handful of sub-steps, not thousands.                     !
 !   7. INFEASIBLE DEMAND: a leaf asked for many times the water it and its xylem can supply stays  !
@@ -23,6 +24,17 @@
 !  12. VANISHING STORES: a near-leafless leaf and a trace pond stay in range, and water closes.   !
 !  13. CAMPBELL        : on a Campbell clay the soil potentials are the Campbell curve's, finite  !
 !                        and below zero; the stand takes up water, and every step closes.         !
+! The soil column alone, on a 2 m loam (docs/science/soil_biophysics.md §The soil water column  !
+! and §Boundary conditions):                                                                 !
+!  14. DRAINAGE        : a wet column drains freely, and through a leaky base about f of that;    !
+!                        its water closes against the drainage.                                    !
+!  15. DOWNPOUR        : rain beyond a wet clay's infiltration ponds, and runs off past the pond.  !
+!  16. REWETTING       : a dried top layer re-wets within 12 h of rain, with little runoff.        !
+!  17. SUB-FREEZING    : rain below the triple point: the pond's enthalpy closes, and what         !
+!                        infiltrates carries its own enthalpy.                                     !
+!  18. AQUIFER         : the head-driven bottom is two-way and settles to hydrostatic equilibrium. !
+!  19. FROZEN TOP      : the ice impedes the rain's infiltration; the freezing curve's suction      !
+!                        fills a frozen layer to saturation, not past it; the water closes.        !
 !==========================================================================================!
 program test_water_network
    use meds_test_assert, only : check_true, check_close, check_int, test_report
@@ -38,9 +50,11 @@ program test_water_network
    use meds_fast_integ_backward_euler, only : water_step, water_jacobian_error
    use meds_plant_hydr_lib, only : water_curve_t, tissue_psi_to_rwc, tissue_psi_tlp
    use meds_pft_derive,     only : build_kirchhoff_table
-   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head
+   use meds_soil_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_to_head, soil_ice_state,  &
+                                    soil_liquid_capacity
+   use meds_therm_lib,       only : internal_energy_liquid, liquid_energy_to_temp
    use meds_pft_params,    only : hydraulics_table_t
-   use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN
+   use meds_soil_params, only : soil_profile_t, soil_params_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_soil_derive,        only : build_profile_hydraulics
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_water,    only : ground_evap_env_t
@@ -80,6 +94,7 @@ program test_water_network
    call test_accuracy()
    call test_vanishing_stores()
    call test_campbell()
+   call test_column_scenarios()
    call test_report('test_water_network')
 
 contains
@@ -328,7 +343,7 @@ contains
    subroutine test_soil_only()
       type(stand_t)       :: st
       type(soil_params_t) :: sealed
-      real(wp) :: theta(soil%n_active), head(soil%n_active), w0
+      real(wp) :: theta(soil%n_active), head(soil%n_active), w0, drain_max
       integer(ik) :: step, nsl
       nsl = soil%n_active
       theta = 0.40_wp ; theta(1:3) = 0.425_wp          ! wet: BCI's clay settles in days, not years
@@ -336,13 +351,16 @@ contains
       call make_stand(st, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
       st%drive%ground%q_air = 0.05_wp                 ! air wetter than any surface: no evaporation
       w0 = total_water(st)
+      drain_max = 0.0_wp
       do step = 1_ik, 96_ik * 30_ik
          call advance(st, sealed, 900.0_wp)
+         drain_max = max(drain_max, abs(st%water%flows%drain))
       end do
       head = st%water%state%psi_soil(2:nsl+1) / grav_head + soil%z_node(1:nsl)
       call check_true('soil only: hydrostatic equilibrium (total head uniform to 1 cm)',                        &
                       maxval(head) - minval(head) < 1.0e-2_wp, maxval(head) - minval(head))
       call check_close('soil only: sealed column keeps its water', total_water(st), w0, 1.0e-11_wp * w0)
+      call check_true('soil only: a sealed bottom drains nothing', drain_max < 1.0e-30_wp, drain_max)
    end subroutine test_soil_only
 
    !=======================================================================================!
@@ -578,6 +596,307 @@ contains
       call check_true('Campbell: every step closes to round-off', worst < 1.0e-13_wp, worst)
       call check_int('Campbell: no sub-step forced through', nfail, 0_ik)
    end subroutine test_campbell
+
+   !=======================================================================================!
+   !     The soil column alone.                                                             !
+   !=======================================================================================!
+
+   !----- The column's own scenarios, run with no stand on a 2 m loam of ten layers in place of the    !
+   !      fixture's clay, which is put back after them. -------------------------------------------!
+   subroutine test_column_scenarios()
+      type(soil_profile_t) :: clay
+      real(wp) :: bottoms(n_soil_layer_max)
+      clay = soil
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.43_wp, 0.078_wp,               &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
+      call test_column_drainage()
+      call test_downpour()
+      call test_dried_surface_rewets()
+      call test_pond_subfreezing_inflow()
+      call test_aquifer()
+      call test_frozen_top()
+      soil = clay
+   end subroutine test_column_scenarios
+
+   !----- No cohorts on the current soil at water content theta, an empty pond, the water it gives up  !
+   !      and its rain at 290 K, under air wetter than any surface, so nothing evaporates. -----------!
+   subroutine make_column(st, theta)
+      type(stand_t), intent(out) :: st
+      real(wp),      intent(in)  :: theta(:)
+      call make_stand(st, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
+      st%drive%t_soil = 290.0_wp
+      st%drive%t_rain = 290.0_wp
+      st%drive%ground%t_ground = 290.0_wp
+      st%drive%ground%q_air    = 0.05_wp
+      st%drive%ground%rho_air  = 1.2_wp
+      st%drive%ground%r_aero   = 100.0_wp
+   end subroutine make_column
+
+   !----- make_column's, with the soil's evaporation suppressed by a huge aerodynamic resistance. ---!
+   subroutine aquifer_column(st, theta)
+      type(stand_t), intent(out) :: st
+      real(wp),      intent(in)  :: theta(:)
+      call make_column(st, theta)
+      st%drive%ground%r_aero = 1.0e6_wp
+   end subroutine aquifer_column
+
+   !----- Freeze the column's top nfrozen layers at temperature temp: each keeps the liquid its    !
+   !      freezing curve holds there, the rest ice, and the network restarts from that state. ----!
+   subroutine freeze_top(st, theta, temp, nfrozen)
+      type(stand_t), intent(inout) :: st
+      real(wp),      intent(in)    :: theta(:), temp
+      integer(ik),   intent(in)    :: nfrozen
+      real(wp)    :: theta_liq, dtheta, dum(0)
+      integer(ik) :: k
+      do k = 1_ik, nfrozen
+         call soil_liquid_capacity(soil%layer_curve(k), temp, theta_liq, dtheta)
+         st%drive%ice(k) = soil_ice_state(soil%layer_curve(k), max(theta(k) - theta_liq, 0.0_wp))
+      end do
+      call set_water_state(st%static, soil, hyd, theta, st%drive%ice, 0.0_wp, 0.0_wp, dum, dum, st%water)
+   end subroutine freeze_top
+
+   !=======================================================================================!
+   !----- A wet column draining through its base (docs/science/soil_biophysics.md §Boundary         !
+   !      conditions): freely, where its water closes against the drainage, and through a leaky     !
+   !      base at f = 0.05, the ED soil maps' factor, where it drains about f of what the free one   !
+   !      does and closes as well. -------------------------------------------------------------!
+   subroutine test_column_drainage()
+      type(soil_params_t) :: opts
+      type(stand_t)       :: col
+      real(wp), parameter :: F_LEAK = 0.05_wp
+      real(wp) :: theta(10), w0, drained, drained_free
+      integer(ik) :: step
+      opts%water_bottom_bc = SOIL_BC_DRAIN
+      theta = 0.40_wp
+      !----- Free drainage. ---------------------------------------------------------------------!
+      opts%drain_factor = 1.0_wp
+      call make_column(col, theta)
+      w0 = total_water(col)
+      drained_free = 0.0_wp
+      do step = 1_ik, 20_ik
+         call advance(col, opts, 600.0_wp)
+         drained_free = drained_free + col%water%flows%drain
+      end do
+      call check_true('free drain: a wet column drains', drained_free > 0.0_wp, drained_free)
+      call check_close('free drain: its water closes against the drainage', w0 - total_water(col), drained_free,  &
+                       1.0e-10_wp * w0)
+      !----- A leaky base. ----------------------------------------------------------------------!
+      opts%drain_factor = F_LEAK
+      call make_column(col, theta)
+      drained = 0.0_wp
+      do step = 1_ik, 20_ik
+         call advance(col, opts, 600.0_wp)
+         drained = drained + col%water%flows%drain
+      end do
+      call check_true('leaky drain: a leaky column drains, by about f of what a free one does',                &
+                      drained > F_LEAK * drained_free .and. drained < 2.0_wp * F_LEAK * drained_free,            &
+                      drained / drained_free)
+      call check_close('leaky drain: its water closes against the drainage', w0 - total_water(col), drained,      &
+                       1.0e-10_wp * w0)
+   end subroutine test_column_drainage
+
+   !=======================================================================================!
+   !----- WET clay (low Ksat, small suction) under a downpour: infiltration is limited by the     !
+   !      clay's conductivity, so the excess ponds and, past the pond's capacity, runs off       !
+   !      (Hortonian). A bone-dry clay would instead take it up by suction (Green-Ampt). --------!
+   subroutine test_downpour()
+      type(soil_profile_t) :: loam
+      type(soil_params_t)  :: opts
+      type(stand_t)        :: col
+      real(wp) :: theta(10), w0, rain, infil, runoff, drained, bottoms(n_soil_layer_max)
+      integer(ik) :: step
+      loam = soil
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, bottoms)
+      call build_profile_hydraulics(10_ik, SOIL_RETENTION_VG, bottoms, 0.38_wp, 0.068_wp,          &
+           5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, soil)
+      theta = 0.36_wp
+      call make_column(col, theta)
+      w0 = total_water(col)
+      rain = 0.0_wp
+      infil = 0.0_wp
+      runoff = 0.0_wp
+      drained = 0.0_wp
+      do step = 1_ik, 4_ik
+         col%drive%rain = 1.0e-2_wp                                     ! 36 mm/hr
+         call advance(col, opts, 900.0_wp)
+         rain    = rain + col%drive%rain * 900.0_wp
+         infil   = infil + col%water%flows%infil - col%water%flows%exfil
+         runoff  = runoff + col%water%flows%spill
+         drained = drained + col%water%flows%drain
+      end do
+      call check_true('downpour: infiltration < rain (conductivity-limited)', infil < rain, infil / rain)
+      call check_true('downpour: the pond filled to its capacity',                                  &
+                      col%water%state%water_soil(POND) >= opts%w_pond_max - 1.0e-9_wp, col%water%state%water_soil(POND))
+      call check_true('downpour: and the rest ran off', runoff > 0.0_wp, runoff)
+      call check_close('downpour: rain = change in store + runoff + drainage', total_water(col) - w0,             &
+                       rain - runoff - drained, 1.0e-10_wp * rain)
+      soil = loam
+   end subroutine test_downpour
+
+   !=======================================================================================!
+   !----- A top layer dried to residual takes up 2 mm/h of rain: within 12 h it has re-wetted     !
+   !      and almost none of the rain has run off. The pond face's conductivity is the geometric  !
+   !      mean of the saturated pond's and the top layer's, and the dry layer's suction drives it;  !
+   !      the top layer's conductivity alone would seal a dried surface against rain. -----------!
+   subroutine test_dried_surface_rewets()
+      type(soil_params_t)    :: opts
+      type(stand_t)          :: col
+      real(wp) :: theta(10), rain, runoff
+      integer(ik) :: step
+      theta = 0.25_wp
+      theta(1) = 0.08_wp
+      call make_column(col, theta)
+      col%drive%ground%t_ground = 298.0_wp
+      col%drive%ground%q_air = 0.02_wp
+      rain = 0.0_wp
+      runoff = 0.0_wp
+      do step = 1_ik, 48_ik
+         col%drive%rain = 2.0_wp / 3600.0_wp                            ! 2 mm/h
+         call advance(col, opts, 900.0_wp)
+         rain = rain + col%drive%rain * 900.0_wp
+         runoff = runoff + col%water%flows%spill
+      end do
+      theta(1) = col%water%state%water_soil(2) / (rho_h2o * soil%dz(1))
+      call check_true('rewetting: the dried top layer re-wets within 12 h of rain', theta(1) > 0.20_wp, theta(1))
+      call check_true('rewetting: and under 5 % of the rain runs off', runoff < 0.05_wp * rain, runoff / rain)
+   end subroutine test_dried_surface_rewets
+
+   !=======================================================================================!
+   !----- Rain (or sub-threshold snow routed to the ground) below the triple point joins the pond:  !
+   !      what the pond received in enthalpy is what it gave the soil, kept, and lost as runoff,    !
+   !      and the water that infiltrated carried its own enthalpy -- an effective temperature below  !
+   !      the melt plateau, not u_liq at the plateau, which would create energy all winter. -------!
+   subroutine test_pond_subfreezing_inflow()
+      type(soil_params_t)    :: opts
+      type(stand_t)          :: col
+      real(wp) :: theta(10), dt, e_in, t_infil
+      theta = 0.25_wp
+      call make_column(col, theta)
+      col%drive%rain = 5.0e-6_wp
+      col%drive%t_rain = 270.0_wp                                             ! 18 mm/day at 3.16 K below the triple point
+      col%drive%ground%t_ground = 271.0_wp
+      col%drive%ground%q_air = 0.003_wp
+      dt = 150.0_wp
+      call advance(col, opts, dt)
+      e_in = col%drive%rain * dt * internal_energy_liquid(270.0_wp)
+      associate (fl => col%water%flows, st => col%water%state)
+         call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',       &
+                         st%water_soil(POND) <= 1.0e-9_wp .and. fl%infil > 0.0_wp, st%water_soil(POND))
+         call check_close('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received', &
+                          fl%infil_enth - fl%exfil_enth + st%e_pond + fl%spill_enth, e_in, 1.0e-9_wp * abs(e_in))
+      end associate
+      call check_close('sub-freezing inflow: the rain brought exactly that enthalpy', col%water%flows%rain_enth,     &
+                       e_in, 0.0_wp)
+      t_infil = liquid_energy_to_temp(col%water%flows%infil_enth / col%water%flows%infil)
+      call check_true('sub-freezing inflow: infiltrating water carries its own (sub-plateau) enthalpy',    &
+                      t_infil < 273.0_wp, t_infil)
+   end subroutine test_pond_subfreezing_inflow
+
+   !=======================================================================================!
+   !----- The aquifer bottom is head-driven against a saturated zone at the column base: a dry     !
+   !      column draws water UP (free drainage never can), a wet one still drains down, the water   !
+   !      closes with the flux running upward, and the column relaxes to hydrostatic equilibrium    !
+   !      with the base (the bottom node's head -> minus half its thickness). -------------------!
+   subroutine test_aquifer()
+      type(soil_params_t)    :: opts
+      type(stand_t)          :: col
+      real(wp) :: theta(10), drain_dry, drain_wet, w0, drained, theta_bot0, head_n, delta
+      integer(ik) :: step, n
+      n = 10_ik
+      opts%water_bottom_bc = SOIL_BC_AQUIFER
+      theta = 0.12_wp
+      call aquifer_column(col, theta)
+      call advance(col, opts, 600.0_wp)
+      drain_dry = col%water%flows%drain
+      call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',        &
+                      drain_dry < 0.0_wp, drain_dry)
+      theta = 0.40_wp
+      call aquifer_column(col, theta)
+      call advance(col, opts, 600.0_wp)
+      drain_wet = col%water%flows%drain
+      call check_true('AQUIFER: wet column still drains DOWNWARD (drainage > 0)', drain_wet > 0.0_wp, drain_wet)
+      theta = 0.15_wp
+      call aquifer_column(col, theta)
+      w0 = total_water(col)
+      drained = 0.0_wp
+      theta_bot0 = 0.15_wp
+      do step = 1_ik, 40_ik
+         call advance(col, opts, 600.0_wp)
+         drained = drained + col%water%flows%drain
+      end do
+      call check_close('AQUIFER: water closes while drawing upward', total_water(col) - w0, -drained,              &
+                       1.0e-10_wp * w0)
+      theta(n) = col%water%state%water_soil(1+n) / (rho_h2o * soil%dz(n))
+      call check_true('AQUIFER: the dry column WETS from below', theta(n) > theta_bot0, theta(n))
+      do step = 1_ik, 1200_ik
+         call advance(col, opts, 3600.0_wp)
+      end do
+      head_n = col%water%state%psi_soil(1+n) / grav_head
+      delta  = 0.5_wp * soil%dz(n)
+      call check_true('AQUIFER: bottom layer reaches hydrostatic equilibrium (head_n -> -Delta)',           &
+                      abs(head_n + delta) < 0.2_wp, head_n + delta)
+      call check_true('AQUIFER: and the residual bottom flux has died',                                         &
+                      abs(col%water%flows%drain / 3600.0_wp) < 1.0e-5_wp, col%water%flows%drain / 3600.0_wp)
+   end subroutine test_aquifer
+
+   !=======================================================================================!
+   !----- A loam column with its top two layers at -7 C (docs/science/soil_biophysics.md, "Frozen  !
+   !      soil"). Rain of 10 mm/h for two hours on a moist column: the ice's impedance lets in a   !
+   !      tenth of what the thawed column takes, or less. Then a dry frozen top over wet soil and   !
+   !      no rain for four days: the freezing curve's suction draws water up into the frozen layer, !
+   !      which fills to saturation and no further. The water closes in both. ------------------!
+   subroutine test_frozen_top()
+      type(soil_params_t)  :: opts
+      type(stand_t)        :: thawed, frozen
+      real(wp) :: theta(10), rain, infil_thawed, infil_frozen, w0, runoff, drained, theta1, theta1_max
+      integer(ik) :: step
+      theta = 0.36_wp
+      call make_column(thawed, theta)
+      call make_column(frozen, theta)
+      call freeze_top(frozen, theta, 266.0_wp, 2_ik)
+      w0 = total_water(frozen)
+      rain = 0.0_wp
+      infil_thawed = 0.0_wp
+      infil_frozen = 0.0_wp
+      runoff = 0.0_wp
+      drained = 0.0_wp
+      do step = 1_ik, 8_ik
+         thawed%drive%rain = 10.0_wp / 3600.0_wp
+         frozen%drive%rain = thawed%drive%rain
+         call advance(thawed, opts, 900.0_wp)
+         call advance(frozen, opts, 900.0_wp)
+         rain = rain + frozen%drive%rain * 900.0_wp
+         infil_thawed = infil_thawed + thawed%water%flows%infil - thawed%water%flows%exfil
+         infil_frozen = infil_frozen + frozen%water%flows%infil - frozen%water%flows%exfil
+         runoff  = runoff + frozen%water%flows%spill
+         drained = drained + frozen%water%flows%drain
+      end do
+      call check_true('frozen top: the ice impedes infiltration (frozen < thawed / 10)', infil_frozen < 0.1_wp * infil_thawed,  &
+                      infil_frozen / max(infil_thawed, tiny(1.0_wp)))
+      call check_close('frozen top: rain = change in store + runoff + drainage', total_water(frozen) - w0,         &
+                       rain - runoff - drained, 1.0e-10_wp * rain)
+
+      !----- A dry frozen top over wet soil: cryosuction, up to saturation. ----------------------!
+      theta = 0.40_wp
+      theta(1) = 0.20_wp
+      call make_column(frozen, theta)
+      call freeze_top(frozen, theta, 266.0_wp, 1_ik)
+      w0 = total_water(frozen)
+      drained = 0.0_wp
+      theta1_max = 0.0_wp
+      do step = 1_ik, 384_ik
+         call advance(frozen, opts, 900.0_wp)
+         drained = drained + frozen%water%flows%drain
+         theta1 = frozen%water%state%water_soil(2) / (rho_h2o * soil%dz(1))
+         theta1_max = max(theta1_max, theta1)
+      end do
+      call check_true('frozen top: the frozen layer draws water up from the wet soil below', theta1 > 0.25_wp, theta1)
+      call check_true('frozen top: and fills no further than saturation', theta1_max <= soil%theta_sat(1) + 1.0e-6_wp,   &
+                      theta1_max)
+      call check_close('frozen top: cryosuction, change in store = - drainage', total_water(frozen) - w0, -drained, &
+                       1.0e-10_wp * w0)
+   end subroutine test_frozen_top
 
    !=======================================================================================!
    !     Small helpers.                                                                     !

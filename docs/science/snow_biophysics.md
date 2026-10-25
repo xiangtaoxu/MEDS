@@ -129,7 +129,7 @@ over the canopy height, not this cover fraction ([canopy_aerodynamics](canopy_ae
 
 | Concept | Routine |
 |---|---|
-| snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` (`snow_energy_step`, the two in one step, for the tests) |
+| snow energy / base conductance | `meds_surface`: `snow_surface_balance`, `snow_take_exchange`, `snow_base_conductance` |
 | the stage before the march, the exchange in it, the commit | `meds_surface`: `prepare_snow_stage`, `ground_surface_exchange` (from `meds_fast_integ_derivs`' `surface_derivs`); `meds_fast_integ_update`: `update_dynamic_state` |
 | snow mass / cover / melt | `meds_surface`: `snow_accumulate`, `snow_cover_fraction`, `snow_drain_meltwater` |
 | prognostic snow type | `meds_patch_state_vars`: `snow_state_t` |
