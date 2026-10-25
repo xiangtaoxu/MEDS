@@ -150,7 +150,8 @@ per module of the new layout (#528). The soil-carbon state holds its pools as th
 (#529). Every documentation page and README is checked against the code and rewritten for
 readability, with no change to any result (#542). Before the release, a sweep: the default forcing
 reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
-`spinup_xi`, and four code oddities go (#551).
+`spinup_xi`, and four code oddities go (#551). The production build accepts a PFT file of
+several PFTs again (#543).
 
 **Upgrading from v0.3.5:**
 - **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
@@ -1969,6 +1970,14 @@ reader reads a file's gaps and packing, a run without the fast loop decays its s
   `met_advance` returned early on a held start, at the recycle seam and past the file's end, before
   it updated the index held through the night. Only `lwdown_source = "synthesize"` reads it, which
   no shipped config uses.
+- **The production build refused every PFT file with more than one PFT** (#543). It stopped at the
+  configuration check with `hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)`,
+  so examples 03, 05 and 06 could not run on it. The PFTs' values were read correctly; the check read
+  them wrongly. It tested each pressure-volume curve key as an array expression over
+  `hydro(1:n)%leaf_curve%<key>`, and ifx 2026.1's AVX-512 code (`MEDS_CPU_TARGET=cascadelake`, with or
+  without IPO) took that array's elements from the wrong offsets: PFT 2's elastic modulus and PFT 3's
+  pi0 as their apoplastic fractions. `check_hydraulics` now checks the curves one PFT at a time. The
+  dev and debug builds, and every result, are unchanged.
 - **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
   now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
 - **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`
