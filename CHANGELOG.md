@@ -1748,6 +1748,12 @@ one helper groups the cohorts of one height into a layer (#514).
 
 ### Fixed
 
+- **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
+  water over 250 kg/m³, so at another density the first window's canopy burial and snow cover read the
+  wrong depth: 0.160 m where 40 kg/m² at 350 kg/m³ is 0.114 m. The depth is now the water over `rho_snow`.
+  At the default density the result is unchanged.
+- **An unclosed TOML string read as empty** (#533). `io_config = "my_variables.txt`, with no closing
+  quote, ran on the default variables. The reader now stops on it and names the key.
 - **Tests that did not test what they said** (#518).
   - `restart_exact` was skipped without pandas, which it does not use. It now checks its own dependencies.
   - `test_column_rk45`'s "sealed" saturated column drained. It is sealed now, and its θ bound is hydrostatic.
