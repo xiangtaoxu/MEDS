@@ -1,12 +1,14 @@
 # MEDS diagnostic output
 
-How MEDS reports itself: what a variable means, how it is aggregated across the demographic
-hierarchy and across time, and how to ask for the ones you want.
+This page describes how MEDS reports itself: what a diagnostic variable means, how it is aggregated
+across the demographic hierarchy (cohort › patch › site › polygon) and across time, and how to choose
+the variables you want. Read §3 for variable names, §4 for what a record holds, and §5 to select
+output.
 
 Implementation: `src/io/output/` (`meds_output_{types,registry,setup,extract,reduce,integrate,stream}`)
-plus the per-cohort / per-patch accumulators in `src/state/meds_diag_vars.f90`. Design and rationale:
-`docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
-`docs/dev_plans/MEDS_IO_DESIGN.md`.
+plus the per-cohort and per-patch accumulators in `src/state/meds_diag_vars.f90`. The temporal
+aggregation engine underneath is recorded in
+[`docs/dev_plans/MEDS_IO_DESIGN.md`](../dev_plans/MEDS_IO_DESIGN.md).
 
 ---
 
@@ -30,13 +32,14 @@ plus the per-cohort / per-patch accumulators in `src/state/meds_diag_vars.f90`. 
 ```
 
 Stages [1]–[4] run inside the time step; a closed period's record is queued, and stage [5] writes the
-queues when a calendar month closes and at the end of the run, so a step makes no netCDF call
-([order of processes](order_of_processes.md) §6).
+queues when a calendar month closes, after a failed step and at the end of the run, so a step makes no
+netCDF call ([order of processes](order_of_processes.md) §6).
 
-Stage [2] is why per-cohort ecophysiology is available at all. `A_net`, `g_sw`, `C_i`, ψ_leaf,
-ψ_wood, PLC, sapflow, root uptake, absorbed radiation and the turbulent fluxes exist only inside the
-fast loop's sub-step, recomputed every `dt_fast`; without the capture each value would be discarded
-at the end of its sub-step.
+Stage [2] is why per-cohort ecophysiology is available at all. Net assimilation, stomatal
+conductance, the intercellular CO₂ concentration, leaf and wood water potential, PLC (percent loss of
+conductivity), sap flow, root uptake, absorbed radiation and the turbulent fluxes exist only inside the
+fast loop's sub-step, recomputed every `dt_fast`; without the capture each value would be discarded at
+the end of its sub-step.
 
 ### Where the stages live
 
@@ -81,12 +84,12 @@ The reduction chain, per patch `p` and cohort `i`, with per-cohort weight `w`:
 ```
 
 ```math
-\text{site (sum)} = \sum_p a_p \sum_{i \in p} w_i x_i
+\text{polygon (sum)} = \sum_p a_p \sum_{i \in p} w_i x_i
 \qquad
-\text{site (mean)} = \frac{\sum_p a_p \sum_{i \in p} w_i x_i}{\sum_p a_p \sum_{i \in p} w_i} \qquad(2)
+\text{polygon (mean)} = \frac{\sum_p a_p \sum_{i \in p} w_i x_i}{\sum_p a_p \sum_{i \in p} w_i} \qquad(2)
 ```
 
-Patch area `a_p` enters **only** at the patch → site step, never inside the weight, so the same `w`
+Patch area `a_p` enters **only** at the patch → polygon step, never inside the weight, so the same `w`
 serves every scale. A patch-axis value therefore carries no area factor: it is per m² of *that
 patch's own* ground, which is what makes a gap-versus-closed-canopy comparison meaningful.
 
@@ -97,7 +100,7 @@ patches weighted by their areas within the site), the forcing each site saw, and
 
 **Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
 `_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement. "Nothing
-to average" covers a PFT or size class with no members, and a whole site, as on bare ground. A
+to average" covers a PFT or size class with no members, and a whole polygon, as on bare ground. A
 **sum** over an empty PFT or size class is a true `0`, because reporting fill there would break the
 closure identity, eq. (3), the moment a PFT went locally extinct. The two conventions differ on purpose.
 
@@ -108,16 +111,17 @@ that step's output tick. It is fill on the cohort axis, and it is left out of ev
 
 A 0 in its place would pull a canopy temperature towards 0 K.
 
-**What a run does not simulate.** A run without the fast loop (`fast_biophysics_on = false`)
+**What a run does not simulate.** A run without the fast loop (`[fast].fast_biophysics_on = false`)
 reports every fast-loop variable as `_FillValue`: the fluxes, the canopy air, the ground, the
 forcing echo and the per-cohort fast diagnostics. The slow operators' own rates (disturbed area,
 recruitment, mortality carbon, and litterfall when soil carbon is on) are weighted by the slow step
 instead, and report their values.
 
-**Closure identities** (asserted in `test_output`'s reduction section, and true to roundoff on real output):
+**Closure identities** (asserted in ctest `output`, reduction section, and true to roundoff on real
+output):
 
 ```math
-\sum_{\text{pft}} X_\text{pft} \;=\; \sum_{\text{class}} X_\text{size} \;=\; X_\text{site} \qquad(3)
+\sum_{\text{pft}} X_\text{pft} \;=\; \sum_{\text{class}} X_\text{size} \;=\; X_\text{polygon} \qquad(3)
 ```
 
 ---
@@ -127,8 +131,8 @@ instead, and report their values.
 **Names.** A variable is named `[mean_]<quantity>[_<breakdown>]_<level>`. The level is `_co`
 (cohort), `_pa` (patch), `_si` (site) or `_py` (polygon); the breakdown `_pft`, `_size` (DBH class) or
 `_layer` (soil layer). `mean_` marks a mean over the record's period, and a name without it is the
-value at the period's end, its snapshot (§4, Snapshots). The tier is the file, `<prefix>-F-…`, `-D-`, `-M-` or `-Y-`, so one
-variable has one name at every tier. The axes' coordinates and bookkeeping (`n_cohort`, `n_patch`,
+value at the period's end, its snapshot (§4, Snapshots). The tier is the file, `<prefix>-F-…`, `-D-`,
+`-M-` or `-Y-`, so one variable has one name at every tier. The axes' coordinates and bookkeeping (`n_cohort`, `n_patch`,
 `cohort_offset`, `cohort_count`, `global_cohort_id`, `global_patch_id`, `owner_patch`, `patch_site`,
 `soil_z`, …) carry no suffix.
 
@@ -156,8 +160,8 @@ distribution comparable to a forest inventory.
 profiles. A window longer than a month would straddle the annual disturbance restructuring, so the
 slot set that was averaged would not be the slot set present at flush. The registry rejects it at
 start-up. For the same reason a file with a cohort or patch axis spans at most a month, whatever
-`[output].file_chunk` says (a FAST-tier one, a day). Its cohort and patch axes are as long as the
-largest live count among the polygons when it opens; `n_cohort` and `n_patch` give each polygon's
+`[output.<tier>].file_chunk` says (a day for the FAST tier). Its cohort and patch axes are as long as
+the largest live count among the polygons when it opens; `n_cohort` and `n_patch` give each polygon's
 live count per record, and the slots past it are `_FillValue`.
 
 **The soil axis has a fixed length.** It is `n_soil_layer_max` long whatever a site's layer count: a
@@ -194,7 +198,8 @@ that is identical to chaining.
 
 Every state's mean has its snapshot, off by default (`--dump-io-config` lists it as `false`), and the
 states that are snapshots by default (`nplant_co`, `area_pa`, `age_pa`, `n_cohort_py`, `n_patch_py`)
-have their means. What the end of the period means depends on where the state comes from:
+have their means. The category codes `pft_co` and `dist_type_pa` are snapshots with no mean. What the
+end of the period means depends on where the state comes from:
 
 - **A state of the slow step** is read as the period's last step left it: the daily `dbh_co` stamped
   31 July is the diameter at 1 August 00:00 (Which steps a record holds, below), and the monthly one
@@ -214,7 +219,7 @@ work, and the slow step's growth, allocation, litter, mortality, recruitment and
 value at an instant is the last fast step's, before midnight UTC for a daily record, which says little
 a mean does not; on an F tier one sub-step long the mean is that value anyway. Each site's forcing
 (`mean_air_temp_si` … `mean_nir_beam_si`) is a mean only too: the fast loop keeps no sub-step of it.
-The ids and the axes' bookkeeping are snapshot-only.
+The ids, the category codes and the axes' bookkeeping are snapshot-only.
 
 #### Which steps a record holds
 
@@ -240,9 +245,9 @@ ends on the boundary, and before the fast loop of the step that begins there. As
   biomass the disturbance removes first shows in the 1 January daily state. The 31 December state is
   the stand before it.
 
-**A checkpoint on a boundary holds the stand before the restructuring.** The global attribute
+**A state file written on a boundary holds the stand before the restructuring.** Its global attribute
 `restructure_pending` (`none`, `month` or `year`) records which restructuring is still owed. A run
-resumed from the checkpoint performs it first, so its first record holds the same events as the
+restarted from the state file performs it first, so its first record holds the same events as the
 continuous run's.
 
 #### The skin temperature
@@ -254,8 +259,8 @@ per patch (`mean_skin_temp_pa`), and both are written sub-daily as well as daily
   \sigma)^{1/4}`$, taken per patch and sub-step and then averaged. It is what an infrared thermometer
   or a satellite land-surface temperature sees, and over a forest it is mostly the canopy.
 - **What it is not.** It is not the soil. MEDS has no skin layer of its own: snow-free, the ground
-  surface is the top soil layer, `mean_soil_temp_top_py`. That layer's node sits 1.8 cm down, so its
-  diurnal swing is damped and lagged against the air's.
+  surface is the top soil layer, `mean_soil_temp_top_py`. That layer's node sits at its midpoint (2.5 cm
+  down for the default 5 cm top layer), so its diurnal swing is damped and lagged against the air's.
 - **Why it is formed inside the step.** Because of the fourth root, the skin temperature of the mean
   longwave is not the mean skin temperature.
 - **The emissivity.** It is taken as 1, so the reflected sky longwave counts as emission. Under a sky
@@ -264,9 +269,9 @@ per patch (`mean_skin_temp_pa`), and both are written sub-daily as well as daily
 
 ### The FAST tier by patch
 
-A polygon mean over a closed canopy and a gap can describe neither. In a stand with a gap, the gap's
-surface soil can run 13 K above the air at midday while the closed patch's runs 0.7 K below it. So
-each fast quantity of the patch block is also written per patch on the F tier:
+A polygon mean over a closed canopy and a gap can describe neither: in a stand with a gap, the gap's
+surface soil can run well above the air at midday while the closed patch's runs below it. So each fast
+quantity of the patch block is also written per patch on the F tier:
 
 - `mean_cas_temp_pa`, `mean_soil_temp_top_pa`, `mean_skin_temp_pa`, `mean_le_pa`, `mean_h_pa`,
   `mean_rnet_pa`, `mean_nee_pa`, `mean_gpp_pa` and `mean_npp_pa`, which have daily values too, under
@@ -367,16 +372,17 @@ A variable is written at its **default tiers** unless `[output].io_config` says 
 defaults write what makes a run judgeable: the structure, carbon, water, energy, soil-carbon, forcing
 and budget variables, the means at their usual tiers. Off by default, because they are large or
 specialised: the per-cohort leaf gas exchange and hydraulics (the `ecophys` group), the absorbed
-radiation (`radiation`), the soil columns by layer and patch, and every snapshot. A tier whose
-`[output.<tier>].enabled` is false writes nothing, whatever `io_config` says.
+radiation (`radiation`), the soil columns by layer and patch, and the snapshots not named in §4. The
+F tier is off by default, and a tier whose `[output.<tier>].enabled` is false writes nothing, whatever
+`io_config` says.
 
 ```bash
-meds_main --dump-io-config          # writes meds_io_config.toml: every variable, ready to uncomment
+meds_main --dump-io-config [main.toml]   # writes meds_io_config.toml: every variable, ready to uncomment
 ```
 
 lists every variable under its group, with its default tiers (`false`: off) and the tiers it can be
 on: F with a sub-step value, D and M with a value at the step's end, Y as well off the cohort and patch
-axes.
+axes. The shipped `meds_io_config.toml` is that list, generated from the reference configs.
 
 **`io_config`** is a TOML file of `[variables]` lines. Each names a variable, or a pattern of names
 with `*` for any run of characters (quoted, as TOML wants it), and gives it tiers, `true` (its
@@ -419,19 +425,25 @@ the cohort and patch axes, the largest lever on output volume; `"*_pft_py"` and 
 the PFT and size-class breakdowns; `"mean_*"` every mean, `"mean_resid_*"` the energy and water budget
 residuals. Keep those residuals: a closure nobody records is worse than one nobody looks at.
 
-**Groups** (9) head the `--dump-io-config` list: `structure`, `carbon`, `water`, `energy`,
-`numerics`, `radiation`, `ecophys`, `biogeochem` and `forcing`. `biogeochem` keeps the soil-carbon
-pools apart from `carbon`; they stay 0 with `soil_carbon_on = false`. `forcing` is the atmospheric
-boundary the run used, after the reader's shortwave partition, rain/snow split and optional
-corrections: polygon means at every tier (`mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`,
-`mean_wind_py`, `mean_lwdown_py`, the four shortwave streams `mean_par_beam_py` …
-`mean_nir_diffuse_py`, `mean_precip_py`, `mean_snowfall_py`, `mean_atm_co2_py`, `mean_cosz_py`,
-`mean_rho_air_py`, and `mean_rainf_py`, sub-daily only; rain and snow are the split each patch made at
-its canopy-air top, area-weighted), and three patch rows at the daily and monthly tiers: the forcing
-each patch saw at its canopy-air top, `mean_wind_cas_top_pa` and `mean_air_temp_cas_top_pa`, and that
-top's height `mean_cas_depth_pa` (with `mean_rough_pa` and `mean_displace_pa`, in `energy`, the move
-can be rebuilt; [`forcing.md`](forcing.md) §8). With `mean_sw_in_py` and `mean_precip_py`, it is what
-checks the sub-daily reconstruction against a tower.
+**Groups** head the `--dump-io-config` list (§7). The `biogeochem` group keeps the soil-carbon
+pools apart from `carbon`; they stay 0 with `[soil_carbon].soil_carbon_on = false`. The `forcing` group is
+the atmospheric boundary the run used, after the reader's shortwave partition, rain/snow split and
+optional corrections:
+
+- polygon means at every tier: `mean_air_temp_py`, `mean_qair_py`, `mean_psurf_py`, `mean_wind_py`,
+  `mean_lwdown_py`, the four shortwave streams `mean_par_beam_py` … `mean_nir_diffuse_py`,
+  `mean_sw_in_py`, `mean_precip_py`, `mean_snowfall_py`, `mean_atm_co2_py`, `mean_cosz_py` and
+  `mean_rho_air_py`; `mean_rainf_py` is sub-daily only. Rain and snow are the split each patch made at
+  its canopy-air top, area-weighted;
+- each site's forcing after its terrain, at the daily, monthly and annual tiers (`mean_air_temp_si`
+  … `mean_nir_beam_si`);
+- three patch rows at the daily and monthly tiers: the forcing each patch saw at its canopy-air top,
+  `mean_wind_cas_top_pa` and `mean_air_temp_cas_top_pa`, and that top's height `mean_cas_depth_pa`.
+  With `mean_rough_pa` and `mean_displace_pa` (in `energy`) the move can be rebuilt
+  ([`forcing.md`](forcing.md) §8).
+
+With `mean_sw_in_py` and `mean_precip_py`, the group is what checks the sub-daily reconstruction against
+a tower.
 
 ---
 
@@ -439,7 +451,7 @@ checks the sub-daily reconstruction against a tower.
 
 Look at these first.
 
-**Fast-scale (14).** `mean_sw_in_py`, `mean_rnet_py` — is the radiation forcing physically shaped?
+**Fast-scale.** `mean_sw_in_py`, `mean_rnet_py` — is the radiation forcing physically shaped?
 `mean_le_py`, `mean_h_py` — the Bowen ratio, the single most diagnostic energy number.
 `mean_gpp_py` — light-response shape and magnitude. `mean_nee_py` — night `= +Reco`, day `= −uptake`;
 the sign flip is the integration test. `mean_et_py` — closes against `mean_le_py`, catches a
@@ -449,7 +461,7 @@ means the canopy air's CO₂ is not coupled. `mean_soil_temp_layer_si`, `mean_so
 and the drydown shape. `mean_ustar_py` — is the surface layer turbulent at all?
 **`mean_resid_energy_py`, `mean_resid_water_py` — a nonzero value invalidates everything above.**
 
-**Slow-scale (18).** `mean_agb_py`, `mean_lai_py`, `mean_basal_area_py`, `mean_nplant_py` — the four
+**Slow-scale.** `mean_agb_py`, `mean_lai_py`, `mean_basal_area_py`, `mean_nplant_py` — the four
 stand-structure scalars. `mean_agb_pft_py`, `mean_lai_pft_py` — is PFT composition doing anything?
 `mean_agb_size_py`, `mean_nplant_size_py` — the size distribution, the demographic core's actual output.
 `mean_npp_py`, `mean_rh_py`, `mean_nee_py` — the carbon balance; drift is the long-run sanity check.
@@ -462,9 +474,9 @@ monotonically climbing count is a config bug. `mean_canopy_height_py` — stand 
 **Budgets you can close from the file alone:**
 
 ```math
-\frac{\mathrm{d}\,\text{agb}}{\mathrm{d}t} \approx \text{agb\_growth\_site} - \text{agb\_mort\_site}
+\frac{\mathrm{d}\,\text{agb}}{\mathrm{d}t} \approx \text{mean\_agb\_growth\_py} - \text{mean\_agb\_mort\_py}
 \qquad
-\frac{\mathrm{d}\,\text{soilc}}{\mathrm{d}t} \approx \sum \text{litter}_* - \text{rh\_site} \qquad(4)
+\frac{\mathrm{d}\,\text{soilc}}{\mathrm{d}t} \approx \sum \text{mean\_litter\_*\_py} - \text{mean\_rh\_py} \qquad(4)
 ```
 
 with `mean_rh_py` [µmol CO₂ m⁻² s⁻¹] taken to kgC m⁻² yr⁻¹, as the litter rates are (× 1.20107 × 10⁻⁸
@@ -480,7 +492,7 @@ soil pools. A boundary's kills (`mean_mort_carbon_cull_py`, `mean_mort_carbon_di
 litter of the step after it. With soil carbon off, all of it leaves the model. `mean_litter_struct_py`
 is a destination, the structural pools, so it overlaps the others.
 
-The three `mort_carbon_*_site` pathways (background, cull, disturbance) are exclusive and together
+The three `mean_mort_carbon_*_py` pathways (background, cull, disturbance) are exclusive and together
 the whole-individual mortality carbon, every pool of the plant included. They are reported apart
 because a stand thinning steadily and a stand knocked over lose the same carbon and mean different
 things. They are written whatever `soil_carbon_on` says, since they are demography.
@@ -489,27 +501,37 @@ things. They are written whatever `soil_carbon_on` says, since they are demograp
 
 ## 7. Variable inventory
 
-373 registered variables: 236 means, 131 snapshots and the axes' 6 bookkeeping variables. Run
-`meds_main --dump-io-config` for the authoritative list with units, groups, axes and default streams —
-it is generated from the registry, so it cannot drift.
+`meds_main --dump-io-config` writes the authoritative list, with units, groups, axes and default tiers.
+It is generated from the registry, so it cannot drift; the page states no count for the same reason.
 
-| group | count | | axis | count |
-|---|---|---|---|---|
-| structure | 114 | | polygon | 166 |
-| energy | 64 | | cohort | 98 |
-| ecophys | 50 | | patch | 55 |
-| forcing | 39 | | pft | 14 |
-| carbon | 37 | | dbh_class | 10 |
-| water | 28 | | soil | 10 |
-| biogeochem | 26 | | (patch, soil) | 10 |
-| numerics | 10 | | site | 10 |
-| radiation | 5 | | | |
+| Group | What it holds |
+|---|---|
+| `structure` | demography and size: plant number, DBH, biomass, patch geometry, ids |
+| `carbon` | GPP, NPP, respiration, allocation, vegetation carbon stocks |
+| `water` | evapotranspiration, soil moisture and potential, snow, surface water |
+| `energy` | latent and sensible heat, net radiation, temperatures, canopy-air state |
+| `numerics` | the integrators' work counters and the energy and water budget residuals |
+| `radiation` | albedo, absorbed shortwave, PAR and longwave, ground radiation |
+| `ecophys` | per-cohort leaf gas exchange and hydraulics (the highest volume) |
+| `biogeochem` | soil-carbon pools, heterotrophic respiration, litterfall |
+| `forcing` | the atmospheric forcing the run used (§5) |
+
+A variable's axis is the dimension after `time` and `polygon` (§3):
+
+| Axis | Variables |
+|---|---|
+| none (the polygon's scalar) | `_py` totals and means |
+| `cohort`, `patch` | `_co`, `_pa` |
+| `site` | `_si` scalars: each site's forcing and growth temperature |
+| `soil` | `_si` soil columns by layer |
+| `(patch, soil)` | `_pa` soil columns by layer |
+| `pft`, `dbh_class` | `_pft_py` and `_size_py` breakdowns |
 
 ---
 
 ## 8. Adding a variable
 
-Two coupled edits, as designed:
+A registry variable takes two coupled edits:
 
 1. a `call add_variable(...)` line in the matching `register_*` routine
    (`meds_output_registry`), naming the field, units, dim, `agg`, group, default streams, and —
@@ -526,10 +548,11 @@ registry line each**, with no new extraction code.
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
 `patch_diag_block` (`meds_diag_vars`): a new index parameter in its section (a patch row the fast
 loop fills goes before `N_PA_FAST_ROWS`, and the slow driver's rows follow), one fill line in the
-capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), and
-the per-cohort rows are staged too, so a registry line on a fast row (`FLD_P_DIAG0 + PA_*`,
-`FLD_C_DIAG0 + CO_*`) reaches the sub-daily tier with no more: its F source follows from it. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
-array, so every permutation is a single whole-array statement that cannot omit a field.
+capture, and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`),
+and the per-cohort rows are staged too, so a registry line on a fast row (`FLD_P_DIAG0 + PA_*`,
+`FLD_C_DIAG0 + CO_*`) reaches the sub-daily tier with no more: its F source follows from it. The
+lockstep machinery needs no edit: the fields are rows of one 2-D array, so every permutation is a single
+whole-array statement that cannot omit a field.
 
 ### The one trap
 

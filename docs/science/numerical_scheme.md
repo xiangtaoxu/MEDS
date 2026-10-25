@@ -1,19 +1,19 @@
 # Numerical schemes of the fast loop
 
-How MEDS actually advances the sub-daily biophysics in time, what the two available integrators
-assume, where they differ, and which one to use. Written for ecological modellers rather than
-numerical analysts: the goal is that you can read a MEDS run's `[fast]` block and know what it
-committed you to.
+How MEDS advances the sub-daily biophysics in time, what the two integrators assume, where they
+differ, and which to use. Written for ecological modellers rather than numerical analysts: after
+reading it you can read a run's `[fast]` block and know what it committed you to. The short version
+is in §6: `esdirk2` at `dt_fast = 900 s`, and `dt_fast` is an accuracy setting, not a stability limit.
 
 Companion pages: [column_biophysics](column_biophysics.md) describes *what* is being integrated
 (the stores and their fluxes). This page is about *how*. Open numerics work is listed in
-`docs/ROADMAP.md` (§4).
+`docs/ROADMAP.md`.
 
 ---
 
-## 1. The problem: one column, wildly different clocks
+## 1. The problem: one patch, wildly different clocks
 
-Each `dt_fast` MEDS advances one patch's whole column: canopy air (heat, moisture, CO₂), leaf and
+Each `dt_fast` MEDS advances one patch's whole surface: canopy air (heat, moisture, CO₂), leaf and
 wood temperature, leaf and wood internal water, canopy surface water, a snow pack, a soil thermal
 column and a soil water column. These are coupled — the leaf's temperature sets its transpiration,
 which sets canopy humidity, which sets the leaf's temperature — so they cannot be advanced
@@ -33,7 +33,7 @@ orders of magnitude**:
 
 A system with that spread is called **stiff**. The practical consequence is blunt: an ordinary
 explicit time step (predict the rate, multiply by `dt`, add) is *unstable* unless `dt` is smaller than
-the fastest response time. Advancing a whole column at the fastest mode's pace — tens of seconds —
+the fastest response time. Advancing a whole patch at the fastest mode's pace — tens of seconds —
 for thirty simulated years is not affordable. Every land model therefore does something cleverer, and
 what it does is the single largest determinant of its sub-daily behaviour.
 
@@ -42,10 +42,10 @@ what it does is the single largest determinant of its sub-daily behaviour.
 ## 2. The one decision that matters most: what gets frozen
 
 Before any integrator runs, MEDS makes a **semi-discretisation** choice: which quantities are
-recomputed continuously as the column evolves, and which are computed once at the start of the step
+recomputed continuously as the patch's state evolves, and which are computed once at the start of the step
 and held fixed. This is inherited from ED2 and it is deliberate.
 
-MEDS sorts the column into three categories.
+MEDS sorts the processes into three categories.
 
 **Category 0 — frozen once per `dt_fast`** (`build_frozen`, `water_step`, `record_water_flows`):
 
@@ -56,7 +56,7 @@ MEDS sorts the column into three categories.
 - soil and plant water — the pond, the soil layers and every cohort's wood and leaves, solved
   together as one network by implicit Euler with its own sub-steps
   ([soil_plant_water](soil_plant_water.md)); its **time-mean** flows (face fluxes, infiltration,
-  drainage, ground evaporation, root uptake, sapflow, transpiration) handed to the rest of the column
+  drainage, ground evaporation, root uptake, sapflow, transpiration) handed to the rest of the patch
   as constants, on both schemes
 
 This is ED2-faithful. ED2 calls `canopy_photosynthesis` once before its RK integrator and the RK
@@ -213,7 +213,7 @@ and $`f_{max} = 5`$.
 ### `rk45` — adaptive explicit Cash–Karp 5(4), ED2-style
 
 A fully explicit fifth-order Runge–Kutta with an embedded fourth-order estimate, marched adaptively
-over the *whole* column state — this is the closest analogue of ED2's own `rk4` integrator. It is a
+over the *whole* state of the patch — this is the closest analogue of ED2's own `rk4` integrator. It is a
 full alternative a run can choose, and the explicit reference the tests compare `esdirk2` against.
 
 *Analogy:* the same group ride, but nobody is allowed to look ahead; if the road gets steep the only
@@ -224,7 +224,7 @@ option is to take smaller steps.
   RK45's committed θ is the network's, as ESDIRK2's is.
 - Explicit is affordable here because of the freeze. With the Category-0 fluxes held, the stiffest
   mode the march integrates is the canopy air (τ ≈ 130 s), so it needs sub-steps of a few minutes —
-  a few per 900 s `dt_fast` — rather than the seconds an explicit solve of the unfrozen column would
+  a few per 900 s `dt_fast` — rather than the seconds an explicit solve of the unfrozen patch would
   need. Plant water adds no stiffness, since its rates are the network's constants over the step.
 - **It is a hybrid, not a pure explicit scheme.** When the explicit march cannot resolve a step (a
   cold night under a closed canopy, where the leaf↔canopy-air coupling is stiff and the state rails
@@ -262,7 +262,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | canopy-air depth | tallest cohort + freeboard, slow-loop owned | same | unified |
 | soil water | the water network's, moved at its steady rate outside the tableau | the network's, at the same rate inside the tableau | unified — both commit the network's θ |
 | canopy-air condensation sink | per-stage rate | per-stage rate | unified |
-| adaptive error norm | one norm over the whole column state | same | unified |
+| adaptive error norm | one norm over the whole march state | same | unified |
 | stability clamps | extrapolation base only (canopy air) | every stage input (canopy air) | numerics |
 
 **There are no *physics* rows.** The two schemes solve the same equations; what remains is one
@@ -322,17 +322,16 @@ reached, so this is straight linear amplification rather than a saturation artef
 **That is why leaf and wood water are solved implicitly, with the soil's, in one network**
 ([soil_plant_water](soil_plant_water.md)), and why the energy stages hold each cohort's transpiration
 at the network's for the step: within a step transpiration does not follow the canopy air's humidity,
-and the canopy air's vapour credit is the leaves' water debit. Measured on BCI's dry season
-(example 04, 2013-01-15 to 04-15, `dt_fast` 900 against 150 s): the window-mean latent heat differs by
+and the canopy air's vapour credit is the leaves' water debit. Measured on a tropical
+dry season (`dt_fast` 900 against 150 s): the window-mean latent heat differs by
 −0.2 W m⁻² and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (refreshing transpiration at
 every stage instead gives +0.3 and 2.9 W m⁻²; at 150 s the two agree to 0.1 W m⁻² in the mean and 0.6
 in any hour). The 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s
-(`test_fast_integ_step`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
-2013-05, 900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
+(`test_fast_integ_step`). Over a wet and a dry season at the same site (900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
 daily leaf and wood potentials by at most 0.004 MPa.
 
-**A drought season carries a bias at 900 s.** Measured on Palo Verde's inventory configuration
-(example 05), restarted from a 150 s state on 2008-12-01 and run at 150, 300, 450 and 900 s:
+**A drought season carries a bias at 900 s.** Measured on a tropical dry forest (Palo Verde),
+restarted from a 150 s state at the start of the dry season and run at 150, 300, 450 and 900 s:
 
 | month | GPP at 300 / 450 / 900 s vs 150 s | ET at 900 s | `psi_wood` at 900 s |
 |---|---|---|---|
@@ -381,7 +380,7 @@ Rank by `Phi'`, not by peak-to-peak.
 
 ### 5b. Conservation
 
-Both schemes close the whole-column water and energy ledgers to machine precision in the unsaturated
+Both schemes close the whole-patch water and energy ledgers to machine precision in the unsaturated
 regime every production run lives in (residuals ~10⁻¹³ kg m⁻² and ~10⁻⁷ J m⁻²), with a snow pack
 present and with condensation active. This holds with the tissue heat store active: the heat each
 tissue's energy gains is taken from a b-weighted time integral of its temperature, so it is exactly
@@ -411,7 +410,7 @@ The rest of this section is the rules the ledgers rest on, and what each guards 
 **Every soil-water flow comes from one solve, whose θ both schemes commit.** A scheme that took a
 *flux* from one solve while committing *state* from its own stages would carry an error of exactly
 however far the two trajectories diverge — invisible while they nearly coincide, dominant once the
-column saturates. A **whole-column** ledger cannot detect that error at all, because it is purely
+column saturates. A **whole-patch** ledger cannot detect that error at all, because it is purely
 *vertical*: enthalpy placed in the wrong layer still sums correctly against the boundary. Only a
 per-layer face check, or a temperature that stops being plausible, exposes it. Taking the face
 fluxes, infiltration, drainage and uptake from the water network, and committing the network's θ,
@@ -420,7 +419,7 @@ makes that class impossible for water. The per-layer check is kept as a ledger o
 were charged for. Both schemes check the network's own faces; RK45 also checks the faces its
 soil-energy equation advected on, over the interior layers only, because the water column's top face
 nets out ground evaporation, whose enthalpy is paid at the surface rather than advected, and its
-bottom face is the drainage; the whole-column ledgers cover both. The same rule holds at the canopy
+bottom face is the drainage; the whole-patch ledgers cover both. The same rule holds at the canopy
 air's boundary: each stage's exchange with the atmosphere is booked at the conductances that stage's
 tendency used, re-solved at its own state (§2), not at the step-start values.
 
@@ -445,7 +444,7 @@ excursion staying small rather than a correction (ESDIRK2 has no explicit stage 
 pair: rain in at its own temperature, snowmelt in at the pack's, infiltration out at the *mixed* pond
 temperature, exfiltration from the top layer in at that layer's temperature, and runoff out at the
 pond's. A pond with no thermal state would shed the enthalpy of every kilogram crossing into it,
-and that energy would leave the column ledger while the water sat on the surface still holding it.
+and that energy would leave the patch ledger while the water sat on the surface still holding it.
 The pond's energy (`w_surface_energy`, J m⁻²) is stored like the snow's; its temperature is read off
 it with the liquid datum, so the pond stays liquid and does not freeze.
 
@@ -454,9 +453,8 @@ however small, since it is written on the start-of-step imbalance with no divisi
 and a tissue with neither coupling nor heat capacity (no area) takes the temperature of what it grows
 from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eqs. (5), (7)).
 No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
-(`[fast].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
-both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
-(ESDIRK2 and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
+(`[fast].debug_error`), a forced winter month on a deciduous stand closes on both schemes, with no failed
+whole-patch check. Tightening the tolerance makes the run halt, which shows the guard is live.
 
 **Condensate keeps the enthalpy it was debited.** Dew and fog are booked apart from the vapour
 export, because they land inside the column, and are deposited into soil layer 1 (§7, item 3) with
@@ -479,7 +477,9 @@ LE, inside H.
 ## 6. Choosing, in practice
 
 `dt_fast` is not bounded by stability (§2). It is bounded by **how much flux error you can
-accept** (§5a), so a spin-up and a flux-tower study genuinely want different values.
+accept** (§5a), so a spin-up and a flux-tower study genuinely want different values. It must not
+exceed `[run].dt_slow` and must divide it exactly; the run refuses a value that does not, and warns
+above 900 s, the top of the measured range (and again above 1800 s).
 
 | you want | use |
 |---|---|
@@ -533,9 +533,8 @@ the CPU, while its own error grows six- to eightfold. On the same three windows,
 | 5e-4 | 8–28 % | 144–336 % | 13 % |
 | 1e-3 | 17–53 % | 287–680 % | 29 % |
 
-Looser still, the fluxes leave the answer altogether: on example 04's August, run-mean H is 50.99 W m⁻²
-at 1e-4 against the 50.94 both schemes converge to, 54.3 at 2e-3 and 73.3 at 5e-3, with LE falling to
-match. The ledgers close throughout, so nothing else would flag it.
+Looser still, the fluxes leave the answer altogether: run-mean H rises well above the value both
+schemes converge to, with LE falling to match. The ledgers close throughout, so nothing else would flag it.
 
 Configuration essentials:
 
@@ -552,7 +551,8 @@ debug_error         = false      # true = HALT on a non-closing budget. Use it w
                                  # change to any flux seam; leave it off for production.
 
 [output]
-numerics = true                  # the work + health counters; turn this on for any numerics study
+# The work counters are ordinary output variables, off by default; for a numerics study select them in
+# the io config: "mean_work_*_py" = "D M Y"   (meds_io_config.toml, the numerics group)
 ```
 
 **Three traps worth naming.**
@@ -570,7 +570,7 @@ numerics = true                  # the work + health counters; turn this on for 
 
 ## 6a. Multi-core: threading the patch axis
 
-The fast loop's columns are **independent within a `dt_fast`** — patches couple only through the slow
+The fast loop's patches are **independent within a `dt_fast`** — patches couple only through the slow
 loop — so patches are the parallel axis, and threading them costs no accuracy at all. The default
 build compiles the threading in (`-DMEDS_OPENMP=OFF` leaves it out), and a run asks for threads:
 
@@ -579,14 +579,12 @@ build compiles the threading in (`-DMEDS_OPENMP=OFF` leaves it out), and a run a
 n_threads = 4                    # default 1. Ignored by a serial build.
 ```
 
-**The output is byte-identical at every thread count**, and that is a design requirement rather than a
-happy accident. Every site-level accumulator (ET, the daily-mean air temperature, the ten integrator
+**The output is byte-identical at every thread count**, and that is a design requirement. Every site-level accumulator (ET, the daily-mean air temperature, the eight integrator
 work counters, the sub-daily output staging) is written into a per-`(sub-step, patch)` staging array
 and folded back **in patch order** after the loop. An OpenMP `reduction(+:)` would sum thread partials
 in *arrival* order, so the last bits of every site diagnostic would drift with the thread count. Folding
 in patch order reproduces the serial fold exactly, so the answer does not move with the thread count.
-Verified over a 12-patch / 115-cohort forced month: 35 netCDF files across all four output tiers,
-identical at 1, 2 and 4 threads; and over the five-year BCI census example at 1, 4, 8 and 16 threads.
+`test_fast_driver` checks it across thread counts.
 An OpenMP build is not bit-identical to a serial build, because compiling the loop as a parallel region
 changes its rounding (`docs/building.md`, "Parallel builds").
 
@@ -603,45 +601,24 @@ Each thread's per-patch scratch is an explicit pool indexed by thread number rat
 thread writes: a data race that gives exactly the thread-count-dependent answers the patch-order fold
 exists to prevent (`docs/building.md`, the portability traps).
 
-### What it buys, measured
+### What threading buys
 
-A 50-year spin-up at Ithaca NY on ERA5-Land forcing (bare-ground start, `esdirk2`, 4 threads on 4 physical cores):
+Threading gives a speedup bounded by the patch count and by the machine's own scaling: on a 50-year
+bare-ground spin-up with 4 threads on 4 cores it ran about 2× faster, against a hardware ceiling of
+about 3× for four independent copies of the same job. Measure that ceiling before judging a speedup.
+A spin-up from bare ground starts with two patches, where four threads can do nothing, and gains
+parallelism as the stand builds; a run from an established stand has it from the first step.
 
-| `dt_fast` | wall | CPU | final stand |
-|---|---|---|---|
-| 150 s | **2321.8 s** (38 min 42 s) | 7622.9 s (3.28 cores avg) | 113 cohorts / 12 patches |
-| 900 s | **545.1 s** (9 min 05 s) | 1510.6 s (2.77 cores avg) | 115 cohorts / 12 patches |
+### What `dt_fast` does to a long run
 
-**The 900 s default is worth 4.26× here, not the 6× the step-size ratio suggests** — the ESDIRK2 march
-takes *two* sub-steps at 900 s where it takes one at 150 s, so 6× fewer steps each cost ~1.4× more, and
-the slow tier does not scale at all. That matches the 4.0–4.6× measured independently per simulated
-day.
-
-Threading itself gives ~2.0× on 4 cores for this run. Read that against the machine, not the core
-count: four *independent* single-threaded copies of the same workload take 55.6 s each where one alone
-takes 42.3 s, so this hardware's four-core aggregate throughput is only **3.03×** its single-core
-throughput (turbo, shared L3, memory). Against what the hardware can actually deliver the loop is ~67%
-efficient. **Always measure that denominator before concluding a parallel speedup is poor.**
-
-Speedup is also bounded by the patch count, and a spin-up from bare ground is the worst case for it:
-this run held **2 patches** for its first ~15 simulated years, where four threads can do nothing. CPU
-utilisation climbed 188% → 272% → 328% as the stand built from 2 patches to 12. A production run
-starting from an established stand has the full parallelism from step one.
-
-### The step-size difference this comparison exposes
-
-The two runs above differ **only** in `dt_fast`, so everything below is the semi-discretisation's
-50-year footprint. Every patch-area-weighted site aggregate agrees to **≤ 0.5%**: stem density 0.40%,
-basal area 0.31%, AGB 0.44%, LAI 0.04%, soil moisture 0.39%, leaf temperature 0.02%, soil temperature
-0.04%. (AGB is 0.44% *lower* at 900 s.)
-
-**But the demography took a different path**, and this is the part to carry away. The runs end with 113
-vs 115 cohorts, and at year 35 they held 82 vs 67 before reconverging; patch ages differ by ~8% and
-cohort identities differ entirely. `dt_fast` perturbs GPP, which perturbs growth, which changes *which*
-cohorts fuse, split or are culled. That is a **discrete** difference, not a truncation error that
-shrinks with the step — so two runs at different `dt_fast` cannot be compared cohort-by-cohort, only
-through site aggregates, and the agreement of those aggregates in one realization is reassurance rather
-than a convergence proof.
+Two spin-ups that differ only in `dt_fast` (150 s and 900 s) agree on every patch-area-weighted site
+aggregate (stem density, basal area, AGB, LAI, soil moisture, leaf and soil temperature) to within
+about half a percent, and the 900 s run is about 4× faster (not 6×: the ESDIRK2 march takes two
+sub-steps at 900 s where it takes one at 150 s). But the demography takes a different path:
+`dt_fast` perturbs GPP, which perturbs growth, which changes *which* cohorts fuse, split or are
+culled. That is a discrete difference, not a truncation error that shrinks with the step, so two runs
+at different `dt_fast` cannot be compared cohort by cohort, only through site aggregates, and the
+agreement of those aggregates in one realization is reassurance rather than a convergence proof.
 
 ---
 
@@ -655,15 +632,15 @@ than a convergence proof.
    after a restart has not been re-measured on the network (see `docs/ROADMAP.md`).
 
 2. **Light wind is no worse.** The feedback behind the oscillation is stability-dependent and its
-   gain varies with wind, so light-to-moderate wind, the common band, is the one that matters. On BCI's
-   tower forcing (example 04, 2012-08 to 2013-05, fast output every step) calm wind below 2 m/s is
+   gain varies with wind, so light-to-moderate wind, the common band, is the one that matters. On a tropical
+   site's tower forcing, with sub-daily output every step, calm wind below 2 m/s is
    13 % of the records, and at 900 s the step-to-step alternation of canopy-air temperature is no
    larger than the 150 s run's at the same instants in any wind band: the lag-1 correlation of its
    second difference is −0.06, where a period-2 oscillation gives −1. §5a′ gives the multiplier
    across wind speeds and `dt_fast`. It is scored at one site.
 
-3. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
-   evapotranspiration at BCI, so routing it onto the leaves would change little; the canopy film,
+3. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, about 0.5 % of
+   evapotranspiration at a humid tropical site, so routing it onto the leaves would change little; the canopy film,
    which is optional, is part of its tissue's energy and could take it.
 4. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
@@ -673,13 +650,13 @@ than a convergence proof.
    to be L-stable rather than explicit.
 5. **Evidence base.** Most of §5 rests on one site and one forcing year per measurement, with no
    confidence intervals. Differences smaller than ~2× should not be read as real. The saturating-column
-   checks of §5b run on a *sealed unit fixture* driven at 29 mm h⁻¹, far above Ithaca's rain rates,
-   because a forced Ithaca column never saturates: a production-forced test suite is not a substitute
+   checks of §5b run on a *sealed unit fixture* driven at 29 mm h⁻¹, far above typical temperate rain rates,
+   because a forced temperate patch never saturates: a production-forced test suite is not a substitute
    for a fixture that deliberately visits the corner.
 
 ---
 
-## 8. Where the code is
+## 8. Code map
 
 | piece | file |
 |---|---|
