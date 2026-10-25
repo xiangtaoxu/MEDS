@@ -280,6 +280,7 @@ module meds_output_types
       integer(ik)          :: fast_n_cohort = 0_ik             !< the polygon's live cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
       logical              :: fast_ready   = .false.           !< the staging holds this slow step's sub-steps
+      integer(ik)          :: fast_step_total = 0_ik           !< sub-steps replayed over the run (output_tick)
       !----- The diagnostic parameters this polygon's extraction reads: its file set's, with         !
       !      soil_ready set when its fast loop runs (attach_output). --------------------------------!
       type(diag_setup_t)   :: diag

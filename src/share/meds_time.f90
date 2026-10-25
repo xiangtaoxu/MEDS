@@ -13,7 +13,7 @@ module meds_time
    implicit none
    private
 
-   public :: meds_time_t
+   public :: meds_time_t, calendar_step_t, calendar_step
    public :: is_leap_year, days_in_month, days_in_year, day_of_year
    public :: time_advance_days, time_advance_months, years_between
    public :: time_advance_years, whole_years_between
@@ -32,6 +32,15 @@ module meds_time
       integer(ik) :: minute = 0_ik
       integer(ik) :: second = 0_ik
    end type meds_time_t
+
+   !----- One step of the calendar: its start and end, its length in days, and the boundaries it !
+   !      crosses. A step that reaches a new month also reaches a new day, and one that reaches a !
+   !      new year a new month. calendar_step builds it. -------------------------------------!
+   type :: calendar_step_t
+      type(meds_time_t) :: start, end
+      integer(ik)       :: days = 1_ik
+      logical           :: new_day = .false., new_month = .false., new_year = .false.
+   end type calendar_step_t
 
    integer(ik), parameter :: MONTH_LEN(12) = [31_ik, 28_ik, 31_ik, 30_ik, 31_ik, 30_ik,       &
                                                31_ik, 31_ik, 30_ik, 31_ik, 30_ik, 31_ik]
@@ -233,6 +242,19 @@ contains
       t2 = t
       call from_jdn(to_jdn(t) + int(ndays, lk), t2%year, t2%month, t2%day)
    end function time_advance_days
+
+   !----- The calendar step of `days` days from `start`. -----------------------------------!
+   pure function calendar_step(start, days) result(step)
+      type(meds_time_t), intent(in) :: start
+      integer(ik),       intent(in) :: days
+      type(calendar_step_t) :: step
+      step%start     = start
+      step%end       = time_advance_days(start, days)
+      step%days      = days
+      step%new_year  = step%end%year /= start%year
+      step%new_month = step%new_year .or. step%end%month /= start%month
+      step%new_day   = step%new_month .or. step%end%day /= start%day
+   end function calendar_step
 
    !----- Advance by whole months; a day past the end of the target month becomes its last !
    !      day (31 January + 1 month is 28 or 29 February). --------------------------------!

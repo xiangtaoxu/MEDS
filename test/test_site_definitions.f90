@@ -21,7 +21,7 @@ program test_site_definitions
    use meds_config,       only : meds_config_t
    use meds_config_io,    only : load_meds_config
    use meds_region,       only : meds_region_t, region_open, region_step, region_done, region_finalize, &
-                                 region_free, DRIVER_OK
+                                 region_free, RUN_OK
    use meds_netcdf_c
    use meds_test_support, only : banner, check, check_close, test_report
    implicit none
@@ -77,11 +77,11 @@ program test_site_definitions
    end associate
    do while (.not. region_done(reg))
       call region_step(reg, status)
-      if (status /= DRIVER_OK) exit
+      if (status /= RUN_OK) exit
    end do
-   call check(status == DRIVER_OK, 'the two sites run three days')
+   call check(status == RUN_OK, 'the two sites run three days')
    call region_finalize(reg, status)
-   call check(status == DRIVER_OK, 'the run finishes with its area conserved')
+   call check(status == RUN_OK, 'the run finishes with its area conserved')
    call region_free(reg)
    call check_output(trim(work)//'/sites-D-202407.nc')   ! a cohort tier's files are monthly
 

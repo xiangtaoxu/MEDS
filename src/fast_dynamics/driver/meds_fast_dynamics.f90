@@ -72,13 +72,13 @@ contains
    !  Advance every patch of the polygon by one slow step of fast biophysics:              !
    !  n_fast_per_slow sub-steps on the forcing source's samples, or on one fixed record    !
    !  without one. The optional outputs report the worst whole-column budget residuals and !
-   !  the failure count, for a caller that asserts conservation. With seed_canopy_air set   !
-   !  (a start's first window), the canopy air starts at the window's first sample, and the !
-   !  flag is cleared.                                                                     !
+   !  the failure count, for a caller that asserts conservation. A start's first window     !
+   !  (poly%seed_canopy_air) puts the canopy air at the window's first sample and clears    !
+   !  the flag.                                                                            !
    !=======================================================================================!
    subroutine fast_dynamics(poly, cfg, met_src, met_cur, step_start, worst_energy, worst_water,  &
                             n_budget_fail, out_bufs, run_energy_budget, run_water_budget,      &
-                            run_face_budget, met_fixed, patch_threads, seed_canopy_air)
+                            run_face_budget, met_fixed, patch_threads)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t), optional, intent(in)    :: met_src       !< the run's forcing source (read-only here)
@@ -97,7 +97,6 @@ contains
       type(met_forcing_t), optional, intent(in) :: met_fixed
       !----- Threads for the patch loop: [run].n_threads in a one-polygon run, else 1 (the default). --!
       integer(ik),         optional, intent(in) :: patch_threads
-      logical,             optional, intent(inout) :: seed_canopy_air   !< a start's first window
 
       !----- The window's samples, each site's after its terrain, and their times: the same for every  !
       !      patch, made before the patch loop. Without forcing, every one is the fixed record. -------!
@@ -162,11 +161,9 @@ contains
       end if
       !----- A start's canopy air is the air of the window's first sample (docs/science/            !
       !      canopy_air_space_biophysics.md, the start). -------------------------------------------!
-      if (present(seed_canopy_air)) then
-         if (seed_canopy_air) then
-            call seed_start_canopy_air(poly, met_site(1, :))
-            seed_canopy_air = .false.
-         end if
+      if (poly%seed_canopy_air) then
+         call seed_start_canopy_air(poly, met_site(1, :))
+         poly%seed_canopy_air = .false.
       end if
 
       !----- The per-(sub-step, patch) reduction staging; every cell is assigned, so none is zeroed. -!

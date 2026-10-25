@@ -41,7 +41,7 @@ module meds_config
 
    public :: meds_config_t, init_params_t
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
-   public :: derive_config, derive_parameters, growth_window_steps, site_config
+   public :: derive_config, derive_parameters, growth_window_steps, site_config, site_configs
    public :: forcing_params_t, output_params_t
    public :: soil_carbon_params_t
    public :: region_params_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -239,6 +239,20 @@ contains
       scfg = cfg
       if (cfg%sites(is)%own_ground) scfg%soil = cfg%sites(is)%soil
    end function site_config
+
+   !----- Each [[sites]] table's configuration (site_config) and its share of the polygon, the     !
+   !      shares made to sum to exactly 1. ---------------------------------------------------------!
+   subroutine site_configs(cfg, site_cfg, site_area)
+      type(meds_config_t),              intent(in)  :: cfg
+      type(meds_config_t), allocatable, intent(out) :: site_cfg(:)
+      real(wp),            allocatable, intent(out) :: site_area(:)
+      integer(ik) :: is
+      allocate(site_cfg(size(cfg%sites)))
+      do is = 1_ik, size(cfg%sites, kind=ik)
+         site_cfg(is) = site_config(cfg, is)
+      end do
+      site_area = cfg%sites%area_fraction / sum(cfg%sites%area_fraction)
+   end subroutine site_configs
 
    !=======================================================================================!
    !  The PFT table.                                                                       !

@@ -136,7 +136,13 @@ worst values; the demographic laws make the founding and treefall decisions the 
 `meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). A
 step that fails no longer leaves `meds_main`'s output files open, a run that cannot open no longer
 leaves its C-API slot half built, and a state file written in a month a polygon failed in owes the
-calendar's restructuring (#521).
+calendar's restructuring (#521). `src/main` checks a step's state in one guard, keeps no dead resets
+and states its own rationale briefly, with no change to any result (#522). The run's status codes
+are `RUN_*`, a run lists its calendar steps once, its output tick is the output library's, and a
+site run chooses its cell and reads its maps the way a region does, with no change to any result
+(#526). The stepper is one polygon's whole slow step in the order of processes and takes the
+polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
+no change to any result (#531).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -787,9 +793,35 @@ calendar's restructuring (#521).
   `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
   `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
   and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
+- **Fortran: the run's status codes, its steps and its start** (#526). `DRIVER_*` are `RUN_*` (the
+  same values: the C API and `meds.model` are unchanged) and the CMake target `meds_driver` is
+  `meds_run`. `polygon_step` takes a `calendar_step_t` (`meds_time`, built by `calendar_step`),
+  `meds_config`'s `site_configs` replaces `meds_region`'s `polygon_sites`, `output_tick`
+  (`meds_output_integrate`) is the polygon's output tick, and `test_c_api_run` takes a work
+  directory.
+- **Fortran: the stepper and the start** (#531). `advance_one_step(poly, cfg, ledgers[, met_src,
+  met_cur, step_start, out_bufs, patch_threads])` takes a `run_ledgers_t` (`meds_stepper`: the
+  energy, water and face budgets and the slow ledger) and performs the owed restructuring and the
+  thermal acclimation itself; `advance_boundary` goes, and a caller owes a restructuring by
+  `poly%restructure_pending`. The canopy air a start owes is `poly%seed_canopy_air` (no
+  `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
+  `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
+  (`meds_soil_carbon`) is the spin-up's steady state.
 
 ### Changed
 
+- **The stepper owns the order of processes; the start is complete in `init_polygon`** (#531), with
+  no change to any result. The tests that step a polygon now run the run's order, the owed
+  restructuring and the acclimation included, and the canopy-air depth, the spin-up and the sites'
+  terrain belong to the start.
+- **A site run chooses its forcing cell and reads its maps the way a region does** (#526). The cell
+  is chosen once, and each polygon applies its cell's map inputs to its own configuration, so a site
+  run's configuration no longer carries the map's values: the PFT table beside its state files
+  shows the configured `chave_e`, not the cell's. Every output file is the same.
+- **`src/main` cleaned up** (#522), with no change to any result. `check_polygon_state` is the step's
+  one guard, its messages word for word the same; `polygon_prepare` no longer resets a freshly
+  allocated run record and takes the polygon's cell (`polygon_run_t%cell` goes); no `;` joins.
+  Comment lines 339 → 271; ED2's run loop is `docs/ed2_comparison.md` §4.11.
 - **The slow loop's routines are consolidated** (#520), with no change to any result on gfortran. One PFT
   table is read everywhere, and each derived value has one source (`recruit_carbon`, `leaf_psi_tlp`,
   `cohort_carbon_supply`); the patch stores blend in one place; the commit is a plain loop; the code

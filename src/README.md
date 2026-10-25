@@ -87,11 +87,11 @@ src/                                    37.5 k lines · 98 modules · 21 CMake l
 │                  integrate → serialize                                      4 450
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                      1 278
-└── main/          meds_stepper (one coupled slow step, and the boundary
-                   restructuring), meds_polygon (one polygon's run
-                   machinery and step), meds_region (a run of one polygon
-                   or many: open / step / finalize), meds_main
-                   (the PROGRAM)                                             1 357
+└── main/          meds_stepper (one polygon's slow step in the order of
+                   processes, and its ledgers), meds_polygon (one
+                   polygon's run record and step), meds_region (a run of
+                   one polygon or many: open / step / finalize), meds_main
+                   (the program)                                             1 160
 ```
 
 **`share/` is one library, and it admits only what depends on nothing outside it.** Every module
@@ -169,7 +169,7 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
                                                                      (INTERFACE)
   met, config ──→ maps ──────────────────────────┐
   output_stream ─────────────────────────────────┤
-  model ─────────────────────────────────────────┴──→ driver ──→ meds_main
+  model ─────────────────────────────────────────┴──→ run ─────→ meds_main
                                                                └→ c_api ──→ meds_py (libmeds.so)
                                                                         └→ the C-API tests
 ```
