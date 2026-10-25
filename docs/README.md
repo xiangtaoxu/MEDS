@@ -18,8 +18,6 @@ the placement rules and the library graph.
 - **[`building.md`](building.md)**: compilers, dependencies, the four build kinds, the tests and the
   parallel builds.
 - **[`ed2_comparison.md`](ed2_comparison.md)**: MEDS against ED2, process by process.
-- **[`output_renames.md`](output_renames.md)**: how output variables are named, and the old name of
-  each variable that was renamed.
 - **[`ROADMAP.md`](ROADMAP.md)**: everything MEDS has deliberately deferred, each item with its issue.
 - **[`dev_plans/`](dev_plans/)**: dated **design and implementation records**, working documents rather
   than reference; [`dev_plans/README.md`](dev_plans/README.md) says which are still live, and
@@ -39,7 +37,7 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 
 | Page | Covers |
 |---|---|
-| [`column_biophysics.md`](science/column_biophysics.md) | How a patch's stores (canopy air, leaves, wood, ground, snow, soil) are coupled and advanced together, and what each conserves. |
+| [`coupled_biophysics.md`](science/coupled_biophysics.md) | How a patch's stores (canopy air, leaves, wood, ground, snow, soil) are coupled and advanced together, and what each conserves. |
 | [`numerical_scheme.md`](science/numerical_scheme.md) | How the fast loop is advanced in time: what is held fixed over a step, the two integrators, how they differ, and how to choose them and `dt_fast`. |
 | [`canopy_radiation_transfer.md`](science/canopy_radiation_transfer.md) | The ED2 two-stream solver, leaf-angle distributions, and the multi-band solution. |
 | [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | The Monin–Obukhov surface layer, the leaf and wood boundary layers, and the wind inside the canopy. |

@@ -113,7 +113,7 @@ either on is a decision to leave the shipped baseline.
 | `ISOILBC` 0–3; 1, `SLDRAIN` | Drainage `q = f·K` (free drainage `f = 1`, bedrock `f = 0`, a soil map's leaky base at its `f_leak`) or an aquifer, a head-driven two-way boundary. No slope-scaled lateral drainage | `[soil].water_bottom_bc` | [soil_biophysics](science/soil_biophysics.md) |
 | soil heat in the RK4 state | Implicit backward-Euler heat diffusion on internal energy; freeze/thaw and ice-aware conductivity and heat capacity always on. The bottom is no-flux (`geothermal`) or an optional Dirichlet anchor below the column. A shallow column reflects the annual wave off a no-flux base; the anchor is the alternative to deepening it | `[soil].thermal_bottom_bc`, `deep_temp`, `deep_depth` | [soil_biophysics](science/soil_biophysics.md), "The bottom thermal boundary" |
 | `NZS` (4), `IPERCOL` | One bulk snow layer: Niu–Yang cover fraction, accumulation, meltwater percolation, surface balance. The clearest resolution loss | `[snow]` | [snow_biophysics](science/snow_biophysics.md) |
-| `therm_lib8` saturation vapour pressure (Murphy–Koop family) | Bolton (1980) over liquid and Magnus over ice, blended on the liquid fraction | | [column_biophysics](science/column_biophysics.md) |
+| `therm_lib8` saturation vapour pressure (Murphy–Koop family) | Bolton (1980) over liquid and Magnus over ice, blended on the liquid fraction | | [coupled_biophysics](science/coupled_biophysics.md) |
 | `IED_GRNDVAP` 0–5; 0 (modified Lee–Pielke) | Dry-surface-layer resistance | `[soil].dsl_dmax`, `dsl_theta_init` | [soil_biophysics](science/soil_biophysics.md) |
 | `LEAF_MAXWHC` | Optional canopy interception films with a Beer-law catch and a per-PFT storage capacity. Off by default | `[fast].canopy_water_on`, `intercept_*`; `[pft].*_surf_water_max` | [vegetation_energy_dynamics](science/vegetation_energy_dynamics.md) |
 | `DECOMP_SCHEME` 0–5; 2 | A seven-pool CENTURY carbon matrix (metabolic and structural litter above and below ground, microbial, slow, passive; lignin tracer). `"ed2"` has the topology of ED2's schemes 0–4 (three active pools) and the capped temperature and moisture responses of ED2's default; `"century5"` is ED2's scheme 5 (five active pools). Daily forward-Euler or matrix-exponential step; an optional semi-analytic steady-state spin-up that ED2 does not have. On by default | `[soil_carbon]` | [soil_carbon](science/soil_carbon.md) |
@@ -269,8 +269,8 @@ The output is the largest usability difference ([diagnostics](science/diagnostic
 | State files | A separate stream, `[output].state_write`, every `state_interval` days, months or years: the raw prognostic state at an instant | `ISOUTPUT`, `FRQSTATE`, HDF5 histories |
 | Post-processing | `post_proc/` ([README](../post_proc/README.md)) | Community scripts |
 
-Variable names follow `[mean_]<quantity>[_<breakdown>]_<level>`; [output_renames](output_renames.md) maps
-the names MEDS used earlier. Two conventions matter for analysis code. Sub-daily variables share a name with
+Variable names follow `[mean_]<quantity>[_<breakdown>]_<level>` ([diagnostics](science/diagnostics.md) §3). Two
+conventions matter for analysis code. Sub-daily variables share a name with
 their coarse namesakes, and putting a variable on a tier it has no value for is rejected at start-up
 instead of writing fill. Cohort and patch axes are forbidden on the annual tier, because a window longer
 than a month would straddle the disturbance restructuring.

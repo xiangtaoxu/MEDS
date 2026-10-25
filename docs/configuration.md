@@ -539,19 +539,9 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `(time, polygon, cohort)` or `(time, polygon, patch)`, its axis as long as the largest live count among
   the polygons when the file opens; `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own
   count, and the entries past it are the fill value.
-- **Sites, soil and map inputs in the files.** Every file has a `site` axis behind `polygon`, as long as
-  the largest polygon's site count; `n_site (polygon)` gives each polygon's own, and the entries past it
-  are the fill value. A region runs one site per cell. The soil coordinate is per site: `soil_z (polygon,
-  site, soil)` holds each site's layer node depths and its CF bounds `soil_z_bnds (polygon, site, soil,
-  nv)` each layer's top and bottom, so the bottom layer ends at that site's own soil depth. Both are
-  negative downward, with the fill value below the site's bottom layer. Each file also carries each
-  site's area and terrain, `area_si` (its fraction of the polygon), `elevation_si` [m], `slope_si` and
-  `aspect_si` [degrees], and the inputs the cell's maps gave it, all `(polygon, site)`: `n_soil_si` (its
-  layer count), `soil_depth_si` [m], `bottom_bc_si` (`flag_values` 1, 2 for drain, aquifer),
-  `drain_factor_si` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a free-draining base,
-  the cell's `f_leak` on a leaky one, 0 on a sealed one; the fill value on an aquifer) and `deep_temp_si`
-  [K], under the same names as in the state file; with `height_allometry = "chave2014"`,
-  `chave_e_py (polygon)`.
+- **Sites, soil and map inputs in the files.** Every file has a `site` axis behind `polygon`, a
+  per-site soil coordinate, and each site's area, terrain and map inputs (`*_si`); the layout is in
+  [diagnostics](science/diagnostics.md) §3, "The polygon and site axes".
 - **State files.** With `[output].state_write`, a region writes one state file every `state_interval` and
   at the end, `<state_file_prefix>-S-<date>.nc` like a site's. It holds every polygon: a `polygon` axis leads each
   variable, `polygon_id` names the rows, the cohort and patch axes are as long as the largest polygon's,

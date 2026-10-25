@@ -1,19 +1,17 @@
-# `post_proc/` — plotting and evaluating output
+# `post_proc/` — plotting output
 
-Five plotting scripts and an evaluation notebook. Two of them read the diagnostic files `meds_main`
-writes; the other four read only the stand file of
-[example 03](../examples/example03_demography/README.md), because they use its variable names. Pick
-by the file you have, from the table below.
+Five plotting scripts. One reads the diagnostic files `meds_main` writes; the other four read only the
+stand file of [example 03](../examples/example03_demography/README.md), because they use its variable
+names. Pick by the file you have, from the table below.
 
 Dependencies: numpy, matplotlib and netCDF4. The two 3-D renderers also need the `viz` extra
-(`pip install -e python/[viz]`: pyvista and scipy); the notebook needs jupyter.
+(`pip install -e python/[viz]`: pyvista and scipy).
 
 ## What each one reads
 
 | Tool | Reads | Draws |
 |---|---|---|
 | `plot_pft_size.py` | diagnostic files (`meds_main`, `meds.model`) of a monthly or annual tier that carries the PFT and DBH-class axes | composition by PFT and structure by DBH class |
-| `evaluate_ithaca.ipynb` | diagnostic files of one run: daily and monthly tiers required, fast and annual optional | conservation checks and plausibility plots |
 | `plot_site_timeseries.py` | example 03's stand file | site totals over time, and aboveground biomass by PFT |
 | `plot_forest_structure.py` | example 03's stand file | animated vertical LAI profile and stand cross-section |
 | `plot_landscape_3d.py` | example 03's stand file; viz extra | a synthetic 3-D landscape at one record |
@@ -33,11 +31,10 @@ With `[output].enabled = true`, each tier writes files named from `[output].dir`
 `<prefix>-M-YYYY.nc` (monthly) and `<prefix>-Y.nc` (annual). The stamp follows each tier's
 `file_chunk`; the shipped values are day, month, year and run, and a `run` chunk has no stamp
 (example 05 writes `regen-M.nc`). `plot_pft_size.py` takes one file or a quoted glob over a tier's
-files; the notebook takes the directory:
+files:
 
 ```bash
 python post_proc/plot_pft_size.py 'OUTDIR/PREFIX-M-*.nc' -o pft_size.png
-MEDS_RUN=OUTDIR jupyter notebook post_proc/evaluate_ithaca.ipynb
 ```
 
 ### Example 03's stand file
@@ -92,18 +89,7 @@ The files are plain netCDF with CF metadata, and which variables exist depends o
 coordinates from the file (`soil_z`, `dbh_lower`, `dbh_upper`, `pft`) and the reference CO₂ from
 `mean_atm_co2_py`, so a figure stays right when a run changes its grid or forcing. The variables,
 axes and aggregation rules are in [`docs/science/diagnostics.md`](../docs/science/diagnostics.md).
-
-## The evaluation notebook
-
-`evaluate_ithaca.ipynb` is a worked pass over one run, using each tier for what it can answer:
-diurnal energy and carbon from the fast tier, seasonal cycles from the daily tier, demography and
-closure from the monthly and annual tiers. Set `MEDS_RUN` to the run's `[output].dir`. It was written
-against a three-year Ithaca run with all four tiers on, which the repository does not hold; the
-notebook copes with a variable the run did not enable.
-
-It is not a benchmark. It checks what needs no observations: that the energy, water and carbon
-budgets close in the files, and that magnitudes and shapes are physically possible. Two habits it
-teaches:
+Two habits keep a budget computed from the files closed:
 
 - **A rate becomes an amount with the width of its own window**, `t[i+1] - t[i]`; the trailing
   partial window is dropped because its width is unknown.

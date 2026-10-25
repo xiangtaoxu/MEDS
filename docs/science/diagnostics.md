@@ -145,7 +145,7 @@ value at the period's end, its snapshot (§4, Snapshots). The tier is the file, 
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
 | `(patch, soil)` | 2-D | per-patch soil profiles; off by default |
-| `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col` ([configuration](../configuration.md), Regional runs) |
+| `polygon` | every file; length 1 in a site run | after `time`; coordinates `polygon_id`, `lat`, `lon`, `row`, `col`; how a region chooses its polygons: [configuration](../configuration.md), Regional runs |
 | `site` | every file; the largest polygon's site count | after `polygon`; `n_site`, `area_si`, the terrain and the soil column of each site; `patch_site` gives each patch's site |
 
 **DBH classes are a size class of *plants*, ED2-style.** A cohort is assigned whole to the bin
@@ -170,6 +170,22 @@ stride means a profile is never read shifted by a layer, as it would be if the s
 layer count that differed between sites or from what a reader assumed. Inside the model the same
 holds: a soil-by-patch or soil-by-site slab is one flat array, patch- or site-major, strided by the
 same ceiling.
+
+**The polygon and site axes.** Every file has a `polygon` axis after `time` (length 1 in a site run,
+whose polygon is id 0), with the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`, and a
+`site` axis behind it, as long as the largest polygon's site count; `n_site (polygon)` gives each
+polygon's own, and the entries past it are `_FillValue`. A region runs one site per cell. The soil
+coordinate is per site: `soil_z (polygon, site, soil)` holds each site's layer node depths and its CF
+bounds `soil_z_bnds (polygon, site, soil, nv)` each layer's top and bottom, so the bottom layer ends at
+that site's own soil depth. Both are negative downward, with `_FillValue` below the site's bottom
+layer. Each file also carries each site's area and terrain, `area_si` (its fraction of the polygon),
+`elevation_si` [m], `slope_si` and `aspect_si` [degrees], and the inputs its maps gave it, all
+`(polygon, site)`: `n_soil_si` (its layer count), `soil_depth_si` [m], `bottom_bc_si` (`flag_values`
+1, 2 for drain, aquifer), `drain_factor_si` (the factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
+free-draining base, the cell's `f_leak` on a leaky one, 0 on a sealed one; `_FillValue` on an aquifer)
+and `deep_temp_si` [K], under the same names as in the state file. A run whose PFTs use Chave et al.
+(2014) height (`[allometry].height_allometry = "chave2014"`) also writes `chave_e_py (polygon)`, each
+cell's environmental stress index E.
 
 ---
 

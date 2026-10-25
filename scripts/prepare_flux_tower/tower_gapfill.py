@@ -178,9 +178,8 @@ def synthesized_longwave(tair_k, rh, psurf_ground_pa, sw, mean_cosz, cloud_a=con
 def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
     """The two parts of the model's synthesis, eps_clear sigma T^4 and eps_clear sigma T^4 (1 - kt),
     as separate predictors. Regressing on both fits the cloud term's coefficient at the site
-    instead of taking the model's 0.22: at Barro Colorado Island the pooled fit gives 0.10 per unit
-    of clear-sky emission, and on held-out records the two parts score RMSE 13.7-14.5 W/m2 against
-    14.5-16.7 for one regression on the whole synthesis."""
+    instead of taking the model's 0.22, and on held-out records the two parts predict better than
+    one regression on the whole synthesis."""
     q = conv.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
     kt = clearness_held_through_night(sw, mean_cosz)
     clear = conv.synthesize_lwdown(tair_k, q, psurf_ground_pa, np.ones_like(q), 0.0)
