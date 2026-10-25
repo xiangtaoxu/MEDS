@@ -22,12 +22,12 @@ program meds_main
    use meds_output_types,     only : output_registry_t
    use meds_output_registry,  only : build_output_registry, dump_io_config
    use meds_region,           only : meds_region_t, region_open, region_step_month, region_done,  &
-                                     region_finalize, region_free, DRIVER_ERR_NAN, DRIVER_ERR_AREA, &
-                                     DRIVER_ERR_BOUNDS
+                                     region_finalize, region_free, DRIVER_OK, DRIVER_ERR_NAN,     &
+                                     DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
    implicit none
 
    type(meds_region_t) :: reg
-   integer(ik)         :: status
+   integer(ik)         :: status, step_status
    logical             :: ok
    character(len=256)  :: path
 
@@ -53,16 +53,19 @@ program meds_main
 
    call region_open(trim(path), reg, ok)
    if (.not. ok) error stop 'meds_main: could not open the run'
+   step_status = DRIVER_OK
    do while (.not. region_done(reg))
-      call region_step_month(reg, status)
-      !----- The run RETURNS a failed step as a status, so that a library caller (Python) survives  !
-      !      it. In the executable it is fatal.  ---------------------------------------------------!
-      if (status == DRIVER_ERR_NAN)    error stop 'meds_main: NaN in the state or the energy/water ledger'
-      if (status == DRIVER_ERR_BOUNDS) error stop 'meds_main: a cohort or soil-carbon state out of bounds'
+      call region_step_month(reg, step_status)
+      if (step_status /= DRIVER_OK) exit
    end do
+   !----- The run returns a failed step as a status, so that a library caller (Python) survives it;  !
+   !      in the executable it is fatal. The run is finalized first either way: after a failure it    !
+   !      writes nothing more, and it closes the files, so the failed month's records stay readable.  !
    call region_finalize(reg, status)
+   call region_free(reg)
+   if (step_status == DRIVER_ERR_NAN)    error stop 'meds_main: NaN in the state or the energy/water ledger'
+   if (step_status == DRIVER_ERR_BOUNDS) error stop 'meds_main: a cohort or soil-carbon state out of bounds'
    if (status == DRIVER_ERR_AREA) error stop 'meds_main: a polygon''s area was not conserved'
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'
-   call region_free(reg)
 
 end program meds_main

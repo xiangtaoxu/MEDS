@@ -133,7 +133,10 @@ pages, `demography.md` and `conservation.md`, and its code keeps short comments 
 is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
 change to any result (#516). Its routines take one required ledger, which keeps the soil-carbon seam's
 worst values; the demographic laws make the founding and treefall decisions the operators apply; and
-`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520).
+`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). A
+step that fails no longer leaves `meds_main`'s output files open, a run that cannot open no longer
+leaves its C-API slot half built, and a state file written in a month a polygon failed in owes the
+calendar's restructuring (#521).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -1755,6 +1758,20 @@ worst values; the demographic laws make the founding and treefall decisions the 
 
 ### Fixed
 
+- **`meds_main` left its output files open when a step failed** (#521). It stopped with `error stop`
+  before `region_finalize`, so the files the run had open were never closed: the sub-daily tier is
+  never synced, and no tier is under `[output].sync_every = "never"`, so the failed month's records
+  could be lost or unreadable. It now finalizes the run first, which after a failure writes nothing
+  more and closes the files (ctest `main_failure_finalizes`).
+- **A run that could not open crashed the next one in its C-API slot** (#521). When a census or
+  restart file stopped `region_open` after it had opened the forcing and allocated the polygons,
+  `meds_run_open` returned -2 without freeing the slot, and the next open, handed the same slot,
+  stopped the Python process ("allocatable array is already allocated"). A run that cannot open now
+  frees what it built.
+- **A state file written after polygon 1 failed owed no restructuring** (#521). The file took the
+  owed restructuring from polygon 1, which stops tracking the calendar when it fails, so a region
+  resumed from it with that cell masked out skipped the month's restructuring for every polygon. The
+  file now takes it from the calendar.
 - **Tests that did not test what they said** (#518).
   - `restart_exact` was skipped without pandas, which it does not use. It now checks its own dependencies.
   - `test_column_rk45`'s "sealed" saturated column drained. It is sealed now, and its θ bound is hydrostatic.

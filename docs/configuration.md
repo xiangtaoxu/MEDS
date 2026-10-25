@@ -532,9 +532,9 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   (a NaN, a cohort or soil-carbon state out of bounds) stops at the failing step, and the others
   finish the month. The month's records are then written, with the fill value where the failed
   polygon has none, and so is a state file that falls due at the month's end (the failed polygon as
-  it stood); the log names the polygon and the date, and `meds_main` stops with an error. So the
-  region ends after the month in which a polygon failed: no later month runs, and no end-of-run state
-  file is written.
+  it stood, the restructuring it owes the calendar's); the log names the polygon and the date, and
+  `meds_main` closes the files and stops with an error. So the region ends after the month in which a
+  polygon failed: no later month runs, and no end-of-run state file is written.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40 (measured with a detail polygon, before the region files held
