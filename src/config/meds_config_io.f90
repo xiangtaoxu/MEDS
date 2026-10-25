@@ -831,7 +831,7 @@ contains
       call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno%shed_light_sharpness,  npft, m)
       call req_pa(t, 'phenology.light_window',            cfg%pft%pheno%light_window,          npft, m)
       !----- Optional: the water cue, which a PFT turns on through its masks. An absent key        !
-      !      keeps the alloc_pft_table default, which equals the pheno_args_t default. ------------!
+      !      keeps the phenology_traits_t default. -----------------------------------------------!
       call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno%flush_water_sum,       npft, m)
       call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno%flush_water_sharpness, npft, m)
       call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno%shed_water_sum,        npft, m)

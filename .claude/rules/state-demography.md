@@ -57,8 +57,8 @@ invisible in a conservation ledger — that is what `test_carbon_growth` exists 
 ## Laws and operators do not touch
 
 The laws are `slow_dynamics/processes/meds_demography`; the operators that apply them are
-`slow_dynamics/driver/meds_slow_update`. They stay apart: the operators take rate **arrays** as
-arguments and never import `meds_demography`. `meds_slow_dynamics` is the one place a rate meets its
+`slow_dynamics/driver/meds_slow_update`. They stay apart: the operators take rate and decision
+**arrays** as arguments and never import `meds_demography`. `meds_slow_dynamics` is the one place a rate meets its
 application. The C API's `apply_rates` path, feeding externally computed rates through the same
 operators, is the standing test.
 

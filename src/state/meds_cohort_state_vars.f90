@@ -38,7 +38,7 @@ module meds_cohort_state_vars
    public :: fuse_cohort_fast_state
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_film_water, cohort_water_enthalpy
-   public :: cohort_wood_store_carbon
+   public :: cohort_wood_store_carbon, cohort_carbon_supply
    public :: set_cohort_tissue_water, cohort_tissue_temps, set_cohort_tissue_temps, hold_cohort_tissue_temps
    public :: cohort_bad_field, cohort_field_finite, cohort_field_name
 
@@ -994,5 +994,25 @@ contains
       allocate(deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m), deriv%d_wood_carbon_dt(m),  &
                deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
    end subroutine cohort_deriv_alloc
+
+   !----- Cohort i's carbon for the slow step [kgC/plant]: the fast loop's GPP and maintenance  !
+   !      respiration, or, with the fast loop off, gpp_ref per unit leaf area and no maintenance !
+   !      (docs/science/plant_carbon_allocation.md §1). The allocator and the slow ledger both   !
+   !      read it, so the ledger declares what the allocator consumes. -----------------------!
+   pure subroutine cohort_carbon_supply(cohort, i, fast_biophysics_on, gpp_ref, dt_yr, gross_gpp, resp_maint)
+      type(cohort_block), intent(in)  :: cohort
+      integer(ik),        intent(in)  :: i
+      logical,            intent(in)  :: fast_biophysics_on
+      real(wp),           intent(in)  :: gpp_ref      !< [kgC/m2 leaf/yr] the fast-off stub's GPP
+      real(wp),           intent(in)  :: dt_yr        !< [yr] the slow step
+      real(wp),           intent(out) :: gross_gpp, resp_maint
+      if (fast_biophysics_on) then
+         gross_gpp  = cohort%gpp_accum(i)
+         resp_maint = cohort%leaf_resp_accum(i) + cohort%stem_resp_accum(i) + cohort%root_resp_accum(i)
+      else
+         gross_gpp  = gpp_ref * cohort%leaf_area(i) * dt_yr
+         resp_maint = 0.0_wp
+      end if
+   end subroutine cohort_carbon_supply
 
 end module meds_cohort_state_vars

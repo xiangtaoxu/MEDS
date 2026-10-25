@@ -38,7 +38,9 @@ program test_fast_loop
    use meds_constants,           only : stefan_boltzmann, n_soil_layer_max
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
+   use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: NSL = 10_ik
@@ -534,7 +536,7 @@ program test_fast_loop
       poly%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
       call hold_cohort_tissue_temps(poly%cohort, 1_ik)   ! at the leaf's temperature, as an operator would
 
-      call settle_tissue_water(poly, cfg)
+      call settle_tissue_water(poly, cfg, no_ledger)
       call check_close(poly%cohort%leaf_water_mass(1),                                              &
                        cfg%pft%hydraulics%pft(1)%leaf_curve%water_sat                               &
                        * poly%cohort%leaf_carbon(1), 1.0e-12_wp,                                    &

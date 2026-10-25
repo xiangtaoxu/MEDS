@@ -2,7 +2,7 @@
 !==========================================================================================!
 ! meds_plant_carbon_allocation -- how a cohort spends, or fails to pay, its daily carbon   !
 ! (docs/science/plant_carbon_allocation.md).                                               !
-!   * cohort_carbon_demand    -- the step's GPP and maintenance, turnover first, and the   !
+!   * cohort_carbon_demand    -- the step's turnover, taken first, and the                  !
 !                                flush-capped growth demands (§1; plant_phenology.md §5).  !
 !   * growth_window_so_far    -- the growth window the sink limit sees (eq. (4)).          !
 !   * growth_sink_limitation  -- the most wood a cohort can build in a step, whatever its  !
@@ -30,41 +30,29 @@ module meds_plant_carbon_allocation
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! One cohort's carbon demand: gather the step's GPP and maintenance respiration (the fast    !
-   ! loop's accumulators, or the gpp_ref stub), apply turnover first (leaf_turnover_step for    !
+   ! One cohort's carbon demand: apply turnover first (leaf_turnover_step for              !
    ! the leaves; the fine roots at their own rate under the leaves' gate, not dropping with      !
    ! them), and form the flush-capped growth demands from the post-shed pools                    !
    ! (docs/science/plant_phenology.md eq. (9) and §5).                                           !
    !---------------------------------------------------------------------------------------!
-   pure subroutine cohort_carbon_demand(fast_biophysics_on,                                       &
-            gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum, gpp_ref, leaf_area, dt_yr, &
+   pure subroutine cohort_carbon_demand(                                                          &
             leaf_flush_tendency, leaf_shed_tendency, flush_rate_max, shed_rate_max, leaf_turn,     &
             fineroot_turnover_rate, min_leaf_cover, bare_leaf_cover,                               &
             leaf_carbon, fineroot_carbon, leaf_target, dt_day, r2l,                                &
-            gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand, fineroot_demand,     &
+            leaf_shed_c, fineroot_shed_c, leaf_demand, fineroot_demand,                            &
             retained_frac, leaf_retained_c, fineroot_retained_c)
-      logical,  intent(in)  :: fast_biophysics_on
-      real(wp), intent(in)  :: gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum
-      real(wp), intent(in)  :: gpp_ref, leaf_area, dt_yr
       real(wp), intent(in)  :: leaf_flush_tendency, leaf_shed_tendency  !< [-]
       real(wp), intent(in)  :: flush_rate_max, shed_rate_max            !< [1/day]
       real(wp), intent(in)  :: leaf_turn, fineroot_turnover_rate        !< [1/yr]
       real(wp), intent(in)  :: min_leaf_cover, bare_leaf_cover          !< [-]
       real(wp), intent(in)  :: leaf_carbon, fineroot_carbon, leaf_target, dt_day, r2l
-      real(wp), intent(out) :: gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c
+      real(wp), intent(out) :: leaf_shed_c, fineroot_shed_c
       real(wp), intent(out) :: leaf_demand, fineroot_demand
       real(wp), intent(in)  :: retained_frac        !< [-] share of the loss resorbed; the shed stays the full loss
       real(wp), intent(out) :: leaf_retained_c      !< [kgC/plant] leaf carbon resorbed this step
       real(wp), intent(out) :: fineroot_retained_c  !< [kgC/plant] fine-root carbon resorbed this step
       real(wp) :: senescence, background, flush_cap, leaf_post, root_post, root_pool, retained
 
-      if (fast_biophysics_on) then
-         gross_gpp  = gpp_accum
-         resp_maint = leaf_resp_accum + stem_resp_accum + root_resp_accum
-      else
-         gross_gpp  = gpp_ref * leaf_area * dt_yr
-         resp_maint = 0.0_wp
-      end if
       !----- Turnover first: the leaf and fine-root losses, then the post-shed pools. ---------!
       call leaf_turnover_step(leaf_carbon, leaf_target, leaf_flush_tendency, leaf_shed_tendency,    &
                               flush_rate_max, shed_rate_max, leaf_turn, min_leaf_cover,              &
@@ -156,8 +144,7 @@ contains
    elemental pure subroutine plant_carbon_allocation(gpp, resp_maint, growth_resp_frac, storage, &
                                     leaf_demand, fineroot_demand, storage_demand, repro_frac,     &
                                     growth_leaf, growth_fineroot, growth_wood, npp_store,         &
-                                    growth_repro, growth_resp, deficit, starving,                 &
-                                    wood_growth_max, exudate)
+                                    growth_repro, growth_resp, deficit, wood_growth_max, exudate)
       real(wp), intent(in)  :: gpp              !< [kgC/plant] gross primary production this step (>= 0)
       real(wp), intent(in)  :: resp_maint       !< [kgC/plant] maintenance respiration this step (>= 0)
       real(wp), intent(in)  :: growth_resp_frac !< [--] construction-cost fraction g (PFT trait)
@@ -173,11 +160,8 @@ contains
       real(wp), intent(out) :: growth_repro     !< [kgC/plant] carbon -> reproduction (>= 0; -> recruits)
       real(wp), intent(out) :: growth_resp      !< [kgC/plant] growth respiration on realized growth (>= 0)
       real(wp), intent(out) :: deficit          !< [kgC/plant] unpaid maintenance after storage exhausted (>= 0)
-      logical,  intent(out) :: starving         !< .true. => storage could not cover the maintenance debt
-      !----- The sink limit (growth_sink_limitation): pass both or neither; without them wood !
-      !      takes the whole residual.                                                     !
-      real(wp), intent(in),  optional :: wood_growth_max  !< [kgC/plant] sink-limited wood growth this step
-      real(wp), intent(out), optional :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
+      real(wp), intent(in)  :: wood_growth_max  !< [kgC/plant] sink-limited wood growth (growth_sink_limitation)
+      real(wp), intent(out) :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
       real(wp) :: net, g, cost, avail, store_left, draw, debt, storage_refill, c_repro, c_wood, c_exudate
 
       growth_leaf = 0.0_wp
@@ -188,7 +172,6 @@ contains
       draw = 0.0_wp
       growth_resp = 0.0_wp
       deficit = 0.0_wp
-      starving = .false.
       store_left = max(storage, 0.0_wp)
       net = gpp - resp_maint
       g   = max(growth_resp_frac, 0.0_wp)
@@ -201,10 +184,7 @@ contains
          debt = -net
          draw = min(debt, store_left)
          store_left = store_left - draw
-         if (draw < debt) then
-            starving = .true.
-            deficit  = debt - draw
-         end if
+         if (draw < debt) deficit = debt - draw
          avail = 0.0_wp
       end if
 
@@ -225,14 +205,12 @@ contains
       c_wood      = max(avail, 0.0_wp)
       growth_wood = c_wood / cost
       c_exudate   = 0.0_wp
-      if (present(wood_growth_max)) then
-         if (growth_wood > wood_growth_max) then
-            c_exudate   = growth_wood - max(wood_growth_max, 0.0_wp)
-            growth_wood = max(wood_growth_max, 0.0_wp)
-         end if
+      if (growth_wood > wood_growth_max) then
+         c_exudate   = growth_wood - max(wood_growth_max, 0.0_wp)
+         growth_wood = max(wood_growth_max, 0.0_wp)
       end if
       growth_resp = growth_resp + growth_respiration(growth_wood + c_exudate, g)
-      if (present(exudate)) exudate = c_exudate
+      exudate     = c_exudate
 
       npp_store = storage_refill - draw
    end subroutine plant_carbon_allocation

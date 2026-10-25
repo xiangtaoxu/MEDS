@@ -50,7 +50,9 @@ program test_slow_diag_units
    use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
+   use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    integer(ik), parameter :: NSL = 10_ik
@@ -96,7 +98,7 @@ program test_slow_diag_units
 
    !=== 2. LITTER: reported rate x elapsed == the amount biogeochemistry consumed. ===============!
    pool0 = sum(poly%patch%recruit_pool(:, 1))
-   call advance_slow_dynamics(poly, cfg)
+   call advance_slow_dynamics(poly, cfg, no_ledger)
    pool1 = sum(poly%patch%recruit_pool(:, 1))
 
    call check(poly%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
@@ -130,7 +132,7 @@ program test_slow_diag_units
    !    which the next fast loop then weighs. ------------------------------------------------------!
    block
       call reset_step_diagnostics(poly)                          ! the output has read step 1
-      call advance_boundary_dynamics(poly, cfg, .true., .true.)  ! new month AND new year
+      call advance_boundary_dynamics(poly, cfg, .true., .true., no_ledger)  ! new month AND new year
       call fast_dynamics(poly, cfg)                              ! the next step's window
       elapsed_yr = poly%patch%diag%w(1) / yr_sec
       call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
@@ -153,7 +155,7 @@ program test_slow_diag_units
       call reset_step_diagnostics(poly)
       poly%patch%diag%n = 0_ik                                   ! as if no fast loop had ever run
       pool0 = sum(poly%patch%recruit_pool(:, 1))
-      call advance_slow_dynamics(poly, cfg_slow)
+      call advance_slow_dynamics(poly, cfg_slow, no_ledger)
       pool1 = sum(poly%patch%recruit_pool(:, 1))
       call check_close(poly%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
                        'slow-only: the slow step weighs the block by dt_slow')

@@ -10,7 +10,7 @@
 !   3. GROWTH-RESP CHG : charged (1+g) on REALIZED growth only; storage refill is exempt.         !
 !   4. WOOD RESIDUAL   : a budget that only covers the leaf demand => wood 0.                     !
 !   5. STORAGE GROWTH  : storage funds leaf growth EVEN when net < 0 (spring leaf-out).            !
-!   6. STARVING        : maintenance debt beyond storage => starving + deficit, no growth.         !
+!   6. STARVING        : maintenance debt beyond storage => a deficit, no growth.                   !
 !   7. SINK LIMIT      : relative = rate x wood x dt; absolute = the wood that grows the diameter    !
 !                        by rate x dbh^exponent x dt, under and over the height cap; the tighter     !
 !                        applies; 0 = off.                                                          !
@@ -60,24 +60,22 @@ contains
 
    !----- 2. Carbon closes (g = 0 for the simplest arithmetic): surplus -> wood. ------------!
    subroutine test_closure()
-      real(wp) :: gl, gf, gw, gs, gr, gresp, def
-      logical  :: starv
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.0_wp, 5.0_wp, 0.3_wp, 0.2_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv)
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
       call check_close('closure: growth_leaf = demand', gl, 0.3_wp)
       call check_close('closure: growth_wood = residual', gw, 0.5_wp)
-      call check_true ('closure: not starving', .not. starv)
+      call check_true ('closure: no deficit', def == 0.0_wp)
       call check_closure('closure: g=0', 1.0_wp, 0.0_wp, gl, gf, gw, gr, gs, gresp, def)
    end subroutine test_closure
 
    !----- 3. Growth respiration charged (1+g) on realized growth; storage refill exempt. ----!
    subroutine test_growth_resp_charge()
-      real(wp) :: gl, gf, gw, gs, gr, gresp, def
-      logical  :: starv
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       ! g = 0.5: leaf demand 0.3 built at cost 1.5 (gresp += 0.15); storage 0.2 at 1:1 (exempt);
       ! residual 0.35 -> wood 0.35/1.5.
       call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.2_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv)
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
       call check_close('growth resp: on realized growth', gresp, 0.15_wp + 0.5_wp*(0.35_wp/1.5_wp))
       call check_close('growth resp: storage exempt (npp_store = 0.2)', gs, 0.2_wp)
       call check_close('growth resp: wood tissue = residual/(1+g)', gw, 0.35_wp/1.5_wp)
@@ -86,35 +84,32 @@ contains
 
    !----- 4. Wood is the residual sink: a budget that only covers the leaf demand => wood 0. !
    subroutine test_wood_residual()
-      real(wp) :: gl, gf, gw, gs, gr, gresp, def
-      logical  :: starv
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       call plant_carbon_allocation(0.5_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv)
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
       call check_close('residual: growth_leaf = demand', gl, 0.5_wp)
       call check_close('residual: growth_wood = 0',      gw, 0.0_wp)
    end subroutine test_wood_residual
 
    !----- 5. Storage funds leaf growth even when net < 0 (spring leaf-out from reserves). ---!
    subroutine test_storage_growth()
-      real(wp) :: gl, gf, gw, gs, gr, gresp, def
-      logical  :: starv
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       ! net = -0.05 (paid from storage), then 0.1 leaf built from the remaining reserves (g=0).
       call plant_carbon_allocation(0.0_wp, 0.05_wp, 0.0_wp, 1.0_wp, 0.1_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv)
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
       call check_true ('storage growth: leaf grows despite net<0', gl > 0.0_wp)
       call check_close('storage growth: growth_leaf = demand',     gl, 0.1_wp)
       call check_close('storage growth: storage draw = debt+growth', gs, -0.15_wp)
-      call check_true ('storage growth: not starving',             .not. starv)
+      call check_true ('storage growth: no deficit',               def == 0.0_wp)
       call check_closure('storage growth: closes', 0.0_wp, 0.05_wp, gl, gf, gw, gr, gs, gresp, def)
    end subroutine test_storage_growth
 
-   !----- 6. Maintenance debt beyond storage => starving + deficit; no growth. --------------!
+   !----- 6. Maintenance debt beyond storage => a deficit; no growth. ----------------------!
    subroutine test_starving()
-      real(wp) :: gl, gf, gw, gs, gr, gresp, def
-      logical  :: starv
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       call plant_carbon_allocation(0.0_wp, 1.0_wp, 0.0_wp, 0.3_wp, 0.1_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv)
-      call check_true ('starving: flag set',           starv)
+           gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
+      call check_true ('starving: deficit left',       def > 0.0_wp)
       call check_close('starving: deficit = debt - storage', def, 0.7_wp)
       call check_close('starving: no leaf growth',      gl, 0.0_wp)
       call check_close('starving: storage drained',     gs, -0.3_wp)
@@ -180,12 +175,11 @@ contains
    subroutine test_sink_cap()
       real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
       real(wp) :: gl0, gf0, gw0, gs0, gr0, gresp0, def0
-      logical  :: starv, starv0
       ! g = 0.5: leaf 0.3 at cost 1.5 leaves 0.55, which would build 0.55/1.5 of wood. The sink
       ! takes 0.1 (cost 0.15); the other 0.40 makes 0.40/1.5 of exudate at the same cost, so growth
       ! respiration is what it would be without the limit.
       call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv,                                                &
+           gl, gf, gw, gs, gr, gresp, def,                                                &
            wood_growth_max=limit(10.0_wp, 10.0_wp, 0.01_wp, 0.0_wp, 1.0_wp), exudate=ex)
       call check_close('sink cap: wood = the limit',                 gw, 0.1_wp)
       call check_close('sink cap: exudate = (residual - wood cost)/(1+g)', ex, 0.4_wp/1.5_wp)
@@ -194,9 +188,9 @@ contains
                        (1.0_wp - 0.0_wp) - gresp)
       ! A limit above the residual changes nothing, to the bit.
       call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl0, gf0, gw0, gs0, gr0, gresp0, def0, starv0)
+           gl0, gf0, gw0, gs0, gr0, gresp0, def0, huge(1.0_wp), ex)
       call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
-           gl, gf, gw, gs, gr, gresp, def, starv,                                                &
+           gl, gf, gw, gs, gr, gresp, def,                                                &
            wood_growth_max=limit(10.0_wp, 10.0_wp, 0.0_wp, 0.0_wp, 1.0_wp), exudate=ex)
       call check_true('sink cap: no limit => bit-identical wood', gw == gw0 .and. gresp == gresp0)
       call check_close('sink cap: no limit => no exudate', ex, 0.0_wp)

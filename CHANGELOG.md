@@ -131,7 +131,9 @@ Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is rea
 one helper groups the cohorts of one height into a layer (#514). The slow loop's science is on two new
 pages, `demography.md` and `conservation.md`, and its code keeps short comments (#515). The slow loop
 is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
-change to any result (#516).
+change to any result (#516). Its routines take one required ledger, which keeps the soil-carbon seam's
+worst values; the demographic laws make the founding and treefall decisions the operators apply; and
+`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -766,9 +768,30 @@ change to any result (#516).
   `update_cohort_derivatives`, `refresh_canopy_depth`) are `meds_slow_update`'s; `soilc_seam_t` is
   `meds_slow_ledger`'s. `soil_carbon_t` is `soil_carbon_state_t`. The `meds_demography` library is
   part of `meds_slow`, and the `MEDS_GPU` build option is gone.
+- **Fortran: the slow loop's signatures** (#520). `advance_slow_dynamics(poly, cfg, ledger[, step_start])`
+  and `vegetation_dynamics(poly, cfg, ledger[, doy])`; `restructure_stand`, `advance_boundary_dynamics`,
+  `settle_tissue_water`, `refresh_canopy_depth`, `shed_turnover_water` and `advance_soil_carbon` take a
+  required `slow_ledger_t` (an inactive one books nothing), and the amounts an operator reports are
+  required. `soilc_seam_t` is gone: the seam's worst values are fields of `slow_ledger_t`, kept by
+  `slow_ledger_soil_check`. `apply_recruitment` and `apply_patch_disturbance` take the decisions of
+  `decide_recruitment` and `decide_disturbance` (`meds_slow_state`), made by the laws `founds_cohort`,
+  `disturbed_fraction` and `survives_treefall` (`meds_demography`).
+  `advance_plant_traits(poly, dt_yr, leaf_carbon_new, storage_new[, instantaneous])` and
+  `reacclimate_plant_traits(poly, cfg, leaf_carbon_new, storage_new)` return the carbon
+  `commit_trait_carbon` writes; `soil_carbon_step` takes its pools `intent(in)` and returns the new ones in
+  `soil_carbon_out_t%pools`, which `commit_soil_carbon` writes. `phenology_kernel` takes
+  `phenology_traits_t` (`pheno_args_t` is gone); `plant_carbon_allocation` requires `wood_growth_max` and
+  `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
+  `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
+  and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
 
 ### Changed
 
+- **The slow loop's routines are consolidated** (#520), with no change to any result on gfortran. One PFT
+  table is read everywhere, and each derived value has one source (`recruit_carbon`, `leaf_psi_tlp`,
+  `cohort_carbon_supply`); the patch stores blend in one place; the commit is a plain loop; the code
+  nothing read is gone, and each line holds one statement. The run's worst soil-carbon seam gap is dated
+  by the start of its slow step.
 - **The tests of `src/share`, `src/config` and `src/io` are one per module** (#519).
   - `test_time` is `test_numerics`' calendar section. `test_numerics` also takes the sun on a slope and
     linear interpolation.

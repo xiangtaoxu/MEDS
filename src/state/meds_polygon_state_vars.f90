@@ -12,6 +12,7 @@ module meds_polygon_state_vars
                                        reset_polygon_diag, reset_site_diag
    use meds_kinds,              only : wp, ik
    use meds_pft_params,         only : pft_table_t
+   use meds_pft_derive,         only : derive_recruit_carbon
    use meds_cohort_state_vars,  only : cohort_block, cohort_deriv_block, alloc_cohort_block, free_cohort_block, reorder_cohort_block
    use meds_patch_state_vars,   only : patch_block, alloc_patch_block, free_patch_block
    use meds_site_state_vars,    only : site_block, alloc_site_block, free_site_block
@@ -129,6 +130,7 @@ contains
       integer(ik) :: ns
       poly%n_pft = n_pft
       poly%cohort%pft_table = pft
+      call derive_recruit_carbon(poly%cohort%pft_table)
       !----- Its sites, sharing the polygon equally until the caller gives their areas; every   !
       !      patch starts in the first. --------------------------------------------------------!
       ns = 1_ik

@@ -9,7 +9,7 @@ program test_carbon_growth
    use meds_cohort_state_vars, only : cohort_deriv_alloc, cohort_bad_field, cohort_field_finite, cohort_field_name
    use meds_patch_state_vars,  only : canopy_air_bad_field
    use meds_polygon_state_vars, only : polygon_t
-   use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives
+   use meds_slow_update, only : update_cohort_states, terminate_cohorts, update_cohort_derivatives, commit_trait_carbon
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_slow_state, only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits,      &
                                slow_step_data_t
@@ -17,12 +17,15 @@ program test_carbon_growth
    use meds_stepper,                only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
+   use meds_slow_ledger,  only : slow_ledger_t
    implicit none
+   real(wp), allocatable :: leaf_new(:), storage_new(:)   !< the traits' leaf and storage carbon
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
+   real(wp)            :: shed_water   !< an operator's shed water, unread here
 
    type(meds_config_t) :: cfg
    type(polygon_t)     :: poly
-   real(wp)    :: gl, gf, gw, gs, gr, gresp, def, wood0, dbh0
-   logical     :: starv
+   real(wp)    :: gl, gf, gw, gs, gr, gresp, def, ex, wood0, dbh0
    integer(ik) :: istep
 
    call banner('carbon-driven growth')
@@ -30,7 +33,7 @@ program test_carbon_growth
 
    !=== 1. Growth-only allocation closes: (growth pools + npp_store) - deficit = net - growth_resp.=!
    call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.05_wp, 0.05_wp, 0.02_wp, 0.3_wp, &
-        gl, gf, gw, gs, gr, gresp, def, starv)
+        gl, gf, gw, gs, gr, gresp, def, huge(1.0_wp), ex)
    call check_close((gl+gf+gw+gr+gs) - def, 1.0_wp - gresp, 1.0e-9_wp,                              &
                     'growth allocation carbon closure')
    call check(gr > 0.0_wp, 'mature cohort allocates to reproduction')
@@ -102,7 +105,8 @@ program test_carbon_growth
       sla0 = poly%cohort%sla(1) ; vc0 = poly%cohort%vcmax25(1) ; ll0 = poly%cohort%leaf_turnover_rate(1)
       ns0  = poly%cohort%nonstructural_carbon(1)
       do istep = 1_ik, 200_ik                                  ! many steps so the slow relaxation shows
-         call advance_plant_traits(poly, cfg, 1.0_wp)
+         call advance_plant_traits(poly, 1.0_wp, leaf_new, storage_new)
+         call commit_trait_carbon(poly, leaf_new, storage_new)
       end do
       call check(poly%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
       call check(poly%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')
@@ -142,7 +146,7 @@ program test_carbon_growth
       !----- (a) Net LOSS on both leaf and fine root: shed proportional to the carbon fraction lost. --!
       step%d_leaf(1)     = -0.25_wp * leaf_carbon0        ! sheds 25% of the leaf pool this step
       step%d_fineroot(1) = -0.10_wp * fineroot_carbon0    ! sheds 10% of the fine-root pool
-      call shed_turnover_water(poly, cfg, step)
+      call shed_turnover_water(poly, cfg, step, no_ledger)
       expect_leaf_shed = leaf_water0 * 0.25_wp
       !----- The fine roots hold their carbon's share of the store they share with the sapwood, and   !
       !      shed a tenth of that: the store's water per unit of its carbon is unchanged once the     !
@@ -171,7 +175,7 @@ program test_carbon_growth
       poly%cohort%wood_water_mass(1) = wood_water0
       step%d_leaf(1)     = 0.01_wp * leaf_carbon0
       step%d_fineroot(1) = 0.01_wp * fineroot_carbon0
-      call shed_turnover_water(poly, cfg, step)
+      call shed_turnover_water(poly, cfg, step, no_ledger)
       call check_close(poly%cohort%leaf_water_mass(1), leaf_water0, 1.0e-12_wp,                    &
                        'shed_turnover_water: net GAIN leaves leaf water mass untouched')
       call check_close(poly%cohort%wood_water_mass(1), wood_water0, 1.0e-12_wp,                    &
@@ -183,7 +187,7 @@ program test_carbon_growth
       poly%cohort%leaf_water_mass(1) = leaf_water0
       step%d_leaf(1)     = -leaf_carbon0
       step%d_fineroot(1) = 0.0_wp
-      call shed_turnover_water(poly, cfg, step)
+      call shed_turnover_water(poly, cfg, step, no_ledger)
       call check_close(poly%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
                        'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
    end block
@@ -269,7 +273,8 @@ program test_carbon_growth
       store0 = 0.25_wp * leaf0                              ! storage covers a quarter of the doubling
       poly%cohort%nonstructural_carbon(1) = store0
       carbon0 = leaf0 + store0
-      call reacclimate_plant_traits(poly, cfg)
+      call reacclimate_plant_traits(poly, cfg, leaf_new, storage_new)
+      call commit_trait_carbon(poly, leaf_new, storage_new)
       call check(poly%cohort%sla(1) == cfg%pft%sla(2_ik), 'reacclimation takes the file''s SLA')
       call check(poly%cohort%nonstructural_carbon(1) == 0.0_wp, 'reacclimation empties storage, no further')
       call check_close(poly%cohort%leaf_carbon(1) + poly%cohort%nonstructural_carbon(1), carbon0,      &
@@ -312,7 +317,7 @@ program test_carbon_growth
       call check(all(poly%cohort%nplant(1:2) * poly%cohort%agb(1:2) >= cfg%min_cohort_agb),        &
                  'cull fixture: both cohorts clear the AGB floor, so only the density floor acts')
       n_cut = poly%cohort%n
-      call terminate_cohorts(poly, cfg)
+      call terminate_cohorts(poly, cfg, shed_water)
       call check(poly%cohort%n == n_cut - 1_ik, 'cull: exactly one cohort removed')
       call check(poly%cohort%nplant(1) > cfg%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
    end block

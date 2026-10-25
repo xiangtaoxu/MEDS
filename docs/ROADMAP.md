@@ -438,8 +438,7 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
   [#407](https://github.com/xiangtaoxu/MEDS/issues/407) Part of [#183](https://github.com/xiangtaoxu/MEDS/issues/183). A region loads each month's forcing on one thread while the others
   wait; reading and compute never overlap.
 - **GPU offload.** *Decided: no.* The evaluation measured OpenMP `target` offload 1.4× slower than
-  the CPU, so the GPU build option is removed. *Planned:* the one `target` loop left
-  (`update_cohort_states_kernel`, in `meds_slow_update`) goes too.
+  the CPU, so the GPU build option and the code's one `target` loop are removed.
 
 ---
 

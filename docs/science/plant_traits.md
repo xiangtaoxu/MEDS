@@ -117,7 +117,8 @@ consumers live outside it.
   `[trait_dynamics].trait_plasticity_on` (default off ⇒ every cohort keeps its PFT's
   top-of-canopy traits). It runs **after** the competition sweep refreshes `overtopping_lai` and **before**
   `compute_carbon_allocation`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
-  `light_plastic_traits` (eq. (1)) then `update_plastic_trait` (eq. (2)), then resorbs any SLA overshoot (§4).
+  `light_plastic_traits` (eq. (1)) then `update_plastic_trait` (eq. (2)), and returns the leaf and storage carbon
+  that resorb any SLA overshoot (§4); `meds_slow_update`'s `commit_trait_carbon` writes them.
 
 - **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the background
   leaf turnover uses `cohort%leaf_turnover_rate`; and the fast loop's `leaf_gas_exchange_batch` (called from
@@ -149,9 +150,9 @@ consumers live outside it.
 | replacement-weighted / instant update (eq. (2)) | `meds_plant_traits`: `update_plastic_trait` |
 | the slopes' fits (eqs. (3)–(4)) | `scripts/pft_traits/pft_traits.py`: `plasticity` |
 | per-cohort trait state + fusion weighting | `meds_cohort_state_vars` (SoA `sla/vcmax25/rd25/leaf_turnover_rate`); `meds_slow_update`: `fuse_2_cohorts` |
-| slow-loop orchestration + SLA-overshoot resorption | `meds_slow_state`: `advance_plant_traits` |
+| slow-loop orchestration + SLA-overshoot resorption | `meds_slow_state`: `advance_plant_traits`; `meds_slow_update`: `commit_trait_carbon` |
 | carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `cohort%leaf_turnover_rate`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |
-| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_slow_state`: `reacclimate_plant_traits` |
+| state persistence + census instant | `meds_init_restart`: `restart_file_write`/`read_restart_file`; `meds_init`: `init_polygon` (census start); `meds_slow_state`: `reacclimate_plant_traits`, written by `meds_slow_update`: `commit_trait_carbon` |
 
 ## References
 - **Ma, Y., Moorcroft, P. R., Wright, S. J., Rogers, A., Lamour, J., Davidson, K. J., Serbin, S. P.,

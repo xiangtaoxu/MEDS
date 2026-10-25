@@ -142,7 +142,7 @@ and passive are fed by transfers alone. Carbon arrives by two routes: turnover/s
 background mortality accumulate into `patch%litter_in` and enter through $u$, while **cull-termination
 and disturbance kills** add necromass *directly* onto `patch%soil_carbon`, through the same
 `necromass_to_litter` split, so the boundary's dead carbon reaches the pools at once rather than with the
-next day's step. Hence the audit field `litter_in_matrix` — it is $`\sum_i u_i`$ only.
+next day's step.
 
 ## 6. The daily step, and why it consumes an accumulated integral
 
@@ -199,8 +199,8 @@ $`R_h`$ to $`[\mathrm{\mu mol\,m^{-2}\,s^{-1}}]`$ with `kgcday_2_umols` for the 
 the driver integrates $`\xi_j`$ into the per-patch `decomp_xi%xi_days` (the $`\xi^{\mathrm{int}}`$ of
 eq. (5)) and $`R_h`$, still in the pools' kgC m⁻² day⁻¹ so the seam check below compares like with
 like, into `decomp_xi%rh_fast`, both reset once per slow step. Within a step the daily
-`soil_carbon_step` is the **only writer** of the real pools, debiting them with exactly that
-$`\xi^{\mathrm{int}}`$; at a calendar boundary the demography's operators also add the culled and
+`soil_carbon_step` is the **only** change to the real pools, debiting them with exactly that
+$`\xi^{\mathrm{int}}`$ (it returns the new pools, and `meds_slow_update` writes them); at a calendar boundary the demography's operators also add the culled and
 killed plants' litter to them, and patch fusion and the treefall gaps blend them on area
 ([demography](demography.md) §3–§4).
 
@@ -249,11 +249,13 @@ In eq. (8), $`X_c`$ is the **storage capacity** — the equilibrium the patch is
 climate and litter input, a moving attractor rather than a fixed point; $`X_p`$ is the **storage
 potential**, the remaining sink (negative means a source); $`\tau_E`$ is the ecosystem **residence
 time** in years, stock over throughput. The transient relaxes toward $`X_c`$ at a rate set by
-$`A\,\xi K`$, making the trio a decomposition of *why* two runs store different carbon.
+$`A\,\xi K`$, making the trio a decomposition of *why* two runs store different carbon. The model
+does not report the trio; it follows from the pools, the litter input and the scalars the output
+holds.
 
 ## 9. Audits, and the difference between conservation and plausibility
 
-Every step fills a `soil_carbon_out_t`: `litter_in_matrix`, `dC_pool`, `rh_out`, `rh_seam_gap` (§7),
+Every step fills a `soil_carbon_out_t`: the new pools, `rh_seam_gap` (§7),
 $\lambda$ with the pool that attained it, and the lignin passive-tracer residual
 $`\max_s|\Delta L_s-(\ell_s-(1-\sigma_s)L_s)|`$, zero by construction for either solver. The carbon
 check that can actually fail is the *independent* one, in the tests: recompute $`R_h`$ from
@@ -320,11 +322,11 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | litter → source term $u$; necromass → destinations | `meds_soil_carbon`: `build_litter_input`, `necromass_to_litter`, `add_necromass` |
 | daily pool advance (Euler / EXPM) + audits | `meds_soil_carbon`: `soil_carbon_step` |
 | instantaneous $`R_h`$ (the fast↔slow seam kernel) | `meds_respiration`: `heterotrophic_respiration` |
-| steady state; capacity / potential / residence time | `meds_soil_carbon`: `solve_soil_carbon_steady_state`, `soil_carbon_diagnostics` |
+| steady state (SASU) | `meds_soil_carbon`: `solve_soil_carbon_steady_state` |
 | pool plausibility | `meds_soil_carbon`: `soil_carbon_bad_pool`, `soil_carbon_pool_name` |
-| pools, indices, audit/diagnostic records | `meds_soil_carbon`: `soil_carbon_out_t`, `soilc_diag_t`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_state_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
+| pools, indices, audit/diagnostic records | `meds_soil_carbon`: `soil_carbon_out_t`; the pool layout `N_SOIL_POOL`, `IP_*` in `meds_biogeochem_params`; `soil_carbon_state_t` / `decomp_xi_t` / `litter_input_t`, with the pool vector's `pack_pool_vector` / `unpack_pool_vector`, in `meds_patch_state_vars` |
 | `[soil_carbon]` bundle + selectors | `meds_biogeochem_params`: `soil_carbon_params_t`, `DECOMP_SCHEME_*`, `DECOMP_STEP_*` |
-| daily driver, seam guard, ledger | `meds_slow_state`: `advance_soil_carbon`; the run's worst seam checks in `meds_slow_ledger`: `soilc_seam_t` |
+| daily driver, seam guard, ledger | `meds_slow_state`: `advance_soil_carbon`; `meds_slow_update`: `commit_soil_carbon`; the run's worst seam checks in `meds_slow_ledger`: `slow_ledger_soil_check` |
 | litter accumulation | `meds_slow_state`: `compute_carbon_allocation`, `accumulate_mortality_litter`; kills in `meds_slow_update`: `terminate_cohorts`, `apply_patch_disturbance` |
 | sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_integ_frozen`: `patch_heterotrophic_respiration`; `meds_fast_state`: `accumulate_fast_to_slow` |
 | output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/test_soil_biogeochem.f90`, `test/test_biogeochem_dynamics.f90`, `test/test_column_co2.f90` |

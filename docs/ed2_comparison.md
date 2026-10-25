@@ -529,7 +529,7 @@ pages. What it takes from ED2 is listed here.
   - The above-ground pools take the surface temperature and the below-ground ones the active layer's,
     as ED2's `A_decomp` and `B_decomp`.
 - **Cohort and patch fusion and fission** (`meds_slow_update`).
-  - They are ED2's `fuse_fiss_utils`; `new_fuse_cohorts` and `new_fuse_patches` keep ED2's names.
+  - They are ED2's `fuse_fiss_utils`; `fuse_cohorts` and `fuse_patches` keep ED2's names.
   - Patch fusion compares ED2's cumulative-LAI light profiles (`patch_pft_size_profile`).
 - **Treefall disturbance** (`apply_patch_disturbance`). The survivorship is ED2's treefall: cohorts
   at or above the survival height die in the gap, and the understory survives into it.

@@ -14,11 +14,12 @@ module meds_pft_derive
                                    RAD_NIR, RAD_LW, kirchhoff_table_t, KIRCHHOFF_TABLE_NTAB,                &
                                    KIRCHHOFF_TABLE_RMAX
    use meds_plant_hydr_lib, only : tissue_psi_tlp, tissue_psi_to_rwc
+   use meds_allometry_lib,  only : min_cohort_carbon
    use meds_optics_lib,     only : N_LEAF_CLASS, beta_lidf, leaf_bf, scatter_pair
    implicit none
    private
 
-   public :: derive_leaf_params, derive_pft_tables
+   public :: derive_leaf_params, derive_pft_tables, derive_recruit_carbon
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: derive_rad_optics, moments_to_beta_params
    public :: build_kirchhoff_table
@@ -36,7 +37,8 @@ contains
       pft%rd25   = pft%rd_vcmax_ratio   * pft%vcmax25
    end subroutine derive_leaf_params
 
-   !----- The three tables the fast loop reads, onto the PFT table. The leaf table takes          !
+   !----- The three tables the fast loop reads, and the phenology's turgor-loss point, onto the  !
+   !      PFT table. The leaf table takes                                                         !
    !      [leaf_physiology]: its constants (`shared`, the part every PFT's parameters share) and    !
    !      its solver selectors. Call after derive_leaf_params. ------------------------------------!
    subroutine derive_pft_tables(pft, shared, stomatal_model, temp_response_form, colimitation,          &
@@ -48,6 +50,7 @@ contains
       type(leaf_photo_table_t) :: leaf_photo
       type(hydraulics_table_t) :: hydraulics
       type(rad_pft_optics_t)   :: optics
+      integer(ik)              :: ipft
       call build_leaf_photo_table(pft, shared, leaf_photo)
       leaf_photo%stomatal_model     = stomatal_model
       leaf_photo%temp_response_form = temp_response_form
@@ -58,7 +61,24 @@ contains
       pft%leaf_photo = leaf_photo
       pft%hydraulics = hydraulics
       pft%optics     = optics
+      !----- The turgor-loss point the phenology's drought counter reads. -----------------!
+      do ipft = 1_ik, pft%n
+         pft%pheno(ipft)%leaf_psi_tlp = pft_leaf_psi_tlp(pft, ipft)
+      end do
    end subroutine derive_pft_tables
+
+   !----- Each PFT's recruit carbon, from the table's own allometry: called on a polygon's copy, !
+   !      once the cell's allometry is in it (docs/science/demography.md §3). -------------------!
+   subroutine derive_recruit_carbon(pft)
+      type(pft_table_t), intent(inout) :: pft
+      integer(ik) :: ipft
+      if (allocated(pft%recruit_carbon)) deallocate(pft%recruit_carbon)
+      allocate(pft%recruit_carbon(pft%n))
+      do ipft = 1_ik, pft%n
+         pft%recruit_carbon(ipft) = min_cohort_carbon(pft%allom(ipft), pft%min_cohort_height,           &
+                                                      pft%wood_density(ipft))
+      end do
+   end subroutine derive_recruit_carbon
 
    !=======================================================================================!
    !  The stomatal stress points.                                                          !
