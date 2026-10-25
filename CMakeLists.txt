@@ -591,11 +591,16 @@ if(MEDS_BUILD_TESTS)
                     -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/main_failure
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_main_failure.cmake)
 
-   #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
-   add_executable(test_pft_optics_config test/test_pft_optics_config.f90)
-   target_link_libraries(test_pft_optics_config PRIVATE meds_model meds_testsupport)
-   meds_fortran_flags(test_pft_optics_config)
-   add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
+   #----- The PFT file's loader and the per-PFT tables derived from it: the shipped file through   #
+   #      the loader, and the optics and hydraulics that differentiate PFTs. It runs from the       #
+   #      SOURCE dir, where meds_config_main.toml names the PFT file, and writes its CSV in a       #
+   #      directory of its own in the build tree.                                                   #
+   add_executable(test_pft_config test/test_pft_config.f90)
+   target_link_libraries(test_pft_config PRIVATE meds_model meds_testsupport)
+   meds_fortran_flags(test_pft_config)
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/pft_config)
+   add_test(NAME pft_config COMMAND test_pft_config ${CMAKE_CURRENT_BINARY_DIR}/work/pft_config
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    #----- The config blocks reach their records: the [soil]/[fast]/[snow]/[aerodynamics] loaders, #
    #      and the [soil] column through build_soil_profile. -------------------------------------#
