@@ -21,9 +21,6 @@ module meds_plant_traits
    public :: light_plastic_traits, update_plastic_trait
    public :: acclimate_leaf_photo_table
 
-   !----- Guards on the gradient exponent against exp overflow; numerical, not science. ---!
-   real(wp), parameter :: LNEXP_MIN = -30.0_wp, LNEXP_MAX = 30.0_wp
-
 contains
 
    !---------------------------------------------------------------------------------------!
@@ -48,7 +45,7 @@ contains
    elemental pure function light_gradient(kplastic, cum_lai_above) result(f)
       real(wp), intent(in) :: kplastic, cum_lai_above
       real(wp)             :: f
-      f = safe_exp(max(LNEXP_MIN, min(LNEXP_MAX, kplastic * max(cum_lai_above, 0.0_wp))))
+      f = safe_exp(kplastic * max(cum_lai_above, 0.0_wp))
    end function light_gradient
 
    !---------------------------------------------------------------------------------------!
@@ -79,7 +76,6 @@ contains
       real(wp),                 intent(in)    :: ds_vcmax_a, ds_vcmax_b, ds_jmax_a, ds_jmax_b, jv_a, jv_b
       type(leaf_photo_table_t), intent(inout) :: table
       integer(ik) :: ipft
-      if (t_growth <= 0.0_wp) return                          ! not yet seeded: leave the fixed values
       do ipft = 1_ik, table%n_pft
          table%pft(ipft)%ds_vcmax = kattge_knorr_entropy(ds_vcmax_a, ds_vcmax_b, t_growth)
          table%pft(ipft)%ds_jmax  = kattge_knorr_entropy(ds_jmax_a,  ds_jmax_b,  t_growth)

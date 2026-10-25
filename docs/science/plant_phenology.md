@@ -301,10 +301,10 @@ restart files.
 |---|---|
 | cues → tendencies → potential rates | `meds_plant_phenology`: `phenology_kernel` (+ private `accumulate`, the water switches) |
 | tendencies → leaf loss + flush cap | `meds_plant_phenology`: `leaf_turnover_step`, `turnover_gate` |
-| types (env / args / state / out) | `meds_plant_phenology`: `pheno_env_t`, `pheno_args_t`, `pheno_state_t`, `pheno_out_t` |
+| types (env / state / out; the PFT's traits) | `meds_plant_phenology`: `pheno_env_t`, `pheno_state_t`, `pheno_out_t`; `meds_pft_params`: `phenology_traits_t` (its `leaf_psi_tlp` derived in `meds_pft_derive`) |
 | cue bits | `meds_pft_params`: `CUE_*`, beside the cue masks |
 | helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `doy_effective` |
-| per-cohort advance (slow loop) | `meds_slow_state`: `advance_leaf_phenology`, `flatten_pheno_params` |
+| per-cohort advance (slow loop) | `meds_slow_state`: `advance_leaf_phenology` |
 | hours of light at each cohort's top | `meds_canopy_radiation`: `solve_band` (`incident`), `rad_out_t%incid_top`; `meds_fast_state`: `accumulate_fast_to_slow` (`light_hours_accum`) |
 | turnover-first carbon demand | `meds_plant_carbon_allocation`: `cohort_carbon_demand` (called from `meds_slow_state`: `compute_carbon_allocation`) |
 | C-API | `meds_c_api_phenology`: `meds_phenology_step`, `meds_leaf_turnover_step`, `meds_daylength` |

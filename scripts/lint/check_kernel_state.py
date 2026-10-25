@@ -9,12 +9,13 @@ OpenMP `target` device. A routine that needs more is driver code.
 
 The library boundary cannot hold this rule, because every module file goes to one shared
 directory: once the state layer is built, any file can `use` any of its modules. So this script
-checks it on every ctest run. Code in the kernel folders (src/fast_dynamics/processes,
-src/slow_dynamics/processes):
+checks it on every ctest run (ctest kernels_patch_only). Code in the kernel folders
+(src/fast_dynamics/processes, src/slow_dynamics/processes):
+  * uses only the laws and constants (src/share), the parameters (src/config), the other process
+    modules, the unset sentinels (meds_state_defaults) and the intrinsic modules;
   * takes from the state layer only the per-patch store types and their blends, through
     `use meds_patch_state_vars, only : ...`;
-  * never names polygon_t, cohort_block or patch_block;
-  * never uses meds_polygon_state_vars, meds_cohort_state_vars or meds_diag_vars.
+  * never names polygon_t, cohort_block or patch_block.
 
 Usage: check_kernel_state.py SRC_DIR   (exit 1 and a list when a kernel reaches past its patch)
 """
@@ -24,8 +25,11 @@ from pathlib import Path
 
 KERNEL_DIRS = ("fast_dynamics/processes", "slow_dynamics/processes")
 FORBIDDEN_TYPES = ("polygon_t", "cohort_block", "patch_block")
-FORBIDDEN_MODULES = ("meds_polygon_state_vars", "meds_cohort_state_vars", "meds_diag_vars")
+ALLOWED_DIRS = ("share", "config") + KERNEL_DIRS       # where a module a kernel uses may be defined
+ALLOWED_MODULES = {"meds_state_defaults"}              # the unset sentinels
+INTRINSIC = {"iso_c_binding", "iso_fortran_env", "ieee_arithmetic", "ieee_exceptions", "omp_lib"}
 PATCH_MODULE = "meds_patch_state_vars"
+MODULE = re.compile(r"^\s*module\s+(\w+)\s*$", re.I)
 ALLOWED = {"cas_state_t", "snow_state_t", "soil_water_state_t", "soil_energy_state_t",
            "soil_carbon_state_t",
            "decomp_xi_t", "litter_input_t", "blend_cas", "blend_snow", "blend_soil_water", "blend_soil_energy",
@@ -63,8 +67,24 @@ def statements(path):
             buf = ""
 
 
+def module_homes(src):
+    """Each module's folder, relative to src (e.g. 'share/functions', 'state')."""
+    homes = {}
+    for f in src.rglob("*.f90"):
+        for _, stmt in statements(f):
+            m = MODULE.match(stmt)
+            if m:
+                homes[m.group(1).lower()] = str(f.parent.relative_to(src))
+    return homes
+
+
+def allowed_home(home):
+    return any(home == d or home.startswith(d + "/") for d in ALLOWED_DIRS)
+
+
 def violations(src):
     found = []
+    homes = module_homes(src)
     for d in KERNEL_DIRS:
         for f in sorted((src / d).glob("*.f90")):
             for no, stmt in statements(f):
@@ -75,8 +95,11 @@ def violations(src):
                 if not m:
                     continue
                 mod = m.group(1).lower()
-                if mod in FORBIDDEN_MODULES:
-                    found.append(f"{f}:{no}: uses {mod}")
+                if mod in INTRINSIC or mod in ALLOWED_MODULES:
+                    continue
+                if mod != PATCH_MODULE and not allowed_home(homes.get(mod, "?")):
+                    found.append(f"{f}:{no}: uses {mod} ({homes.get(mod, 'not found')}): only the laws, the "
+                                 "parameters, the process modules and the per-patch stores are allowed")
                 elif mod == PATCH_MODULE:
                     if not m.group(2):
                         found.append(f"{f}:{no}: uses {mod} without an only-list")
@@ -97,4 +120,4 @@ if __name__ == "__main__":
         print(f"\n{len(bad)} kernel reference(s) past the patch: a kernel takes only the per-patch store "
               "types; a routine that needs more is driver code (scripts/lint/check_kernel_state.py)")
         sys.exit(1)
-    print("check_kernel_state: the kernels take only the per-patch store types")
+    print("check_kernel_state: the kernels take only the laws, the parameters and the per-patch stores")

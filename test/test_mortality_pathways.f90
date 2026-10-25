@@ -34,7 +34,13 @@ program test_mortality_pathways
    use meds_slow_update, only : terminate_cohorts, apply_patch_disturbance
    use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, test_report
+   use meds_slow_ledger,  only : slow_ledger_t
+   use meds_slow_state,  only : decide_disturbance
    implicit none
+   real(wp)             :: dist_frac          !< the treefall decision's share
+   logical, allocatable :: dist_survives(:)   !< and its survivors
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
+   real(wp)            :: shed_water   !< an operator's shed water, unread here
 
    call banner('mortality carbon by pathway')
    call check_cull()
@@ -108,7 +114,7 @@ contains
       expect = 0.20_wp * plant_carbon(poly, 1_ik)
       call check(expect > 0.0_wp, 'cull fixture: the doomed cohort carries carbon')
 
-      call terminate_cohorts(poly, cfg)
+      call terminate_cohorts(poly, cfg, shed_water)
       call check(poly%cohort%n == 1_ik, 'cull fixture: exactly one cohort was culled')
       call check_close(site_amount(poly, cfg, PA_MORT_C_CULL), expect, 1.0e-12_wp,                 &
                        'PA_MORT_C_CULL == the culled cohort''s every pool x its density')
@@ -142,7 +148,8 @@ contains
       expect = poly%patch%area(1) * frac * poly%cohort%nplant(1) * plant_carbon(poly, 1_ik)
       call check(expect > 0.0_wp, 'disturbance fixture: the canopy carries carbon')
 
-      call apply_patch_disturbance(poly, cfg, 1.0_wp)
+      call decide_disturbance(poly, cfg, 1.0_wp, dist_frac, dist_survives)
+      call apply_patch_disturbance(poly, cfg, dist_frac, dist_survives, shed_water)
 
       !----- Asserted on the SITE AGGREGATE, not on the donor slot, because that is where the      !
       !      donor's area shrink lands: the carbon died on the frac of the donor that became the   !
@@ -177,7 +184,7 @@ contains
       poly%patch%diag%w = 0.0_wp
 
       n0 = poly%cohort%nplant(1)
-      call advance_slow_dynamics(poly, cfg)                      ! no month/year boundary
+      call advance_slow_dynamics(poly, cfg, no_ledger)                      ! no month/year boundary
       call check(poly%cohort%n == 1_ik, 'background fixture: the cohort survived the step')
       call check(n0 - poly%cohort%nplant(1) > 0.0_wp, 'the step actually killed some density')
 
@@ -215,23 +222,23 @@ contains
       call arm_patch_diag(poly, cfg)        ! fast loop on: the fixture's weight stands in for it
       n0     = poly%cohort%nplant(1)
       expect = (n0 - cfg%negligible_nplant) * plant_carbon(poly, 1_ik)
-      call advance_slow_dynamics(poly, cfg)
+      call advance_slow_dynamics(poly, cfg, no_ledger)
       call check(poly%cohort%nplant(1) == cfg%negligible_nplant,                                   &
                  'no leaves, no storage: the density reaches the floor on the first step')
       call check_close(site_amount(poly, cfg, PA_MORT_C_BACKGROUND), expect, 1.0e-9_wp,            &
                        'no leaves, no storage: its carbon dies down the background pathway')
       do day = 2_ik, 30_ik
-         call advance_slow_dynamics(poly, cfg)
+         call advance_slow_dynamics(poly, cfg, no_ledger)
       end do
-      call advance_boundary_dynamics(poly, cfg, .true., .false.)
+      call advance_boundary_dynamics(poly, cfg, .true., .false., no_ledger)
       call check(poly%cohort%n == 0_ik, 'no leaves, no storage: culled at the month boundary')
 
       !----- Storage for the season: the cohort lives on it, leafless, for 150 days. --------------!
       call leafless_stand(poly, cfg, 0.5_wp)
       n0 = poly%cohort%nplant(1)
       do day = 1_ik, 150_ik
-         call advance_slow_dynamics(poly, cfg)
-         if (mod(day, 30_ik) == 0_ik) call advance_boundary_dynamics(poly, cfg, .true., .false.)
+         call advance_slow_dynamics(poly, cfg, no_ledger)
+         if (mod(day, 30_ik) == 0_ik) call advance_boundary_dynamics(poly, cfg, .true., .false., no_ledger)
       end do
       call check(poly%cohort%n == 1_ik, 'leafless with storage: survives a 150-day dry season')
       call check(poly%cohort%nonstructural_carbon(1) > 0.0_wp .and. poly%cohort%leaf_carbon(1) == 0.0_wp, &

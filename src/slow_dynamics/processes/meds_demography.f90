@@ -3,7 +3,9 @@
 ! meds_demography -- the demographic laws (docs/science/demography.md §1), as elemental    !
 ! pure functions of scalars and PFT traits: the prospective diameter growth rate           !
 ! (eq. (1)), the Camac et al. (2018) mortality hazard (eq. (3)), the decline to the        !
-! density floor (eq. (4)) and a cohort's term of the recruitment rate (eq. (6)).           !
+! density floor (eq. (4)), the recruit efficiency (eq. (5)) and a cohort's term of the     !
+! recruitment rate (eq. (6)); the founding test, the disturbed fraction (eq. (7)) and      !
+! treefall survival, the decisions the stand's operators apply.                            !
 ! meds_slow_update, which applies the rates, never uses this module (src/README.md rule    !
 ! 4). The empirical growth and recruitment laws live in the Python example.                !
 !==========================================================================================!
@@ -14,7 +16,8 @@ module meds_demography
    implicit none
    private
 
-   public :: npp_to_growth, camac_mortality, decline_to_floor_mortality, npp_to_recruitment
+   public :: npp_to_growth, camac_mortality, decline_to_floor_mortality, recruit_efficiency, npp_to_recruitment
+   public :: founds_cohort, disturbed_fraction, survives_treefall
 
 contains
 
@@ -51,6 +54,16 @@ contains
       mort = log(max(nplant, nplant_floor) / max(nplant_floor, tiny_num)) / max(window, tiny_num)
    end function decline_to_floor_mortality
 
+   !----- The share of a cohort's reproduction carbon that becomes recruits, eq. (5): the     !
+   !      PFT's efficiency in the open, reduced by the shade of its patch's LAI. ------------!
+   elemental pure function recruit_efficiency(efficiency_open, shade_decay, patch_lai) result(eff)
+      real(wp), intent(in) :: efficiency_open   !< [-] the efficiency in the open
+      real(wp), intent(in) :: shade_decay       !< [m2/m2 per LAI] k of exp(-k LAI)
+      real(wp), intent(in) :: patch_lai         !< [m2/m2] the patch's LAI
+      real(wp)             :: eff
+      eff = efficiency_open * exp(-shade_decay * patch_lai)
+   end function recruit_efficiency
+
    !----- One cohort's term of the recruitment rate [plant/m2/yr], eq. (6): its reproduction  !
    !      carbon per plant as a yearly rate, times the density and the recruit efficiency     !
    !      (eq. (5)), over carbon_min. The caller sums the terms per PFT and patch and applies !
@@ -61,5 +74,31 @@ contains
       real(wp)             :: rec
       rec = nplant * (npp_repro / dt_yr) * recruit_carbon_efficiency / carbon_min
    end function npp_to_recruitment
+
+   !----- Whether a recruit pool founds a cohort this month: once it holds min_recruit_size   !
+   !      plants per m2; a smaller pool carries over (demography.md §3). ------------------!
+   elemental pure function founds_cohort(recruit_pool, min_recruit_size) result(found)
+      real(wp), intent(in) :: recruit_pool       !< [plant/m2]
+      real(wp), intent(in) :: min_recruit_size   !< [plant/m2]
+      logical              :: found
+      found = recruit_pool >= min_recruit_size
+   end function founds_cohort
+
+   !----- The share of a site's area a treefall disturbance at `rate` opens over dt_yr, eq. (7). !
+   elemental pure function disturbed_fraction(rate, dt_yr) result(frac)
+      real(wp), intent(in) :: rate    !< [1/yr]
+      real(wp), intent(in) :: dt_yr   !< [yr]
+      real(wp)             :: frac
+      frac = 1.0_wp - exp(-rate * dt_yr)
+   end function disturbed_fraction
+
+   !----- Whether a cohort survives into a treefall gap: shorter than survive_height        !
+   !      (demography.md §4). ---------------------------------------------------------------!
+   elemental pure function survives_treefall(height, survive_height) result(survives)
+      real(wp), intent(in) :: height           !< [m]
+      real(wp), intent(in) :: survive_height   !< [m]
+      logical              :: survives
+      survives = height < survive_height
+   end function survives_treefall
 
 end module meds_demography

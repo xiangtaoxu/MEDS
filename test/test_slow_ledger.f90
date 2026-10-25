@@ -40,11 +40,13 @@ program test_slow_ledger
    use meds_plant_hydr_lib,     only : water_curve_t, tissue_water_to_psi
    use meds_constants,          only : grav_head, n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
+   use meds_constants,          only : rho_air_ref
    implicit none
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
    integer(ik) :: n_soil_layer
 
-   real(wp), parameter  :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
+   real(wp), parameter  :: RHO = rho_air_ref    !< the density the canopy-air store is valued at
    type(meds_config_t)  :: cfg
    type(polygon_t)      :: poly
    type(soil_profile_t) :: soil
@@ -110,7 +112,7 @@ program test_slow_ledger
 
    !=== 2. DECLARATION ARITHMETIC: a declared term is subtracted from the residual. ===========!
    led%active = .true.
-   call slow_ledger_open(led, poly, cfg, RHO)
+   call slow_ledger_open(led, poly, cfg)
    call slow_ledger_declare(led, carbon_in = 1.0_wp, water_out = 2.0_wp, energy_in = 3.0_wp)
    call slow_ledger_mark(led, poly, cfg, SLOW_PHASE_GROW)   ! nothing moved: residual = -(in - out)
    call check_close(led%resid_sum(SLOW_PHASE_GROW)%carbon, -1.0_wp, 1.0e-12_wp, 'declared carbon_in is subtracted')
@@ -120,16 +122,16 @@ program test_slow_ledger
    !----- An UNDECLARED, UNCHANGED step must be exactly zero, or every phase carries a bias. ----!
    led = slow_ledger_t()
    led%active = .true.
-   call slow_ledger_open(led, poly, cfg, RHO)
+   call slow_ledger_open(led, poly, cfg)
    call slow_ledger_mark(led, poly, cfg, SLOW_PHASE_GROW)
    call check(led%resid_sum(SLOW_PHASE_GROW)%carbon == 0.0_wp .and.                                &
               led%resid_sum(SLOW_PHASE_GROW)%water  == 0.0_wp .and.                                &
               led%resid_sum(SLOW_PHASE_GROW)%energy == 0.0_wp, 'a step that changes nothing closes at exactly zero')
 
    !=== 3. The canopy-air OPEN-VOLUME terms must equal the store change they explain. ==========!
-   s0 = slow_site_store(poly, cfg, RHO)
+   s0 = slow_site_store(poly, cfg)
    call cas_set_depth(poly%patch%cas(1), 8.0_wp, rho_air=RHO, de_open=de, dw_open=dw, dc_open=dc)
-   s1 = slow_site_store(poly, cfg, RHO)
+   s1 = slow_site_store(poly, cfg)
    call check_close(s1%energy - s0%energy, de,             1.0e-6_wp, 'de_open explains the canopy energy change')
    call check_close(s1%water  - s0%water,  dw,             1.0e-12_wp, 'dw_open explains the canopy vapour change')
    call check_close(s1%carbon - s0%carbon, dc * 1.2e-8_wp, 1.0e-14_wp, 'dc_open explains the canopy CO2 change')
@@ -213,18 +215,18 @@ contains
       !      canopy air, its depth set as the driver sets it before the first step (check_birth_temp   !
       !      covers a patch at another temperature). ------------------------------------------------!
       call init_bare_ground(st, c, 1_ik)
-      call refresh_canopy_depth(st, c)
+      call refresh_canopy_depth(st, c, no_ledger)
       st%patch%recruit_pool(:, 1) = 0.0_wp
       st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
       lg = slow_ledger_t() ; lg%active = .true.
-      call slow_ledger_open(lg, st, c, RHO)
+      call slow_ledger_open(lg, st, c)
       call restructure_stand(st, c, .true., .false., lg)
       call check(st%cohort%n == 1_ik, 'tissue water (a): one recruit is born')
       call check(lg%decl_gross(SLOW_PHASE_RECRUIT)%water > 0.0_wp,                                 &
                  'tissue water (a): the recruit''s birth water is declared as drawn in')
       !----- Zero to round-off of the store the ledger differences: the seeded soil holds hundreds  !
       !      of kg/m2 against the recruit's grams. --------------------------------------------------!
-      s_now = slow_site_store(st, c, RHO)
+      s_now = slow_site_store(st, c)
       call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water)                                        &
                  <= tol * (lg%decl_gross(SLOW_PHASE_RECRUIT)%water + s_now%water),                  &
                  'tissue water (a): the recruit phase''s water residual is zero')
@@ -252,8 +254,8 @@ contains
       st%cohort%stem_resp_accum(1) = 0.0_wp
       st%cohort%root_resp_accum(1) = 0.0_wp
       lg = slow_ledger_t() ; lg%active = .true.
-      call slow_ledger_open(lg, st, c, RHO)
-      call vegetation_dynamics(st, c, ledger=lg)
+      call slow_ledger_open(lg, st, c)
+      call vegetation_dynamics(st, c, lg)
       call settle_tissue_water(st, c, lg)
       call check(st%cohort%leaf_carbon(1) == 0.0_wp .and. st%cohort%leaf_water_mass(1) == 0.0_wp, &
                  'tissue water (b): the canopy went bare, and its leaves hold no water')
@@ -321,8 +323,8 @@ contains
       st%cohort%root_resp_accum(1) = 0.0_wp
       w_plant0 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
       lg = slow_ledger_t() ; lg%active = .true.
-      call slow_ledger_open(lg, st, c, RHO)
-      call vegetation_dynamics(st, c, ledger=lg)
+      call slow_ledger_open(lg, st, c)
+      call vegetation_dynamics(st, c, lg)
       call check(st%cohort%leaf_carbon(1) > 0.0_wp, 'reflush: the bare cohort grew leaves')
       w_plant1 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
       call check_close(w_plant1, w_plant0, 1.0e-14_wp, 'reflush: the plant''s water is unchanged')
@@ -393,7 +395,7 @@ contains
          st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-         call vegetation_dynamics(st, c)
+         call vegetation_dynamics(st, c, no_ledger)
       end do
       pool = st%patch%recruit_pool(1, 1)
    end subroutine pool_after_steps
@@ -437,8 +439,8 @@ contains
       st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
       np0 = st%patch%n
 
-      call vegetation_dynamics(st, c)
-      call restructure_stand(st, c, .true., .true.)   ! monthly + annual: every operator fires
+      call vegetation_dynamics(st, c, no_ledger)
+      call restructure_stand(st, c, .true., .true., no_ledger)   ! monthly + annual: every operator fires
 
       !----- THE invariant. `>=` not `==`: the patch block is capacity-allocated, so the array is  !
       !      allowed to be longer than the live patch count -- it must never be SHORTER.  ---------!
@@ -489,8 +491,8 @@ contains
       st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
       st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
       lg%active = .true.
-      call slow_ledger_open(lg, st, c, RHO)
-      call vegetation_dynamics(st, c, ledger=lg)
+      call slow_ledger_open(lg, st, c)
+      call vegetation_dynamics(st, c, lg)
       litter        = litter_site_total(st)
       grow_residual = lg%resid_sum(SLOW_PHASE_GROW)%carbon
    end subroutine grow_one_step
@@ -527,7 +529,7 @@ contains
       st%cohort%wood_water_mass(1:st%cohort%n) = 2.3_wp
       tis0  = tissue_water_total(st)
       shed0 = shed_total(st, c)
-      call vegetation_dynamics(st, c)
+      call vegetation_dynamics(st, c, no_ledger)
       tis1  = tissue_water_total(st)
       shed1 = shed_total(st, c)
       call check(tis1 < tis0, 'mortality water: the tissue store actually falls')
@@ -551,7 +553,7 @@ contains
          call hold_cohort_tissue_temps(poly%cohort, i)
       end do
       lg%active = .true.
-      call slow_ledger_open(lg, poly, cfg, RHO)
+      call slow_ledger_open(lg, poly, cfg)
       call shed_turnover_water(poly, cfg, step, lg)
       call slow_ledger_mark(lg, poly, cfg, SLOW_PHASE_ALLOCATE)
       call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
@@ -605,13 +607,13 @@ contains
       type(slow_store_t) :: a, b
       real(wp) :: e0, e1, de_store, de_tissue
       e0 = slow_tissue_energy(poly)
-      a  = slow_site_store(poly, cfg, RHO)
+      a  = slow_site_store(poly, cfg)
       !----- Grow one cohort's wood at its temperature, as the growth commit does: ONLY the        !
       !      thermal mass changes. ----------------------------------------------------------------!
       poly%cohort%wood_carbon(1) = poly%cohort%wood_carbon(1) * 1.5_wp
       call hold_cohort_tissue_temps(poly%cohort, 1_ik)
       e1 = slow_tissue_energy(poly)
-      b  = slow_site_store(poly, cfg, RHO)
+      b  = slow_site_store(poly, cfg)
       de_tissue = e1 - e0
       de_store  = b%energy - a%energy
       call check(de_tissue > 0.0_wp, 'thermal mass: growing biomass raises the tissue heat store')
@@ -722,7 +724,7 @@ contains
       end if
       if (present(nplant0)) nplant0 = st%cohort%nplant(1)
       dbh_start = st%cohort%dbh(1)
-      call vegetation_dynamics(st, c)
+      call vegetation_dynamics(st, c, no_ledger)
       if (present(ddbh)) ddbh = st%cohort%dbh(1) - dbh_start
       if (present(lab_soil)) lab_soil = st%patch%litter_in(1)%labile_soil
       if (present(wood))     wood     = st%cohort%wood_carbon(1)
@@ -794,9 +796,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, RHO)
+      a = slow_site_store(poly, cfg)
       call perturb()
-      b = slow_site_store(poly, cfg, RHO)
+      b = slow_site_store(poly, cfg)
       call check_close(b%water - a%water, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),            &
                        'store: '//name//' reaches the water total')
    end subroutine moves_water
@@ -809,9 +811,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, RHO)
+      a = slow_site_store(poly, cfg)
       call perturb()
-      b = slow_site_store(poly, cfg, RHO)
+      b = slow_site_store(poly, cfg)
       call check_close(b%energy - a%energy, amount, 1.0e-6_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the energy total')
    end subroutine moves_energy
@@ -824,9 +826,9 @@ contains
          end subroutine perturb
       end interface
       type(slow_store_t) :: a, b
-      a = slow_site_store(poly, cfg, RHO)
+      a = slow_site_store(poly, cfg)
       call perturb()
-      b = slow_site_store(poly, cfg, RHO)
+      b = slow_site_store(poly, cfg)
       call check_close(b%carbon - a%carbon, amount, 1.0e-9_wp * max(1.0_wp, abs(amount)),          &
                        'store: '//name//' reaches the carbon total')
    end subroutine moves_carbon
@@ -839,9 +841,9 @@ contains
       end interface
       type(slow_store_t) :: a, b
       real(wp) :: d
-      a = slow_site_store(poly, cfg, RHO)
+      a = slow_site_store(poly, cfg)
       call perturb()
-      b = slow_site_store(poly, cfg, RHO)
+      b = slow_site_store(poly, cfg)
       select case (currency)
       case ('carbon') ; d = b%carbon - a%carbon
       case ('water')  ; d = b%water  - a%water

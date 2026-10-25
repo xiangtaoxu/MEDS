@@ -12,11 +12,10 @@
 !==========================================================================================!
 module meds_stepper
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : rho_air_ref
    use meds_config,               only : meds_config_t
    use meds_polygon_state_vars, only : polygon_t
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
-   use meds_slow_ledger,          only : soilc_seam_t, slow_ledger_t
+   use meds_slow_ledger,          only : slow_ledger_t
    use meds_fast_dynamics,        only : fast_dynamics
    use meds_time,                 only : meds_time_t
    use meds_met_types,        only : met_source_t, met_cursor_t
@@ -36,7 +35,7 @@ contains
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(poly, cfg, met_src, met_cur, step_start, out_bufs,                   &
                                run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
-                               seam, latitude_deg, patch_threads, seed_canopy_air)
+                               patch_threads, seed_canopy_air)
       type(polygon_t),      intent(inout) :: poly
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
@@ -49,15 +48,13 @@ contains
       !      accumulate per-fast-step flux residuals; this one snapshots the site store across   !
       !      the slow step, which is the window neither of them can see. Same lifetime, same     !
       !      place in the plumbing.                                                              !
+      !      It also keeps the soil-carbon seam's run-worst checks (docs/science/soil_carbon.md §7). !
       type(slow_ledger_t), intent(inout), optional :: slow_ledger
-      !----- The soil-carbon SEAM check (docs/science/soil_carbon.md §7): |the daily pool debit - the  !
-      !      fast loop's own accumulated Rh|, worst over patches. Both sides read the same frozen pool !
-      !      and the same per-pool xi integral, so it is ~0 BY CONSTRUCTION -- an assertion guard, not !
-      !      a correction. ----------------------------------------------------------------------------!
-      type(soilc_seam_t), intent(inout), optional :: seam
-      real(wp),           intent(in),    optional :: latitude_deg  !< the polygon's (default [site])
       integer(ik),        intent(in),    optional :: patch_threads !< the fast loop's patch threads (default 1)
       logical,            intent(inout), optional :: seed_canopy_air !< a start's first window (the fast loop's)
+      type(slow_ledger_t) :: ledger   !< the caller's slow ledger, or an inactive one that books nothing
+
+      if (present(slow_ledger)) ledger = slow_ledger
 
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. Every optional is handed  !
       !      straight on: the fast loop takes the forcing only when forcing_on and the source, cursor  !
@@ -67,7 +64,7 @@ contains
          !----- The fast loop reads each cohort's tissue water against the capacity its biomass     !
          !      allows: first shed what the slow step or the boundary left above it, booked by the  !
          !      slow ledger (docs/science/order_of_processes.md §2). ------------------------------!
-         call settle_tissue_water(poly, cfg, slow_ledger)
+         call settle_tissue_water(poly, cfg, ledger)
          call fast_dynamics(poly, cfg, met_src=met_src, met_cur=met_cur,                            &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
@@ -78,9 +75,9 @@ contains
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the  !
       !      master slow_on freeze, which holds cohort/patch state static while the fast loop still  !
       !      runs (docs/science/order_of_processes.md §2). Leaf phenology is the FIRST step INSIDE   !
-      !      vegetation_dynamics and advances whenever step_start is supplied. The slow ledger      !
-      !      values the canopy-air store at the reference air density, one value for the run. -----!
-      if (cfg%slow_on) call advance_slow_dynamics(poly, cfg, step_start, seam, slow_ledger, rho_air_ref, latitude_deg)
+      !      vegetation_dynamics and advances whenever step_start is supplied. --------------------!
+      if (cfg%slow_on) call advance_slow_dynamics(poly, cfg, ledger, step_start)
+      if (present(slow_ledger)) slow_ledger = ledger
    end subroutine advance_one_step
 
    !---------------------------------------------------------------------------------------!
@@ -95,8 +92,11 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       type(slow_ledger_t), intent(inout), optional :: slow_ledger
+      type(slow_ledger_t) :: ledger   !< the caller's slow ledger, or an inactive one that books nothing
       if (.not. cfg%slow_on) return
-      call advance_boundary_dynamics(poly, cfg, is_new_month, is_new_year, slow_ledger)
+      if (present(slow_ledger)) ledger = slow_ledger
+      call advance_boundary_dynamics(poly, cfg, is_new_month, is_new_year, ledger)
+      if (present(slow_ledger)) slow_ledger = ledger
    end subroutine advance_boundary
 
 end module meds_stepper

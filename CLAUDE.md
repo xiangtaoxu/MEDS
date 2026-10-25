@@ -88,7 +88,7 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 
 1. **Kernels never see `polygon_t`.** The kernel folders take only the per-patch store types from the
    state layer (`meds_patch_state_vars`, through an only-list), which is what keeps them
-   device-eligible and standalone-buildable; ctest `kernels_no_site_state` checks it. A routine that
+   device-eligible and standalone-buildable; ctest `kernels_patch_only` checks it. A routine that
    needs `polygon_t` is driver code. The integrator also takes the patch's site (`site_surface_t`) and
    nothing past it; ctest `integrator_boundary` checks it.
 2. **A kernel goes where its caller's timescale is**, then in its process module (fast:
@@ -97,8 +97,8 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
    of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,
    `meds_site_state_vars`, `meds_polygon_state_vars`). Parameters are not state.
-4. **Laws and operators do not touch.** The appliers (`meds_slow_update`) take rate arrays and
-   never import the rate laws (`meds_demography`). `meds_slow_dynamics` is the one place they meet.
+4. **Laws and operators do not touch.** The appliers (`meds_slow_update`) take rate and decision
+   arrays and never import the laws (`meds_demography`). `meds_slow_dynamics` is the one place they meet.
 
 ## Invariants that break quietly
 

@@ -111,7 +111,7 @@ slow kernels also link the fast kernels, for the seam of rule 2). That is what k
 library building standalone, keeps the kernels eligible for OpenMP `target` offload (a portability
 property worth holding, though offload is not a speedup and has no build option — see
 [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets a
-test link one kernel library alone. It is checked on every ctest run, by `kernels_no_site_state`
+test link one kernel library alone. It is checked on every ctest run, by `kernels_patch_only`
 (`scripts/lint/check_kernel_state.py`), because the library boundary cannot hold it: every module
 file goes to one shared directory, so any file can use any built module. **If a new routine needs
 `polygon_t`, it is driver code**, and it belongs in a `driver/` folder. The integrator
@@ -145,8 +145,8 @@ per-cohort state a kernel reads and writes back (`pheno_state_t`).
 
 **4. Laws and operators do not touch.** The demographic laws decide: they are a process module,
 `slow_dynamics/processes/meds_demography`. `meds_slow_update` applies what it is given (the commit,
-recruitment, disturbance, fusion and fission): it takes rate **arrays** as arguments and never uses
-the laws. `meds_slow_dynamics` is the one place a rate meets its application. The C API's
+recruitment, disturbance, fusion and fission): it takes rate and decision **arrays** as arguments
+and never uses the laws. `meds_slow_dynamics` is the one place a rate meets its application. The C API's
 `apply_rates` path, which feeds externally computed rates through the same update routines, is the
 standing test that the separation holds.
 
@@ -189,7 +189,7 @@ One edge is worth knowing because it is easy to get wrong:
 | a soil, canopy or plant process | `fast_dynamics/processes/meds_<process>.f90` or `slow_dynamics/processes/meds_<process>.f90`, by the **cadence of its caller** |
 | a per-patch store the kernels and the patch block share | `state/meds_patch_state_vars.f90`: its type, its blend, and its section of `patch_block` |
 | a per-cohort field | `state/meds_cohort_state_vars.f90`: its section of `cohort_block` and of each lockstep list — and every creation site, the fusion policy, and, if it persists, the restart file (`io/init/meds_init_restart.f90`: three adjacent lines in its cohort section) |
-| a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list — and `fuse_patch_into`, the new gap in `apply_patch_disturbance`, and, if it persists, the restart file's patch section |
+| a per-patch field | `state/meds_patch_state_vars.f90`: its section of `patch_block` and of each patch list, and `blend_patch_stores` if it is a store (fusion and a new treefall gap both blend through it), else `fuse_patch_into` and the gap in `apply_patch_disturbance`; and, if it persists, the restart file's patch section |
 | a stateless constitutive curve: a physical or biological law with parameters | `share/functions/` |
 | a model-independent tool every layer needs (numerics, calendar, checks) | `share/`, if it uses nothing outside `share/` |
 | a TOML block | a leaf in `config/params/`, so `meds_config` can carry it with no back-edge; its keys in `meds_config_main.toml`, its checks in `config/meds_config_check.f90` |

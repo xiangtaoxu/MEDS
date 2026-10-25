@@ -9,7 +9,7 @@ program test_fusion_cohort
                                                cohort_bad_field, cohort_field_name, cohort_deriv_block, cohort_deriv_alloc, &
                                                init_cohort, hold_cohort_tissue_temps
    use meds_polygon_state_vars,         only : polygon_t
-   use meds_slow_update, only : fill_cohort_deriv, fuse_2_cohorts, new_fuse_cohorts, split_cohorts,      &
+   use meds_slow_update, only : fill_cohort_deriv, fuse_2_cohorts, fuse_cohorts, split_cohorts,      &
                                 max_cohort_count
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
    use meds_output_reduce, only : total_nplant, total_agb
@@ -135,7 +135,7 @@ program test_fusion_cohort
                        'root_resp_accum not nplant-weighted (extensive) on cohort fusion')
    end block
 
-   !=== 2. new_fuse_cohorts reduces count to <= max_cohort, conserving N and AGB. ==========!
+   !=== 2. fuse_cohorts reduces count to <= max_cohort, conserving N and AGB. ==========!
    call init_bare_ground(poly, cfg, 1_ik)
    do j = 1_ik, 200_ik
       !----- Low density so per-cohort LAI stays well under cohort_lai_cap (realistic). ---!
@@ -144,7 +144,7 @@ program test_fusion_cohort
    call finalize_init(poly)
    n0   = total_nplant(poly)
    agb0 = total_agb(poly)
-   call new_fuse_cohorts(poly, cfg)
+   call fuse_cohorts(poly, cfg)
    call check(max_cohort_count(poly) <= abs(cfg%max_cohort), 'fusion did not reach max_cohort')
    call check_close(total_nplant(poly), n0,   1.0e-10_wp, 'fusion broke nplant conservation')
    call check_close(total_agb(poly),    agb0, cfg%conservation_tol, 'fusion broke AGB conservation')
@@ -156,14 +156,14 @@ program test_fusion_cohort
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
    call finalize_init(poly)
-   call new_fuse_cohorts(poly, cfg)
+   call fuse_cohorts(poly, cfg)
    call check(poly%cohort%n == 2_ik, 'saplings 0.15 m apart merged in a sapling stand')
    call init_bare_ground(poly, cfg, 1_ik)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
    call add_cohort(poly, cfg, 1_ik, 1_ik, 1.0e-3_wp, 60.0_wp)
    call finalize_init(poly)
-   call new_fuse_cohorts(poly, cfg)
+   call fuse_cohorts(poly, cfg)
    call check(poly%cohort%n == 2_ik, 'saplings 0.15 m apart not merged under a 60 cm tree')
 
    !=== 3. split_cohorts conserves N and AGB and increases the count. =====================!

@@ -30,9 +30,10 @@ program test_biogeochem_dynamics
    use meds_init,                only : init_fast_state
    use meds_slow_dynamics, only : advance_slow_dynamics
    use meds_patch_state_vars, only : litter_input_t
-   use meds_slow_ledger, only : soilc_seam_t
+   use meds_slow_ledger, only : slow_ledger_t
    use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
    implicit none
+   type(slow_ledger_t) :: no_ledger    !< inactive: a test step books nothing
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks are computed on
 
    integer(ik)            :: n_budget_fail
@@ -41,7 +42,7 @@ program test_biogeochem_dynamics
    type(polygon_t)      :: poly
    type(soil_profile_t) :: test_profile   !< the site's soil column (use_test_column)
    real(wp) :: total0, total1
-   type(soilc_seam_t) :: seam   !< per-run seam worsts, accumulated by advance_slow_dynamics
+   type(slow_ledger_t) :: seam   !< an inactive ledger, which keeps the run's seam worsts
    real(wp) :: we, ww
 
    call banner('slow soil-carbon biogeochemistry (double-count gate)')
@@ -88,7 +89,7 @@ program test_biogeochem_dynamics
       rh_fast_accum_ref = poly%patch%decomp_xi(1)%rh_fast
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
-      call advance_slow_dynamics(poly, cfg, seam=seam)
+      call advance_slow_dynamics(poly, cfg, seam)
 
       call check_true('rh_seam_gap ~ 0 (the double-count gate)',                                   &
                       seam%worst_rh_gap < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), seam%worst_rh_gap)
@@ -132,7 +133,7 @@ program test_biogeochem_dynamics
       poly2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
       totalA = poly2%patch%soil_carbon(1)%slow_carbon
       call fast_dynamics(poly2, cfg)
-      call advance_slow_dynamics(poly2, cfg)
+      call advance_slow_dynamics(poly2, cfg, no_ledger)
       totalB = poly2%patch%soil_carbon(1)%fast_grnd_carbon + poly2%patch%soil_carbon(1)%fast_soil_carbon &
              + poly2%patch%soil_carbon(1)%struct_grnd_carbon + poly2%patch%soil_carbon(1)%struct_soil_carbon &
              + poly2%patch%soil_carbon(1)%microbial_carbon + poly2%patch%soil_carbon(1)%slow_carbon  &

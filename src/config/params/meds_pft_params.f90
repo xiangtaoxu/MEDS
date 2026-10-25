@@ -150,9 +150,9 @@ module meds_pft_params
    integer(ik), parameter :: CUE_WATER = 4_ik   !< water: predawn leaf psi summed against the TLP
    integer(ik), parameter :: CUE_ALL   = CUE_TEMP + CUE_LIGHT + CUE_WATER
 
-   !----- A PFT's [phenology] block (docs/science/plant_phenology.md). The defaults equal  !
-   !      pheno_args_t's (meds_plant_phenology), into which meds_slow_state copies them    !
-   !      with the turgor-loss point. -----------------------------------------------------!
+   !----- A PFT's [phenology] block (docs/science/plant_phenology.md), the record the      !
+   !      phenology kernel reads. The defaults are a PFT with no [phenology] section: no cues, !
+   !      so only the rates and timescales act. leaf_psi_tlp is derived at load. -------------!
    type :: phenology_traits_t
       integer(ik) :: flush_cue_mask        = CUE_NONE    !< cues of the flush side (a sum of CUE_*)
       integer(ik) :: shed_cue_mask         = CUE_NONE    !< cues of the shed side
@@ -178,6 +178,7 @@ module meds_pft_params
       real(wp)    :: flush_water_sharpness = 0.5_wp      !< [1/(MPa day)]
       real(wp)    :: shed_water_sum        = 10.0_wp     !< [MPa day] dry sum that triggers shedding
       real(wp)    :: shed_water_sharpness  = 0.5_wp      !< [1/(MPa day)]
+      real(wp)    :: leaf_psi_tlp          = -2.0_wp     !< [MPa] the leaf's turgor-loss point (derive_pft_tables)
    end type phenology_traits_t
 
    !---------------------------------------------------------------------------------------!
@@ -283,6 +284,10 @@ module meds_pft_params
       type(leaf_photo_table_t) :: leaf_photo   !< DERIVED each PFT's leaf-photosynthesis parameters
       type(hydraulics_table_t) :: hydraulics   !< DERIVED each PFT's hydraulics and Kirchhoff lookup
       type(rad_pft_optics_t)   :: optics       !< DERIVED the two-stream's per-PFT optics
+      !----- A recruit's carbon [kgC/plant] at min_cohort_height on its PFT's allometry, the  !
+      !      value of one plant of the recruit pool; derived on a polygon's own copy of the table, !
+      !      which carries the cell's allometry (derive_recruit_carbon). ----------------------!
+      real(wp), allocatable :: recruit_carbon(:)   !< DERIVED (pft)
    end type pft_table_t
 
    !----- Sentinel of an optional stomatal stress point the PFT file leaves out: large and !

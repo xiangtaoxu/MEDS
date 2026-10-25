@@ -131,8 +131,8 @@ program test_phenology_driver
    !          turgor-loss point; one wet day adds wet credit without wiping it. -------------!
    block
       real(wp) :: tlp, dry7
-      cfg%pft%pheno(1)%flush_cue_mask = CUE_NONE
-      cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
+      poly%cohort%pft_table%pheno(1)%flush_cue_mask = CUE_NONE
+      poly%cohort%pft_table%pheno(1)%shed_cue_mask  = CUE_WATER
       tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = tlp - 1.0_wp           ! 1 MPa below the TLP
@@ -155,8 +155,8 @@ program test_phenology_driver
    !          stays lower. A cohort with no light memory starts from its first day's hours. ----!
    block
       real(wp) :: expect
-      cfg%pft%pheno(1:2)%shed_cue_mask = CUE_LIGHT
-      cfg%pft%pheno(1:2)%light_window  = 10.0_wp
+      poly%cohort%pft_table%pheno(1:2)%shed_cue_mask = CUE_LIGHT
+      poly%cohort%pft_table%pheno(1:2)%light_window  = 10.0_wp
       call reset_pheno_memory(poly)
       call set_daily_drivers(poly, 290.0_wp, 9.0_wp)
       call advance_leaf_phenology(poly, cfg, 200_ik)
@@ -173,7 +173,7 @@ program test_phenology_driver
                        poly%cohort%light_hours_mean(1), expect, 1.0e-9_wp)
       call check_close('a shaded cohort reads its own hours of light (3 h)',                     &
                        poly%cohort%light_hours_mean(2), expect / 4.0_wp, 1.0e-9_wp)
-      cfg%pft%pheno(2)%shed_cue_mask = CUE_NONE
+      poly%cohort%pft_table%pheno(2)%shed_cue_mask = CUE_NONE
    end block
 
    !=== 5. ACCEPTANCE: the drought-deciduous and light-exchanging habits, end to end. =======!
@@ -183,8 +183,8 @@ program test_phenology_driver
    block
       real(wp) :: shed_wet, shed_dry, flush_dry, flush_rewet, tlp
       integer(ik) :: d
-      cfg%pft%pheno(1)%flush_cue_mask = CUE_WATER
-      cfg%pft%pheno(1)%shed_cue_mask  = CUE_WATER
+      poly%cohort%pft_table%pheno(1)%flush_cue_mask = CUE_WATER
+      poly%cohort%pft_table%pheno(1)%shed_cue_mask  = CUE_WATER
       tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
       call reset_pheno_memory(poly)
       poly%cohort%dmax_psi_leaf(1) = 0.5_wp * tlp               ! well watered
@@ -216,10 +216,10 @@ program test_phenology_driver
    block
       real(wp) :: shed_dim, shed_bright, flush_bright
       integer(ik) :: d
-      cfg%pft%pheno(1)%flush_cue_mask       = CUE_NONE
-      cfg%pft%pheno(1)%shed_cue_mask        = CUE_LIGHT
-      cfg%pft%pheno(1)%shed_light_hours     = 6.0_wp
-      cfg%pft%pheno(1)%shed_light_sharpness = 2.0_wp         ! > 0: many bright hours trigger
+      poly%cohort%pft_table%pheno(1)%flush_cue_mask       = CUE_NONE
+      poly%cohort%pft_table%pheno(1)%shed_cue_mask        = CUE_LIGHT
+      poly%cohort%pft_table%pheno(1)%shed_light_hours     = 6.0_wp
+      poly%cohort%pft_table%pheno(1)%shed_light_sharpness = 2.0_wp         ! > 0: many bright hours trigger
       call reset_pheno_memory(poly)
       do d = 1_ik, 60_ik
          call set_daily_drivers(poly, 295.0_wp, 2.0_wp)       ! few bright hours

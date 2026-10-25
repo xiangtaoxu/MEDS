@@ -5,7 +5,7 @@ program test_patch
    use meds_config,         only : meds_config_t, derive_parameters
    use meds_polygon_state_vars,        only : polygon_t
    use meds_init_bare_ground, only : init_bare_ground, add_cohort, finalize_init
-   use meds_slow_update, only : new_fuse_patches, terminate_patches, sort_patches, patch_light_profile
+   use meds_slow_update, only : fuse_patches, terminate_patches, sort_patches, patch_light_profile
    use meds_output_reduce, only : total_nplant, total_area
    use meds_cohort_state_vars, only : cohort_film_water
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -33,7 +33,7 @@ program test_patch
    poly%cohort%leaf_surf_water(1) = 0.20_wp ; poly%cohort%wood_surf_water(2) = 0.10_wp   ! patch 1
    poly%cohort%leaf_surf_water(3) = 0.40_wp                                               ! patch 2
    film0 = site_film(poly)
-   call new_fuse_patches(poly, cfg)
+   call fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'identical patches should fuse to one')
    call check_close(total_area(poly),   1.0_wp, 1.0e-9_wp, 'total area not conserved by fusion')
    call check_close(total_nplant(poly), n0,     1.0e-9_wp, 'the polygon''s plant number not conserved by fusion')
@@ -92,7 +92,7 @@ program test_patch
    poly%patch%cas(1)%can_depth = 30.0_wp ; poly%patch%cas(2)%can_depth = 10.0_wp
    cas_before = poly%patch%area(1) * poly%patch%cas(1)%can_depth * poly%patch%cas(1)%can_enthalpy  &
               + poly%patch%area(2) * poly%patch%cas(2)%can_depth * poly%patch%cas(2)%can_enthalpy
-   call new_fuse_patches(poly, cfg)
+   call fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'reservoir patches should fuse to one')
    call check_close(poly%patch%soil_water(1)%theta(1),       0.25_wp,   1.0e-9_wp, 'soil water not area-weighted on fusion')
    call check_close(poly%patch%soil_energy(1)%soil_energy(3), 1.5e6_wp,  1.0e-3_wp, 'soil energy not area-weighted on fusion')
@@ -126,14 +126,14 @@ program test_patch
         / real(count(light1 < 1.0_wp - 1.0e-7_wp .or. light2 < 1.0_wp - 1.0e-7_wp), wp)
    call check(davg > 0.3_wp .and. davg < 0.7_wp,                                                  &
               'fixture: the two light profiles must differ by between 0.3 and 0.7 on average')
-   call new_fuse_patches(poly, cfg)
+   call fuse_patches(poly, cfg)
    call check(poly%patch%n == 2_ik, 'patches more different than the ceiling must stay apart above max_patch')
    !----- The uncapped schedule, spelled as a ceiling: 0.10 * 1.5**5 over six passes is a step of 1.5. -!
    cfg%patch_light_tol_max = 0.10_wp * 1.5_wp**5
    call derive_parameters(cfg)
    call check_close(cfg%patch_light_tol_mult, 1.5_wp, 1.0e-12_wp, 'ceiling 0.759375 must give the old 1.5 step')
    call two_unlike_patches()
-   call new_fuse_patches(poly, cfg)
+   call fuse_patches(poly, cfg)
    call check(poly%patch%n == 1_ik, 'without the ceiling the same two patches fuse down to max_patch')
 
    write(*,'(a)') '   PASS'

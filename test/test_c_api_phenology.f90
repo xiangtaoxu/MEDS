@@ -4,7 +4,7 @@
 !                                                                                          !
 ! WHY THIS TEST EXISTS. The same reason test_c_api_leaf does, one subsystem over. A C-API  !
 ! shim that only the optional `-DMEDS_BUILD_PYLIB=ON` library compiles is invisible to     !
-! ctest on both back ends, so a field inserted into `pheno_args_t` or a renamed            !
+! ctest on both back ends, so a field inserted into `pheno_args_c` or a renamed            !
 ! component can leave the C API unable to compile while the whole suite stays green. Every !
 ! C-API shim is therefore compiled into a ctest target, so an interface mismatch fails the !
 ! build (docs/building.md §Running the tests).                                             !

@@ -11,7 +11,6 @@
 !   4. SCHEME TOPO   : scheme 0 = 3-active (struct->slow); scheme 5 = 5-active clay/sand topology.      !
 !   5. SPIN-UP       : SASU active-block X_ss is an exact EULER fixed point; brute force converges;      !
 !                      inert pools held at 0; the singular full 7x7 is never solved (default K5=K7=0).    !
-!   6. RESIDENCE/CAP : X_c = X_ss at equilibrium, X_p = 0; a perturbed pool relaxes toward X_c.           !
 !   7. LITTER+LIGNIN : build_litter_input maps pre-split streams; lignin is a proportional passive tracer.!
 !   8. T/THETA RESP  : Q10 doubling per 10 K; ED2 cap at 45 C; moisture peak; Rh=0 at X=0; N off => f=1.  !
 !   9. FAST/SLOW SEAM: the accumulated xi_int path closes rh_today==today_rh, the daily-mean path does    !
@@ -25,10 +24,10 @@ program test_soil_biogeochem
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : yr_day, kgcday_2_umols
    use meds_patch_state_vars, only : litter_input_t, soil_carbon_state_t, pack_pool_vector
-   use meds_soil_carbon, only : soil_carbon_out_t, soilc_diag_t, soil_carbon_bad_pool,                   &
+   use meds_soil_carbon, only : soil_carbon_out_t, soil_carbon_bad_pool,                   &
                                 soil_carbon_pool_name, SOILC_NEG_TOL, SOILC_MAX_PLAUSIBLE,               &
                                 build_litter_input, soil_carbon_step, solve_soil_carbon_steady_state,    &
-                                soil_carbon_diagnostics, necromass_to_litter, add_necromass
+                                necromass_to_litter, add_necromass
    use meds_biogeochem_params, only : soil_carbon_params_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_ED2,         &
                                       DECOMP_SCHEME_CENTURY5, N_SOIL_POOL, IP_FAST_GRND, IP_FAST_SOIL,                      &
                                       IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
@@ -41,7 +40,6 @@ program test_soil_biogeochem
    call test_scalar_placement()
    call test_scheme_topology()
    call test_spinup_steady_state()
-   call test_residence_capacity()
    call test_litter_and_lignin()
    call test_necromass_to_litter()
    call test_temperature_moisture()
@@ -97,6 +95,7 @@ contains
          real(wp) :: rh_indep, dc
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+         p = audit%pools
          call check_true('EULER lignin_resid ~ 0', abs(audit%lignin_resid) < 1.0e-12_wp*sx, audit%lignin_resid)
          !----- LAMBDA, the freeze number: the fraction of a pool one step withdraws. It must be the  !
          !      max over pools of xi_int*K, must name that pool, and -- the property that makes the   !
@@ -125,6 +124,7 @@ contains
          type(soil_carbon_state_t) :: p
          p = pools
          call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+         p = audit%pools
          call check_true('EXPM  rh_today >= 0', rh >= -1.0e-12_wp, rh)
       end block
    end subroutine test_mass_closure
@@ -282,7 +282,7 @@ contains
       u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
       lignin_in = 0.0_wp
       call decomposition_transfer_matrix(pools, opts, a_mat, k_diag, er)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
+      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, pss)
       call pack_pool_vector(pss, xss)
       ! inert pools held at 0 (default scheme); finite everywhere:
       if (scheme == DECOMP_SCHEME_ED2) then
@@ -310,6 +310,7 @@ contains
       opts%step_solver = DECOMP_STEP_EULER
       p = pss
       call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
+      p = audit%pools
       call pack_pool_vector(p, x1)
       worst = maxval(abs(x1 - xss))
       call check_true('  '//tag//' EULER fixed point dX~0', worst < 1.0e-10_wp*max(maxval(xss),1.0_wp), worst)
@@ -320,6 +321,7 @@ contains
       p = soil_carbon_state_t()
       do it = 1_ik, 400000_ik
          call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
+         p = audit%pools
       end do
       call pack_pool_vector(p, x1)
       relerr = maxval(abs(x1 - xss)) / max(maxval(xss), 1.0_wp)
@@ -329,42 +331,6 @@ contains
          call check_true('  '//tag//' brute force -> X_ss', relerr < 1.0e-6_wp, relerr)
       end if
    end subroutine spinup_one_scheme
-
-   !=======================================================================================!
-   ! 6. Residence/capacity: X_c = X_ss at equilibrium, X_p = 0; perturbed pool relaxes toward X_c.  !
-   !=======================================================================================!
-   subroutine test_residence_capacity()
-      type(soil_carbon_state_t)  :: pss, pert, p
-      type(soil_carbon_params_t) :: opts
-      type(soilc_diag_t)         :: diag
-      type(soil_carbon_out_t)    :: audit
-      real(wp) :: a_mat(N_SOIL_POOL,N_SOIL_POOL), k_diag(N_SOIL_POOL), er(N_SOIL_POOL)
-      real(wp) :: xi(N_SOIL_POOL), u(N_SOIL_POOL), lignin_in(2), xss(N_SOIL_POOL)
-      real(wp) :: x_before, x_after, rh
-      print '(a)', '-- test 6: residence time / storage capacity --'
-      opts = soil_carbon_params_t()
-      xi = [0.7_wp, 0.5_wp, 0.7_wp, 0.5_wp, 0.5_wp, 0.5_wp, 0.5_wp]
-      u  = 0.0_wp
-      u(IP_FAST_GRND)=0.03_wp; u(IP_FAST_SOIL)=0.05_wp; u(IP_STRUCT_GRND)=0.02_wp; u(IP_STRUCT_SOIL)=0.04_wp
-      lignin_in = 0.0_wp
-      call decomposition_transfer_matrix(pss, opts, a_mat, k_diag, er)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi, u, opts, pss)
-      call pack_pool_vector(pss, xss)
-      call soil_carbon_diagnostics(a_mat, k_diag, xi, u, pss, diag)
-      call check_true('X_c == X_ss at equilibrium', maxval(abs(diag%x_c - xss)) < 1.0e-10_wp*max(maxval(xss),1.0_wp), &
-                      maxval(abs(diag%x_c - xss)))
-      call check_true('X_p == 0 at equilibrium', maxval(abs(diag%x_p)) < 1.0e-10_wp*max(maxval(xss),1.0_wp), maxval(abs(diag%x_p)))
-      call check_true('tau_E > 0 [yr]', diag%tau_e > 0.0_wp, diag%tau_e)
-      ! perturb the slow pool DOWN and confirm it relaxes back UP toward X_c:
-      pert = pss ; pert%slow_carbon = pss%slow_carbon * 0.5_wp
-      x_before = pert%slow_carbon
-      opts%step_solver = DECOMP_STEP_EULER
-      p = pert
-      call soil_carbon_step(p, u, lignin_in, xi, opts, rh, audit)
-      x_after = p%slow_carbon
-      call check_true('perturbed pool relaxes toward X_c', (x_after - x_before) > 0.0_wp .and. x_after <= xss(IP_SLOW), &
-                      x_after - x_before)
-   end subroutine test_residence_capacity
 
    !=======================================================================================!
    ! 7. Litter mapping + lignin passive tracer.                                                    !
@@ -417,6 +383,7 @@ contains
       opts%step_solver = DECOMP_STEP_EULER
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       f_lig_after = p%struct_grnd_lignin / p%struct_grnd_carbon
       d_s = xi_int(IP_STRUCT_GRND) * (opts%k_struct/yr_day)
       call check('f_lignin conserved under pure decay', f_lig_after, f_lig_before, 1.0e-12_wp)
@@ -429,6 +396,7 @@ contains
       u = 0.0_wp ; u(IP_STRUCT_GRND) = 0.5_wp ; lignin_in = [0.4_wp, 0.0_wp]     ! high-lignin input
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       call check_true('lignin input raises f_lignin', &
                       p%struct_grnd_lignin/p%struct_grnd_carbon > 0.2_wp, p%struct_grnd_lignin/p%struct_grnd_carbon)
 
@@ -442,6 +410,7 @@ contains
       u = 0.0_wp ; lignin_in = 0.0_wp
       p = pools
       call soil_carbon_step(p, u, lignin_in, xi_int, opts, rh, audit)
+      p = audit%pools
       call check_true('EXPM large step: L >= 0 (no negative lignin)', p%struct_grnd_lignin >= 0.0_wp, p%struct_grnd_lignin)
       call check_true('EXPM large step: L <= C', p%struct_grnd_lignin <= p%struct_grnd_carbon, &
                       p%struct_grnd_carbon - p%struct_grnd_lignin)

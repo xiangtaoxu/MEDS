@@ -5,28 +5,31 @@
 ! carbon, water and energy store and attributes what the operator did not declare to its   !
 ! phase (§3, eq. (1)); a breach of eq. (2) is reported at the end of the run (§5). It      !
 ! measures; it corrects nothing. Routines: slow_ledger_open, _rebase, _declare, _mark,     !
-! _report; slow_site_store (§2); the declared amounts slow_fast_carbon_handover,           !
-! slow_co2_handoff and litter_carbon_total (§3); check_plausible (§6). soilc_seam_t keeps  !
-! the run's worst soil-carbon checks.                                                      !
+! _report; slow_ledger_heat_open/_close, an operator's thermal-mass exchange (§4);         !
+! slow_site_store (§2); the declared amounts slow_fast_carbon_handover, slow_co2_handoff   !
+! and litter_carbon_total (§3); check_plausible (§6). slow_ledger_soil_check keeps the     !
+! run's worst soil-carbon checks.                                                          !
 !==========================================================================================!
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t
-   use meds_cohort_state_vars,  only : cohort_film_water
+   use meds_cohort_state_vars,  only : cohort_film_water, cohort_carbon_supply
    use meds_polygon_state_vars, only : polygon_t, patch_polygon_area
-   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store, pack_pool_vector, &
-                                       litter_input_t
-   use meds_allometry_lib,      only : min_cohort_carbon
+   use meds_patch_state_vars,   only : cas_capacities, soil_water_store, soil_energy_store,              &
+                                       pack_pool_vector, litter_input_t
    use meds_budget_check,       only : BUDGET_RTOL_FLUX
-   use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name
+   use meds_soil_carbon,        only : soil_carbon_bad_pool, soil_carbon_pool_name, soil_carbon_out_t
+   use meds_constants,          only : rho_air_ref
+   use meds_time,               only : meds_time_t, time_to_string
    use meds_biogeochem_params,  only : N_SOIL_POOL
    implicit none
    private
 
-   public :: slow_store_t, slow_ledger_t, soilc_seam_t, slow_site_store, slow_fast_carbon_handover
+   public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
    public :: slow_tissue_energy, slow_co2_handoff, litter_carbon_total
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
-   public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
+   public :: slow_ledger_heat_open, slow_ledger_heat_close, slow_ledger_soil_check
+   public :: KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
              SLOW_PHASE_TISSUE_WATER
@@ -66,9 +69,6 @@ module meds_slow_ledger
    !----- The run's accumulator, held in the polygon's run record (polygon_run_t). --------!
    type :: slow_ledger_t
       logical             :: active = .false.       !< off => every entry point is a no-op
-      !----- The air density the canopy-air store is valued at: the constant rho_air_ref   !
-      !      the stepper passes (conservation.md §2). -------------------------------------!
-      real(wp)            :: rho_air = 0.0_wp
       !----- Rolling state within the current step. ---------------------------------------!
       type(slow_store_t)  :: at_mark                !< store when the current phase opened
       type(slow_store_t)  :: decl_in, decl_out      !< declared boundary terms for the current phase
@@ -90,30 +90,35 @@ module meds_slow_ledger
       integer(ik)         :: bad_pool  = 0_ik      !< which CENTURY pool (index)
       real(wp)            :: bad_value = 0.0_wp    !< its value
       integer(ik)         :: n_bad     = 0_ik      !< how many marks saw an impossible store
+      !----- A thermal-mass bracket's opening tissue energy [J/m2] (slow_ledger_heat_open). --!
+      real(wp)            :: heat_at_open = 0.0_wp
+      !----- The run's worst soil-carbon checks (soil_carbon.md §7, §9), kept whether or not  !
+      !      the ledger is active, with the step and patch count where the Rh gap peaked. --!
+      integer(ik)         :: n_seam       = 0_ik     !< soil-carbon steps checked
+      real(wp)            :: worst_rh_gap = 0.0_wp   !< [kgC/m2/day] max |the step's Rh - the fast loop's|
+      character(len=19)   :: worst_rh_gap_when   = ''   !< the step it peaked on (its start)
+      integer(ik)         :: worst_rh_gap_npatch = 0_ik !< and the patch count then
+      real(wp)            :: worst_lignin = 0.0_wp   !< [kgC/m2/day] max |lignin passive-tracer residual|
+      real(wp)            :: worst_lambda = 0.0_wp   !< [-] max fraction of any pool withdrawn in one step
+      integer(ik)         :: lambda_pool  = 0_ik     !< the pool that attained it
+      character(len=19)   :: step_label   = ''       !< the current step's start, for the dates above
    end type slow_ledger_t
-
-   !----- The run's worst values of the soil-carbon step's three checks (soil_carbon.md §7, §9). !
-   type :: soilc_seam_t
-      real(wp)    :: worst_rh_gap  = 0.0_wp  !< [kgC/m2/day] max |rh_out - rh_fast_accum|
-      real(wp)    :: worst_lignin  = 0.0_wp  !< [kgC/m2/day] max |lignin passive-tracer residual|
-      real(wp)    :: worst_lambda  = 0.0_wp  !< [-] max fraction of any pool withdrawn in one step
-      integer(ik) :: lambda_pool   = 0_ik    !< the pool that attained worst_lambda
-   end type soilc_seam_t
 
 contains
 
    !---------------------------------------------------------------------------------------!
    ! Open a slow step: snapshot the store as the first phase's baseline and clear the      !
-   ! declared terms. `rho_air` values the canopy air for the step (conservation.md §2).    !
+   ! declared terms. The step's start labels the soil-carbon checks, active or not.        !
    !---------------------------------------------------------------------------------------!
-   subroutine slow_ledger_open(ledger, poly, cfg, rho_air)
+   subroutine slow_ledger_open(ledger, poly, cfg, step_start)
       type(slow_ledger_t), intent(inout) :: ledger
       type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
-      real(wp), optional,  intent(in)    :: rho_air
+      type(meds_time_t),   intent(in), optional :: step_start
+      ledger%step_label = ''
+      if (present(step_start)) ledger%step_label = time_to_string(step_start)
       if (.not. ledger%active) return
-      if (present(rho_air)) ledger%rho_air = rho_air
-      ledger%at_mark  = slow_site_store(poly, cfg, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       ledger%n_step   = ledger%n_step + 1_ik
@@ -131,7 +136,7 @@ contains
       type(polygon_t),     intent(in)    :: poly
       type(meds_config_t), intent(in)    :: cfg
       if (.not. ledger%active) return
-      ledger%at_mark  = slow_site_store(poly, cfg, ledger%rho_air)
+      ledger%at_mark  = slow_site_store(poly, cfg)
       ledger%decl_in  = slow_store_t()
       ledger%decl_out = slow_store_t()
       if (.not. ledger%has_first) then
@@ -159,6 +164,44 @@ contains
       if (present(energy_out)) ledger%decl_out%energy = ledger%decl_out%energy + energy_out
    end subroutine slow_ledger_declare
 
+   !----- A thermal-mass bracket: the operators between open and close change the tissues'    !
+   !      thermal mass at unchanged temperatures, an exchange the close declares             !
+   !      (conservation.md §4). ------------------------------------------------------------!
+   subroutine slow_ledger_heat_open(ledger, poly)
+      type(slow_ledger_t), intent(inout) :: ledger
+      type(polygon_t),     intent(in)    :: poly
+      if (.not. ledger%active) return
+      ledger%heat_at_open = slow_tissue_energy(poly)
+   end subroutine slow_ledger_heat_open
+
+   subroutine slow_ledger_heat_close(ledger, poly)
+      type(slow_ledger_t), intent(inout) :: ledger
+      type(polygon_t),     intent(in)    :: poly
+      if (.not. ledger%active) return
+      call slow_ledger_declare(ledger, energy_in = slow_tissue_energy(poly) - ledger%heat_at_open)
+   end subroutine slow_ledger_heat_close
+
+   !----- Keep the run's worst of one patch's soil-carbon checks (soil_carbon.md §7, §9),    !
+   !      active or not, and the step and patch count where the Rh gap peaked: a seam that is !
+   !      zero except on the days a patch operator fires reads differently from one that    !
+   !      drifts every day. ----------------------------------------------------------------!
+   subroutine slow_ledger_soil_check(ledger, out, n_patch)
+      type(slow_ledger_t),     intent(inout) :: ledger
+      type(soil_carbon_out_t), intent(in)    :: out
+      integer(ik),             intent(in)    :: n_patch
+      ledger%n_seam = ledger%n_seam + 1_ik
+      if (abs(out%rh_seam_gap) > ledger%worst_rh_gap) then
+         ledger%worst_rh_gap        = abs(out%rh_seam_gap)
+         ledger%worst_rh_gap_when   = ledger%step_label
+         ledger%worst_rh_gap_npatch = n_patch
+      end if
+      ledger%worst_lignin = max(ledger%worst_lignin, abs(out%lignin_resid))
+      if (out%lambda_max > ledger%worst_lambda) then
+         ledger%worst_lambda = out%lambda_max
+         ledger%lambda_pool  = out%lambda_pool
+      end if
+   end subroutine slow_ledger_soil_check
+
    !---------------------------------------------------------------------------------------!
    ! Close the phase now open: add its residual (conservation.md eq. (1)) to the phase's   !
    ! sums and reopen at the new store. A mark with no operator since the last adds zero,   !
@@ -172,14 +215,16 @@ contains
       type(slow_store_t) :: now, r
       if (.not. ledger%active) return
       if (phase < 1_ik .or. phase > N_SLOW_PHASE) return
-      now = slow_site_store(poly, cfg, ledger%rho_air)
+      now = slow_site_store(poly, cfg)
       r%carbon = (now%carbon - ledger%at_mark%carbon) - (ledger%decl_in%carbon - ledger%decl_out%carbon)
       r%water  = (now%water  - ledger%at_mark%water ) - (ledger%decl_in%water  - ledger%decl_out%water )
       r%energy = (now%energy - ledger%at_mark%energy) - (ledger%decl_in%energy - ledger%decl_out%energy)
 
       associate (s => ledger%resid_sum(phase), a => ledger%resid_abs(phase),                       &
                  w => ledger%resid_worst(phase), g => ledger%decl_gross(phase))
-         s%carbon = s%carbon + r%carbon ; s%water = s%water + r%water ; s%energy = s%energy + r%energy
+         s%carbon = s%carbon + r%carbon
+         s%water = s%water + r%water
+         s%energy = s%energy + r%energy
          a%carbon = a%carbon + abs(r%carbon)
          a%water  = a%water  + abs(r%water)
          a%energy = a%energy + abs(r%energy)
@@ -233,20 +278,12 @@ contains
    !  agree on what exists; carbon is added here. The recruit pool is valued at c_min per  !
    !  plant; the shed water is a handoff, declared, not stored (§3).                       !
    !=======================================================================================!
-   pure function slow_site_store(poly, cfg, rho_air) result(store)
+   pure function slow_site_store(poly, cfg) result(store)
       type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
-      real(wp),            intent(in) :: rho_air
       type(slow_store_t)              :: store
       real(wp)    :: a, dmol, cap_mass, cap_mol, e_soil, w_soil
-      real(wp)    :: c_min(cfg%pft%n)
       integer(ik) :: ip, i, i0, i1, pf
-
-      !----- Each PFT's recruit value per plant, c_min, as the vital rates use it. --------!
-      do pf = 1_ik, cfg%pft%n
-         c_min(pf) = min_cohort_carbon(poly%cohort%pft_table%allom(pf), cfg%pft%min_cohort_height,          &
-                                       cfg%pft%wood_density(pf))
-      end do
 
       do ip = 1_ik, poly%patch%n
          a = patch_polygon_area(poly, ip)
@@ -269,7 +306,7 @@ contains
          !----- Canopy air at the fast step's capacities; a depth change is the            !
          !      open-volume exchange refresh_canopy_depth declares. -----------------------!
          associate (cas => poly%patch%cas(ip))
-            call cas_capacities(rho_air, cas%can_shv, cas%can_depth, dmol, cap_mass, cap_mol)
+            call cas_capacities(rho_air_ref, cas%can_shv, cas%can_depth, dmol, cap_mass, cap_mol)
             store%water  = store%water  + a * cap_mass * cas%can_shv
             store%energy = store%energy + a * cap_mass * cas%can_enthalpy
             store%carbon = store%carbon + a * cap_mol  * cas%can_co2 * KGC_PER_UMOL_C
@@ -284,8 +321,9 @@ contains
          end associate
 
          !----- Carbon in transit: the recruit carry-forward pool. ------------------------!
-         do pf = 1_ik, cfg%pft%n
-            store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip) * c_min(pf)
+         do pf = 1_ik, poly%cohort%pft_table%n
+            store%carbon = store%carbon + a * poly%patch%recruit_pool(pf, ip)                   &
+                                        * poly%cohort%pft_table%recruit_carbon(pf)
          end do
 
          !----- Cohorts: nplant is per m2 of patch; the area weight converts to site. -----!
@@ -334,7 +372,7 @@ contains
    pure function slow_fast_carbon_handover(poly, cfg) result(net_c)
       type(polygon_t),     intent(in) :: poly
       type(meds_config_t), intent(in) :: cfg
-      real(wp)    :: net_c, per_plant, a
+      real(wp)    :: net_c, gross_gpp, resp_maint, a
       integer(ik) :: ip, i, i0, i1
       net_c = 0.0_wp
       do ip = 1_ik, poly%patch%n
@@ -343,13 +381,9 @@ contains
          i1 = i0 + poly%patch%cohort_count(ip) - 1_ik
          associate (ch => poly%cohort)
             do i = i0, i1
-               if (cfg%fast_biophysics_on) then
-                  per_plant = ch%gpp_accum(i) - (ch%leaf_resp_accum(i) + ch%stem_resp_accum(i)     &
-                                                 + ch%root_resp_accum(i))
-               else
-                  per_plant = cfg%gpp_ref * ch%leaf_area(i) * cfg%dt_years
-               end if
-               net_c = net_c + a * ch%nplant(i) * per_plant
+               call cohort_carbon_supply(ch, i, cfg%fast_biophysics_on, cfg%gpp_ref, cfg%dt_years,     &
+                                         gross_gpp, resp_maint)
+               net_c = net_c + a * ch%nplant(i) * (gross_gpp - resp_maint)
             end do
          end associate
       end do
@@ -389,16 +423,26 @@ contains
       integer(ik), intent(in) :: phase
       character(len=16)       :: nm
       select case (phase)
-      case (SLOW_PHASE_ALLOCATE) ; nm = 'allocate'
-      case (SLOW_PHASE_GROW)     ; nm = 'grow+mortality'
-      case (SLOW_PHASE_RECRUIT)  ; nm = 'recruit'
-      case (SLOW_PHASE_COHORT)   ; nm = 'cohort fuse/fiss'
-      case (SLOW_PHASE_DISTURB)  ; nm = 'disturbance'
-      case (SLOW_PHASE_PATCH)    ; nm = 'patch fuse/term'
-      case (SLOW_PHASE_CANOPY)   ; nm = 'canopy depth'
-      case (SLOW_PHASE_SOILC)    ; nm = 'soil carbon'
-      case (SLOW_PHASE_TISSUE_WATER) ; nm = 'tissue water'
-      case default               ; nm = '?'
+      case (SLOW_PHASE_ALLOCATE)
+         nm = 'allocate'
+      case (SLOW_PHASE_GROW)
+         nm = 'grow+mortality'
+      case (SLOW_PHASE_RECRUIT)
+         nm = 'recruit'
+      case (SLOW_PHASE_COHORT)
+         nm = 'cohort fuse/fiss'
+      case (SLOW_PHASE_DISTURB)
+         nm = 'disturbance'
+      case (SLOW_PHASE_PATCH)
+         nm = 'patch fuse/term'
+      case (SLOW_PHASE_CANOPY)
+         nm = 'canopy depth'
+      case (SLOW_PHASE_SOILC)
+         nm = 'soil carbon'
+      case (SLOW_PHASE_TISSUE_WATER)
+         nm = 'tissue water'
+      case default
+         nm = '?'
       end select
    end function slow_phase_name
 
@@ -409,6 +453,24 @@ contains
    subroutine slow_ledger_report(ledger)
       type(slow_ledger_t), intent(in) :: ledger
       integer(ik) :: p, nbad
+      !----- The soil-carbon seam: a number that should be machine-zero, reported whether or not  !
+      !      it ever breached. Lambda, the fraction of a pool one slow step withdraws, says whether !
+      !      freezing the pool across the step is sound; it is expected small but nonzero, and a    !
+      !      WARNING as it approaches 1, long before a pool could go negative. ---------------------!
+      if (ledger%n_seam > 0_ik) then
+         write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
+               ledger%worst_rh_gap, ' kgC/m2'
+         if (ledger%worst_rh_gap > 0.0_wp)                                                        &
+            write(*,'(3a,i0,a)') '                       worst at ', ledger%worst_rh_gap_when,    &
+                  ' with ', ledger%worst_rh_gap_npatch, ' patches'
+         write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
+               ledger%worst_lignin, ' kgC/m2/day'
+         write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
+               ledger%worst_lambda, ' [-]  pool ', trim(soil_carbon_pool_name(ledger%lambda_pool))
+         if (ledger%worst_lambda > 0.1_wp)                                                        &
+            write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
+                        // ' the frozen-pool approximation is degrading; shorten dt_slow.'
+      end if
       if (.not. ledger%active .or. ledger%n_step == 0_ik) return
       print '(a)', ''
       print '(a)', '=== slow-loop conservation ledger (site totals, per m2) ==================='
