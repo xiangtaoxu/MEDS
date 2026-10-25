@@ -139,7 +139,9 @@ polygon failed in owes the calendar's restructuring (#521). `src/main` checks a 
 dead resets and states its own rationale briefly, with no change to any result (#522). The run's status
 codes are `RUN_*`, a run lists its calendar steps once, its output tick is the output library's, and
 a site run chooses its cell and reads its maps the way a region does, with no change to any result
-(#526).
+(#526). The stepper is one polygon's whole slow step in the order of processes and
+takes the polygon's ledgers as one record, and a polygon's start is complete when `init_polygon`
+returns, with no change to any result (#531).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -796,9 +798,21 @@ a site run chooses its cell and reads its maps the way a region does, with no ch
   `meds_config`'s `site_configs` replaces `meds_region`'s `polygon_sites`, `output_tick`
   (`meds_output_integrate`) is the polygon's output tick, and `test_c_api_run` takes a work
   directory.
+- **Fortran: the stepper and the start** (#531). `advance_one_step(poly, cfg, ledgers[, met_src,
+  met_cur, step_start, out_bufs, patch_threads])` takes a `run_ledgers_t` (`meds_stepper`: the
+  energy, water and face budgets and the slow ledger) and performs the owed restructuring and the
+  thermal acclimation itself; `advance_boundary` goes, and a caller owes a restructuring by
+  `poly%restructure_pending`. The canopy air a start owes is `poly%seed_canopy_air` (no
+  `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
+  `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
+  (`meds_soil_carbon`) is the spin-up's steady state.
 
 ### Changed
 
+- **The stepper owns the order of processes; the start is complete in `init_polygon`** (#531), with
+  no change to any result. The tests that step a polygon now run the run's order, the owed
+  restructuring and the acclimation included, and the canopy-air depth, the spin-up and the sites'
+  terrain belong to the start.
 - **A site run chooses its forcing cell and reads its maps the way a region does** (#526). The cell
   is chosen once, and each polygon applies its cell's map inputs to its own configuration, so a site
   run's configuration no longer carries the map's values: the PFT table beside its state files
