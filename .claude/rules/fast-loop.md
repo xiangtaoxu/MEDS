@@ -1,7 +1,8 @@
 ---
 paths:
   - "src/fast_dynamics/**"
-  - "test/test_column_*.f90"
+  - "test/test_fast_integ_*.f90"
+  - "test/meds_test_fast_fixture.f90"
   - "test/test_fast_loop.f90"
   - "test/test_water_network.f90"
   - "test/test_canopy_*.f90"

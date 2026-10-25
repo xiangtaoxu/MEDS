@@ -330,7 +330,7 @@ and the canopy air's vapour credit is the leaves' water debit. Measured on BCI's
 −0.2 W m⁻² and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (refreshing transpiration at
 every stage instead gives +0.3 and 2.9 W m⁻²; at 150 s the two agree to 0.1 W m⁻² in the mean and 0.6
 in any hour). The 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s
-(`test_column_esdirk2`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
+(`test_fast_integ_step`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
 2013-05, 900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
 daily leaf and wood potentials by at most 0.004 MPa.
 

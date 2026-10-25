@@ -112,6 +112,8 @@ integration itself in [`numerical_scheme.md`](../../docs/science/numerical_schem
 `test_canopy_radiation`, `test_canopy_water`, `test_leaf_gas_exchange`, `test_plant_energy`,
 `test_plant_hydraulics`, `test_respiration`, `test_soil_heat`, `test_soil_water`, `test_surface`; the laws
 in `src/share/functions/` in `test_therm_lib`, `test_optics_lib`, `test_plant_hydr_lib` and
-`test_soil_hydr_lib`. The water network, and the soil column alone: `test_water_network`. The coupled loop:
-`test_column_dynamics`, `test_column_derivs`, `test_column_esdirk2`, `test_column_rk45`,
+`test_soil_hydr_lib`. The water network, and the soil column alone: `test_water_network`. The integrator,
+one test per concern on the shared fixture `meds_test_fast_fixture`: `test_fast_integ_kernels` (the right-hand
+sides, the backward-Euler stage, the state vector and the error control), `test_fast_integ_schemes` (ESDIRK2,
+RK45 and the adaptive march) and `test_fast_integ_step` (one fast step end to end). The driver:
 `test_fast_loop`.
