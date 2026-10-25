@@ -836,6 +836,9 @@ matrix's vector (#529).
 
 ### Changed
 
+- **`test_fast_loop` is `test_fast_driver`, and every block runs on forcing** (#536). Five blocks ran on the
+  reference climate of a run without forcing. They now run on the test's diurnal forcing file, with all
+  56 checks kept, and the header lists every section.
 - **The soil-carbon state is the matrix's vector** (#529), with no change to any result. The kernels
   read and write `%carbon` as it is, without packing it into an array and back, and the pool names
   are one table beside the pool indices; the restart reads and writes the pools in one loop.
@@ -1818,6 +1821,8 @@ matrix's vector (#529).
 
 ### Removed
 
+- **`fast_dynamics`' `met_fixed` argument** (#536), which nothing in production passed. A run without
+  forcing still steps on the reference climate.
 - **The PI step controller and ESDIRK2's fixed sub-steps** (#530): `[fast].step_controller`,
   `[fast].esdirk2_adaptive` and `[fast].esdirk2_fixed_substep`, with `CTRL_I`, `CTRL_PI`, the PI gains and
   `fixed_march`. Only tests ran either option. The fast loop marches ESDIRK2 adaptively under the integral
