@@ -607,7 +607,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch allometry disturbance init_census init_soil_state time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
+   foreach(t containers allometry init_census init_soil_state time fast_loop tissue_energy slow_update slow_step)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
