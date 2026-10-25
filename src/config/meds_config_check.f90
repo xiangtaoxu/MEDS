@@ -723,6 +723,7 @@ contains
    !      (docs/science/plant_hydraulics.md). ------------------------------------------------------!
    subroutine check_hydraulics(cfg)
       type(meds_config_t), intent(in) :: cfg
+      integer(ik) :: ipft
       associate (hydro => cfg%pft%hydro(1:cfg%pft%n))
          if (any(hydro%root_beta <= 0.0_wp .or. hydro%root_beta >= 1.0_wp))                             &
             error stop TAG//'hydraulics.root_beta must lie in (0, 1)'
@@ -733,17 +734,23 @@ contains
          if (any(hydro%fine_root_radius <= 0.0_wp)) error stop TAG//'hydraulics.fine_root_radius must be > 0'
          if (any(hydro%vessel_curl <= 0.0_wp))      error stop TAG//'hydraulics.vessel_curl must be > 0'
          if (any(hydro%wood_kmax <= 0.0_wp))        error stop TAG//'hydraulics.wood_kmax must be > 0'
-         associate (leaf => hydro%leaf_curve, wood => hydro%wood_curve)
-            if (.not. (all(leaf%pi0 < 0.0_wp) .and. all(wood%pi0 < 0.0_wp)))                           &
-               error stop TAG//'hydraulics.leaf_pi0 and wood_pi0 must be < 0'
-            if (.not. (all(leaf%elastic_mod > -leaf%pi0) .and. all(wood%elastic_mod > -wood%pi0)))      &
-               error stop TAG//'hydraulics.leaf_elastic_mod and wood_elastic_mod must exceed |pi0|'
-            if (.not. (all(leaf%apoplast_frac >= 0.0_wp .and. leaf%apoplast_frac < 1.0_wp) .and.         &
-                       all(wood%apoplast_frac >= 0.0_wp .and. wood%apoplast_frac < 1.0_wp)))             &
-               error stop TAG//'hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)'
-            if (.not. (all(leaf%water_sat > 0.0_wp) .and. all(wood%water_sat > 0.0_wp)))               &
-               error stop TAG//'hydraulics.leaf_water_sat and wood_water_sat must be > 0'
-         end associate
+         !----- The curves one PFT at a time: an array expression over hydro%leaf_curve%<key>,      !
+         !      a key of a record inside each element of the PFT array, reads other PFTs' keys      !
+         !      in ifx 2026.1's AVX-512 code (the production build) and refused every multi-PFT     !
+         !      file. ------------------------------------------------------------------------------!
+         do ipft = 1_ik, cfg%pft%n
+            associate (leaf => cfg%pft%hydro(ipft)%leaf_curve, wood => cfg%pft%hydro(ipft)%wood_curve)
+               if (.not. (leaf%pi0 < 0.0_wp .and. wood%pi0 < 0.0_wp))                                   &
+                  error stop TAG//'hydraulics.leaf_pi0 and wood_pi0 must be < 0'
+               if (.not. (leaf%elastic_mod > -leaf%pi0 .and. wood%elastic_mod > -wood%pi0))             &
+                  error stop TAG//'hydraulics.leaf_elastic_mod and wood_elastic_mod must exceed |pi0|'
+               if (.not. (leaf%apoplast_frac >= 0.0_wp .and. leaf%apoplast_frac < 1.0_wp .and.          &
+                          wood%apoplast_frac >= 0.0_wp .and. wood%apoplast_frac < 1.0_wp))              &
+                  error stop TAG//'hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)'
+               if (.not. (leaf%water_sat > 0.0_wp .and. wood%water_sat > 0.0_wp))                       &
+                  error stop TAG//'hydraulics.leaf_water_sat and wood_water_sat must be > 0'
+            end associate
+         end do
          if (.not. all(hydro%wood_psi50 < 0.0_wp)) error stop TAG//'hydraulics.wood_psi50 must be < 0'
          if (.not. all(hydro%wood_kexp > 0.0_wp))  error stop TAG//'hydraulics.wood_kexp must be > 0'
       end associate
