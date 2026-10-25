@@ -686,7 +686,7 @@ if(MEDS_BUILD_TESTS)
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
    #     allocation and trait dynamics are daily -- so it links both kernel libraries: there is no
    #     edge between them to ride on.
-   foreach(t plant_hydraulics plant_respiration plant_carbon_allocation plant_traits)
+   foreach(t plant_hydraulics plant_respiration plant_carbon_allocation plant_traits demography)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
