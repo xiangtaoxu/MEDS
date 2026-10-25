@@ -15,8 +15,9 @@
 !     compiles.                                                                                    !
 !                                                                                          !
 ! The assertions cover the shim's own logic: the invalid-handle guard (every accessor has to      !
-! return a sentinel rather than index a stale registry slot), distinct handles, and a real         !
-! open -> step -> finalize -> free cycle through the C boundary.                                    !
+! return a sentinel rather than index a stale registry slot), distinct handles, a real             !
+! open -> step -> finalize -> free cycle through the C boundary, and a failed open that leaves its  !
+! slot free for the next one.                                                                       !
 !                                                                                          !
 ! The cycle runs on a config DERIVED from the shipped default one: fast biophysics and live met    !
 ! forcing off (the forcing netCDF is not tracked in git), bare ground, three days. The derivation   !
@@ -41,6 +42,7 @@ program test_c_api_run
    character(len=*), parameter :: CFG_DEFAULT    = 'meds_config_eval.toml'
    character(len=*), parameter :: CFG_CALIBRATED = 'calibration/meds_config_calibrated.toml'
    character(len=*), parameter :: CFG_DERIVED = 'test_c_api_run_derived.toml'
+   character(len=*), parameter :: CFG_NO_CENSUS = 'test_c_api_run_no_census.toml'
    integer(c_int)      :: h, h2, status, d0, d1, nsteps
    real(c_double)      :: agb, lai, soilc
    type(meds_config_t) :: cfg
@@ -69,7 +71,7 @@ program test_c_api_run
    call check(meds_run_total_agb(99_c_int) == 0.0_wp,   'aggregates on a bogus handle read 0')
 
    !=== 3. A real open -> step -> finalize -> free cycle across the C boundary. ==============!
-   call write_derived_config()
+   call write_derived_config(CFG_DERIVED)
    h = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
    call check(h > 0_c_int, 'a run opens from a config through the C-API')
    call check(meds_run_is_done(h) == 0_c_int, 'a freshly opened run is not already done')
@@ -107,10 +109,9 @@ program test_c_api_run
    call check(meds_run_step(h) == 1_c_int, 'a step past end_time returns DRIVER_FINISHED')
 
    !=== 3b. A REUSED registry slot must not inherit the previous run's counters. =============!
-   !      The registry is module-`save`, so a freed handle is handed out again -- and the run       !
-   !      object in that slot still holds whatever the last run left in it. `meds_region_t`'s       !
-   !      default initialisers do NOT help: they apply to a fresh variable, not to a slot being      !
-   !      reopened.                                                                                !
+   !      The registry is module-`save`, so a freed handle is handed out again. `meds_region_t`'s   !
+   !      default initialisers apply to a fresh variable, not to a slot being reopened: what makes  !
+   !      the slot fresh is region_free, which leaves it as a run never opened.                     !
    !                                                                                          !
    !      A Python process that runs one config after another (a calibration's trials) reuses   !
    !      slots this way, so the step counters, both whole-column budgets, the slow ledger and the !
@@ -123,6 +124,19 @@ program test_c_api_run
    call check(meds_run_is_done(h) == 0_c_int, 'and is not already done')
    status = meds_run_step(h)
    call check(meds_run_istep(h) == 1_c_int, 'the second run counts its own steps from 1')
+
+   !=== 3c. A run that FAILS to open holds nothing. ==========================================!
+   !      A census start whose file is missing stops in the polygons' start, after the run has  !
+   !      allocated them. The slot it failed in is the next one handed out, so the open after   !
+   !      it must start clean rather than find the failed attempt's arrays still there. -------!
+   call write_derived_config(CFG_NO_CENSUS, census='no_such_census.csv')
+   h2 = meds_run_open(to_c(CFG_NO_CENSUS), int(len(CFG_NO_CENSUS), c_int), 0_c_int)
+   call check(h2 == -2_c_int, 'a run whose census file is missing does not open')
+   h2 = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
+   call check(h2 > 0_c_int .and. h2 /= h, 'a run opens in the slot a failed open left')
+   call check(meds_run_step(h2) == 0_c_int, 'and steps from its own start')
+   call meds_run_free(h2)
+   call delete_file(CFG_NO_CENSUS)
 
    !=== 4. State is readable, and readable AFTER finalize (that is why free is separate). ====!
    agb   = meds_run_total_agb(h)
@@ -147,11 +161,13 @@ contains
    !      match for a key, so these win over the same keys later in the file. What is turned off: !
    !      the fast loop and live met forcing (the forcing netCDF is untracked), the output        !
    !      streams and the state checkpoint (a test must not litter the source tree), and the      !
-   !      window is cut to three days from bare ground.  -----------------------------------------!
-   subroutine write_derived_config()
+   !      window is cut to three days from bare ground, or from `census`, a census file.  --------!
+   subroutine write_derived_config(path, census)
+      character(len=*),           intent(in) :: path
+      character(len=*), optional, intent(in) :: census
       integer :: uin, uout, ios
       character(len=512) :: line
-      open(newunit=uout, file=CFG_DERIVED, status='replace', action='write')
+      open(newunit=uout, file=path, status='replace', action='write')
       write(uout,'(a)') '# GENERATED by test_c_api_run -- deleted when the test passes.'
       write(uout,'(a)') '[run]'
       write(uout,'(a)') 'start_time = "2024-07-01"'
@@ -162,7 +178,12 @@ contains
       write(uout,'(a)') '[forcing]'
       write(uout,'(a)') 'forcing_on = false'
       write(uout,'(a)') '[init]'
-      write(uout,'(a)') 'init_mode = 0'
+      if (present(census)) then
+         write(uout,'(a)') 'init_mode = 1'
+         write(uout,'(3a)') 'census_file = "', census, '"'
+      else
+         write(uout,'(a)') 'init_mode = 0'
+      end if
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'state_write = false'
       write(uout,'(a)') 'enabled = false'

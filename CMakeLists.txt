@@ -564,6 +564,13 @@ if(MEDS_BUILD_TESTS)
                        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/refused/${case} -DCASE=${case}
                        -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_main_refuses.cmake)
    endforeach()
+   #----- A step that fails stops meds_main after the run is finalized, which closes the files. #
+   #      The script explains the case.                                                          #
+   add_test(NAME main_failure_finalizes
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
+                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/main_failure
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_main_failure.cmake)
 
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
    add_executable(test_pft_optics_config test/test_pft_optics_config.f90)
