@@ -321,7 +321,7 @@ contains
 
       integer(ik) :: n, k, it, ib
       real(wp), dimension(n_soil_layer_max) :: fl_n, kappa, kf, q_src, e_n, e_new, e_try, step
-      real(wp), dimension(n_soil_layer_max) :: lo_t, di_t, up_t, a, b, c
+      real(wp), dimension(n_soil_layer_max) :: lo_t, di_t, up_t, a, b, c, rhs
       real(wp) :: g_deep, g_face, w_cp, lam, norm_try, e0, e1
       type(soil_column_eval_t) :: now, try
 
@@ -381,8 +381,9 @@ contains
             c(k) = 0.0_wp
             if (k > 1_ik) a(k) = lo_t(k) / now%de(k-1)
             if (k < n)    c(k) = up_t(k) / now%de(k+1)
+            rhs(k) = -now%res(k)          ! a named array: an expression here is copied to a temporary
          end do
-         call thomas_solve(a, b, c, -now%res, step, n)
+         call thomas_solve(a, b, c, rhs, step, n)
          lam = 1.0_wp
          do ib = 0_ik, SOIL_STEP_HALVINGS
             e_try(1:n) = e_new(1:n) + lam * step(1:n)
