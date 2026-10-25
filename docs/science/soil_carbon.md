@@ -329,7 +329,7 @@ The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`,
 | daily driver, seam guard, ledger | `meds_slow_state`: `advance_soil_carbon`; `meds_slow_update`: `commit_soil_carbon`; the run's worst seam checks in `meds_slow_ledger`: `slow_ledger_soil_check` |
 | litter accumulation | `meds_slow_state`: `compute_carbon_allocation`, `accumulate_mortality_litter`; kills in `meds_slow_update`: `terminate_cohorts`, `apply_patch_disturbance` |
 | sub-daily $`R_h`$ + $`\xi`$ accumulation | `meds_fast_integ_frozen`: `patch_heterotrophic_respiration`; `meds_fast_state`: `accumulate_fast_to_slow` |
-| output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/test_respiration.f90` ($\xi$, $A$, $K$, $`e_r`$ and $`R_h`$), `test/test_soil_carbon.f90` (the daily step), `test/test_slow_step.f90`, `test/test_canopy_air_space.f90` |
+| output; tests | `soilc_*_site`, `mean_soilc_total_pa`, `mean_rh_py` (`GRP_CARBON`); `test/fast/test_respiration.f90` ($\xi$, $A$, $K$, $`e_r`$ and $`R_h`$), `test/slow/test_soil_carbon.f90` (the daily step), `test/slow/test_slow_step.f90`, `test/fast/test_canopy_air_space.f90` |
 
 ## References
 - ED2 `../ED2/ED/src/`: `dynamics/soil_respiration.f90` (environmental scalars, sub-daily

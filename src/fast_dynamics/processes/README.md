@@ -3,7 +3,7 @@
 **One module per process, named after its science page.** Each holds its physics for one patch and
 the argument records its kernels read; none sees `polygon_t`, so they compile and unit-test
 standalone (`cmake --build … --target meds_fast_kernels`), each in a test named after it
-(`test/test_canopy_radiation.f90` for `meds_canopy_radiation`). The integrator (`../integrator/`) decides
+(`test/fast/test_canopy_radiation.f90` for `meds_canopy_radiation`). The integrator (`../integrator/`) decides
 when each is called and how the stores are advanced; the laws they evaluate that other layers also
 use (the tissue and soil water curves, the thermal properties, the optics) are in
 `src/share/functions/`.

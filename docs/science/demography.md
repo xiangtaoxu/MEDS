@@ -334,7 +334,7 @@ L_{\uparrow,j} = \sum_{i\,:\,h_i > h_j} n_i\,A_{\mathrm{leaf},i} \qquad(11)
 | treefall gaps, patch fusion, termination, eq. (10) | `meds_slow_update`: `apply_patch_disturbance`, `fuse_patches`, `fuse_patch_into`, `terminate_patches`, `light_profile_of` |
 | the overtopping LAI, eq. (11) | `meds_slow_update`: `update_overtopping_lai`; `meds_numerics`: `equal_height_layers` |
 | the order of the operators | `meds_slow_dynamics`: `vegetation_dynamics`, `restructure_stand` |
-| tests | `test/test_demography.f90` (the laws), `test/test_slow_update.f90` (the operators), `test/test_slow_step.f90` (the step) |
+| tests | `test/slow/test_demography.f90` (the laws), `test/slow/test_slow_update.f90` (the operators), `test/slow/test_slow_step.f90` (the step) |
 
 ## References
 

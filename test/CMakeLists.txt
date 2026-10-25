@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
-# The MEDS test suite (docs/building.md, "Tests"): one test per src module, in folders that  #
-# mirror src/, its support libraries, the source-tree checks and the Python tools' tests.    #
+# The MEDS test suite (docs/building.md, "Running the tests"): one test per src module, in   #
+# folders that mirror src/, its support libraries, the source-tree checks and the Python     #
+# tools' tests.                                                                              #
 #                                                                                            #
 # Every test is registered by meds_add_test (below) with exactly one label:                  #
 #   unit         a module's test, and meds_main's refusals: seconds each                     #
@@ -395,10 +396,10 @@ set_tests_properties(${meds_all_tests} PROPERTIES TIMEOUT 600)
 #  long (opt-in, -DMEDS_TEST_LONG=ON): example 05's two Palo Verde runs through meds_main, the  #
 #  runs to make before a physics or tissue-energy change merges. Each runs a copy of the        #
 #  example's config in its own build-tree directory and passes when the run completes and its  #
-#  slow ledger closes; checks/check_long_run.cmake explains them. The inventory (about 2 min    #
-#  on the example's 12 threads) reads the ED_ERA5land archive; the regrowth (about 36 min)      #
-#  reads Palo Verde's cell cut from it, 2003-2022: MEDS_TEST_PV_FORCING names a cut file, and   #
-#  without one the test cuts it into its directory once (about 6 min).                          #
+#  slow ledger closes; checks/check_long_run.cmake explains them. The inventory (85 s on the     #
+#  example's 12 threads, ifx dev) reads the ED_ERA5land archive; the regrowth (31 min) reads    #
+#  Palo Verde's cell cut from it, 2003-2022: MEDS_TEST_PV_FORCING names a cut file, and         #
+#  without one the test cuts it into its directory once (under 2 min).                          #
 #==========================================================================================#
 if (MEDS_TEST_LONG)
    set(MEDS_ERA5LAND_ARCHIVE "$ENV{ERA5LAND_ARCHIVE}" CACHE PATH

@@ -3,12 +3,10 @@ paths:
   - "src/state/**"
   - "src/slow_dynamics/**"
   - "src/io/init/**"
-  - "test/test_containers.f90"
-  - "test/test_slow_update.f90"
-  - "test/test_slow_step.f90"
-  - "test/test_slow_ledger.f90"
-  - "test/test_demography.f90"
-  - "test/test_state_*.f90"
+  - "test/state/**"
+  - "test/slow/test_slow_*.f90"
+  - "test/slow/test_demography.f90"
+  - "test/io/test_state_file.f90"
 ---
 
 # State and demography

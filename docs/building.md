@@ -116,7 +116,7 @@ measurable build time, because the tests compile its sources anyway and it adds 
 without it, a clean configure and build at `-j 16` takes 44–50 s with ifx and 52–56 s with gfortran,
 and the rebuild after an edit 3–4 s. It compiles every library position-independent (`-fPIC`),
 which leaves every output value of `meds_main` as it is, on ifx and gfortran, and its run time
-within noise. The suite gains the Python package's tests: 84 tests.
+within noise. The suite gains the Python package's tests: 86 tests.
 
 **dev is the reference.** It is the project's `-O2`, for any x86-64 CPU. Outputs are compared between
 commits on dev builds; gfortran dev builds of two commits that change no arithmetic give
@@ -133,10 +133,10 @@ older CPU: build with `-DMEDS_CPU_TARGET=` (empty) for a portable one, or `host`
 build on. Use ifx: gfortran's production build is only 4–8 % faster than ifx dev. IPO and the CPU
 target are offered for ifx and gfortran; nvfortran builds debug and dev.
 
-**production builds `meds_main` and `libmeds.so`, not the tests.** Under IPO each of the ~80 test
+**production builds `meds_main` and `libmeds.so`, not the tests.** Under IPO each of the 47 test
 programs is a whole-program link of its own, and several tests assert results to the last bit, which
-a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 4 of 84 tests fail with ifx and
-2 with gfortran ([The suite runs on dev](#the-suite-runs-on-dev)). Run the suite on dev. For the same
+a production build moves at round-off: with `-DMEDS_BUILD_TESTS=ON`, 4 tests fail with ifx and 2 with
+gfortran ([The suite runs on dev](#the-suite-runs-on-dev)). Run the suite on dev. For the same
 reason `meds.model` and `meds_main` agree to round-off on a production build, not bit for bit: each
 is optimised as a whole program of its own.
 To run the examples or a calibration on a production build, point them at it: a script that runs
@@ -246,7 +246,10 @@ enough. See [`../python/README.md`](../python/README.md).
 ## Running the tests
 
 ```bash
-ctest --test-dir build-dev --output-on-failure          # all of them
+ctest --test-dir build-dev --output-on-failure                    # all of them
+ctest --test-dir build-dev -L unit --output-on-failure            # one label (below)
+ctest --test-dir build-dev -L integration --output-on-failure
+ctest --test-dir build-dev -LE long --output-on-failure           # all but the long runs
 ctest --test-dir build-debug -R slow_update --output-on-failure   # one, by regex
 ```
 
@@ -256,14 +259,49 @@ conservation ledgers, and a full spin-up. Every C-API shim is compiled by a mand
 so an ABI change is a build failure in a default build rather than a silent break in an optional
 one.
 
+**One test per `src` module, laid out as `src` is.** ctest `slow_update` is
+`test/slow/test_slow_update.f90`, the test of `src/slow_dynamics/driver/meds_slow_update.f90`; the
+folders are `test/share/`, `config/`, `state/`, `fast/`, `slow/`, `io/`, `driver/` and `c_api/`, with
+the shared fixtures in `test/support/`, the CMake checks in `test/checks/` and the restart test in
+`test/python/`. `test/CMakeLists.txt` registers every test through `meds_add_test` and builds the
+test programs in `<build>/test/`. Each test carries one label:
+
+| Label | What it holds | Tests (dev) | Time (dev, one core) |
+|---|---|---|---|
+| `unit` | each module's test, and `meds_main`'s refusals (`*_refused`, `main_failure_finalizes`) | 67 | 15 s |
+| `integration` | whole runs: `sites`, `region`, `fast_driver`, `c_api_run`, `restart_exact` | 5 | 44 s |
+| `lint` | the source-tree rules (`no_issue_refs`, `constants_named`, `kernels_patch_only`, ...) and the tracked copies (`io_config_example`, `license_copy`, `notice_copy`) | 10 | 2 s |
+| `python` | the Python tools' and the package's pytest suites (`prepare_flux_tower`, `calibrate_fast`, `python_api`, `prepare_census`) | 4 | 26 s |
+| `long` | opt-in: example 05's Palo Verde inventory and its 150-year regrowth | 2 | 34 min on 12 threads |
+
+A debug build has 84 tests: no `python_api` (it builds no `libmeds.so`), and no
+`soil_nan_layer_refused` (it traps the NaN that case feeds the loader). A `-L` takes a regular
+expression, so `-L 'unit|lint'` runs both.
+
+**The long tests are opt-in**, and the runs to make before merging a change to the physics or to the
+tissue energy. Configure with them, and run them alone:
+
+```bash
+FC=ifx cmake --preset dev -DMEDS_TEST_LONG=ON -DMEDS_ERA5LAND_ARCHIVE=/path/to/ED_ERA5land
+ctest --test-dir build-dev -L long --output-on-failure
+```
+
+`palo_verde_inventory` runs the 2009 inventory (`meds_config_inventory.toml`; 85 s on the example's
+12 threads, ifx dev), reading the archive; `palo_verde_regrowth` the 150 years from bare ground
+(`meds_config_regrowth.toml`; 31 minutes) on Palo Verde's cell, 2003-2022, which it cuts from the
+archive into its directory once (under 2 minutes) unless `-DMEDS_TEST_PV_FORCING=` names a cut file. Each runs a copy of the example's config in `<build>/long/palo_verde_<case>/`, which holds its
+output and its log, and passes when the run completes and its slow ledger closes
+(`test/checks/check_long_run.cmake`). `MEDS_ERA5LAND_ARCHIVE` defaults to `ERA5LAND_ARCHIVE` from the
+environment.
+
 ### The suite runs on dev
 
-**Run the suite on a dev build** (or debug); dev passes all 84 tests with ifx and with gfortran.
+**Run the suite on a dev build** (or debug); dev passes all 86 tests with ifx and with gfortran.
 Several tests compare two computations of the same number bit for bit, or within a few units in the
 last place, and that holds only when both are compiled the same way. dev compiles each file on its
 own at `-O2`, for any x86-64 CPU. production optimises across files (IPO) and generates AVX-512 code,
 so the two sides of such a check can be compiled differently and part in the last bits. Built with
-`-DMEDS_BUILD_TESTS=ON`, production fails 4 of the 84 tests with ifx and 2 with gfortran:
+`-DMEDS_BUILD_TESTS=ON`, production fails 4 tests with ifx and 2 with gfortran:
 
 | Test | Compiler | The check that fails | Production's value | Tolerance | Cause |
 |---|---|---|---|---|---|

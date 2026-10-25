@@ -42,12 +42,18 @@ from `$CONDA_PREFIX`. Toolchain activation for this machine is in `CLAUDE.local.
 ```bash
 FC=ifx cmake --preset dev               # the dev kind (Release, -O2) in build-dev
 cmake --build build-dev -j
-ctest --test-dir build-dev --output-on-failure          # 84 tests, ~110 s; -j 5: 32 s
+ctest --test-dir build-dev --output-on-failure          # 86 tests, ~90 s; -j 5: 33 s
+ctest --test-dir build-dev -L unit --output-on-failure  # the 67 unit tests, ~15 s
 
 # debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
 FC=ifx cmake --preset debug
 ctest --test-dir build-debug -R slow_update --output-on-failure   # one test by regex
 ```
+
+The tests mirror `src/`, one per module (ctest `slow_update` is `test/slow/test_slow_update.f90`),
+and each has one label: `unit` (67), `integration` (5), `lint` (10) or `python` (4).
+`-DMEDS_TEST_LONG=ON` adds the two `long` Palo Verde runs, to make before a physics change merges
+(`docs/building.md`, "Running the tests").
 
 Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`
 (dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–36 % faster, for long runs; it builds

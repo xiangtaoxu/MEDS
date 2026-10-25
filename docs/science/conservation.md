@@ -202,4 +202,4 @@ All three are in soil_carbon.md §6–§7, §9.
 | plausibility | `meds_slow_ledger`: `check_plausible`; `meds_soil_carbon`: `soil_carbon_bad_pool` |
 | the soil-carbon seam's worst values | `meds_slow_ledger`: `slow_ledger_soil_check`, called by `meds_slow_state`: `advance_soil_carbon` |
 | where the phases are marked | `meds_slow_dynamics`: `advance_slow_dynamics`, `vegetation_dynamics`, `restructure_stand` |
-| tests | `test/test_slow_ledger.f90` |
+| tests | `test/slow/test_slow_ledger.f90` |

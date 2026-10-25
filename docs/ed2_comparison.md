@@ -20,7 +20,7 @@
 >   maps ([`soil_biophysics.md`](science/soil_biophysics.md), "Hydraulic parameters from soil texture"
 >   and "The column from the soil maps"); and a region runs its polygons on OpenMP threads, one polygon
 >   per thread ([`configuration.md`](configuration.md), "Regional runs").
-> - **Counts.** The suite has 72 tests and the output registry 284 variables.
+> - **Counts.** The suite has 86 tests (84 in a debug build) and the output registry 366 variables.
 
 MEDS is a ground-up reimplementation of [ED2](https://github.com/EDmodel/ED2) in Fortran 2018. If you
 already run ED2, this page tells you what carried over, what changed, what is missing, and what a MEDS
