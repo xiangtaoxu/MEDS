@@ -1,49 +1,65 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_met_driver -- unit tests for the meteorological-forcing library (docs/science/forcing.md): !
-! the pure disaggregation kernels and a NetCDF round-trip (write a small (time,grid) MEDS        !
-! forcing file, read it back through the reader).                                                !
-! Argument 1 (from CMake): the shipped CO2 series, data/co2/, checked by test_co2_series.          !
+! test_met_file -- the "default" forcing file and what meds_met does with it                 !
+! (docs/science/forcing.md):                                                                 !
+!   - its reader: a netCDF round trip, the interval that contains an instant, the sunrise    !
+!     interval's shortwave, the file and the [forcing] block agreeing, start-hold and the     !
+!     window edges, recycling a window over many years (Feb 29 included), and the nearest     !
+!     grid point;                                                                             !
+!   - the cosz reconstruction that conserves an interval's mean shortwave;                    !
+!   - the vertical moves: a site above its polygon (met_at_site) and the forcing height to a   !
+!     canopy-air top (met_to_cas_top);                                                         !
+!   - the CO2 series: its file, its period middles and every refusal;                         !
+!   - the contract a flux-tower file relies on: the three humidity forms, UTC, the heights it   !
+!     states, rain and shortwave read from the interval that contains the instant on an end-   !
+!     and a begin-stamped file, and the model's relative humidity returning the file's RHair.   !
+! The moist-air laws it still checks here (humidity, precipitation phase, the lapse) belong   !
+! to meds_therm_lib, and move to that library's test.                                         !
 !==========================================================================================!
-program test_met_driver
-   use meds_test_assert, only : check, check_true, test_report
-   use meds_kinds,           only : wp, ik
-   use meds_constants,       only : t_3ple, h2o_dry_ratio
-   use meds_time,            only : meds_time_t, seconds_between, seconds_into_day, time_advance_seconds,         &
-                                    solar_cosz_utc
-   use meds_therm_lib,          only : sat_vapor_pressure, air_density, sat_specific_humidity,                    &
-                                       rh_to_specific_humidity, precip_phase, lapse_air_temperature,              &
-                                       lapse_pressure, lapse_specific_humidity
-   use meds_radiation_lib,   only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
-                                    SWPART_PASSTHROUGH, partition_shortwave, clearness_index,                     &
-                                    clear_sky_emissivity, synthesize_lwdown, lapse_longwave
-   use meds_forcing_params,  only : forcing_params_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN,              &
-                                    CLAMP_HOLD, CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,                  &
-                                    HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN,     &
-                                    WIND_EXPOSURE_LOCAL
-   use meds_met_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_numerics,    only : linear_interpolate
-   use meds_met,             only : cosz_reconstruct_factor, disaggregate_sw, cas_top_wind_factor,                &
-                                    met_to_cas_top, met_open, met_cursor_init, met_advance, met_instant,          &
-                                    met_close
-   use meds_met_grid,        only : great_circle_distance, nearest_grid_index
-   use meds_constants,       only : grav, cp_air
-   use meds_met_share, only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                 &
-                              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH,             &
-                              MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE
+program test_met_file
+   use meds_test_assert,      only : check, check_true, test_report
+   use meds_kinds,            only : wp, ik
+   use meds_constants,        only : t_3ple, h2o_dry_ratio, grav, cp_air
+   use meds_time,             only : meds_time_t, time_advance_seconds, solar_cosz_utc
+   use meds_therm_lib,        only : sat_vapor_pressure, air_density, sat_specific_humidity, rh_to_specific_humidity, &
+                                     precip_phase, lapse_air_temperature, lapse_pressure, lapse_specific_humidity, &
+                                     specific_humidity_to_vpd
+   use meds_radiation_lib,    only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, SWPART_CLEARIDX, SWPART_PASSTHROUGH, &
+                                     clearness_index, clear_sky_emissivity, lapse_longwave
+   use meds_forcing_params,   only : forcing_params_t, MET_BACKEND_DEFAULT, METAVG_END, METAVG_BEGIN, CLAMP_HOLD, &
+                                     CLAMP_ERROR, GRIDMATCH_NEAREST, CO2_SOURCE_FILE, HEIGHT_ABOVE_ZERO_PLANE, &
+                                     HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL, &
+                                     LW_SYNTHESIZE
+   use meds_met_types,        only : met_forcing_t, met_source_t, met_cursor_t
+   use meds_met,              only : cosz_reconstruct_factor, disaggregate_sw, cas_top_wind_factor, met_to_cas_top, &
+                                     met_open, met_cursor_init, met_advance, met_instant, met_close, met_at_site
+   use meds_met_grid,         only : great_circle_distance, nearest_grid_index
+   use meds_met_share,        only : MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD, &
+                                     MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH, &
+                                     MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED, MET_ERR_CO2_IN_MET_FILE, &
+                                     MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
    use meds_netcdf_c
-   use iso_c_binding,        only : c_int, c_size_t, c_double
+   use iso_c_binding,         only : c_int, c_size_t, c_double
    implicit none
-   character(len=*), parameter :: NCFILE = 'test_met_driver_tmp.nc'
+
+   character(len=*), parameter :: NCFILE = 'test_met_file_tmp.nc'
    !----- The forcing file the CO2 tests open: 365 daily records of 2021 (write_yearfile). ------!
    character(len=*), parameter :: CO2_MET_FILE = 'test_met_co2_year_tmp.nc'
    character(len=1024) :: co2_default_file = ''
 
-   call test_interpolation()
+   character(len=*), parameter :: TOWER_FILE = 'test_met_file_tower_tmp.nc'
+   real(wp),    parameter :: DT           = 1800.0_wp    !< [s] half-hourly, as a tower reports
+   integer,     parameter :: NT           = 96           !< two days of records
+   integer,     parameter :: RAIN_REC     = 30           !< the one record with rain
+   real(wp),    parameter :: RAIN_RATE    = 2.0e-3_wp    !< [kg/m2/s] its rate
+   integer,     parameter :: SATURATED_REC = 10          !< the record whose RHair is exactly 1
+   real(wp),    parameter :: TOWER_HEIGHT = 41.0_wp      !< [m] above the ground (BCI)
+   real(wp),    parameter :: PSURF        = 98800.0_wp   !< [Pa]
+   type(meds_time_t)      :: base
+
+
    call test_humidity()
    call test_precip_phase()
-   call test_sw_partition()
-   call test_sw_partition_weissnorman()
    call test_cosz_reconstruction()
    call test_netcdf_roundtrip()
    call test_sunrise_interval()
@@ -52,13 +68,21 @@ program test_met_driver
    call test_terrain_lapse()
    call test_cas_top()
    call test_multiyear_cycling()
-   call test_lwdown_synthesis()
    call test_recycle_anchor_phase()
    call test_file_config_agreement()
    if (command_argument_count() >= 1) call get_command_argument(1, co2_default_file)
    call test_co2_series(trim(co2_default_file))
 
-   call test_report('test_met_driver')
+   base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
+   call test_humidity_forms()
+   call test_utc_required()
+   call test_stated_heights()
+   call test_flux_interval(METAVG_END)
+   call test_flux_interval(METAVG_BEGIN)
+   call test_tower_round_trip()
+   call test_met_at_site()
+
+   call test_report('test_met_file')
 
 contains
 
@@ -72,61 +96,9 @@ contains
                            fc%elevation)
    end subroutine site_cursor
 
-   !----- LONGWAVE SYNTHESIS (docs/science/forcing.md §11, eq. (17)). The clear-sky emissivities   !
-   !      are closed-form, so these are known-answer checks against Brutsaert (1975) and Idso &    !
-   !      Jackson (1969) evaluated by hand -- not against the code's own output. What they pin     !
-   !      beyond arithmetic: the cloud term only ever ADDS, the night sentinel is distinguishable  !
-   !      from an overcast sky, and both emissivity forms stay inside physical bounds.             !
-   subroutine test_lwdown_synthesis()
-      real(wp) :: eps, lw_clear, lw_cloudy, kt
-      real(wp), parameter :: SIG = 5.670374419e-8_wp
-      print '(a)', '-- 12. LWdown synthesis (Brutsaert / Idso + cloud term) --'
-
-      !----- Brutsaert at 20 C, q = 0.010, 1013.25 hPa: eps = 1.24 (e/T)^(1/7) = 0.81985. -------!
-      eps = clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp)
-      call check('Brutsaert eps at 20 C, q = 0.010', eps, 0.81985_wp, 1.0e-4_wp)
-      !----- Idso-Jackson is temperature only: 1 - 0.261 exp(-7.77e-4 dT^2) = 0.80866. ----------!
-      eps = clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.010_wp, 101325.0_wp)
-      call check('Idso eps at 20 C (humidity-independent)', eps, 0.80866_wp, 1.0e-4_wp)
-      call check('Idso ignores humidity entirely',                                          &
-                       clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.001_wp, 101325.0_wp),     &
-                       clear_sky_emissivity(LW_CLEAR_IDSO, 293.15_wp, 0.030_wp, 101325.0_wp), 1.0e-12_wp)
-      !----- Brutsaert does NOT: a moister sky emits more. --------------------------------------!
-      call check_true('Brutsaert: a moister sky is more emissive',                                &
-             clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.030_wp, 101325.0_wp) >         &
-             clear_sky_emissivity(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.001_wp, 101325.0_wp))
-
-      !----- The full synthesis, clear sky (kt = 1): LW = eps sigma T^4 = 343.33 W/m2. ----------!
-      lw_clear = synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,          &
-                                   1.0_wp, 0.22_wp)
-      call check('clear-sky LWdown at 20 C', lw_clear, 0.81985_wp * SIG * 293.15_wp**4, 1.0e-2_wp)
-      !----- Overcast (kt = 0.3) with a = 0.22: x (1 + 0.22*0.7) = 396.20 W/m2. -----------------!
-      lw_cloudy = synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,         &
-                                    0.3_wp, 0.22_wp)
-      call check('cloudy-sky LWdown (kt = 0.3, a = 0.22)', lw_cloudy, 396.199_wp, 1.0e-2_wp)
-      call check_true('the cloud term only ADDS to the clear-sky flux', lw_cloudy > lw_clear)
-      !----- a = 0 recovers the clear-sky value for ANY kt: the term is genuinely optional. -----!
-      call check('cloud coefficient 0 => clear sky at any kt',                              &
-                       synthesize_lwdown(LW_CLEAR_BRUTSAERT, 293.15_wp, 0.010_wp, 101325.0_wp,    &
-                                         0.0_wp, 0.0_wp), lw_clear, 1.0e-9_wp)
-
-      !----- The clearness index: a real value by day, a NEGATIVE sentinel at night. A zero here  !
-      !      would read as fully overcast and give every night the maximum cloud correction. -----!
-      kt = clearness_index(500.0_wp, 0.5_wp)
-      call check('clearness index by day = SW/(S0 cosz)', kt, 500.0_wp / (1361.0_wp*0.5_wp), 1.0e-9_wp)
-      call check_true('clearness index is a NEGATIVE sentinel at night, not 0',                    &
-                      clearness_index(0.0_wp, 0.0_wp) < 0.0_wp, clearness_index(0.0_wp, 0.0_wp))
-      call check_true('clearness index is capped at 1', clearness_index(5000.0_wp, 0.5_wp) <= 1.0_wp)
-   end subroutine test_lwdown_synthesis
 
 
 
-   !----- 1. temporal interpolation: states are linear between the bracketing records. -----!
-   subroutine test_interpolation()
-      print '(a)', '-- test 1: interpolation --'
-      call check('linear midpoint', linear_interpolate(10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
-      call check('linear at prev',  linear_interpolate(10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
-   end subroutine test_interpolation
 
    !----- 2. humidity from dewpoint (matches independent Bolton). --------------------------!
    subroutine test_humidity()
@@ -156,55 +128,12 @@ contains
       call check_true('partial snow at t_3ple', snow > 0.0_wp .and. snow < tot, snow)
    end subroutine test_precip_phase
 
-   !----- 4. shortwave partition (Erbs clearness-index). -----------------------------------!
-   subroutine test_sw_partition()
-      real(wp) :: pb, pd, nb, nd, cosz
-      real(wp), parameter :: PS = 98000.0_wp
-      print '(a)', '-- test 4: SW partition (Erbs) --'
-      cosz = 0.8_wp
-      call partition_shortwave(800.0_wp, cosz, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
-      call check('4 streams sum to total SW', pb+pd+nb+nd, 800.0_wp, 1.0e-9_wp)
-      call check_true('all streams >= 0', pb>=0 .and. pd>=0 .and. nb>=0 .and. nd>=0, min(pb,pd,nb,nd))
-      call check_true('clear sky -> mostly beam', (pb+nb) > (pd+nd), (pb+nb)-(pd+nd))
-      ! overcast (low kt) -> mostly diffuse
-      call partition_shortwave(150.0_wp, cosz, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
-      call check_true('overcast -> mostly diffuse', (pd+nd) > (pb+nb), (pd+nd)-(pb+nb))
-      ! night -> all zero
-      call partition_shortwave(0.0_wp, 0.0_wp, PS, SWPART_CLEARIDX, pb, pd, nb, nd)
-      call check('night -> zero SW', pb+pd+nb+nd, 0.0_wp, 1.0e-30_wp)
-   end subroutine test_sw_partition
 
-   !----- Weiss-Norman band-specific partition: exact energy conservation, clear/overcast beam    !
-   !      trend, dawn all-diffuse, and pressure sensitivity of the beam fraction.                   !
-   subroutine test_sw_partition_weissnorman()
-      real(wp) :: pb, pd, nb, nd, cosz, beam_hi, beam_lo
-      print '(a)', '-- test 4b: SW partition (Weiss-Norman) --'
-      cosz = 0.8_wp
-      call partition_shortwave(800.0_wp, cosz, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
-      call check('WN: 4 streams sum to total SW', pb+pd+nb+nd, 800.0_wp, 1.0e-8_wp)
-      call check_true('WN: all streams >= 0', pb>=0 .and. pd>=0 .and. nb>=0 .and. nd>=0, min(pb,pd,nb,nd))
-      call check_true('WN: clear sky -> mostly beam', (pb+nb) > (pd+nd), (pb+nb)-(pd+nd))
-      call check_true('WN: PAR beam > NIR-diffuse in clear sky', pb > nd, pb-nd)
-      beam_hi = pb + nb
-      ! overcast (low observed vs potential) -> beam collapses, diffuse dominates
-      call partition_shortwave(120.0_wp, cosz, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
-      call check('WN overcast: streams sum to total', pb+pd+nb+nd, 120.0_wp, 1.0e-8_wp)
-      call check_true('WN overcast -> mostly diffuse', (pd+nd) > (pb+nb), (pd+nd)-(pb+nb))
-      ! grazing sun (cosz below WN_COSZ_MIN) -> all diffuse, still conserving
-      call partition_shortwave(50.0_wp, 0.01_wp, 98000.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
-      call check('WN dawn: streams sum to total', pb+pd+nb+nd, 50.0_wp, 1.0e-9_wp)
-      call check('WN dawn: no beam', pb+nb, 0.0_wp, 1.0e-30_wp)
-      ! pressure sensitivity: psurf_pa enters the WN optical depth, so the split MUST change with it
-      call partition_shortwave(800.0_wp, cosz, 101325.0_wp, SWPART_WEISS_NORMAN, pb, pd, nb, nd)
-      beam_lo = pb + nb
-      call check_true('WN: surface pressure changes the beam split', abs(beam_hi-beam_lo) > 1.0e-6_wp, &
-                      abs(beam_hi-beam_lo))
-   end subroutine test_sw_partition_weissnorman
 
    !----- 5. cosz reconstruction conserves the interval mean (the load-bearing method). -----!
    subroutine test_cosz_reconstruction()
       type(meds_time_t) :: t
-      real(wp) :: factor, f_avg, win_start, dt_win, dt_sub, sec, cosz, fsum, secz_sum, secz, mean_secz
+      real(wp) :: factor, f_avg, win_start, dt_win, dt_sub, sec, cosz, fsum
       integer(ik) :: i, n
       real(wp), parameter :: LAT = 42.44_wp, LON = -76.50_wp
       print '(a)', '-- test 5: cosz reconstruction (interval-mean conserving) --'
@@ -215,25 +144,14 @@ contains
       n = 12_ik ; dt_sub = dt_win / real(n, wp)
       factor = cosz_reconstruct_factor(t, win_start, dt_sub, dt_win, LAT, LON)  ! = 1/<cosz>
       ! (a) the CORRECT 1/<cosz> factor conserves the interval mean EXACTLY over the same subsamples:
-      fsum = 0.0_wp ; secz_sum = 0.0_wp
-      do i = 1_ik, n
-         sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = solar_cosz_utc(t, sec, LAT, LON)
-         fsum = fsum + disaggregate_sw(f_avg, cosz, factor)
-         secz_sum = secz_sum + 1.0_wp/max(cosz, 0.03_wp)          ! <sec z> = <1/cosz> (ED2 mean_daysecz, clamped)
-      end do
-      call check('1/<cosz> conserves interval mean (sunrise window)', fsum/real(n,wp), f_avg, 1.0e-8_wp)
-      ! (b) the GENUINE ED2 error is F = F_avg*cosz*<sec z> (multiply by the MEAN SECANT, ed_met_driver
-      !     fperp=nbdsf*secz; flux=fperp*cosz). By Cauchy-Schwarz <cosz><sec z> >= 1, so it is BIASED HIGH:
       fsum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
          cosz = solar_cosz_utc(t, sec, LAT, LON)
-         fsum = fsum + f_avg*cosz*(secz_sum/real(n,wp))
+         fsum = fsum + disaggregate_sw(f_avg, cosz, factor)
       end do
-      mean_secz = fsum/real(n,wp)
-      call check_true('<sec z> form is BIASED HIGH (does NOT conserve)', mean_secz > f_avg + 1.0_wp, mean_secz - f_avg)
-      ! (c) a fully-night window -> factor 0 -> all SW routes to 0
+      call check('1/<cosz> conserves interval mean (sunrise window)', fsum/real(n,wp), f_avg, 1.0e-8_wp)
+      ! (b) a fully-night window -> factor 0 -> all SW routes to 0
       factor = cosz_reconstruct_factor(t, 4.0_wp*3600.0_wp, dt_sub, dt_win, LAT, LON) ! 04-05 UTC = night
       call check('night window -> factor 0', factor, 0.0_wp, 1.0e-30_wp)
    end subroutine test_cosz_reconstruction
@@ -1030,4 +948,390 @@ contains
       st = nc_close(ncid) ; call nc_check(st, 'yf: close')
    end subroutine write_yearfile
 
-end program test_met_driver
+
+   !----- The [forcing] block a tower file is read with: BCI's location, 41 m heights above the   !
+   !      ground, a wind measured over this canopy. --------------------------------------------!
+   function tower_config(convention) result(fc)
+      integer(ik), intent(in) :: convention
+      type(forcing_params_t)  :: fc
+      fc%format = MET_BACKEND_DEFAULT ; fc%path = TOWER_FILE ; fc%grid_index = 1_ik
+      fc%timestep = DT ; fc%avg_convention = convention ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude = 9.1568_wp ; fc%longitude = -79.8486_wp ; fc%elevation = 150.0_wp
+      fc%recycle = .false.
+      fc%tq_height = TOWER_HEIGHT ; fc%wind_height = TOWER_HEIGHT
+      fc%height_above = HEIGHT_ABOVE_GROUND ; fc%wind_exposure = WIND_EXPOSURE_LOCAL
+   end function tower_config
+
+   !----- The fixture's values at record k (1-based), so a test can name what it expects. ---------!
+   pure real(wp) function tair_at(k) result(v)
+      integer, intent(in) :: k
+      v = 299.0_wp + 3.0_wp * sin(2.0_wp * 3.14159265_wp * (0.5_wp * real(k - 1, wp) - 13.0_wp) / 24.0_wp)
+   end function tair_at
+
+   pure real(wp) function rh_at(k) result(v)
+      integer, intent(in) :: k
+      v = 0.80_wp - 0.15_wp * sin(2.0_wp * 3.14159265_wp * (0.5_wp * real(k - 1, wp) - 13.0_wp) / 24.0_wp)
+      if (k == SATURATED_REC) v = 1.0_wp
+   end function rh_at
+
+   !----- Distinct daytime means, rising record by record, so a read from the wrong interval is off  !
+   !      by 10 W/m2 rather than by a rounding error. The daylit records at BCI are 11:00-23:30 UTC. -!
+   pure real(wp) function sw_at(k) result(v)
+      integer, intent(in) :: k
+      real(wp) :: hh
+      hh = modulo(0.5_wp * real(k - 1, wp), 24.0_wp)
+      v = 0.0_wp
+      if (hh >= 13.0_wp .and. hh <= 21.0_wp) v = 100.0_wp + 10.0_wp * real(k, wp)
+   end function sw_at
+
+   pure real(wp) function stamp_seconds(k) result(s)
+      integer, intent(in) :: k
+      s = real(k - 1, wp) * DT
+   end function stamp_seconds
+
+   !----- A one-point MEDS forcing file, half-hourly from 2020-07-01 00:00 UTC. `humidity` names the !
+   !      variable(s) it carries ('RHair', 'Tdew', 'Qair', 'RHair+Qair' or 'none'); an empty         !
+   !      `time_zone` or `height_above` leaves that attribute out, and so does stated_height <= 0.    !
+   subroutine write_tower_file(convention, humidity, time_zone, rh_scale, stated_height, height_above)
+      character(len=*), intent(in) :: convention, humidity, time_zone, height_above
+      real(wp),         intent(in) :: rh_scale, stated_height
+      character(len=8)  :: names(9)
+      integer(c_int)    :: st, ncid, td, gd, vt, vla, vlo, vid(9), dims1(1), dims2(2)
+      integer(c_size_t) :: s1(1), c1(1), s2(2), c2(2)
+      real(c_double)    :: tsec(NT), dat(1, NT), one(1)
+      integer :: nvar, j, k
+      names(1:6) = [character(len=8) :: 'Tair', 'PSurf', 'Wind', 'Rainf', 'SWdown', 'LWdown']
+      nvar = 6
+      select case (humidity)
+      case ('RHair')      ; nvar = 7 ; names(7) = 'RHair'
+      case ('Tdew')       ; nvar = 7 ; names(7) = 'Tdew'
+      case ('Qair')       ; nvar = 7 ; names(7) = 'Qair'
+      case ('RHair+Qair') ; nvar = 8 ; names(7) = 'RHair' ; names(8) = 'Qair'
+      end select
+      st = nc_create_f(TOWER_FILE, NC_NETCDF4, ncid) ; call nc_check(st, 'tower: create')
+      st = nc_def_dim_f(ncid, 'time', int(NT, c_size_t), td) ; call nc_check(st, 'tower: time dim')
+      st = nc_def_dim_f(ncid, 'grid', 1_c_size_t, gd) ; call nc_check(st, 'tower: grid dim')
+      dims1(1) = td
+      st = nc_def_var_f(ncid, 'time', NC_DOUBLE, 1, dims1, vt) ; call nc_check(st, 'tower: time var')
+      st = nc_put_att_text_f(ncid, vt, 'units', 33_c_size_t, 'seconds since 2020-07-01 00:00:00')
+      call nc_check(st, 'tower: units')
+      dims1(1) = gd
+      st = nc_def_var_f(ncid, 'latitude',  NC_DOUBLE, 1, dims1, vla) ; call nc_check(st, 'tower: lat')
+      st = nc_def_var_f(ncid, 'longitude', NC_DOUBLE, 1, dims1, vlo) ; call nc_check(st, 'tower: lon')
+      dims2(1) = td ; dims2(2) = gd
+      do j = 1, nvar
+         st = nc_def_var_f(ncid, trim(names(j)), NC_DOUBLE, 2, dims2, vid(j)) ; call nc_check(st, 'tower: var')
+      end do
+      !----- The global attributes make_tower_forcing.py writes; the fixture must carry them or the  !
+      !      checks under test would be skipped here and fire in production. ---------------------!
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'avg_convention', int(len(convention), c_size_t), convention)
+      call nc_check(st, 'tower: avg_convention')
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', 5_c_size_t, 'total')
+      call nc_check(st, 'tower: sw_input_kind')
+      if (len(time_zone) > 0) then
+         st = nc_put_att_text_f(ncid, NC_GLOBAL, 'time_zone', int(len(time_zone), c_size_t), time_zone)
+         call nc_check(st, 'tower: time_zone')
+      end if
+      if (stated_height > 0.0_wp) then
+         st = nc_put_att_double_f(ncid, NC_GLOBAL, 'tq_height_m', NC_DOUBLE, real(stated_height, c_double))
+         call nc_check(st, 'tower: tq_height_m')
+         st = nc_put_att_double_f(ncid, NC_GLOBAL, 'wind_height_m', NC_DOUBLE, real(stated_height, c_double))
+         call nc_check(st, 'tower: wind_height_m')
+      end if
+      if (len(height_above) > 0) then
+         st = nc_put_att_text_f(ncid, NC_GLOBAL, 'height_above', int(len(height_above), c_size_t), height_above)
+         call nc_check(st, 'tower: height_above')
+      end if
+      st = nc_enddef(ncid) ; call nc_check(st, 'tower: enddef')
+
+      do k = 1, NT ; tsec(k) = real(stamp_seconds(k), c_double) ; end do
+      s1(1) = 0_c_size_t ; c1(1) = int(NT, c_size_t)
+      st = nc_put_vara_double(ncid, vt, s1, c1, tsec) ; call nc_check(st, 'tower: time vals')
+      c1(1) = 1_c_size_t
+      one = 9.1568_c_double  ; st = nc_put_vara_double(ncid, vla, s1, c1, one) ; call nc_check(st, 'tower: lat vals')
+      one = -79.8486_c_double ; st = nc_put_vara_double(ncid, vlo, s1, c1, one) ; call nc_check(st, 'tower: lon vals')
+      s2 = 0_c_size_t ; c2 = [int(NT, c_size_t), 1_c_size_t]
+      do j = 1, nvar
+         do k = 1, NT
+            select case (trim(names(j)))
+            case ('Tair')   ; dat(1, k) = tair_at(k)
+            case ('PSurf')  ; dat(1, k) = PSURF
+            case ('Wind')   ; dat(1, k) = 2.5_wp
+            case ('Rainf')  ; dat(1, k) = merge(RAIN_RATE, 0.0_wp, k == RAIN_REC)
+            case ('SWdown') ; dat(1, k) = sw_at(k)
+            case ('LWdown') ; dat(1, k) = 450.0_wp
+            case ('RHair')  ; dat(1, k) = rh_scale * rh_at(k)
+            case ('Tdew')   ; dat(1, k) = tair_at(k) - 3.0_wp
+            case ('Qair')   ; dat(1, k) = 0.018_wp
+            end select
+         end do
+         st = nc_put_vara_double(ncid, vid(j), s2, c2, dat) ; call nc_check(st, 'tower: vals')
+      end do
+      st = nc_close(ncid) ; call nc_check(st, 'tower: close')
+   end subroutine write_tower_file
+
+   !----- The forcing at an instant `sec` seconds after the file's first stamp. --------------------!
+   function sample(src, cur, sec) result(met)
+      type(met_source_t), intent(in)    :: src
+      type(met_cursor_t), intent(inout) :: cur
+      real(wp),           intent(in)    :: sec
+      type(met_forcing_t) :: met
+      type(meds_time_t)   :: now
+      now = time_advance_seconds(base, sec)
+      call met_advance(src, cur, now)
+      met = met_instant(src, cur, now)
+   end function sample
+
+   !----- 1. Each humidity form becomes q through the model's own conversion, at the record's own   !
+   !      temperature and pressure; a file with none, with two, or with RHair in percent is refused. -!
+   subroutine test_humidity_forms()
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_params_t) :: fc
+      type(met_forcing_t)    :: met
+      integer(ik) :: st
+      integer, parameter :: K = 40
+      print '(a)', '-- test 1: humidity forms --'
+      fc = tower_config(METAVG_BEGIN)
+
+      call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('an RHair file opens', st == MET_OK, real(st, wp))
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+      met = sample(src, cur, stamp_seconds(K))
+      call check('RHair -> q by rh_to_specific_humidity at the record''s T and P', met%air_shv,           &
+                 rh_to_specific_humidity(rh_at(K), tair_at(K), PSURF), 1.0e-15_wp)
+      call met_close(src)
+
+      call write_tower_file('begin', 'Tdew', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a Tdew file opens', st == MET_OK, real(st, wp))
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+      met = sample(src, cur, stamp_seconds(K))
+      call check('Tdew -> q by sat_specific_humidity', met%air_shv,                              &
+                 sat_specific_humidity(tair_at(K) - 3.0_wp, PSURF), 1.0e-15_wp)
+      call met_close(src)
+
+      call write_tower_file('begin', 'Qair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a Qair file opens', st == MET_OK, real(st, wp))
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+      met = sample(src, cur, stamp_seconds(K))
+      call check('Qair is used as it is', met%air_shv, 0.018_wp, 1.0e-15_wp)
+      call met_close(src)
+
+      call write_tower_file('begin', 'RHair+Qair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a file with two humidity variables is refused', st == MET_ERR_HUMIDITY, real(st, wp))
+      call met_close(src)
+
+      call write_tower_file('begin', 'none', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a file with no humidity variable is refused', st == MET_ERR_HUMIDITY, real(st, wp))
+      call met_close(src)
+
+      call write_tower_file('begin', 'RHair', 'UTC', 100.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('RHair written in percent is refused', st == MET_ERR_HUMIDITY, real(st, wp))
+      call met_close(src)
+   end subroutine test_humidity_forms
+
+   !----- 2. MEDS runs in UTC: a file that does not say time_zone = "UTC" is refused. -----------!
+   subroutine test_utc_required()
+      type(met_source_t)     :: src
+      type(forcing_params_t) :: fc
+      integer(ik) :: st
+      print '(a)', '-- test 2: the UTC requirement --'
+      fc = tower_config(METAVG_BEGIN)
+      call write_tower_file('begin', 'RHair', '', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a file without time_zone is refused', st == MET_ERR_NOT_UTC, real(st, wp))
+      call met_close(src)
+      call write_tower_file('begin', 'RHair', 'UTC-05:00', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a local-time file is refused', st == MET_ERR_NOT_UTC, real(st, wp))
+      call met_close(src)
+      call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      call met_open(src, fc, stat=st)
+      call check_true('a UTC file opens', st == MET_OK, real(st, wp))
+      call met_close(src)
+   end subroutine test_utc_required
+
+   !----- 3. The heights a file states must be the ones [forcing] moves the forcing from. ---------!
+   subroutine test_stated_heights()
+      type(met_source_t)     :: src
+      type(forcing_params_t) :: fc
+      integer(ik) :: st
+      print '(a)', '-- test 3: the stated heights --'
+      call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      fc = tower_config(METAVG_BEGIN)
+      fc%tq_height = 2.0_wp
+      call met_open(src, fc, stat=st)
+      call check_true('tq_height against a file stating 41 m is refused', st == MET_ERR_ATTR_MISMATCH, real(st, wp))
+      call met_close(src)
+      fc = tower_config(METAVG_BEGIN)
+      fc%wind_height = 10.0_wp
+      call met_open(src, fc, stat=st)
+      call check_true('wind_height against a file stating 41 m is refused', st == MET_ERR_ATTR_MISMATCH, real(st, wp))
+      call met_close(src)
+      fc = tower_config(METAVG_BEGIN)
+      fc%height_above = HEIGHT_ABOVE_ZERO_PLANE
+      call met_open(src, fc, stat=st)
+      call check_true('height_above against a file stating "ground" is refused',                     &
+                      st == MET_ERR_ATTR_MISMATCH, real(st, wp))
+      call met_close(src)
+      call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, 0.0_wp, '')
+      fc = tower_config(METAVG_BEGIN)
+      fc%tq_height = 2.0_wp
+      call met_open(src, fc, stat=st)
+      call check_true('a file that states no heights is not checked', st == MET_OK, real(st, wp))
+      call met_close(src)
+   end subroutine test_stated_heights
+
+   !----- 4. Rain and shortwave are interval means, read from the record whose interval CONTAINS   !
+   !      the instant: record k covers [t_k, t_k+dt) on a begin-stamped file and (t_k-dt, t_k] on an !
+   !      end-stamped one. A read one record off puts every storm in the wrong half-hour; the       !
+   !      shortwave check averages the instantaneous flux over the reconstruction's own ten         !
+   !      midpoints, which returns the interval mean exactly when the right record is used.         !
+   subroutine test_flux_interval(convention)
+      integer(ik), intent(in) :: convention
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_params_t) :: fc
+      type(met_forcing_t)    :: met
+      real(wp) :: t0, sw_mean
+      integer  :: i, k_sw
+      integer(ik) :: st
+      if (convention == METAVG_BEGIN) then
+         print '(a)', '-- test 4b: rain and shortwave intervals, begin-stamped --'
+         call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+         t0 = stamp_seconds(RAIN_REC)                        ! the rain interval starts at its stamp
+      else
+         print '(a)', '-- test 4a: rain and shortwave intervals, end-stamped --'
+         call write_tower_file('end', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+         t0 = stamp_seconds(RAIN_REC) - DT                   ! ... ends at its stamp
+      end if
+      fc = tower_config(convention)
+      call met_open(src, fc, stat=st)
+      call check_true('the file opens', st == MET_OK, real(st, wp))
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+      met = sample(src, cur, t0 - 0.5_wp * DT)
+      call check('no rain in the interval before', met%precip, 0.0_wp, 1.0e-15_wp)
+      met = sample(src, cur, t0 + 0.25_wp * DT)
+      call check('the rain falls in its own interval (early)', met%precip, RAIN_RATE, 1.0e-15_wp)
+      met = sample(src, cur, t0 + 0.75_wp * DT)
+      call check('the rain falls in its own interval (late)', met%precip, RAIN_RATE, 1.0e-15_wp)
+      met = sample(src, cur, t0 + 1.5_wp * DT)
+      call check('no rain in the interval after', met%precip, 0.0_wp, 1.0e-15_wp)
+
+      !----- A midday interval, 17:00-17:30 UTC (about solar noon at BCI). -------------------------!
+      t0 = 17.0_wp * 3600.0_wp
+      k_sw = nint(t0 / DT) + 1                               ! begin: the record stamped 17:00
+      if (convention == METAVG_END) k_sw = k_sw + 1          ! end:   the record stamped 17:30
+      sw_mean = 0.0_wp
+      do i = 1, 10
+         met = sample(src, cur, t0 + (real(i, wp) - 0.5_wp) * DT / 10.0_wp)
+         sw_mean = sw_mean + (met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse) / 10.0_wp
+      end do
+      call check('the shortwave of the interval is its own record''s mean', sw_mean, sw_at(k_sw), 1.0e-9_wp)
+      call met_close(src)
+
+      !----- The clearness index the longwave synthesis holds through the night is the containing   !
+      !      interval's too: on a begin file, the next record's would be the dark one after sunset.  !
+      fc%lwdown_source = LW_SYNTHESIZE
+      call met_open(src, fc, stat=st)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+      met = sample(src, cur, t0 + 0.4_wp * DT)
+      call check('the remembered clearness is the containing interval''s', cur%kt_last_day,              &
+                 clearness_index(sw_at(k_sw), solar_cosz_utc(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
+                                 t0 + 0.4_wp * DT, fc%latitude, fc%longitude)), 1.0e-12_wp)
+      call met_close(src)
+   end subroutine test_flux_interval
+
+   !----- 5. The round trip of a tower file. -----------------------------------------------------!
+   subroutine test_tower_round_trip()
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_params_t) :: fc
+      type(met_forcing_t)    :: met
+      real(wp) :: vpd, rh_model, worst
+      integer  :: k
+      integer(ik) :: st
+      print '(a)', '-- test 5: the round trip of a tower file --'
+      call write_tower_file('begin', 'RHair', 'UTC', 1.0_wp, TOWER_HEIGHT, 'ground')
+      fc = tower_config(METAVG_BEGIN)
+      call met_open(src, fc, stat=st)
+      call check_true('the tower file opens', st == MET_OK, real(st, wp))
+      call met_cursor_init(src, cur, 1_ik, fc%latitude, fc%longitude, fc%elevation)
+
+      !----- At every stamp the model's own inverse returns the tower's relative humidity. This is  !
+      !      what storing RHair buys: the provider's saturation curve never enters. ----------------!
+      worst = 0.0_wp
+      do k = 1, NT - 1
+         if (k == SATURATED_REC) cycle
+         met = sample(src, cur, stamp_seconds(k))
+         vpd = specific_humidity_to_vpd(met%air_temp, met%air_shv, met%air_pressure)
+         rh_model = 1.0_wp - vpd / sat_vapor_pressure(met%air_temp)
+         worst = max(worst, abs(rh_model - rh_at(k)))
+      end do
+      call check('the model''s RH at the forcing temperature is RHair at every stamp', worst, 0.0_wp, 1.0e-12_wp)
+      met = sample(src, cur, stamp_seconds(SATURATED_REC))
+      vpd = specific_humidity_to_vpd(met%air_temp, met%air_shv, met%air_pressure)
+      call check('a saturated tower record reads back as VPD = 0', vpd, 0.0_wp, 1.0e-9_wp)
+
+      call met_close(src)
+   end subroutine test_tower_round_trip
+
+   !----- A site's forcing within its polygon (meds_met::met_at_site; docs/science/forcing.md §8): a  !
+   !      site above its polygon is colder by the lapse rate times the height, at a lower pressure  !
+   !      and the same relative humidity, under less longwave; one at the polygon's elevation on    !
+   !      level ground keeps the polygon's forcing exactly; without the lapse only the beam scales.  !
+   subroutine test_met_at_site()
+      type(forcing_params_t) :: f
+      type(met_forcing_t)    :: met, site
+      print '(a)', '-- a site within its polygon --'
+      !=== 3. A site above its polygon. ===========================================================!
+      f%apply_elevation_lapse = .true.
+      f%lapse_rate_tair = 0.0065_wp
+      met%air_temp = 290.0_wp
+      met%air_pressure = 95000.0_wp
+      met%air_shv = 0.010_wp
+      met%lw_down = 350.0_wp
+      met%par_beam = 200.0_wp
+      met%nir_beam = 220.0_wp
+      met%par_diffuse = 60.0_wp
+      met%air_density = air_density(met%air_temp, met%air_pressure, met%air_shv)
+      site = met_at_site(met, f, 1, 500.0_wp, 1.0_wp)
+      call check_true('500 m up is 500 m x the lapse rate colder', abs(site%air_temp - (290.0_wp - 3.25_wp)) < 1.0e-12_wp)
+      call check_true('and at a lower pressure', site%air_pressure < met%air_pressure)
+      call check_true('at the same relative humidity',                                               &
+                      abs(relative_humidity(site) - relative_humidity(met)) < 1.0e-9_wp)
+      call check_true('under less longwave', site%lw_down < met%lw_down)
+      call check_true('with its air density from its own air',                                       &
+                      site%air_density == air_density(site%air_temp, site%air_pressure, site%air_shv))
+      call check_true('the light is the polygon''s on level ground',                                  &
+                      site%par_beam == met%par_beam .and. site%par_diffuse == met%par_diffuse)
+      site = met_at_site(met, f, 1, 0.0_wp, 1.0_wp)
+      call check_true('a site at the polygon''s elevation on level ground keeps its forcing exactly',  &
+                      site%air_temp == met%air_temp .and. site%air_pressure == met%air_pressure .and.                &
+                      site%air_shv == met%air_shv .and. site%lw_down == met%lw_down .and.                        &
+                      site%par_beam == met%par_beam .and. site%nir_beam == met%nir_beam .and.            &
+                      site%air_density == met%air_density)
+      f%apply_elevation_lapse = .false.
+      site = met_at_site(met, f, 1, 500.0_wp, 1.5_wp)
+      call check_true('without the lapse the air is the polygon''s',                                  &
+                      site%air_temp == met%air_temp .and. site%air_pressure == met%air_pressure)
+      call check_true('and the slope scales the beam alone',                                          &
+                      site%par_beam == 1.5_wp * met%par_beam .and. site%nir_beam == 1.5_wp * met%nir_beam &
+                      .and. site%par_diffuse == met%par_diffuse)
+
+   end subroutine test_met_at_site
+
+   !----- Relative humidity of a forcing sample: its vapour pressure over saturation. ----------!
+   real(wp) function relative_humidity(m)
+      type(met_forcing_t), intent(in) :: m
+      relative_humidity = m%air_shv * m%air_pressure / (h2o_dry_ratio + (1.0_wp - h2o_dry_ratio) * m%air_shv)  &
+                          / sat_vapor_pressure(m%air_temp)
+   end function relative_humidity
+
+end program test_met_file

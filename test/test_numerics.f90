@@ -12,13 +12,24 @@
 !   6. conserved: the tolerance scales with the terms' absolute sum, not the net total.         !
 !   7. pair_mean: the two-member weighted mean fusion blends with; weights of any size count.   !
 !   8. equal_height_layers: runs of exactly equal heights are one layer, either way up.         !
+!   9. The calendar (meds_time): leap years, day and month stepping, day of year, comparisons,   !
+!      the decimal year, parsing and formatting, and the one solar declination that solar_cosz  !
+!      and daylength both use.                                                                  !
+!  10. The sun on a slope (meds_time::slope_incidence_cosz; docs/science/forcing.md §8): level   !
+!      ground sees cos z, an equator-facing slope at a winter noon sees cos(z - slope), a      !
+!      pole-facing one less, and an east-facing one more of the morning sun.                   !
+!  11. linear_interpolate: states are linear between the bracketing records.                   !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_numerics,     only : quadratic_smaller_root, adaptive_step_update, ascending_order, conserved, &
-                                 pair_mean, equal_height_layers
+                                 pair_mean, equal_height_layers, linear_interpolate
    use meds_linear_algebra, only : thomas_solve
+   use meds_time,         only : meds_time_t, is_leap_year, days_in_month, days_in_year, day_of_year,         &
+                                 time_advance_days, time_advance_months, time_lt, time_eq, string_to_time,    &
+                                 time_to_string, time_to_stamp, time_to_decimal_year, solar_cosz, daylength,  &
+                                 solar_declination, solar_cosz_utc, seconds_into_day, slope_incidence_cosz
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  BUDGET_RTOL_FLUX, last_check_closed
@@ -33,6 +44,9 @@ program test_numerics
    call test_conserved()
    call test_pair_mean()
    call test_equal_height_layers()
+   call test_calendar()
+   call test_slope_sun()
+   call test_interpolation()
 
    call test_report('test_numerics')
 
@@ -211,4 +225,167 @@ contains
       call check_true('conserved: a NaN fails', .not. conserved(1.0_wp, nan_v, 1.0_wp, ROUNDOFF_RTOL), 0.0_wp)
    end subroutine test_conserved
 
+
+   !----- 9. The calendar: leap years (with the century rule), stepping by days and months, day of   !
+   !      year, comparisons, the decimal year, string round trips, and one solar declination. ----!
+   subroutine test_calendar()
+      type(meds_time_t) :: a, b
+      logical           :: ok
+      real(wp)          :: cz_noon, cz_mid, cz_summer, cz_winter
+      print '(a)', 'test_calendar:'
+      call check_true('2000 is a leap year (div by 400)', is_leap_year(2000_ik))
+      call check_true('1900 is not a leap year (div by 100, not 400)', .not. is_leap_year(1900_ik))
+      call check_true('2004 is a leap year', is_leap_year(2004_ik))
+      call check_true('2001 is not a leap year', .not. is_leap_year(2001_ik))
+      call check_true('Feb 2000 has 29 days', days_in_month(2000_ik, 2_ik) == 29_ik)
+      call check_true('Feb 1900 has 28 days', days_in_month(1900_ik, 2_ik) == 28_ik)
+      call check_true('April has 30 days', days_in_month(2001_ik, 4_ik) == 30_ik)
+      call check_true('January has 31 days', days_in_month(2001_ik, 1_ik) == 31_ik)
+      call check_true('2000 has 366 days', days_in_year(2000_ik) == 366_ik)
+      call check_true('2001 has 365 days', days_in_year(2001_ik) == 365_ik)
+
+      !----- Day stepping across leap and non-leap February and the year boundary. --------------!
+      a = time_advance_days(meds_time_t(2000_ik, 2_ik, 28_ik), 1_ik)
+      call check_true('2000-02-28 + 1 day -> 02-29 (leap)', a%month == 2_ik .and. a%day == 29_ik)
+      a = time_advance_days(meds_time_t(1900_ik, 2_ik, 28_ik), 1_ik)
+      call check_true('1900-02-28 + 1 day -> 03-01 (non-leap)', a%month == 3_ik .and. a%day == 1_ik)
+      a = time_advance_days(meds_time_t(2000_ik, 12_ik, 31_ik), 1_ik)
+      call check_true('year roll-over on +1 day', a%year == 2001_ik .and. a%month == 1_ik .and. a%day == 1_ik)
+      a = time_advance_days(meds_time_t(2000_ik, 1_ik, 1_ik), days_in_year(2000_ik))
+      call check_true('+366 days from a leap Jan 1', a%year == 2001_ik .and. a%month == 1_ik .and. a%day == 1_ik)
+
+      !----- Month stepping clamps the day into the shorter target month. -----------------------!
+      a = time_advance_months(meds_time_t(2000_ik, 1_ik, 31_ik), 1_ik)
+      call check_true('Jan 31 + 1 month -> Feb 29 (leap clamp)', a%month == 2_ik .and. a%day == 29_ik)
+      a = time_advance_months(meds_time_t(2001_ik, 1_ik, 31_ik), 1_ik)
+      call check_true('Jan 31 + 1 month -> Feb 28 (non-leap clamp)', a%month == 2_ik .and. a%day == 28_ik)
+      a = time_advance_months(meds_time_t(2000_ik, 12_ik, 15_ik), 1_ik)
+      call check_true('Dec + 1 month rolls the year', a%year == 2001_ik .and. a%month == 1_ik .and. a%day == 15_ik)
+      a = time_advance_months(meds_time_t(2000_ik, 6_ik, 10_ik), 12_ik)
+      call check_true('+12 months -> same day next year', a%year == 2001_ik .and. a%month == 6_ik .and. a%day == 10_ik)
+
+      call check_true('Jan 1 is DOY 1', day_of_year(meds_time_t(2000_ik, 1_ik, 1_ik)) == 1_ik)
+      call check_true('Mar 1 (leap) is DOY 61', day_of_year(meds_time_t(2000_ik, 3_ik, 1_ik)) == 61_ik)
+      call check_true('Dec 31 (leap) is DOY 366', day_of_year(meds_time_t(2000_ik, 12_ik, 31_ik)) == 366_ik)
+      call check_true('Dec 31 (non-leap) is DOY 365', day_of_year(meds_time_t(2001_ik, 12_ik, 31_ik)) == 365_ik)
+
+      !----- The solar zenith cosine at the equinox and the solstices. --------------------------!
+      cz_noon   = solar_cosz(meds_time_t(2001_ik, 3_ik, 21_ik),  43200.0_wp,  0.0_wp)   ! equinox, equator, noon
+      cz_mid    = solar_cosz(meds_time_t(2001_ik, 3_ik, 21_ik),      0.0_wp,  0.0_wp)   ! equinox, equator, midnight
+      cz_summer = solar_cosz(meds_time_t(2001_ik, 6_ik, 21_ik),  43200.0_wp, 45.0_wp)   ! N-summer solstice noon, 45N
+      cz_winter = solar_cosz(meds_time_t(2001_ik, 12_ik, 21_ik), 43200.0_wp, 45.0_wp)   ! N-winter solstice noon, 45N
+      call check_true('equinox equator noon: cosz ~ 1', abs(cz_noon - 1.0_wp) < 0.02_wp, cz_noon)
+      call check_true('midnight: cosz floored to 0', cz_mid == 0.0_wp, cz_mid)
+      call check_true('45N summer noon sun higher than winter', cz_summer > cz_winter .and. cz_winter > 0.0_wp)
+
+      call check_true('2000 spans 366 days',                                                       &
+                      time_eq(time_advance_days(meds_time_t(2000_ik, 1_ik, 1_ik), 366_ik), meds_time_t(2001_ik, 1_ik, 1_ik)))
+      call check_true('2001 spans 365 days',                                                       &
+                      time_eq(time_advance_days(meds_time_t(2001_ik, 1_ik, 1_ik), 365_ik), meds_time_t(2002_ik, 1_ik, 1_ik)))
+
+      a = meds_time_t(2000_ik, 1_ik, 1_ik)
+      b = meds_time_t(2000_ik, 1_ik, 2_ik)
+      call check_true('Jan 1 < Jan 2', time_lt(a, b))
+      call check_true('Jan 2 not < Jan 1', .not. time_lt(b, a))
+      call check_true('a date is not before itself', .not. time_lt(a, a))
+      call check_true('equal dates compare equal', time_eq(a, meds_time_t(2000_ik, 1_ik, 1_ik)))
+      a = meds_time_t(2000_ik, 1_ik, 1_ik, 10_ik, 0_ik, 0_ik)
+      b = meds_time_t(2000_ik, 1_ik, 1_ik, 11_ik, 0_ik, 0_ik)
+      call check_true('same day, earlier hour is less', time_lt(a, b))
+
+      !----- The decimal calendar year: mid-leap-year is exactly x.5. ---------------------------!
+      call check('Jan 1 -> integer year', time_to_decimal_year(meds_time_t(2000_ik, 1_ik, 1_ik)), 2000.0_wp, 1.0e-9_wp)
+      call check('DOY 184 of 366 -> year + 0.5', time_to_decimal_year(meds_time_t(2000_ik, 7_ik, 2_ik)), 2000.5_wp,    &
+                 1.0e-9_wp)
+
+      !----- String round trips and validation. --------------------------------------------------!
+      call string_to_time('2000-01-01', a, ok)
+      call check_true('parse YYYY-MM-DD', ok .and. a%year == 2000_ik .and. a%month == 1_ik .and. a%day == 1_ik)
+      call string_to_time('1999-12-31 23:59:59', a, ok)
+      call check_true('parse date + time', ok .and. a%hour == 23_ik .and. a%minute == 59_ik .and. a%second == 59_ik)
+      call string_to_time('2000/06/15', a, ok)
+      call check_true('parse with / separators', ok .and. a%month == 6_ik .and. a%day == 15_ik)
+      call string_to_time('2000-02-29', a, ok)
+      call check_true('2000-02-29 is a valid (leap) date', ok)
+      call string_to_time('2001-02-29', a, ok)
+      call check_true('2001-02-29 is rejected (non-leap)', .not. ok)
+      call string_to_time('2000-13-01', a, ok)
+      call check_true('month 13 is rejected', .not. ok)
+      call string_to_time('not-a-date', a, ok)
+      call check_true('garbage is rejected', .not. ok)
+      call check_true('14-char stamp', time_to_stamp(meds_time_t(2050_ik, 1_ik, 1_ik)) == '20500101000000')
+      call check_true('stamp carries the time of day',                                             &
+                      time_to_stamp(meds_time_t(1999_ik, 12_ik, 31_ik, 23_ik, 59_ik, 59_ik)) == '19991231235959')
+      call check_true('human string', time_to_string(meds_time_t(2000_ik, 1_ik, 1_ik)) == '2000-01-01 00:00:00')
+
+      !----- ONE declination behind both solar consumers. solar_cosz and daylength both read        !
+      !      solar_declination, Cooper's form (docs/science/forcing.md eq. (4)); two standard          !
+      !      approximations, Cooper and White (1997), differ by a 1.25-day phase offset. Each        !
+      !      consumer is INVERTED back to a declination rather than the formula re-implemented, so a  !
+      !      divergence is caught even if the formula itself changes. -------------------------------!
+      block
+         real(wp)    :: decl, cz, dl, lat, decl_from_cosz, decl_from_dl, arg
+         integer(ik) :: d, doy
+         real(wp),    parameter :: PI_ = 3.14159265358979323846_wp
+         integer(ik), parameter :: DOYS(4) = [ 46_ik, 105_ik, 196_ik, 288_ik ]
+         lat = 42.44_wp
+         do d = 1_ik, size(DOYS, kind=ik)
+            doy  = DOYS(d)
+            decl = solar_declination(doy)
+            !----- At solar NOON the hour angle is zero, so cosz = cos(lat - decl) exactly. ----!
+            cz = solar_cosz(date_of_doy(2025_ik, doy), 43200.0_wp, lat)
+            decl_from_cosz = lat * PI_ / 180.0_wp - acos(min(1.0_wp, max(-1.0_wp, cz)))
+            call check('solar_cosz uses solar_declination', decl_from_cosz, decl, 1.0e-12_wp)
+            !----- daylength inverts to the same declination through its own acos. -------------!
+            dl  = daylength(lat, doy)
+            arg = cos(dl * PI_ / 24.0_wp)                    ! = -tan(lat) tan(decl)
+            decl_from_dl = atan(-arg / tan(lat * PI_ / 180.0_wp))
+            call check('daylength uses solar_declination', decl_from_dl, decl, 1.0e-12_wp)
+         end do
+         !----- The shared function is the Cooper form: zero declination at its ascending crossing  !
+         !      (doy 81), positive in NH summer, negative in NH winter. ----------------------------!
+         call check('declination ~ 0 at doy 81', solar_declination(81_ik), 0.0_wp, 1.0e-3_wp)
+         call check_true('declination near +23.45 deg at the June solstice', solar_declination(172_ik) > 0.40_wp)
+         call check_true('declination near -23.45 deg at the December solstice', solar_declination(355_ik) < -0.40_wp)
+      end block
+   end subroutine test_calendar
+
+   !----- 10. The sun on a slope: 45 N on the winter solstice, at 0 E (solar noon ~12 UTC). --------!
+   subroutine test_slope_sun()
+      real(wp), parameter :: LAT = 45.0_wp, LON = 0.0_wp, SLOPE = 30.0_wp
+      real(wp), parameter :: DEG = 3.14159265358979323846_wp / 180.0_wp
+      type(meds_time_t) :: noon, morning, afternoon
+      real(wp)          :: cosz, flat, south, north, east_am, east_pm
+      print '(a)', 'test_slope_sun:'
+      noon      = meds_time_t(year=2021, month=12, day=21, hour=12)
+      morning   = meds_time_t(year=2021, month=12, day=21, hour=10)
+      afternoon = meds_time_t(year=2021, month=12, day=21, hour=14)
+      cosz  = solar_cosz_utc(noon, seconds_into_day(noon), LAT, LON)
+      flat  = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, 0.0_wp, 0.0_wp)
+      south = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, SLOPE, 180.0_wp)
+      north = slope_incidence_cosz(noon, seconds_into_day(noon), LAT, LON, SLOPE, 0.0_wp)
+      call check('level ground sees the sun at cos z', flat, cosz, 1.0e-12_wp)
+      !----- At noon the sun is due south, so an equator-facing slope sees it at z - slope; the 12 UTC !
+      !      instant is a few minutes off solar noon at 0 E, hence the tolerance. ---------------------!
+      call check('a 30 deg equator-facing slope sees the noon sun at cos(z - 30 deg)', south,          &
+                 cos(acos(cosz) - SLOPE * DEG), 2.0e-3_wp)
+      call check_true('a slope facing the pole sees it lower than level ground', north < cosz)
+      east_am = slope_incidence_cosz(morning, seconds_into_day(morning), LAT, LON, SLOPE, 90.0_wp)
+      east_pm = slope_incidence_cosz(afternoon, seconds_into_day(afternoon), LAT, LON, SLOPE, 90.0_wp)
+      call check_true('a slope facing east sees more of the morning sun than of the afternoon''s', east_am > east_pm)
+   end subroutine test_slope_sun
+
+   !----- 11. Linear interpolation between two records. -------------------------------------------!
+   subroutine test_interpolation()
+      print '(a)', 'test_interpolation:'
+      call check('linear midpoint', linear_interpolate(10.0_wp, 20.0_wp, 0.5_wp), 15.0_wp, 1.0e-12_wp)
+      call check('linear at the first record', linear_interpolate(10.0_wp, 20.0_wp, 0.0_wp), 10.0_wp, 1.0e-12_wp)
+      call check('linear at the second record', linear_interpolate(10.0_wp, 20.0_wp, 1.0_wp), 20.0_wp, 1.0e-12_wp)
+   end subroutine test_interpolation
+
+   !----- Calendar date of a day-of-year, so the cosz inversion above can be driven by doy. -------!
+   pure type(meds_time_t) function date_of_doy(year, doy) result(t)
+      integer(ik), intent(in) :: year, doy
+      t = time_advance_days(meds_time_t(year = year, month = 1_ik, day = 1_ik), doy - 1_ik)
+   end function date_of_doy
 end program test_numerics

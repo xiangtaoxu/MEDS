@@ -495,7 +495,7 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(meds_testsupport)
 
 
-   #----- Shared numerical primitives + conservation checker (links meds_share only). ------#
+   #----- Shared numerical primitives, the conservation checker and the calendar (links meds_share only). #
    add_executable(test_numerics test/test_numerics.f90)
    target_link_libraries(test_numerics PRIVATE meds_share meds_testassert)
    meds_fortran_flags(test_numerics)
@@ -571,11 +571,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_pft_optics_config)
    add_test(NAME pft_optics_config COMMAND test_pft_optics_config)
 
-   #----- The [soil] column keys reach the column they describe. ----------------------------#
-   add_executable(test_soil_column_config test/test_soil_column_config.f90)
-   target_link_libraries(test_soil_column_config PRIVATE meds_config meds_testsupport)
-   meds_fortran_flags(test_soil_column_config)
-   add_test(NAME soil_column_config COMMAND test_soil_column_config)
+   #----- The config blocks reach their records: the [soil]/[fast]/[snow]/[aerodynamics] loaders, #
+   #      and the [soil] column through build_soil_profile. -------------------------------------#
+   add_executable(test_params_config test/test_params_config.f90)
+   target_link_libraries(test_params_config PRIVATE meds_config meds_testassert)
+   meds_fortran_flags(test_params_config)
+   add_test(NAME params_config COMMAND test_params_config)
 
    #----- Field-coverage of the fast state vector's combinators. ---------------------------#
    add_executable(test_state_combinators test/test_state_combinators.f90)
@@ -589,25 +590,19 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch allometry disturbance init_census init_soil_state time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
+   foreach(t containers fusion_cohort patch disturbance carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways tissue_energy)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Census files the reader must refuse: each passes on the reason it returns. ------#
-   add_executable(test_init_census_refuses test/test_init_census_refuses.f90)
-   target_link_libraries(test_init_census_refuses PRIVATE meds_testsupport meds_model)
-   meds_fortran_flags(test_init_census_refuses)
-   add_test(NAME init_census_refuses_area COMMAND test_init_census_refuses area)
-   set_tests_properties(init_census_refuses_area PROPERTIES
-                        PASS_REGULAR_EXPRESSION "two different patch_area values"
-                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
-   add_test(NAME init_census_refuses_column COMMAND test_init_census_refuses column)
-   set_tests_properties(init_census_refuses_column PROPERTIES
-                        PASS_REGULAR_EXPRESSION "unknown column \"basal\""
-                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
+   #----- How a run's polygon starts: the census reader and every reason it refuses a file, and  #
+   #      the initial soil state. ----------------------------------------------------------------#
+   add_executable(test_init test/test_init.f90)
+   target_link_libraries(test_init PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_init)
+   add_test(NAME init COMMAND test_init)
 
    #----- Leaf-physiology test links meds_fast + test support (assertions). ---------------#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
@@ -726,22 +721,20 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_soil_biogeochem)
    add_test(NAME soil_biogeochem COMMAND test_soil_biogeochem)
 
-   #----- A site's forcing within its polygon: the sun and the beam on a slope, the lapse to the site. #
-   add_executable(test_site_terrain test/test_site_terrain.f90)
-   target_link_libraries(test_site_terrain PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_site_terrain)
-   add_test(NAME site_terrain COMMAND test_site_terrain)
-
-   #----- Meteorological-forcing reader test links the forcing library (writes+reads a NetCDF). #
-   add_executable(test_met_driver test/test_met_driver.f90)
-   target_link_libraries(test_met_driver PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_met_driver)
-   #      The three met tests write their files in a directory of their own in the build tree.
-   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land
-                       ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
-   add_test(NAME met_driver COMMAND test_met_driver
+   #----- The radiation laws of the forcing: the beam/diffuse split, PAR, the sky's longwave. #
+   add_executable(test_radiation_lib test/test_radiation_lib.f90)
+   target_link_libraries(test_radiation_lib PRIVATE meds_share meds_testassert)
+   meds_fortran_flags(test_radiation_lib)
+   add_test(NAME radiation_lib COMMAND test_radiation_lib)
+   #----- A MEDS forcing file: its contract, the reader, and the forcing at a site. ----------#
+   add_executable(test_met_file test/test_met_file.f90)
+   target_link_libraries(test_met_file PRIVATE meds_met meds_testassert)
+   meds_fortran_flags(test_met_file)
+   #      The met tests write their files in a directory of their own in the build tree.
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_file ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
+   add_test(NAME met_file COMMAND test_met_file
             ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_driver)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_file)
    #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
    add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
    target_link_libraries(meds_testarchive PUBLIC meds_met)
@@ -752,15 +745,10 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME met_era5land COMMAND test_met_era5land
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_era5land)
    #----- The static-map reader and the cell mask, on the synthetic archive's grid. ----------#
-   add_executable(test_surface_maps test/test_surface_maps.f90)
-   target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
-   meds_fortran_flags(test_surface_maps)
-   add_test(NAME surface_maps COMMAND test_surface_maps ${CMAKE_CURRENT_BINARY_DIR}/surface_maps_tmp)
-   #      The flux-tower contract of a MEDS forcing file (docs/science/forcing.md §1).
-   add_executable(test_met_tower test/test_met_tower.f90)
-   target_link_libraries(test_met_tower PRIVATE meds_met meds_testassert)
-   meds_fortran_flags(test_met_tower)
-   add_test(NAME met_tower COMMAND test_met_tower WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/met_tower)
+   add_executable(test_maps test/test_maps.f90)
+   target_link_libraries(test_maps PRIVATE meds_maps meds_testassert meds_testarchive)
+   meds_fortran_flags(test_maps)
+   add_test(NAME maps COMMAND test_maps ${CMAKE_CURRENT_BINARY_DIR}/work/maps)
    #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
    #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
    find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -827,12 +815,6 @@ if(MEDS_BUILD_TESTS)
       endif()
    endif()
 
-   #----- Fast-loop biophysics run-config TOML wiring ([soil]/[fast]/[snow]/[aerodynamics]).   #
-   add_executable(test_biophysics_params_config test/test_biophysics_params_config.f90)
-   target_link_libraries(test_biophysics_params_config PRIVATE meds_config meds_testassert)
-   meds_fortran_flags(test_biophysics_params_config)
-   add_test(NAME biophysics_params_config COMMAND test_biophysics_params_config)
-
    #----- Fast-loop column-dynamics integration test (links the whole model + test support). #
    add_executable(test_column_dynamics test/test_column_dynamics.f90)
    target_link_libraries(test_column_dynamics PRIVATE meds_model meds_testsupport)
@@ -865,23 +847,21 @@ if(MEDS_BUILD_TESTS)
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- The shipped [allometry] block must equal the meds_allometry_lib initializers (the     #
-   #      Python library's config-free values); biomass must be Chave 2014 in carbon, leaf      #
-   #      ED2's over C2B.                                                                       #
-   add_executable(test_allometry_defaults test/test_allometry_defaults.f90)
-   target_link_libraries(test_allometry_defaults PRIVATE meds_testsupport meds_model)
-   meds_fortran_flags(test_allometry_defaults)
-   add_test(NAME allometry_defaults COMMAND test_allometry_defaults
-            ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
+   #----- meds_allometry_lib: the size laws, and the shipped [allometry] block equal to the     #
+   #      library's initializers (the Python library's config-free values), which are Chave 2014 #
+   #      in carbon and ED2's leaf fit over C2B. meds_config only for the TOML reader.            #
+   add_executable(test_allometry_lib test/test_allometry_lib.f90)
+   target_link_libraries(test_allometry_lib PRIVATE meds_config meds_testassert)
+   meds_fortran_flags(test_allometry_lib)
+   add_test(NAME allometry_lib COMMAND test_allometry_lib ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
 
    #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so #
-   #      it can drift silently from the registry. The source tree path is passed in because     #
-   #      ctest runs from the build tree.                                                        #
-   add_executable(test_io_config_example test/test_io_config_example.f90)
-   target_link_libraries(test_io_config_example PRIVATE meds_output meds_testsupport)
-   meds_fortran_flags(test_io_config_example)
-   add_test(NAME io_config_example COMMAND test_io_config_example
-            ${CMAKE_CURRENT_SOURCE_DIR}/meds_io_config.toml)
+   #      it can drift silently from the registry: it must be what meds_main --dump-io-config     #
+   #      writes from the reference configs. The script explains the rule.                       #
+   add_test(NAME io_config_example
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main> -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/work/io_config_example
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_io_config_example.cmake)
 
    #----- The Python wheel ships COPIES of LICENSE and NOTICE, because python/pyproject.toml     #
    #      cannot list license files above its own directory. A tracked copy drifts silently,     #
@@ -905,11 +885,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_diagnostic_reduce)
    add_test(NAME diagnostic_reduce COMMAND test_diagnostic_reduce)
 
-   #----- State restart round-trip (plastic-trait persistence) links the IO layer + model. #
-   add_executable(test_state_roundtrip test/test_state_roundtrip.f90)
-   target_link_libraries(test_state_roundtrip PRIVATE meds_model meds_output_stream meds_testsupport)
-   meds_fortran_flags(test_state_roundtrip)
-   add_test(NAME state_roundtrip COMMAND test_state_roundtrip)
+   #----- The state file: written, read back and written again, every variable (links the IO layer). #
+   add_executable(test_state_file test/test_state_file.f90)
+   target_link_libraries(test_state_file PRIVATE meds_model meds_output_stream meds_testsupport)
+   meds_fortran_flags(test_state_file)
+   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
+   add_test(NAME state_file COMMAND test_state_file WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
 
    #----- A polygon of several sites: its stands, threads and state file (links the IO layer). #
    add_executable(test_several_sites test/test_several_sites.f90)

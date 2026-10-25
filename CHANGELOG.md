@@ -769,6 +769,26 @@ change to any result (#516).
 
 ### Changed
 
+- **The tests of `src/share`, `src/config` and `src/io` are one per module** (#519).
+  - `test_time` is `test_numerics`' calendar section. `test_numerics` also takes the sun on a slope and
+    linear interpolation.
+  - `test_allometry` and `test_allometry_defaults` are `test_allometry_lib`.
+  - `test_biophysics_params_config` and `test_soil_column_config` are `test_params_config`. The soil column
+    is built by the production `build_soil_profile`.
+  - `test_init_census`, its refusal ctests and `test_init_soil_state` are `test_init`. All twelve census
+    refusals run in one process.
+  - `test_surface_maps` is `test_maps`.
+  - `test_met_driver`, `test_met_tower` and `test_site_terrain` are two tests. `test_met_file` covers the
+    forcing file and what `meds_met` does with it; `test_radiation_lib` covers the radiation laws.
+- **`io_config_example` regenerates `meds_io_config.toml`** (#519) with `meds_main --dump-io-config` and
+  compares the result with the tracked file byte for byte. Before, it checked only that each registry name
+  appeared in the file.
+- **`test_state_file` checks every variable of the state file** (#519). It replaces `test_state_roundtrip`,
+  which checked about thirty stores by hand.
+  - A polygon of two sites, three patches and four cohorts, with every store stamped, is written, read back
+    and written again. The two files must be the same bit for bit.
+  - Every variable must be stamped away from the value a reader that skipped it would hold.
+  - It also checks the restructuring owed, a run of another growth-window length, and the reader's refusals.
 - **One script checks the runs `meds_main` refuses** (#518), `test/check_main_refuses.cmake`, with five
   cases: unknown config keys, an RK45 `rtol` too loose, a missing or empty census, and a missing restart.
   Each is a one-day run in a directory of the build tree; the three scripts it replaces ran the reference

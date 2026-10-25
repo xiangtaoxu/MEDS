@@ -322,7 +322,7 @@ and a run on synthesized LW sits 1.37 K cooler at the soil surface than the same
 Use it when your forcing has no longwave, not in preference to one that does.
 
 Recycled met keeps its sub-daily phase over multi-decade runs: the recycle window is declared in
-config and validated at open, and `test_met_driver` checks recycle phase over 29 years.
+config and validated at open, and `test_met_file` checks recycle phase over 29 years.
 
 What the forcing code in `src/io/met` takes from ED2:
 
