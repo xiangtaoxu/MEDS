@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # The config test_region derives its region and site configs from: one deciduous PFT, fast
-# biophysics on. The test gives every run the rest (test/test_region.f90, common_block, region_block
-# and site_block): the window, a bare-ground start, the synthetic ED_ERA5land archive and its soil
-# maps, the location, the output's place and names; and each case adds its own keys. derive_config
-# writes each key once, so a key set here and by the test is the test's.
-# CMakeLists.txt runs the test in this folder.
+# biophysics on. The test gives every run the rest (test/driver/test_region.f90, common_block,
+# region_block and site_block): the window, a bare-ground start, the synthetic ED_ERA5land archive and
+# its soil maps, the location, the output's place and names; and each case adds its own keys.
+# derive_config writes each key once, so a key set here and by the test is the test's.
+# test/CMakeLists.txt runs the test in this folder.
 [run]
 dt_slow    = "1d"
 

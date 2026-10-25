@@ -21,7 +21,7 @@ program test_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
-   use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps, archive_grid, &
+   use meds_test_archive,          only : NLAT, NLON, write_static, write_map, write_surface_maps, archive_grid, &
                                           soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, &
                                           texture_at, SG_TOP, SG_BOTTOM
    use meds_met_types,             only : met_grid_t, met_cells_t

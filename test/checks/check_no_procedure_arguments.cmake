@@ -21,6 +21,6 @@ foreach(source IN LISTS sources)
 endforeach()
 if (found)
    message(FATAL_ERROR "A procedure argument or pointer is declared (see the comment at the top of "
-                       "test/check_no_procedure_arguments.cmake):${found}")
+                       "test/checks/check_no_procedure_arguments.cmake):${found}")
 endif()
 message(STATUS "no procedure arguments under ${SRC_DIR}")
