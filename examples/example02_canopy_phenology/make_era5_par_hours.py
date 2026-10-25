@@ -72,7 +72,7 @@ def configure(site, work, archive):
     }.items():
         cfg.set(key, value)
     with open(os.path.join(work, "variables.toml"), "w") as fh:
-        fh.write('[variables]\npar_beam_fast = "F"\npar_diffuse_fast = "F"\n')
+        fh.write('[variables]\nmean_par_beam_py = "F"\nmean_par_diffuse_py = "F"\n')
     return cfg.write(work)
 
 
