@@ -482,10 +482,11 @@ meds_fortran_flags(meds_main)
 #----- Tests. -----------------------------------------------------------------------------#
 if(MEDS_BUILD_TESTS)
    enable_testing()
-   #----- Assertions only, depending on nothing but a kind. Kept separate from meds_testsupport  #
-   #      because many tests deliberately link ONE narrow library each to keep that layer             #
-   #      standalone-buildable, and they must be able to assert without linking the whole model.   #
-   add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90)
+   #----- Assertions, the soil grid and the derived configs (meds_test_run), depending on nothing #
+   #      but a kind. Kept separate from meds_testsupport because many tests deliberately link ONE  #
+   #      narrow library each to keep that layer standalone-buildable, and they must be able to     #
+   #      assert without linking the whole model.                                                  #
+   add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90 test/meds_test_run.f90)
    target_link_libraries(meds_testassert PUBLIC meds_share)
    meds_fortran_flags(meds_testassert)
 
