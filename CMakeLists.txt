@@ -651,13 +651,13 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_run COMMAND test_c_api_run ${CMAKE_CURRENT_BINARY_DIR}/c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
-   #      A run's sites from [[sites]]: derived from example 04's config, it runs from that example's
-   #      directory and writes under the build tree; meds_main checks what a config may not hold.
-   add_executable(test_site_definitions test/test_site_definitions.f90)
-   target_link_libraries(test_site_definitions PRIVATE meds_testsupport meds_run)
-   meds_fortran_flags(test_site_definitions)
-   add_test(NAME site_definitions
-            COMMAND test_site_definitions ${CMAKE_CURRENT_BINARY_DIR}/site_definitions $<TARGET_FILE:meds_main>
+   #      A polygon of several sites: its sites from [[sites]], their files, a census, their stands,
+   #      threads and state file, and what meds_main refuses. Its configs derive from example 04's,
+   #      so it runs from that example's directory; it writes only under the build tree.
+   add_executable(test_sites test/test_sites.f90)
+   target_link_libraries(test_sites PRIVATE meds_testsupport meds_run)
+   meds_fortran_flags(test_sites)
+   add_test(NAME sites COMMAND test_sites ${CMAKE_CURRENT_BINARY_DIR}/work/sites $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
    #      A region against its site runs, on the synthetic archive.
@@ -869,12 +869,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_state_file)
    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
    add_test(NAME state_file COMMAND test_state_file WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/work/state_file)
-
-   #----- A polygon of several sites: its stands, threads and state file (links the IO layer). #
-   add_executable(test_several_sites test/test_several_sites.f90)
-   target_link_libraries(test_several_sites PRIVATE meds_model meds_output_stream meds_testsupport)
-   meds_fortran_flags(test_several_sites)
-   add_test(NAME several_sites COMMAND test_several_sites)
 
    #----- Every test stops at 10 minutes. The longest takes about 1.5 in a Debug build, so a test   #
    #      that hangs, or slows by an order of magnitude, fails instead of holding the suite.         #
