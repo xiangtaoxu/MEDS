@@ -1896,6 +1896,12 @@ matrix's vector (#529).
 
 ### Fixed
 
+- **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
+  water over 250 kg/m³, so at another density the first window's canopy burial and snow cover read the
+  wrong depth: 0.160 m where 40 kg/m² at 350 kg/m³ is 0.114 m. The depth is now the water over `rho_snow`.
+  At the default density the result is unchanged.
+- **An unclosed TOML string read as empty** (#533). `io_config = "my_variables.txt`, with no closing
+  quote, ran on the default variables. The reader now stops on it and names the key.
 - **The slow ledger missed the carbon of culled and treefall-killed plants with soil carbon off**
   (#523). The cull and the treefall added their dead carbon straight to the soil pools, and only
   with soil carbon on, so with it off the carbon left undeclared and the ledger warned (−0.143

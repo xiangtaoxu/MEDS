@@ -16,7 +16,8 @@
 !      and bare ground is empty unless a PFT's nbg_init_density seeds it at min_cohort_height.  !
 !   4. THE INITIAL SNOWPACK (meds_init: init_fast_state; docs/science/snow_biophysics.md): no   !
 !      [fast].snow_init_swe seeds no pack; one seeds every patch with one frozen layer of that   !
-!      water equivalent at [fast].snow_init_temp, as deep as its water over the snow density.    !
+!      water equivalent at [fast].snow_init_temp, as deep as its water over the snow density,   !
+!      at a configured density too.                                                            !
 !==========================================================================================!
 program test_init
    use meds_kinds,              only : wp, ik
@@ -357,6 +358,15 @@ contains
                              'a seeded pack is not as deep as its water over the snow density')
          end associate
       end do
+      !----- At another density: a seed at the default density's depth would disagree with its water   !
+      !      until the pack's first exchange, and the first window's canopy burial and snow cover     !
+      !      would read the wrong depth. -----------------------------------------------------------!
+      cfg%snow%rho_snow = 350.0_wp
+      call init_bare_ground(poly, cfg, 3_ik)
+      call finalize_init(poly)
+      call init_fast_state(poly, cfg)
+      call check_close(poly%patch%snow(1)%snow_depth(1), SWE / cfg%snow%rho_snow, 1.0e-12_wp,                       &
+                       'a pack seeded at [snow].rho_snow = 350 is as deep as its water over 350 kg/m3')
    end subroutine test_initial_snowpack
 
 end program test_init
