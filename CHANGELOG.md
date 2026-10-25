@@ -133,7 +133,13 @@ pages, `demography.md` and `conservation.md`, and its code keeps short comments 
 is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
 change to any result (#516). Its routines take one required ledger, which keeps the soil-carbon seam's
 worst values; the demographic laws make the founding and treefall decisions the operators apply; and
-`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520).
+`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). A step that fails no longer leaves `meds_main`'s output files open, a run
+that cannot open no longer leaves its C-API slot half built, and a state file written in a month a
+polygon failed in owes the calendar's restructuring (#521). `src/main` checks a step's state in one guard, keeps no
+dead resets and states its own rationale briefly, with no change to any result (#522). The run's status
+codes are `RUN_*`, a run lists its calendar steps once, its output tick is the output library's, and
+a site run chooses its cell and reads its maps the way a region does, with no change to any result
+(#526).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -784,9 +790,23 @@ worst values; the demographic laws make the founding and treefall decisions the 
   `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
   `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
   and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
+- **Fortran: the run's status codes, its steps and its start** (#526). `DRIVER_*` are `RUN_*` (the
+  same values: the C API and `meds.model` are unchanged) and the CMake target `meds_driver` is
+  `meds_run`. `polygon_step` takes a `calendar_step_t` (`meds_time`, built by `calendar_step`),
+  `meds_config`'s `site_configs` replaces `meds_region`'s `polygon_sites`, `output_tick`
+  (`meds_output_integrate`) is the polygon's output tick, and `test_c_api_run` takes a work
+  directory.
 
 ### Changed
 
+- **A site run chooses its forcing cell and reads its maps the way a region does** (#526). The cell
+  is chosen once, and each polygon applies its cell's map inputs to its own configuration, so a site
+  run's configuration no longer carries the map's values: the PFT table beside its state files
+  shows the configured `chave_e`, not the cell's. Every output file is the same.
+- **`src/main` cleaned up** (#522), with no change to any result. `check_polygon_state` is the step's
+  one guard, its messages word for word the same; `polygon_prepare` no longer resets a freshly
+  allocated run record and takes the polygon's cell (`polygon_run_t%cell` goes); no `;` joins.
+  Comment lines 339 → 271; ED2's run loop is `docs/ed2_comparison.md` §4.11.
 - **The slow loop's routines are consolidated** (#520), with no change to any result on gfortran. One PFT
   table is read everywhere, and each derived value has one source (`recruit_carbon`, `leaf_psi_tlp`,
   `cohort_carbon_supply`); the patch stores blend in one place; the commit is a plain loop; the code
@@ -1726,6 +1746,20 @@ worst values; the demographic laws make the founding and treefall decisions the 
 
 ### Fixed
 
+- **`meds_main` left its output files open when a step failed** (#521). It stopped with `error stop`
+  before `region_finalize`, so the files the run had open were never closed: the sub-daily tier is
+  never synced, and no tier is under `[output].sync_every = "never"`, so the failed month's records
+  could be lost or unreadable. It now finalizes the run first, which after a failure writes nothing
+  more and closes the files (ctest `main_failure_finalizes`).
+- **A run that could not open crashed the next one in its C-API slot** (#521). When a census or
+  restart file stopped `region_open` after it had opened the forcing and allocated the polygons,
+  `meds_run_open` returned -2 without freeing the slot, and the next open, handed the same slot,
+  stopped the Python process ("allocatable array is already allocated"). A run that cannot open now
+  frees what it built.
+- **A state file written after polygon 1 failed owed no restructuring** (#521). The file took the
+  owed restructuring from polygon 1, which stops tracking the calendar when it fails, so a region
+  resumed from it with that cell masked out skipped the month's restructuring for every polygon. The
+  file now takes it from the calendar.
 - **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
   targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
   `-j 16`). The shims now compile in one target.
