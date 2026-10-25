@@ -23,6 +23,8 @@ MEDS is open source under the [Apache License 2.0](LICENSE).
   merged work that is not yet in a release. It merges into `main` when a release is cut.
 - A closing keyword such as `Fixes #N` in a pull request into `beta` does not close the issue.
   The issue is closed when the release reaches `main`.
+- Build and run the test suite on a dev build before you open the pull request, and build new
+  modules with gfortran and nvfortran as well as ifx ([`docs/building.md`](docs/building.md)).
 - Record what you changed in [`CHANGELOG.md`](CHANGELOG.md), in the same pull request.
 
 ## Where things are
