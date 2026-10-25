@@ -23,7 +23,7 @@ module meds_plant_hydraulics
    public :: cohort_root_profile
    public :: xylem_sapflow, root_water_uptake, root_water_uptake_profile
    public :: supply_limited_transpiration
-   public :: cohort_root_depth, kirchhoff_potential   ! used only by the tests
+   public :: kirchhoff_potential   ! used only by the tests
 
    !----- [-] Width, in relative water content, over which smooth_max0 rounds the leaves'  !
    !      supply limit (docs/science/soil_plant_water.md eq. (3)). ------------------------!

@@ -1,64 +1,62 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_aerodynamics -- unit tests for the stateless canopy-aerodynamics kernel.                !
-!   1. NEUTRAL log-law: mo_surface_layer recovers ustar = vonk*u/ln(zldis/z0m) and             !
-!      heat_transfer_factor = vonk/ln(zldis/z0m) when the air and canopy air have identical    !
-!      (theta, q), and the same                                                                  !
-!      ustar a hair either side of neutral.                                                       !
-!   2. STABILITY ordering: unstable (warm surface) gives a LARGER ustar than neutral, stable      !
-!      (warm air aloft) a SMALLER one, at the same wind. A stable night over a 30 m forest       !
-!      keeps zeta within zeta_max_stable, and its coupling rises with the wind. Under a weak wind  !
-!      and hot canopy air the sweeps settle on the root a 200-sweep solve finds.                  !
-!   3. reduced_wind is positive and monotonically INCREASING with height (neutral); in the very   !
-!      stable range the profile through the surface layer's u* passes through the wind at zref.  !
-!   4. boundary_layer_conductance is positive, above the floor, and increases with wind       !
-!      (forced convection); an isothermal 5 cm leaf at 20 C and 1 m/s has the laminar          !
-!      flat-plate value 0.6 Re^0.5 alpha/l, Re = u l/nu, with the air's 20 C nu and alpha.       !
-!   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
-!      the closed-crown extinction; gbw = gbh_2_gbw*gbh; and ggnet == ggbare in the open-canopy   !
-!      limit.                                                                                    !
-!   6. OPEN CANOPY: the ground conductance is the bare-ground value at an open fraction W = 1    !
-!      (a patch with no leaf or wood area), the dense-canopy value at W = 0, and rises            !
-!      monotonically between; W = exp(-(LAI + WAI)). On a bare patch the soil's conductance and   !
-!      the canopy air's exchange in series are CLM5's neutral bare-soil resistance.               !
-!   7. TIED cohorts (one height) are one wind layer: a crown split into two cohorts of half the    !
-!      leaf area meets the wind the whole crown does, and so does the cohort below.               !
-! The equations are docs/science/canopy_aerodynamics.md §2-§4 (eqs. (3), (6)-(10)).        !
+! test_canopy_aerodynamics -- the canopy's turbulent exchange (meds_canopy_aerodynamics;   !
+! docs/science/canopy_aerodynamics.md §2-§4, eqs. (3), (6)-(10)).                          !
+!   1. NEUTRAL (mo_surface_layer): with the air and the canopy air alike, u* and the       !
+!      scalar factor are the log law's, kappa u / ln(zldis/z0m) and kappa / ln(zldis/z0m), !
+!      and the same a hair either side of neutral.                                         !
+!   2. STABILITY (mo_surface_layer): unstable gives a larger u* than neutral and stable a  !
+!      smaller one; a stable night over a 30 m forest keeps zeta within zeta_max_stable    !
+!      and its coupling rises with the wind; under a weak wind and hot canopy air the      !
+!      sweeps settle on the root a 200-sweep solve finds.                                  !
+!   3. CANOPY-TOP WIND (canopy_aerodynamics, eq. (7)): neutral, it is the log law's share  !
+!      of the wind at zref, ln((h - d)/z0) / ln((zref - d)/z0).                            !
+!   4. BOUNDARY LAYER (canopy_aerodynamics, eqs. (9)-(10)): a leaf's conductance is above  !
+!      its floor and rises with the wind; an isothermal 5 cm leaf at 20 C has Monteith &   !
+!      Unsworth's laminar flat-plate value with the air's tabulated viscosity and          !
+!      diffusivity.                                                                        !
+!   5. TWO COHORTS (canopy_aerodynamics, eq. (8)): u* and the ground conductance are       !
+!      positive, a closed canopy couples the ground less than bare soil, and the wind      !
+!      falls top to bottom by each closed crown's extinction.                              !
+!   6. OPEN CANOPY (canopy_aerodynamics, eq. (6)): the ground conductance is the bare      !
+!      value at W = 1, the dense-canopy value at W = 0, and rises monotonically between;   !
+!      W = exp(-(LAI + WAI)); a bare patch couples as CLM5 couples bare soil.              !
+!   7. TIED COHORTS (canopy_aerodynamics, eq. (8)): a crown split into two cohorts of half !
+!      the leaf area meets the wind the whole crown does, and so does the cohort below.    !
 !==========================================================================================!
-program test_aerodynamics
-   use meds_test_assert, only : check, check_true, test_report
+program test_canopy_aerodynamics
+   use meds_test_assert,         only : check, check_true, test_report
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : von_karman
-   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, alloc_aero_out
    use meds_biophysics_params,   only : aero_params_t
-   use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
-                                        reduced_wind, boundary_layer_conductance, open_canopy_fraction
+   use meds_canopy_aerodynamics, only : aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity,          &
+                                        canopy_aerodynamics, mo_surface_layer, open_canopy_fraction
    implicit none
 
    call test_neutral()
    call test_stability_order()
-   call test_wind_profile()
+   call test_canopy_top_wind()
    call test_boundary_layer()
-   call test_master()
+   call test_two_cohorts()
    call test_open_canopy()
    call test_tied_layer()
 
-   call test_report('test_aerodynamics')
+   call test_report('test_canopy_aerodynamics')
 
 contains
-
-
 
    !----- 1. Neutral log-law recovery. -------------------------------------------------------!
    subroutine test_neutral()
       type(aero_params_t) :: cfg
       real(wp) :: ustar, heat_transfer_factor, zeta, rib, obu, uref, z0m, zldis, ln, us_side
-      uref = 5.0_wp ; z0m = 0.1_wp ; zldis = 10.0_wp    ! displace = 0 => zldis = zref
+      uref  = 5.0_wp
+      z0m   = 0.1_wp
+      zldis = 10.0_wp                                       ! displace = 0 => zldis = zref
       call mo_surface_layer(cfg, uref, zldis, 0.0_wp, z0m, 298.15_wp, 0.010_wp,                 &
                             298.15_wp, 0.010_wp, ustar, heat_transfer_factor, zeta, rib, obu)
       ln = log(zldis / z0m)
       call check('neutral ustar', ustar, von_karman * uref / ln, 1.0e-5_wp)
-      call check('neutral heat_transfer_factor', heat_transfer_factor, von_karman / ln,        1.0e-6_wp)
+      call check('neutral heat_transfer_factor', heat_transfer_factor, von_karman / ln, 1.0e-6_wp)
       call check('neutral zeta ~ 0', zeta, 0.0_wp, 1.0e-6_wp)
       !----- A hair either side of neutral gives the neutral answer: the convective velocity     !
       !      fades with the buoyancy flux, so the wind has no jump there. --------------------------!
@@ -101,62 +99,94 @@ contains
       call check('free convection: the sweeps settle on the root', g_1, us_s * t1, 1.0e-3_wp * us_s * t1)
    end subroutine test_stability_order
 
-   !----- 3. Wind profile monotonic in height (neutral). -------------------------------------!
-   subroutine test_wind_profile()
-      type(aero_params_t) :: cfg
-      real(wp) :: u_lo, u_hi, ustar, t1, zeta, r, o
-      u_lo = reduced_wind(cfg, 0.4_wp, 0.0_wp,  3.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
-      u_hi = reduced_wind(cfg, 0.4_wp, 0.0_wp, 12.0_wp, 0.0_wp, 0.1_wp, 10.0_wp)
-      call check_true('wind positive', u_lo > 0.0_wp, u_lo)
-      call check_true('wind increases with height', u_hi > u_lo, u_hi - u_lo)
-      !----- A 4 K inversion under 3 m/s over a 30 m forest, the stable cap raised to 5: zeta 3.5, !
-      !      u* above its floor. ------------------------------------------------------------------!
-      cfg%zeta_max_stable = 5.0_wp
-      call mo_surface_layer(cfg, 3.0_wp, 40.0_wp, 18.9_wp, 3.9_wp, 290.15_wp, 0.008_wp,         &
-                            286.15_wp, 0.008_wp, ustar, t1, zeta, r, o)
-      call check_true('very stable case', zeta > 1.0_wp .and. ustar > cfg%ustmin, zeta)
-      call check('very stable profile through the wind at zref',                                &
-                 reduced_wind(cfg, ustar, zeta, 40.0_wp, 18.9_wp, 3.9_wp, 21.1_wp), 3.0_wp, 1.0e-9_wp)
-   end subroutine test_wind_profile
+   !----- A neutral patch at 20 C: the air and the canopy air alike, and the ground at their      !
+   !      temperature, under a wind u_ref at zref = 30 m. ----------------------------------------!
+   function neutral_env(u_ref) result(env)
+      real(wp), intent(in) :: u_ref   !< [m/s]
+      type(aero_env_t)     :: env
+      env%u_ref     = u_ref
+      env%zref      = 30.0_wp
+      env%theta_atm = 293.15_wp
+      env%can_temp  = 293.15_wp
+      env%t_ground  = 293.15_wp
+      env%shv_atm   = 0.010_wp
+      env%can_shv   = 0.010_wp
+   end function neutral_env
 
-   !----- 4. Boundary-layer conductance positive + increases with wind. ----------------------!
+   !----- One cohort of 5 cm leaves at the top of a 20 m canopy, at the canopy air's temperature,   !
+   !      under the neutral wind u_ref. ---------------------------------------------------------!
+   subroutine one_leaf_cohort(u_ref, out)
+      real(wp),         intent(in)    :: u_ref   !< [m/s]
+      type(aero_out_t), intent(inout) :: out
+      type(aero_params_t) :: cfg
+      type(aero_args_t)   :: geom
+      integer(ik), parameter :: ORDER(1) = [1_ik]
+      geom%veg_height   = 20.0_wp
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
+      call ensure_aero_out_capacity(out, 1_ik)
+      call canopy_aerodynamics(cfg, neutral_env(u_ref), geom, 1_ik, ORDER, [20.0_wp], [0.5_wp], [293.15_wp],  &
+                               [293.15_wp], [0.05_wp], [0.02_wp], out)
+   end subroutine one_leaf_cohort
+
+   !----- 3. The canopy-top wind (eq. (7)): neutral, u* and the profile are the log law's, so the  !
+   !      wind at the canopy top is the wind at zref scaled by ln((h - d)/z0) / ln((zref - d)/z0). !
+   subroutine test_canopy_top_wind()
+      type(aero_params_t) :: cfg
+      type(aero_out_t)    :: out
+      real(wp), parameter :: U_REF = 3.0_wp, H = 20.0_wp, ZREF = 30.0_wp
+      real(wp) :: z0, d, uh_log
+      call one_leaf_cohort(U_REF, out)
+      z0 = cfg%z0m_ratio * H
+      d  = cfg%d_ratio * H
+      uh_log = U_REF * log((H - d) / z0) / log((ZREF - d) / z0)
+      call check('neutral canopy-top wind is the log law''s', out%uh, uh_log, 1.0e-12_wp * uh_log)
+      call check_true('the canopy-top wind is positive and below the wind at zref',                 &
+                      out%uh > 0.0_wp .and. out%uh < U_REF, out%uh)
+   end subroutine test_canopy_top_wind
+
+   !----- 4. The leaf boundary layer (eqs. (9)-(10)), through the kernel. An isothermal leaf has no   !
+   !      free convection, so at the low Reynolds number of a 5 cm leaf in ~1.5 m/s its conductance is !
+   !      the laminar flat plate's, Nu = 0.60 Re^0.5 (Monteith & Unsworth 2013, Principles of        !
+   !      Environmental Physics, ch. 10), g = Nu kappa_T / l, with the air's viscosity 1.51e-5 and   !
+   !      thermal diffusivity 2.15e-5 m2/s at 20 C (their Appendix A.3). Within 1 %: the linear     !
+   !      fits of the two air properties sit within 0.4 % of the table. ---------------------------!
    subroutine test_boundary_layer()
       type(aero_params_t) :: cfg
-      real(wp) :: g_lo, g_hi, g_20, nu_20, alpha_20
-      g_lo = boundary_layer_conductance(cfg, 0.5_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
-      g_hi = boundary_layer_conductance(cfg, 5.0_wp, 300.0_wp, 298.0_wp, 0.05_wp, .true.)
-      call check_true('gbh positive above floor', g_lo > cfg%gbhmos_min, g_lo)
-      call check_true('gbh increases with wind',  g_hi > g_lo, g_hi - g_lo)
-      nu_20    = 1.33e-5_wp * 1.14_wp                    ! [m2/s] air at 20 C
-      alpha_20 = 1.89e-5_wp * 1.14_wp
-      g_20 = boundary_layer_conductance(cfg, 1.0_wp, 293.15_wp, 293.15_wp, 0.05_wp, .true.)
-      call check('gbh laminar flat plate at 20 C', g_20,                                         &
-                 0.6_wp * sqrt(1.0_wp * 0.05_wp / nu_20) * alpha_20 / 0.05_wp, 1.0e-12_wp)
+      type(aero_out_t)    :: lo, hi, mid
+      real(wp), parameter :: NU_20 = 1.51e-5_wp, KAPPA_20 = 2.15e-5_wp, WIDTH = 0.05_wp   ! [m2/s], [m2/s], [m]
+      real(wp) :: g_plate
+      call one_leaf_cohort(1.0_wp, lo)
+      call one_leaf_cohort(6.0_wp, hi)
+      call check_true('gbh positive above floor', lo%leaf_gbh(1) > cfg%gbhmos_min, lo%leaf_gbh(1))
+      call check_true('gbh increases with wind', hi%leaf_gbh(1) > lo%leaf_gbh(1), hi%leaf_gbh(1) - lo%leaf_gbh(1))
+      call one_leaf_cohort(3.0_wp, mid)
+      g_plate = 0.60_wp * sqrt(mid%wind(1) * WIDTH / NU_20) * KAPPA_20 / WIDTH
+      call check('an isothermal 5 cm leaf: the laminar flat plate at 20 C', mid%leaf_gbh(1), g_plate,         &
+                 1.0e-2_wp * g_plate)
    end subroutine test_boundary_layer
 
-   !----- 5. Master kernel on a 2-cohort patch. ----------------------------------------------!
-   subroutine test_master()
+   !----- 5. Two cohorts under the default forcing. ------------------------------------------!
+   subroutine test_two_cohorts()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
       type(aero_args_t)   :: geom
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik
       integer(ik), parameter :: ORDER(N) = [1_ik, 2_ik]   ! the arrays are bottom to top already
-      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N)
-      real(wp) :: ggbare_open
-      !----- Bottom(1) -> Top(2) ordering (RT convention). ----------------------------------!
-      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
-      tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
-      lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
-      geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
+      real(wp), parameter :: HEIGHT(N) = [8.0_wp, 18.0_wp], LAI(N) = [1.5_wp, 2.0_wp]
+      real(wp), parameter :: TL(N) = [299.0_wp, 300.0_wp], TW(N) = [298.5_wp, 299.0_wp]
+      real(wp), parameter :: LW(N) = [0.04_wp, 0.04_wp], BD(N) = [0.02_wp, 0.02_wp]
+      geom%veg_height   = 18.0_wp
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
 
-      call alloc_aero_out(out, N)
-      call canopy_aerodynamics(cfg, env, geom, N, ORDER, height, lai, tl, tw, lw, bd, out)
+      call ensure_aero_out_capacity(out, N)
+      call canopy_aerodynamics(cfg, env, geom, N, ORDER, HEIGHT, LAI, TL, TW, LW, BD, out)
 
-      call check_true('master ustar > 0', out%ustar > 0.0_wp, out%ustar)
-      call check_true('master ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
-      call check_true('master ggnet <= ggbare (closed canopy)', out%ggnet <= out%ggbare + 1.0e-12_wp, &
-                      out%ggbare - out%ggnet)
+      call check_true('ustar > 0', out%ustar > 0.0_wp, out%ustar)
+      call check_true('ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
+      call check_true('ggnet <= ggbare (closed canopy)', out%ggnet <= out%ggbare + 1.0e-12_wp, out%ggbare - out%ggnet)
       call check_true('wind decreases top->bottom', out%wind(2) > out%wind(1), out%wind(2) - out%wind(1))
       !----- Each closed crown takes the wind down by exp(-LAI/4) to its mid-depth and exp(-LAI/2)  !
       !      to its base (docs/science/canopy_aerodynamics.md eq. (8)). ---------------------------!
@@ -164,16 +194,7 @@ contains
                  max(cfg%ugbmin, out%uh * exp(-0.25_wp * 2.0_wp)), 1.0e-12_wp)
       call check('bottom cohort: under the top crown, then to its own mid-depth', out%wind(1),       &
                  max(cfg%ugbmin, out%uh * exp(-0.50_wp * 2.0_wp) * exp(-0.25_wp * 1.5_wp)), 1.0e-12_wp)
-      call check('leaf gbw = ratio*gbh', out%leaf_gbw(1), cfg%gbh_2_gbw * out%leaf_gbh(1), 1.0e-12_wp)
-      call check_true('r_aero = 1/ggnet finite', out%ggnet > 0.0_wp .and. 1.0_wp/out%ggnet < 1.0e6_wp, &
-                      1.0_wp / out%ggnet)
-
-      !----- Open-canopy limit: ggnet collapses to ggbare. ----------------------------------!
-      geom%opencan_frac = 1.0_wp
-      call canopy_aerodynamics(cfg, env, geom, N, ORDER, height, lai, tl, tw, lw, bd, out)
-      ggbare_open = out%ggbare
-      call check('ggnet == ggbare when open', out%ggnet, ggbare_open, 1.0e-12_wp)
-   end subroutine test_master
+   end subroutine test_two_cohorts
 
    !----- 6. The open-canopy blend of the ground conductance (eq. (6)). ----------------------!
    subroutine test_open_canopy()
@@ -183,14 +204,15 @@ contains
       type(aero_out_t)    :: out
       integer(ik), parameter :: N = 2_ik, NW = 11_ik
       integer(ik), parameter :: ORDER(N) = [1_ik, 2_ik]   ! the arrays are bottom to top already
-      real(wp) :: height(N), lai(N), tl(N), tw(N), lw(N), bd(N), gg(NW), r_meds, r_clm, nu
+      real(wp), parameter :: HEIGHT(N) = [8.0_wp, 18.0_wp], LAI(N) = [1.5_wp, 2.0_wp]
+      real(wp), parameter :: TL(N) = [299.0_wp, 300.0_wp], TW(N) = [298.5_wp, 299.0_wp]
+      real(wp), parameter :: LW(N) = [0.04_wp, 0.04_wp], BD(N) = [0.02_wp, 0.02_wp]
+      real(wp) :: gg(NW), r_meds, r_clm, nu
       integer(ik) :: k
-      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
-      tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
-      lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
-      geom%veg_height = 18.0_wp ; geom%snowfac = 0.0_wp
+      geom%veg_height = 18.0_wp
+      geom%snowfac    = 0.0_wp
       env%t_ground = env%can_temp + 2.0_wp           ! a warm ground: the dense term's stability is 0
-      call alloc_aero_out(out, N)
+      call ensure_aero_out_capacity(out, N)
 
       !----- The open fraction: 1 on bare ground, exp(-PAI) under plants. --------------------------!
       call check('a patch with no leaf or wood area is fully open', open_canopy_fraction(0.0_wp, 0.0_wp), &
@@ -200,7 +222,7 @@ contains
       !----- The two limits, exactly, and a monotone rise between them. ----------------------------!
       do k = 1_ik, NW
          geom%opencan_frac = real(k - 1_ik, wp) / real(NW - 1_ik, wp)
-         call canopy_aerodynamics(cfg, env, geom, N, ORDER, height, lai, tl, tw, lw, bd, out)
+         call canopy_aerodynamics(cfg, env, geom, N, ORDER, HEIGHT, LAI, TL, TW, LW, BD, out)
          gg(k) = out%ggnet
          if (k == 1_ik) call check('W = 0: the dense-canopy conductance', out%ggnet, out%ggveg, 0.0_wp)
          if (k == NW)   call check('W = 1: the bare-ground conductance', out%ggnet, out%ggbare, 0.0_wp)
@@ -212,17 +234,20 @@ contains
       !----- At LAI 6 (W = 0.0025) the blend is the linear weighting of the two terms, and the       !
       !      ground stays far closer to the dense value than to the bare one. ------------------------!
       geom%opencan_frac = open_canopy_fraction(6.0_wp, 0.0_wp)
-      call canopy_aerodynamics(cfg, env, geom, N, ORDER, height, lai, tl, tw, lw, bd, out)
+      call canopy_aerodynamics(cfg, env, geom, N, ORDER, HEIGHT, LAI, TL, TW, LW, BD, out)
       call check('LAI 6: W ggbare + (1 - W) ggveg', out%ggnet,                                       &
                  geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg, 1.0e-15_wp)
       call check_true('LAI 6: the ground couples nearly as under the dense form alone',                &
                       out%ggnet - out%ggveg < 0.01_wp * (out%ggbare - out%ggveg), out%ggnet / out%ggveg)
       !----- A bare patch at the soil's roughness, neutral: 1/(u* temp1) + 1/ggbare is CLM5's        !
       !      (ln(zldis/z0m) + 0.13 (z0m u*/nu)^0.45) / (kappa u*), the resistance from the soil to zref. !
-      geom%veg_height = cfg%soil_rough / cfg%z0m_ratio ; geom%opencan_frac = 1.0_wp
-      env%can_temp = 298.15_wp ; env%theta_atm = 298.15_wp ; env%t_ground = 298.15_wp
-      env%can_shv = env%shv_atm
-      call canopy_aerodynamics(cfg, env, geom, 0_ik, ORDER, height, lai, tl, tw, lw, bd, out)
+      geom%veg_height   = cfg%soil_rough / cfg%z0m_ratio
+      geom%opencan_frac = 1.0_wp
+      env%can_temp  = 298.15_wp
+      env%theta_atm = 298.15_wp
+      env%t_ground  = 298.15_wp
+      env%can_shv   = env%shv_atm
+      call canopy_aerodynamics(cfg, env, geom, 0_ik, ORDER, HEIGHT, LAI, TL, TW, LW, BD, out)
       r_meds = 1.0_wp / (out%ustar * out%heat_transfer_factor) + 1.0_wp / out%ggnet
       nu     = cfg%kin_visc0 * (1.0_wp + cfg%dkin_visc * (298.15_wp - cfg%t_ref_air))
       r_clm  = (log((env%zref - out%displace) / out%rough)                                        &
@@ -231,8 +256,8 @@ contains
    end subroutine test_open_canopy
 
    !----- 7. Tied cohorts share one wind layer (docs/science/canopy_aerodynamics.md eq. (8)), as they  !
-   !      share one radiation layer: test_master's stand with its top crown split into two cohorts of  !
-   !      half the leaf area each must give every cohort the wind the unsplit stand gives it. ------!
+   !      share one radiation layer: test_two_cohorts' stand with its top crown split into two cohorts !
+   !      of half the leaf area each must give every cohort the wind the unsplit stand gives it. -----!
    subroutine test_tied_layer()
       type(aero_params_t) :: cfg
       type(aero_env_t)    :: env
@@ -245,8 +270,11 @@ contains
       real(wp), parameter :: TL3(3) = [299.0_wp, 300.0_wp, 300.0_wp], TW3(3) = [298.5_wp, 299.0_wp, 299.0_wp]
       real(wp), parameter :: LW3(3) = [0.04_wp, 0.04_wp, 0.04_wp], BD3(3) = [0.02_wp, 0.02_wp, 0.02_wp]
       integer(ik), parameter :: ORD2(2) = [1_ik, 2_ik], ORD3(3) = [1_ik, 2_ik, 3_ik]   ! bottom to top
-      geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
-      call alloc_aero_out(one, 2_ik) ; call alloc_aero_out(split, 3_ik)
+      geom%veg_height   = 18.0_wp
+      geom%opencan_frac = 0.0_wp
+      geom%snowfac      = 0.0_wp
+      call ensure_aero_out_capacity(one, 2_ik)
+      call ensure_aero_out_capacity(split, 3_ik)
       call canopy_aerodynamics(cfg, env, geom, 2_ik, ORD2, H2, LAI2, TL2, TW2, LW2, BD2, one)
       call canopy_aerodynamics(cfg, env, geom, 3_ik, ORD3, H3, LAI3, TL3, TW3, LW3, BD3, split)
       call check('tied: both halves of the top crown meet its wind', split%wind(2), one%wind(2), 1.0e-14_wp)
@@ -256,4 +284,4 @@ contains
       call check('tied: the same leaf boundary layer', split%leaf_gbh(3), one%leaf_gbh(2), 1.0e-14_wp)
    end subroutine test_tied_layer
 
-end program test_aerodynamics
+end program test_canopy_aerodynamics

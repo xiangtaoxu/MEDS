@@ -501,12 +501,16 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
-   #----- Soil pedotransfer function: Hodnett & Tomasella (2002)'s worked example, Ks, coarse  #
-   #      fragments (links meds_share only). ---------------------------------------------------#
-   add_executable(test_pedotransfer test/test_pedotransfer.f90)
-   target_link_libraries(test_pedotransfer PRIVATE meds_share meds_testassert)
-   meds_fortran_flags(test_pedotransfer)
-   add_test(NAME pedotransfer COMMAND test_pedotransfer)
+   #----- The share/functions libraries, one test each, named after its module. Each links meds_share #
+   #      alone; test_optics_lib also the config layer, whose meds_pft_derive turns a PFT's leaf-angle #
+   #      moments into the LIDF's Beta parameters.                                                    #
+   foreach(t therm_lib plant_hydr_lib soil_hydr_lib optics_lib)
+      add_executable(test_${t} test/test_${t}.f90)
+      target_link_libraries(test_${t} PRIVATE meds_share meds_testassert)
+      meds_fortran_flags(test_${t})
+      add_test(NAME ${t} COMMAND test_${t})
+   endforeach()
+   target_link_libraries(test_optics_lib PRIVATE meds_config)
 
    #----- No procedure is passed as an argument anywhere in src/: the ifx cost of doing        #
    #      so serialises threads. The script explains the rule it checks.                       #
@@ -611,12 +615,6 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_init)
    add_test(NAME init COMMAND test_init)
 
-   #----- Leaf-physiology test links meds_fast + test support (assertions). ---------------#
-   add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
-   target_link_libraries(test_leaf_physiology PRIVATE meds_testsupport meds_fast)
-   meds_fortran_flags(test_leaf_physiology)
-   add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
-
    #----- C-API shims. Linking every C-API shim INTO a ctest target is the point: a shim          #
    #      built only by the optional -DMEDS_BUILD_PYLIB=ON shared library breaks unseen -- a       #
    #      component inserted mid-type in leaf_photo_args_t, or a signature changed under the       #
@@ -628,7 +626,9 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_c_api_leaf test/test_c_api_leaf.f90)
    target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_c_api)
    meds_fortran_flags(test_c_api_leaf)
-   add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
+   #      Runs from the SOURCE dir: the canopy shim opens the reference configuration and the PFT
+   #      file it names, relative to it, and writes nothing.
+   add_test(NAME c_api_leaf COMMAND test_c_api_leaf WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    add_executable(test_c_api_phenology test/test_c_api_phenology.f90)
    target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_c_api)
@@ -671,55 +671,32 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/region)
 
-   #----- Hydraulics / phenology / respiration / carbon tests link the kernel libraries (state-free). #
-   #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
-   #     allocation and trait dynamics are daily -- so it links both kernel libraries: there is no
-   #     edge between them to ride on.
-   foreach(t plant_hydraulics plant_phenology plant_respiration plant_carbon_allocation plant_trait_dynamics)
+   #----- The daily plant kernels' tests (phenology, allocation, traits) link the kernel libraries   #
+   #      (state-free).                                                                              #
+   foreach(t plant_phenology plant_carbon_allocation plant_trait_dynamics)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_slow_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
 
-   #----- Canopy radiative-transfer test links meds_fast_kernels (state-free). ------------#
-   add_executable(test_canopy_radiation test/test_canopy_radiation.f90)
-   target_link_libraries(test_canopy_radiation PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_canopy_radiation)
-   add_test(NAME canopy_radiation COMMAND test_canopy_radiation)
-
-   #----- Canopy-aerodynamics test links meds_fast_kernels (state-free). ------------------#
-   add_executable(test_aerodynamics test/test_aerodynamics.f90)
-   target_link_libraries(test_aerodynamics PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_aerodynamics)
-   add_test(NAME aerodynamics COMMAND test_aerodynamics)
-
-   #----- Vertical soil-hydrology test links meds_fast (it runs the soil-plant water solve). #
-   add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_fast meds_testassert)
-   meds_fortran_flags(test_column_hydrology)
-   add_test(NAME column_hydrology COMMAND test_column_hydrology)
-
-   #----- The soil-plant water network's water relations and flows: values and derivatives. --#
-   add_executable(test_water_processes test/test_water_processes.f90)
-   target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_water_processes)
-   add_test(NAME water_processes COMMAND test_water_processes)
-
-   #----- The soil-plant water network on synthetic stands and soils. ------------------------#
-   add_executable(test_water_network test/test_water_network.f90)
-   target_link_libraries(test_water_network PRIVATE meds_fast meds_testassert)
-   meds_fortran_flags(test_water_network)
-   add_test(NAME water_network COMMAND test_water_network)
-
-   #----- Energy-balance + snow tests link meds_fast_kernels (state-free). ----------------#
-   foreach(t column_energy surface_energy snow)
+   #----- The fast-loop process modules (src/fast_dynamics/processes/), one test each, named after  #
+   #      its module. Each links the kernel library alone, so the kernels build and test standalone; #
+   #      the leaf test also the in-code config fixture, whose leaf table it solves on.               #
+   foreach(t canopy_aerodynamics canopy_air_space canopy_radiation canopy_water leaf_gas_exchange plant_energy
+             plant_hydraulics respiration soil_heat soil_water surface)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_fast_kernels meds_testassert)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+   target_link_libraries(test_leaf_gas_exchange PRIVATE meds_testsupport)
 
+   #----- The soil-plant water network on synthetic stands and soils, and the soil column alone. -#
+   add_executable(test_water_network test/test_water_network.f90)
+   target_link_libraries(test_water_network PRIVATE meds_fast meds_testassert)
+   meds_fortran_flags(test_water_network)
+   add_test(NAME water_network COMMAND test_water_network)
 
    #----- Slow soil-carbon matrix test links biogeochemistry; the fast/slow-seam check also    #
    #      exercises the fast CAS-CO2 Rh kernel, which meds_fast_kernels carries.                #

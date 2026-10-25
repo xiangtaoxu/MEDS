@@ -1,35 +1,28 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
-!   1. EXACT RELAXATION: tissue_energy_balance's closed-form tissue step, its two limits and its   !
-!      energy identity (docs/science/vegetation_energy_dynamics.md eqs. (3)-(7)).                  !
-!   2. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
-!   3. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
-!   4. The CAS CO2 twin: still at the atmosphere's CO2, an L-stable relaxation that a weaker       !
-!      conductance slows, and a constant source's analytic steady state.                           !
-!   5. tissue_energy_balance's two latent pathways: the stomata's and the wetted film's (f_wet).   !
-!   6. A THIN tissue: energy closes at every area index, halving the area halves every flux and    !
-!      keeps the temperature, and a tissue with no area takes the temperature of what it grows     !
-!      from.                                                                                       !
+! test_plant_energy -- a tissue's energy balance (meds_plant_energy: tissue_energy_balance; !
+! docs/science/vegetation_energy_dynamics.md eqs. (1)-(8)).                                 !
+!   1. EXACT RELAXATION (eqs. (3)-(7)): the closed-form tissue step, its diagnostic and    !
+!      frozen limits, its energy identity and small-x branch, marched exactly against the  !
+!      analytic relaxation; a store with no coupling warms by its forcing.                 !
+!   2. LATENT PATHWAYS: the stomata's and the wetted film's; f_wet = 0 leaves no trace of  !
+!      the film, f_wet = 1 is the film alone, and partial wetting closes the balance.      !
+!   3. THIN TISSUE (eqs. (1), (8)): energy closes at every area index, halving the area    !
+!      halves every flux and keeps the temperature, and a tissue with no area takes the    !
+!      temperature of what it grows from.                                                  !
 !==========================================================================================!
-program test_surface_energy
-   use meds_test_assert, only : check, check_true, test_report
-   use meds_kinds,            only : wp, ik
-   use meds_constants,        only : cp_air, latent_heat_vap, stefan_boltzmann, pi, mmdry
-   use meds_therm_lib,           only : cas_temp_to_enthalpy, cas_enthalpy_to_temp
+program test_plant_energy
+   use meds_test_assert,  only : check, check_true, test_report
+   use meds_kinds,        only : wp, ik
+   use meds_constants,    only : cp_air, latent_heat_vap, stefan_boltzmann, pi
    use meds_plant_energy, only : tissue_energy_balance, latent_pathway_t
-   use meds_surface, only : ground_surface_fluxes
-   use meds_canopy_air_space,   only : cas_env_t, cas_box_step_implicit
    implicit none
 
    call test_veg_exponential()
-   call test_ground_balance()
-   call test_cas()
-   call test_cas_co2()
    call test_veg_energy_diagnostic_wetted()
    call test_veg_energy_thin_tissue()
 
-   call test_report('test_surface_energy')
+   call test_report('test_plant_energy')
 
 contains
 
@@ -50,8 +43,13 @@ contains
       type(latent_pathway_t) :: dry, none   !< the stomata's pathway; none: no film
       integer(ik) :: k, nstep
       print '(a)', 'test_veg_exponential:'
-      t_cas = 295.0_wp ; sw = 300.0_wp ; lw = -40.0_wp
-      h = 120.0_wp ; les = 30.0_wp ; lws = 5.0_wp ; ler = 25.0_wp
+      t_cas = 295.0_wp
+      sw = 300.0_wp
+      lw = -40.0_wp
+      h = 120.0_wp
+      les = 30.0_wp
+      lws = 5.0_wp
+      ler = 25.0_wp
       dry = latent_pathway_t(slope=les, ref=ler)
       denom = h + les + lws
       dt    = 1800.0_wp
@@ -86,7 +84,9 @@ contains
       !----- (d) THE POINT: marching the kernel reproduces the analytic relaxation EXACTLY, not      !
       !          approximately. A backward-Euler storage term would drift here; this does not.       !
       !          T(t) = T_eq + (T0 - T_eq)*exp(-t/tau).                                              !
-      nstep = 20_ik ; t_march = t0 ; worst = 0.0_wp
+      nstep = 20_ik
+      t_march = t0
+      worst = 0.0_wp
       do k = 1_ik, nstep
          call tissue_energy_balance(sw, lw, 0.0_wp, h, lws, dry, none, 0.0_wp, t_cas, t_cas, a_st, t_march, &
                                     dtt, ts, tr, fe, dh, drn)
@@ -112,106 +112,6 @@ contains
       call check('no coupling: the store warms by numer*dt/cap', ts, t0 + (sw + lw - ler) / a_st, 1.0e-12_wp)
       call check_true('no coupling: no sensible heat leaves', dh == 0.0_wp, dh)
    end subroutine test_veg_exponential
-
-   subroutine test_ground_balance()
-      real(wp) :: t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil
-      print '(a)', 'test_ground_balance:'
-      ggnet = 0.02_wp ; rho = 1.2_wp ; t_ground = 300.0_wp
-      !----- no sensible gradient (t_cas = t_ground) and no soil evaporation -> both vanish. -!
-      t_cas = t_ground ; soil_evap = 0.0_wp
-      call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
-      call check_true('H_bare = 0 (no gradient)', abs(h_bare) < 1.0e-9_wp, h_bare)
-      call check_true('LE_soil = 0 (no evap)',    abs(le_soil) < 1.0e-30_wp, le_soil)
-      !----- warm ground over cooler CAS -> positive sensible. -----------------------------------!
-      t_cas = 298.0_wp
-      call ground_surface_fluxes(t_ground, t_cas, ggnet, rho, soil_evap, h_bare, le_soil)
-      call check('H_bare = ggnet*rho*cp*dT', h_bare, ggnet*rho*cp_air*(t_ground - t_cas), 1.0e-9_wp)
-   end subroutine test_ground_balance
-
-   subroutine test_cas()
-      !----- Runs the production cas_box_step_implicit (enthalpy twin;                           !
-      !      docs/science/canopy_air_space_biophysics.md eq. (2)). Vapour + CO2 twins held inert (0 !
-      !      sources / 0 vapour conductance; a nonzero molar capacity avoids a 0/0 in the unused    !
-      !      CO2 branch). The closed-budget residual is assembled here from the production result.   !
-      type(cas_env_t) :: cas_env
-      real(wp) :: enth, shv, temp, resid, enthalpy_atm, worst, enth_new, shv_new, co2_new
-      real(wp), parameter :: CAS_MASS_CAPACITY = 1.2_wp * 20.0_wp     ! rho_air * can_depth  [kg/m2]
-      real(wp), parameter :: GATM = 1.2_wp * 0.3_wp * 1.0_wp  ! rho_air * ustar * heat_transfer_factor(c3)  [kg/m2/s]
-      integer(ik) :: step
-      print '(a)', 'test_cas:'
-      shv  = 0.012_wp
-      enth = cas_temp_to_enthalpy(295.0_wp, shv)                  ! CAS starts at 295 K
-      temp = 295.0_wp
-      enthalpy_atm = cas_temp_to_enthalpy(300.0_wp, shv)              ! warmer atmosphere
-      cas_env%air_mass_capacity        = CAS_MASS_CAPACITY
-      cas_env%air_molar_capacity       = 1.0_wp                    ! inert CO2 twin (avoid 0/0)
-      cas_env%atm_conductance_enthalpy = GATM
-      cas_env%atm_conductance_vapor    = 0.0_wp
-      cas_env%atm_conductance_co2      = 0.0_wp
-      cas_env%atm_enthalpy             = enthalpy_atm
-      cas_env%atm_specific_humidity    = 0.0_wp
-      cas_env%atm_co2                  = 0.0_wp
-      cas_env%surface_enthalpy_source  = 50.0_wp + 20.0_wp + 10.0_wp + 5.0_wp  ! cohort + ground sensible + vapour-enthalpy
-      cas_env%surface_vapor_source     = 0.0_wp
-      cas_env%biotic_co2_source        = 0.0_wp
-      worst = 0.0_wp
-      do step = 1_ik, 30_ik
-         call cas_box_step_implicit(enth, shv, 0.0_wp, cas_env, 60.0_wp, enth_new, shv_new, co2_new)
-         resid = cas_env%air_mass_capacity * (enth_new - enth)                                   &
-                 - 60.0_wp * (cas_env%surface_enthalpy_source                                    &
-                              + cas_env%atm_conductance_enthalpy * (cas_env%atm_enthalpy - enth_new))
-         worst = max(worst, abs(resid))
-         enth = enth_new ; shv = shv_new
-         temp = cas_enthalpy_to_temp(enth, shv)
-      end do
-      call check_true('CAS energy residual ~ 0 (30 steps)', worst < 1.0e-6_wp, worst)
-      call check_true('CAS warms toward atmosphere + surfaces', temp > 295.0_wp, temp)
-   end subroutine test_cas
-
-   !----- The CO2 twin of the same box (docs/science/canopy_air_space_biophysics.md eq. (1)). At  !
-   !      the atmosphere's CO2 with no source it holds still; displaced, it relaxes toward the     !
-   !      atmosphere without overshoot at any step, and more slowly over a weaker conductance;     !
-   !      under a constant source it settles at co2_atm + source/conductance; uptake draws it      !
-   !      down and respiration pushes it up. -------------------------------------------------------!
-   subroutine test_cas_co2()
-      real(wp), parameter :: CO2_ATM = 400.0_wp, RHO_AIR = 1.2_wp, USTAR = 0.3_wp, SOURCE = 5.0_wp
-      real(wp) :: g_co2, c, c_weak
-      integer(ik) :: step
-      print '(a)', 'test_cas_co2:'
-      g_co2 = RHO_AIR / mmdry * USTAR                    ! [mol/m2/s] dry air, transfer factor 1
-      c = cas_co2_after(CO2_ATM, 0.0_wp, g_co2, 1800.0_wp)
-      call check('no source at the atmosphere''s CO2: unchanged', c, CO2_ATM, 1.0e-9_wp)
-      c = cas_co2_after(500.0_wp, 0.0_wp, g_co2, 60.0_wp)
-      call check_true('displaced: relaxes toward the atmosphere', c > CO2_ATM .and. c < 500.0_wp, c)
-      c_weak = cas_co2_after(500.0_wp, 0.0_wp, 0.5_wp * g_co2, 60.0_wp)
-      call check_true('a weaker conductance relaxes more slowly', c_weak > c, c_weak - c)
-      c = cas_co2_after(500.0_wp, 0.0_wp, g_co2, 1.0e9_wp)
-      call check_true('a huge step does not overshoot the atmosphere (L-stable)', c >= CO2_ATM, c)
-      call check('a huge step lands on the atmosphere', c, CO2_ATM, 1.0e-3_wp)
-      c = CO2_ATM
-      do step = 1_ik, 4000_ik
-         c = cas_co2_after(c, SOURCE, g_co2, 60.0_wp)
-      end do
-      call check('a constant source settles at co2_atm + source/conductance', c, CO2_ATM + SOURCE / g_co2, 1.0e-4_wp)
-      c = cas_co2_after(CO2_ATM, -15.0_wp, g_co2, 300.0_wp)
-      call check_true('uptake draws the canopy air below the atmosphere', c < CO2_ATM, c)
-      c = cas_co2_after(CO2_ATM, 10.0_wp, g_co2, 300.0_wp)
-      call check_true('respiration pushes the canopy air above the atmosphere', c > CO2_ATM, c)
-   end subroutine test_cas_co2
-
-   !----- One step of the CAS box's CO2, on a 20 m column of dry air at 1.2 kg/m3; the enthalpy and !
-   !      vapour twins are held inert (a nonzero mass capacity avoids their 0/0). ---------------!
-   function cas_co2_after(co2, source, g_co2, dt) result(co2_new)
-      real(wp), intent(in) :: co2, source, g_co2, dt
-      real(wp) :: co2_new, enth_new, shv_new
-      type(cas_env_t) :: env
-      env%air_mass_capacity   = 1.0_wp
-      env%air_molar_capacity  = 1.2_wp / mmdry * 20.0_wp
-      env%atm_conductance_co2 = g_co2
-      env%atm_co2             = 400.0_wp
-      env%biotic_co2_source   = source
-      call cas_box_step_implicit(0.0_wp, 0.0_wp, co2, env, dt, enth_new, shv_new, co2_new)
-   end function cas_co2_after
 
    subroutine test_veg_energy_diagnostic_wetted()
       !----- Direct unit test of tissue_energy_balance's two latent pathways (the column tests exercise  !
@@ -293,13 +193,15 @@ contains
       real(wp), parameter :: CAP_PER_AREA = 1500.0_wp   !< [J/m2 tissue/K] a leaf's dry tissue and water
       logical :: is_leaf
       print '(a)', 'test_veg_energy_thin_tissue:'
-      worst = 0.0_wp ; worst_split = 0.0_wp
+      worst = 0.0_wp
+      worst_split = 0.0_wp
       do is = 0_ik, 1_ik
          do il = 1_ik, 2_ik
             is_leaf = (il == 1_ik)
             do ia = 1_ik, 15_ik
                ai = 1.0e-6_wp * (10.0_wp ** (0.5_wp * real(ia - 1_ik, wp)))
-               ast = 0.0_wp ; if (is == 1_ik) ast = CAP_PER_AREA * ai / 900.0_wp
+               ast = 0.0_wp
+               if (is == 1_ik) ast = CAP_PER_AREA * ai / 900.0_wp
                call thin_tissue(ai, ast, is_leaf, dt_temp, t_store, transp, dh, drnet, film_evap)
                resid = drnet + 25.0_wp*ai - dh - latent_heat_vap*(transp + film_evap) - ast * (t_store - T0)
                worst = max(worst, abs(resid) / (abs(drnet) + 25.0_wp*ai))
@@ -337,4 +239,4 @@ contains
                                  a_store, T0, dtt, ts, tr, fe, h_out, rn)
    end subroutine thin_tissue
 
-end program test_surface_energy
+end program test_plant_energy

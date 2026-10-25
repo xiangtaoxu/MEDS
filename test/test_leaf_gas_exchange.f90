@@ -1,8 +1,27 @@
 ! SPDX-License-Identifier: Apache-2.0
-!----- Leaf physiology: temperature response, FvCB C3 + Collatz C4 demand, the three stomatal !
-!      models, the coupled A-gs-Ci solver, water stress, and the night/closed branch          !
-!      (docs/science/leaf_gas_exchange.md). ----------------------------------------------------!
-program test_leaf_physiology
+!==========================================================================================!
+! test_leaf_gas_exchange -- one leaf's gas exchange (meds_leaf_gas_exchange;               !
+! docs/science/leaf_gas_exchange.md), on the in-code config fixture's leaf table.          !
+!   1. C3 DEMAND (assimilation_demand_c3, eq. (2)): a hand-computed Ac, Aj and Ap, and    !
+!      the co-limitation curvatures' cost against the sharp minimum.                       !
+!   2. REGIMES (assimilation_demand_c3): Rubisco, RuBP and product limitation where each   !
+!      should bind.                                                                        !
+!   3. THE SOLVE (solve_leaf_gas_exchange, §5): a midday C3 leaf converges inside its      !
+!      bounds, and its gs is the Medlyn law's at the solution.                             !
+!   4. STOMATAL MODELS (§3): Leuning, Medlyn and Katul converge, and gs falls with VPD.    !
+!   5. C4 (Collatz, §2): it draws Ci lower than C3; its PEP limb rises with temperature;   !
+!      transpiration crosses gs and gb in series.                                          !
+!   6. WATER STRESS (§4, eqs. (9)-(10)): the fast limb on the leaf potential and the slow  !
+!      limb on the predawn potential, for every stomatal model; under Katul, every solve,  !
+!      open or pinned at g0, lies on the CO2 diffusion line (eq. (1)); Katul behind a      !
+!      thin boundary layer and at the dew point.                                           !
+!   7. LIGHT: the night branch at PAR = 0, and a monotone light response.                  !
+!   8. O2 (eq. (3)): oxygen reaches Gamma* as well as the Michaelis term.                  !
+!   9. PRESSURE (rubisco_kinetics, eq. (3)): Gamma* as a mole fraction does not depend on  !
+!      pressure; Kc and Ko are partial pressures.                                          !
+! The temperature responses are test_therm_lib's.                                          !
+!==========================================================================================!
+program test_leaf_gas_exchange
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
    use meds_config,             only : meds_config_t, derive_parameters
@@ -10,12 +29,10 @@ program test_leaf_physiology
                                        pft_wstress_psi_close
    use meds_pft_params,         only : HYD_UNSET, leaf_photo_pft_t
    use meds_leaf_params,        only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_therm_lib,     only : arrhenius_scale, peaked_arrhenius_scale, kattge_knorr_entropy,  &
-                                  kattge_knorr_jv_ratio
-   use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
-   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn, solve_leaf_gas_exchange
-   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
-   use meds_test_support, only : banner, build_test_config, check, check_close
+   use meds_leaf_gas_exchange,  only : assimilation_demand_c3, rubisco_kinetics, stomata_gs_medlyn,          &
+                                       solve_leaf_gas_exchange, leaf_env_t, leaf_out_t, LIM_NONE,         &
+                                       LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
+   use meds_test_support,       only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
@@ -23,27 +40,13 @@ program test_leaf_physiology
    type(leaf_out_t)   :: flux, flux2
    real(wp) :: a_gross, ac, aj, ap, an0, an1, an2, prev
    real(wp) :: psi_tlp, jump, gs_top
-   integer(ik) :: i, j
+   integer(ik) :: i, j, n_pinned
    integer(ik), dimension(3) :: sms = [ SM_LEUNING, SM_MEDLYN, SM_KATUL ]
 
-   call banner('leaf physiology (photosynthesis + stomata)')
-   cfg = build_test_config_local()
+   call banner('leaf gas exchange (photosynthesis + stomata)')
+   cfg = build_test_config()
 
-   !=== 1. Temperature response: identity at the reference, monotonicity, peaked optimum. ===!
-   call check_close(arrhenius_scale(40.49_wp, 79430.0_wp, t_kelvin + 25.0_wp), 40.49_wp,        &
-                    1.0e-12_wp, 'Arrhenius must equal k25 at the reference temperature')
-   call check(arrhenius_scale(40.49_wp, 79430.0_wp, t_kelvin + 5.0_wp) <                        &
-              arrhenius_scale(40.49_wp, 79430.0_wp, t_kelvin + 35.0_wp),                        &
-              'Arrhenius must increase with temperature')
-   call check_close(peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, 650.0_wp,          &
-                    t_kelvin + 25.0_wp), 60.0_wp, 1.0e-12_wp, 'peaked must equal k25 at reference')
-   !----- Peaked form: a single interior maximum near ~32 degC (rise then fall). ------------!
-   an0 = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, 650.0_wp, t_kelvin + 25.0_wp)
-   an1 = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, 650.0_wp, t_kelvin + 32.0_wp)
-   an2 = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, 650.0_wp, t_kelvin + 45.0_wp)
-   call check(an1 > an0 .and. an1 > an2, 'peaked Vcmax must have an interior thermal optimum')
-
-   !=== 2. C3 demand: hand-computed Ac/Aj known-answer (vcmax=100, j=120, ci=300, gstar=40, ==!
+   !=== 1. C3 demand: hand-computed Ac/Aj known-answer (vcmax=100, j=120, ci=300, gstar=40, ==!
    !       kc=400, ko=275000, o2=210000, tpu=15). Ac=100*260/(300+400*(1+210000/275000))      !
    !       = 25.8593; Aj=120*260/(4*300+8*40)=20.5263; Ap=3*15=45. =============================!
    call assimilation_demand_c3(300.0_wp, 100.0_wp, 120.0_wp, 15.0_wp, 40.0_wp, 400.0_wp, 275000.0_wp, &
@@ -53,39 +56,7 @@ program test_leaf_physiology
    call check_close(ap, 45.0_wp,     1.0e-6_wp, 'C3 Ap known-answer')
    call check_close(a_gross, 20.52632_wp, 1.0e-4_wp, 'C3 min co-limitation picks Aj')
 
-   !=== 1b. THERMAL ACCLIMATION, Kattge & Knorr (2007): docs/science/leaf_gas_exchange.md eq. (4). =!
-   !        dS = a - b*T_growth[degC] is an arithmetic identity, so what these assert is that
-   !        the CODE computes the published relation -- and then that the shift does what it is
-   !        for: moving where the response peaks.
-   block
-      real(wp) :: ds_cold, ds_warm, jv_cold, jv_warm, k_cold, k_warm, topt_cold, topt_warm
-      real(wp), parameter :: T_COLD = t_kelvin + 10.0_wp, T_WARM = t_kelvin + 30.0_wp
-      print '(a)', 'test_thermal_acclimation:'
-      !----- Hand-computed: dS_vcmax = 668.39 - 1.07*T. At 10 C -> 657.69; at 30 C -> 636.29. -!
-      ds_cold = kattge_knorr_entropy(668.39_wp, 1.07_wp, T_COLD)
-      ds_warm = kattge_knorr_entropy(668.39_wp, 1.07_wp, T_WARM)
-      call check_close(ds_cold, 657.69_wp, 1.0e-10_wp, 'dS_vcmax at a 10 C growth temperature')
-      call check_close(ds_warm, 636.29_wp, 1.0e-10_wp, 'dS_vcmax at a 30 C growth temperature')
-      !----- Jmax:Vcmax = 2.59 - 0.035*T. At 10 C -> 2.24; at 30 C -> 1.54. -------------------!
-      jv_cold = kattge_knorr_jv_ratio(2.59_wp, 0.035_wp, T_COLD)
-      jv_warm = kattge_knorr_jv_ratio(2.59_wp, 0.035_wp, T_WARM)
-      call check_close(jv_cold, 2.24_wp, 1.0e-10_wp, 'Jmax:Vcmax at a 10 C growth temperature')
-      call check_close(jv_warm, 1.54_wp, 1.0e-10_wp, 'Jmax:Vcmax at a 30 C growth temperature')
-      call check(jv_warm < jv_cold, 'a warm-grown plant invests relatively less in electron transport')
-      !----- The POINT of the dS shift: at a hot leaf temperature the warm-acclimated plant must !
-      !      retain more capacity than the cold-acclimated one.  --------------------------------!
-      k_cold = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds_cold, t_kelvin + 38.0_wp)
-      k_warm = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds_warm, t_kelvin + 38.0_wp)
-      call check(k_warm > k_cold, 'warm acclimation retains more Vcmax at 38 C than cold acclimation')
-      topt_cold = peak_temperature(ds_cold)
-      topt_warm = peak_temperature(ds_warm)
-      call check(topt_warm > topt_cold + 1.0_wp,                                                 &
-                 'the thermal optimum moves UP with growth temperature (> 1 K over a 20 K range)')
-      print '(a,2(f7.2,a))', '   [acclimation] Vcmax optimum: cold-grown ', topt_cold - t_kelvin,       &
-            ' C, warm-grown ', topt_warm - t_kelvin, ' C'
-   end block
-
-   !=== 2b. CO-LIMITATION strength. The two C3 smoothings must use the CO-LIMITATION ========!
+   !=== 1b. CO-LIMITATION strength. The two C3 smoothings must use the CO-LIMITATION ========!
    !        curvatures, not theta_j (docs/science/leaf_gas_exchange.md §2). This is a REGIME     !
    !        assertion: at ambient CO2 Ac and Aj sit close together, so the smoothing penalty     !
    !        lands exactly where the model spends most of its time, and borrowing theta_j = 0.85  !
@@ -113,7 +84,7 @@ program test_leaf_physiology
             ' | theta_j borrowed = ', a_old, ''
    end block
 
-   !=== 3. C3 limitation regimes (raw demand, COLIM_MIN). ===================================!
+   !=== 2. C3 limitation regimes (raw demand, COLIM_MIN). ===================================!
    !----- High light, low Ci -> Rubisco-limited. ---------------------------------------------!
    call assimilation_demand_c3(120.0_wp, 60.0_wp, 104.0_wp, 10.0_wp, 42.0_wp, 400.0_wp, 275000.0_wp,  &
                         209000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
@@ -127,7 +98,7 @@ program test_leaf_physiology
                         209000.0_wp, COLIM_MIN, 0.98_wp, 0.95_wp, a_gross, ac, aj, ap)
    call check(ap < ac .and. ap < aj, 'high Ci, low TPU should be product-limited')
 
-   !=== 4. Full solve (PFT 1, C3, Medlyn default): convergence, bounds, diffusion closure. ==!
+   !=== 3. Full solve (PFT 1, C3, Medlyn default): convergence, bounds, the Medlyn law. =====!
    env = std_env()
    call leaf_solve(env, 1_ik, flux)
    call check(flux%converged, 'C3 solve must converge')
@@ -136,19 +107,17 @@ program test_leaf_physiology
    call check(flux%ci > 0.0_wp .and. flux%ci < flux%cs, 'Ci must lie between 0 and Cs')
    call check(flux%limitation == LIM_RUBISCO .or. flux%limitation == LIM_RUBP,                 &
               'midday C3 leaf should be Rubisco- or RuBP-limited')
-   !----- Diffusion identity A_net = gs*(Cs-Ci)/1.6 (back-computation consistency). ----------!
-   call check_close(flux%A_net, flux%gs * (flux%cs - flux%ci) / 1.6_wp, 1.0e-6_wp,             &
-                    'A_net must satisfy the CO2 diffusion identity')
    !----- The converged gs reproduces the Medlyn law (root really solved the coupled system). -!
    call check_close(flux%gs, stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd,                   &
                     cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%leaf_physiology%vpd_min), 1.0e-4_wp, &
                     'back-computed gs must match the Medlyn model at the solution')
 
-   !=== 5. All three stomatal models converge; gs decreases as VPD rises. ===================!
+   !=== 4. All three stomatal models converge; gs decreases as VPD rises. ===================!
    do i = 1_ik, 3_ik
       cfg%leaf_physiology%stomatal_model = sms(i)
       call derive_parameters(cfg)
-      env = std_env() ; env%vpd = 800.0_wp
+      env = std_env()
+      env%vpd = 800.0_wp
       call leaf_solve(env, 1_ik, flux)
       env%vpd = 2500.0_wp
       call leaf_solve(env, 1_ik, flux2)
@@ -160,7 +129,7 @@ program test_leaf_physiology
    cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
-   !=== 6. C3 vs C4 contrast (PFT 1 vs PFT 3): C4 runs and draws Ci lower (concentrating). ==!
+   !=== 5. C3 vs C4 contrast (PFT 1 vs PFT 3): C4 runs and draws Ci lower (concentrating). ==!
    env = std_env()
    call leaf_solve(env, 1_ik, flux)    ! C3
    call leaf_solve(env, 3_ik, flux2)   ! C4
@@ -169,11 +138,12 @@ program test_leaf_physiology
               flux2%limitation == LIM_C4_PEP, 'C4 limitation flag must be a C4-valid regime')
    call check(flux2%ci / flux2%cs < flux%ci / flux%cs, 'C4 should operate at a lower Ci/Cs than C3')
 
-   !=== 6b. C4 kp temperature response: at a CO2/PEP-limiting Ci the PEP-limited gross rate     !
+   !=== 5b. C4 kp temperature response: at a CO2/PEP-limiting Ci the PEP-limited gross rate     !
    !     must RISE with leaf temperature, which it cannot with kp held at its 25 degC value. =====!
    block
       real(wp) :: a_cold, a_warm
-      env = std_env() ; env%ca = 40.0_wp                     ! very low CO2 -> C4 PEP-limited
+      env = std_env()
+      env%ca = 40.0_wp                                       ! very low CO2 -> C4 PEP-limited
       env%leaf_temp = t_kelvin + 18.0_wp
       call leaf_solve(env, 3_ik, flux)           ! C4 (PFT 3), cold
       a_cold = flux%A_gross
@@ -185,13 +155,14 @@ program test_leaf_physiology
       call check(a_warm > a_cold, 'C4 PEP-limited gross assimilation must rise with temperature (kp now temp-scaled)')
    end block
 
-   !=== 6c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_boundary_layer is on   !
+   !=== 5c. Transpiration puts stomata gs and the boundary layer gb in SERIES when use_boundary_layer is on   !
    !     (gs alone would overestimate the water flux). ===========================================!
    block
       real(wp) :: e_series
       cfg%leaf_physiology%use_boundary_layer = .true.
       call derive_parameters(cfg)
-      env = std_env() ; env%gb = 0.6_wp                      ! finite water-vapour boundary conductance [mol/m2/s]
+      env = std_env()
+      env%gb = 0.6_wp                                        ! finite water-vapour boundary conductance [mol/m2/s]
       call leaf_solve(env, 1_ik, flux)
       e_series = flux%gs * env%gb / (flux%gs + env%gb) * env%vpd / env%pressure
       call check_close(flux%transpiration, e_series, 1.0e-9_wp, 'transpiration uses the gs-gb series conductance')
@@ -201,56 +172,85 @@ program test_leaf_physiology
       call derive_parameters(cfg)
    end block
 
-   !=== 7-. The fast limb is idle while the leaf holds turgor: psi_leaf above the turgor-loss   !
+   !=== 6-. The fast limb is idle while the leaf holds turgor: psi_leaf above the turgor-loss   !
    !     point is inert. ====================================================================!
    psi_tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
-   env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_solve(env, 1_ik, flux) ; an0 = flux%A_net
-   env%psi_leaf = 0.9_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux) ; an1 = flux%A_net
+   env = std_env()
+   env%psi_leaf =  0.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   an0 = flux%A_net
+   env%psi_leaf = 0.9_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
+   an1 = flux%A_net
    call check_close(an1, an0, 1.0e-12_wp, 'psi_leaf above the turgor-loss point is inert')
 
-   !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as the leaf wilts past its      !
+   !=== 6. Water stress (PFT 1, Medlyn): A_net falls monotonically as the leaf wilts past its      !
    !     turgor-loss point, to -Rd once the fast limb has shut the biochemistry. ===================!
-   env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_solve(env, 1_ik, flux) ; an0 = flux%A_net
-   env%psi_leaf = 1.5_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux) ; an1 = flux%A_net
-   env%psi_leaf = 2.5_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux) ; an2 = flux%A_net
+   env = std_env()
+   env%psi_leaf =  0.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   an0 = flux%A_net
+   env%psi_leaf = 1.5_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
+   an1 = flux%A_net
+   env%psi_leaf = 2.5_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
+   an2 = flux%A_net
    call check(an0 > an1 .and. an1 > an2, 'A_net must decrease as the leaf dries')
    call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta_nonstomata = 0)')
 
-   !=== 7a. The fast limb on a C4 leaf (PFT 3): it scales Vcmax, the light slope and kp, so a      !
+   !=== 6a. The fast limb on a C4 leaf (PFT 3): it scales Vcmax, the light slope and kp, so a      !
    !     light-limited leaf at beta_nonstomata = 0.5 keeps about half its gross rate. =============!
    block
       real(wp) :: psi_tlp_c4, ag_wet
       psi_tlp_c4 = pft_leaf_psi_tlp(cfg%pft, 3_ik)
-      env = std_env() ; env%par = 200.0_wp ; call leaf_solve(env, 3_ik, flux) ; ag_wet = flux%A_gross
-      env%psi_leaf = 1.5_wp * psi_tlp_c4 ; call leaf_solve(env, 3_ik, flux)
+      env = std_env()
+      env%par = 200.0_wp
+      call leaf_solve(env, 3_ik, flux)
+      ag_wet = flux%A_gross
+      env%psi_leaf = 1.5_wp * psi_tlp_c4
+      call leaf_solve(env, 3_ik, flux)
       call check_close(flux%beta_nonstomata, 0.5_wp, 1.0e-12_wp, 'C4 fast limb: 0.5 half way')
       call check(abs(flux%A_gross / ag_wet - 0.5_wp) < 0.05_wp,                                        &
                  'a light-limited C4 leaf at beta_nonstomata 0.5 keeps about half its gross rate')
    end block
 
-   !=== 7b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
+   !=== 6b. Katul under full water stress must CLOSE (g0 fallback), not return an open flux. =!
    cfg%leaf_physiology%stomatal_model = SM_KATUL
    call derive_parameters(cfg)
-   env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_solve(env, 1_ik, flux)  ; an0 = flux%A_net
-   env%psi_leaf = -5.0_wp ; call leaf_solve(env, 1_ik, flux2)
+   env = std_env()
+   env%psi_leaf =  0.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   an0 = flux%A_net
+   env%psi_leaf = -5.0_wp
+   call leaf_solve(env, 1_ik, flux2)
    call check(flux2%converged, 'Katul full-stress solve must converge via the g0 fallback')
    call check(flux2%A_net < an0, 'Katul full water stress must reduce assimilation')
    call check_close(flux2%gs, cfg%pft%stomatal_g0(1), 1.0e-2_wp, 'Katul full-stress leaf must close to ~g0')
 
-   !=== 7c. Every OPEN Katul solve must be diffusion-consistent: gs*(cs-ci)/1.6 == A_net across a  !
-   !     water-stress sweep. The g0-pinned re-solve keeps A/gs/Ci mutually consistent even when the  !
-   !     Katul optimum would otherwise fall below the cuticular floor g0. ==========================!
-   do i = 0_ik, 8_ik
-      env = std_env() ; env%psi_leaf = -0.5_wp * real(i, wp)                 ! 0 .. -4 MPa
+   !=== 6c. Under water stress the Katul optimum can fall below the cuticular floor g0; the solve   !
+   !     then finds Ci again with gs pinned at g0, so A, gs and Ci stay on the CO2 diffusion line   !
+   !     A_net = gs (Cs - Ci) / 1.6 (docs/science/leaf_gas_exchange.md eq. (1)). An open solve is on !
+   !     it by construction, its gs being back-computed from it; a pinned solve with the leaf still  !
+   !     assimilating is on it only through that second solve, to the Ci solve's tolerance. The    !
+   !     sweep, fine enough to reach the pinned case, must find every solve within 0.1 umol/mol of !
+   !     Ci of the line. ==============================================================================!
+   n_pinned = 0_ik
+   do i = 0_ik, 2000_ik
+      env = std_env()
+      env%psi_leaf = -0.002_wp * real(i, wp)                                ! 0 .. -4 MPa
       call leaf_solve(env, 1_ik, flux)
       call check(flux%converged, 'Katul stress sweep must converge')
-      if (flux%gs > cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp)) then      ! open stomata only
-         call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,          &
-                          'Katul open solve is diffusion-consistent (gs, cs, ci, A match)')
-      end if
+      if (flux%gs <= cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp) .and. flux%A_net > 0.0_wp)               &
+         n_pinned = n_pinned + 1_ik
+      call check(abs(flux%gs * (flux%cs - flux%ci) / 1.6_wp - flux%A_net) <= 0.1_wp * flux%gs / 1.6_wp,    &
+                 'Katul: every solve, open or pinned at g0, lies on the CO2 diffusion line')
    end do
-   !=== 7c2. Katul behind a thin boundary layer and at the dew point. With gb = 0.2 mol/m2/s the    !
-   !     bracket ends where Ci = Cs, so a lit leaf keeps an open, diffusion-consistent solve instead  !
+   print '(a,i0)', '   [Katul] solves pinned at g0 with the leaf assimilating: ', n_pinned
+   call check(n_pinned > 0_ik, 'the Katul stress sweep reaches the g0-pinned solve with the leaf assimilating')
+
+   !=== 6c2. Katul behind a thin boundary layer and at the dew point. With gb = 0.2 mol/m2/s the    !
+   !     bracket ends where Ci = Cs, so a lit leaf keeps an open solve instead                        !
    !     of the cuticular fallback; at VPD = 0 the conductance is the floored VPD's, as at 1 Pa. ======!
    block
       logical  :: bl_saved
@@ -258,15 +258,19 @@ program test_leaf_physiology
       bl_saved = cfg%leaf_physiology%use_boundary_layer
       cfg%leaf_physiology%use_boundary_layer = .true.
       call derive_parameters(cfg)
-      env = std_env() ; env%gb = 0.2_wp ; call leaf_solve(env, 1_ik, flux)
+      env = std_env()
+      env%gb = 0.2_wp
+      call leaf_solve(env, 1_ik, flux)
       call check(flux%converged .and. flux%gs > 2.0_wp * cfg%pft%stomatal_g0(1),                        &
                  'Katul behind a thin boundary layer keeps its stomata open')
-      call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,                  &
-                       'Katul behind a thin boundary layer is diffusion-consistent')
       cfg%leaf_physiology%use_boundary_layer = bl_saved
       call derive_parameters(cfg)
-      env = std_env() ; env%vpd = 0.0_wp ; call leaf_solve(env, 1_ik, flux) ; gs_dew = flux%gs
-      env%vpd = 1.0_wp ; call leaf_solve(env, 1_ik, flux)
+      env = std_env()
+      env%vpd = 0.0_wp
+      call leaf_solve(env, 1_ik, flux)
+      gs_dew = flux%gs
+      env%vpd = 1.0_wp
+      call leaf_solve(env, 1_ik, flux)
       call check(flux%A_net > 0.0_wp .and. gs_dew > 2.0_wp * cfg%pft%stomatal_g0(1),                    &
                  'Katul at the dew point keeps its stomata open')
       call check_close(gs_dew, flux%gs, 1.0e-12_wp, 'Katul gs is continuous at the dew point')
@@ -274,16 +278,23 @@ program test_leaf_physiology
    cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
-   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the fast limb  !
+   !=== 6d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the fast limb  !
    !     is idle, so a drop in the predawn potential must close stomata (gs falls) through g1. ===!
-   env = std_env() ; env%psi_leaf = 0.0_wp
-   env%psi =  0.0_wp ; call leaf_solve(env, 1_ik, flux)  ; an0 = flux%gs
-   env%psi = -1.0_wp ; call leaf_solve(env, 1_ik, flux)  ; an1 = flux%gs
-   env%psi = -3.0_wp ; call leaf_solve(env, 1_ik, flux2) ; an2 = flux2%gs
+   env = std_env()
+   env%psi_leaf = 0.0_wp
+   env%psi =  0.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   an0 = flux%gs
+   env%psi = -1.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   an1 = flux%gs
+   env%psi = -3.0_wp
+   call leaf_solve(env, 1_ik, flux2)
+   an2 = flux2%gs
    call check(flux2%converged, 'stomatal-limb (psi) solve must converge')
    call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
 
-   !=== 7e. The fast limb (beta_nonstomata) on the leaf's current potential: 1 down to the     !
+   !=== 6e. The fast limb (beta_nonstomata) on the leaf's current potential: 1 down to the     !
    !     turgor-loss point, falling linearly to 0 at twice it (the defaults; the PFT file may set  !
    !     wstress_psi_open/_close). Every stomatal model ties gs to A, so as the leaf wilts gs falls !
    !     continuously to the cuticular g0, and a wilted leaf nets -Rd by day. ======================!
@@ -291,18 +302,25 @@ program test_leaf_physiology
                     'fast limb starts at the turgor-loss point')
    call check_close(pft_wstress_psi_close(cfg%pft, 1_ik), 2.0_wp * psi_tlp, 1.0e-14_wp,                 &
                     'fast limb completes at twice the turgor-loss point')
-   env = std_env() ; env%psi_leaf = 0.9_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux)
+   env = std_env()
+   env%psi_leaf = 0.9_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_nonstomata, 1.0_wp, 0.0_wp, 'fast limb: 1 while the leaf holds turgor')
-   env%psi_leaf = 1.5_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux)
+   env%psi_leaf = 1.5_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_nonstomata, 0.5_wp, 1.0e-12_wp, 'fast limb: 0.5 half way')
-   env%psi_leaf = 2.0_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux)
+   env%psi_leaf = 2.0_wp * psi_tlp
+   call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_nonstomata, 0.0_wp, 0.0_wp, 'fast limb: 0 at twice the turgor-loss point')
    do j = 1_ik, size(sms)
       cfg%leaf_physiology%stomatal_model = sms(j)
       call derive_parameters(cfg)
       env = std_env()
-      env%psi_leaf = psi_tlp ; call leaf_solve(env, 1_ik, flux) ; gs_top = flux%gs
-      jump = 0.0_wp ; prev = huge(1.0_wp)
+      env%psi_leaf = psi_tlp
+      call leaf_solve(env, 1_ik, flux)
+      gs_top = flux%gs
+      jump = 0.0_wp
+      prev = huge(1.0_wp)
       do i = 0_ik, 280_ik
          env%psi_leaf = psi_tlp * (0.8_wp + 1.4_wp * real(i, wp) / 280.0_wp)
          call leaf_solve(env, 1_ik, flux)
@@ -313,14 +331,11 @@ program test_leaf_physiology
          if (i > 0_ik) call check(flux%gs <= prev * (1.0_wp + 1.0e-4_wp) + 1.0e-12_wp,            &
                                   'fast-limb sweep: gs never rises as the leaf dries')
          if (i > 0_ik) jump = max(jump, prev - flux%gs)
-         if (flux%gs > cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp)) then
-            call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,           &
-                             'fast-limb sweep: A, gs, Ci and Cs stay diffusion-consistent')
-         end if
          prev = flux%gs
       end do
       call check(jump < 0.05_wp * gs_top, 'fast-limb sweep: no step larger than 5% of gs at the turgor-loss point')
-      env%psi_leaf = 2.1_wp * psi_tlp ; call leaf_solve(env, 1_ik, flux)
+      env%psi_leaf = 2.1_wp * psi_tlp
+      call leaf_solve(env, 1_ik, flux)
       call check_close(flux%gs, cfg%pft%stomatal_g0(1), 1.0e-9_wp, 'wilted leaf by day: gs is the cuticular g0')
       call check_close(flux%A_gross, 0.0_wp, 1.0e-12_wp, 'wilted leaf by day: no photosynthesis')
       call check_close(flux%A_net, -flux%rd, 1.0e-12_wp, 'wilted leaf by day: the leaf respires')
@@ -328,30 +343,37 @@ program test_leaf_physiology
    cfg%leaf_physiology%stomatal_model = SM_MEDLYN
    call derive_parameters(cfg)
 
-   !=== 7f. The stomatal stress begins at an onset: half the turgor-loss point unless the PFT     !
+   !=== 6f. The stomatal stress begins at an onset: half the turgor-loss point unless the PFT     !
    !     file sets stomata_psi_onset. Above it beta_stomata is 1, so the gravity head a tall tree   !
    !     has in wet soil does not close its stomata; below it beta = exp(sref*(psi - onset)). =====!
    psi_tlp = pft_leaf_psi_tlp(cfg%pft, 1_ik)
    call check_close(pft_stomata_psi_onset(cfg%pft, 1_ik), 0.5_wp * psi_tlp, 1.0e-14_wp,                 &
                     'onset defaults to half the turgor-loss point')
-   env = std_env() ; env%psi_leaf = 0.0_wp
-   env%psi = 0.0_wp ; call leaf_solve(env, 1_ik, flux) ; gs_top = flux%gs
-   env%psi = 0.99_wp * pft_stomata_psi_onset(cfg%pft, 1_ik) ; call leaf_solve(env, 1_ik, flux)
+   env = std_env()
+   env%psi_leaf = 0.0_wp
+   env%psi = 0.0_wp
+   call leaf_solve(env, 1_ik, flux)
+   gs_top = flux%gs
+   env%psi = 0.99_wp * pft_stomata_psi_onset(cfg%pft, 1_ik)
+   call leaf_solve(env, 1_ik, flux)
    call check(flux%beta_stomata == 1.0_wp .and. flux%gs == gs_top, 'onset: no stress just above it')
-   env%psi = pft_stomata_psi_onset(cfg%pft, 1_ik) - 0.5_wp ; call leaf_solve(env, 1_ik, flux)
+   env%psi = pft_stomata_psi_onset(cfg%pft, 1_ik) - 0.5_wp
+   call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_stomata, exp(-0.5_wp * cfg%pft%wstress_sref_stomata(1)), 1.0e-14_wp,     &
                     'onset: beta = exp(sref*(psi - onset)) below it')
    cfg%pft%stomata_psi_onset(1) = -0.3_wp
    call derive_parameters(cfg)
    call check_close(pft_stomata_psi_onset(cfg%pft, 1_ik), -0.3_wp, 0.0_wp, 'onset: a set value is used')
-   env%psi = -0.5_wp ; call leaf_solve(env, 1_ik, flux)
+   env%psi = -0.5_wp
+   call leaf_solve(env, 1_ik, flux)
    call check_close(flux%beta_stomata, exp(-0.2_wp * cfg%pft%wstress_sref_stomata(1)), 1.0e-14_wp,     &
                     'onset: a set value moves the threshold')
    cfg%pft%stomata_psi_onset(1) = HYD_UNSET
    call derive_parameters(cfg)
 
-   !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
-   env = std_env() ; env%par = 0.0_wp
+   !=== 7. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
+   env = std_env()
+   env%par = 0.0_wp
    call leaf_solve(env, 1_ik, flux)
    call check(flux%limitation == LIM_NONE, 'PAR=0 must hit the closed/night branch')
    call check_close(flux%A_net, -flux%rd, 1.0e-6_wp, 'night A_net must equal -Rd')
@@ -366,7 +388,7 @@ program test_leaf_physiology
       prev = flux%A_net
    end do
 
-   !=== 9. O2 propagates to BOTH places oxygen enters the C3 demand. =======================!
+   !=== 8. O2 propagates to BOTH places oxygen enters the C3 demand. =======================!
    !      Gamma* = 0.5*O/S_(c/o) is proportional to the O2 partial pressure
    !      (docs/science/leaf_gas_exchange.md eq. (3)). If o2_mol_frac reached only the Michaelis
    !      term Kc(1+O/Ko), raising O2 would inhibit carboxylation while leaving the
@@ -374,13 +396,16 @@ program test_leaf_physiology
    env = std_env()
    cfg%leaf_physiology%o2_mol_frac = 0.209_wp
    call derive_parameters(cfg)
-   call leaf_solve(env, 1_ik, flux)  ; an0 = flux%A_net       ! the calibration point
+   call leaf_solve(env, 1_ik, flux)
+   an0 = flux%A_net                                           ! the calibration point
    cfg%leaf_physiology%o2_mol_frac = 0.105_wp
    call derive_parameters(cfg)
-   call leaf_solve(env, 1_ik, flux)  ; an1 = flux%A_net       ! half O2
+   call leaf_solve(env, 1_ik, flux)
+   an1 = flux%A_net                                           ! half O2
    cfg%leaf_physiology%o2_mol_frac = 0.350_wp
    call derive_parameters(cfg)
-   call leaf_solve(env, 1_ik, flux2) ; an2 = flux2%A_net      ! paleo-high O2
+   call leaf_solve(env, 1_ik, flux2)
+   an2 = flux2%A_net                                          ! paleo-high O2
    call check(flux%converged .and. flux2%converged, 'the O2 sweep must converge')
    !----- Less O2 => less photorespiration => MORE assimilation, and vice versa. Monotone in O2. -!
    call check(an1 > an0, 'halving O2 must RAISE A_net (less photorespiration)')
@@ -401,7 +426,7 @@ program test_leaf_physiology
    cfg%leaf_physiology%o2_mol_frac = 0.209_wp                 ! back to the shipped default
    call derive_parameters(cfg)
 
-   !=== 10. Gamma* as a mole fraction does not depend on pressure (docs/science/leaf_gas_exchange.md!
+   !=== 9. Gamma* as a mole fraction does not depend on pressure (docs/science/leaf_gas_exchange.md!
    !       eq. (3)): it is proportional to the O2 partial pressure, which scales with pressure as   !
    !       the CO2 partial pressure does. At 25 C and 21 % O2 it is Bernacchi et al. (2001)'s       !
    !       42.75 umol/mol at sea level and at 3000 m (70 kPa) alike. Kc and Ko are partial          !
@@ -427,26 +452,17 @@ program test_leaf_physiology
 
 contains
 
-   !----- Locate the peak of the peaked-Arrhenius response by a coarse scan, so the optimum is   !
-   !      MEASURED from the function rather than re-derived from a formula the test would then    !
-   !      be checking against itself. ------------------------------------------------------------!
-   pure real(wp) function peak_temperature(ds) result(t_opt)
-      real(wp), intent(in) :: ds
-      real(wp)    :: t, k, k_best
-      integer(ik) :: j
-      k_best = -1.0_wp ; t_opt = 0.0_wp
-      do j = 0_ik, 600_ik
-         t = t_kelvin + 5.0_wp + 0.05_wp * real(j, wp)
-         k = peaked_arrhenius_scale(60.0_wp, 65330.0_wp, 200000.0_wp, ds, t)
-         if (k > k_best) then ; k_best = k ; t_opt = t ; end if
-      end do
-   end function peak_temperature
-
    !----- A representative midday tropical leaf environment. ------------------------------!
    function std_env() result(e)
       type(leaf_env_t) :: e
-      e%par = 1500.0_wp ; e%leaf_temp = t_kelvin + 25.0_wp ; e%vpd = 1500.0_wp
-      e%ca = 400.0_wp ; e%pressure = 101325.0_wp ; e%psi_leaf = 0.0_wp ; e%gb = 0.0_wp ; e%psi = 0.0_wp
+      e%par = 1500.0_wp
+      e%leaf_temp = t_kelvin + 25.0_wp
+      e%vpd = 1500.0_wp
+      e%ca = 400.0_wp
+      e%pressure = 101325.0_wp
+      e%psi_leaf = 0.0_wp
+      e%gb = 0.0_wp
+      e%psi = 0.0_wp
    end function std_env
 
    !----- One leaf's gas exchange for PFT ipft, as the fast loop solves it: the configuration's  !
@@ -461,11 +477,4 @@ contains
       end associate
    end subroutine leaf_solve
 
-   !----- build_test_config lives in meds_test_support; wrap it for clarity. --------------!
-   function build_test_config_local() result(c)
-      use meds_test_support, only : build_test_config
-      type(meds_config_t) :: c
-      c = build_test_config()
-   end function build_test_config_local
-
-end program test_leaf_physiology
+end program test_leaf_gas_exchange

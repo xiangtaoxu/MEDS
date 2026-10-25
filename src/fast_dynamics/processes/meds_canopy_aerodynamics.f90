@@ -60,7 +60,7 @@ module meds_canopy_aerodynamics
    public :: canopy_burial_fraction          !< the share of a patch's canopy height a snow pack buries
    public :: aero_env_t, aero_args_t, aero_out_t, ensure_aero_out_capacity
    public :: set_aero_env_atm, set_aero_env_canopy
-   public :: reduced_wind, boundary_layer_conductance, alloc_aero_out  ! used only by the tests
+   public :: alloc_aero_out                  ! used only by the tests
 
    !----- One patch's reference-level forcing and its canopy-air and ground state. ----------------!
    type :: aero_env_t
