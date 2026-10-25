@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# The site config test_region derives its region and site configs from: one deciduous PFT at
-# Ithaca NY, fast biophysics on. The test prepends an override block (the synthetic ED_ERA5land
-# archive and its soil maps, a bare-ground start, a 12-day window) and drops the keys the archive,
-# the soil maps or region mode reject, so only the keys below that it leaves alone matter.
+# The config test_region derives its region and site configs from: one deciduous PFT, fast
+# biophysics on. The test gives every run the rest (test/test_region.f90, common_block, region_block
+# and site_block): the window, a bare-ground start, the synthetic ED_ERA5land archive and its soil
+# maps, the location, the output's place and names; and each case adds its own keys. derive_config
+# writes each key once, so a key set here and by the test is the test's.
 # CMakeLists.txt runs the test in this folder.
 [run]
 dt_slow    = "1d"
-start_time = "2074-07-01"
-end_time   = "2074-08-01"
 
 [fast]
 fast_biophysics_on  = true
@@ -44,18 +43,10 @@ disturbance_survive_height = 10.0
 min_recruit_size          = 1.0e-2
 
 [init]
-init_mode    = 2
-restart_file = "spinup-S-20740701000000.nc"
 pft_config   = "pft_parameters.toml"
 
 [output]
-state_write       = false
-state_interval    = "1 years"
-state_file_dir    = "."
-state_file_prefix = "july"
 enabled       = true
-dir           = "out"
-prefix        = "july"
 io_config     = "output_variables.toml"
 cohort_max    = 4096
 patch_max     = 256
@@ -67,9 +58,6 @@ file_chunk = "day"
 [output.daily]
 enabled    = true
 file_chunk = "month"
-[output.monthly]
-enabled    = false
-file_chunk = "year"
 [output.annual]
 enabled    = false
 file_chunk = "run"
@@ -99,12 +87,8 @@ leaf_absorptance = 0.85
 phi_psii         = 0.85
 
 [site]
-latitude              = 42.44
-longitude             = -76.50
-elevation             = 320.0
 apply_elevation_lapse = true
 lapse_rate_tair       = 0.0065
-grid_elevation        = 367.5
 
 [forcing]
 forcing_on     = true
@@ -114,18 +98,11 @@ height_above         = "zero_plane"
 wind_exposure        = "open_terrain"
 wind_exposure_z0     = 0.03
 wind_blending_height = 40.0
-format         = "default"
-path           = "../../data/forcing/ithaca_forcing.nc"
-grid_index     = 1
-grid_match     = "explicit"
 timestep       = "3600s"
 avg_convention = "end"
 sw_partition   = "clearidx"
 lwdown_source  = "file"
 co2_const      = 420.0
-recycle        = true
-recycle_start  = "2024-01-01 01:00:00"
-recycle_end    = "2025-01-01 01:00:00"
 start_clamp    = "hold"
 
 [soil_carbon]
@@ -133,4 +110,3 @@ soil_carbon_on = true
 
 [soil]
 thermal_bottom_bc = "dirichlet"
-deep_temp = 284.75

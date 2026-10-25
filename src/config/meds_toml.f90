@@ -5,7 +5,8 @@
 ! `[a, b, c]` arrays, each key stored as `section.key`. toml-f is not used: its compiled   !
 ! .mod is compiler-specific, as netCDF-Fortran's is (docs/building.md). A getter returns   !
 ! its default only for an absent key; a present value it cannot parse stops the run, so a  !
-! typo in a required value cannot pass as zero.                                            !
+! typo in a required value cannot pass as zero; and a key set twice stops the parse, so a  !
+! second value cannot be ignored in silence.                                               !
 !==========================================================================================!
 module meds_toml
    use meds_kinds, only : wp, ik
@@ -110,6 +111,13 @@ contains
             t%key(t%n) = trim(adjustl(line(1:ieq-1)))
          end if
          t%val(t%n) = adjustl(line(ieq+1:))
+         !----- TOML forbids setting a key twice, and a getter would read only the first value, so a !
+         !      second one would be ignored in silence. A [[name]] table's keys carry its index, so  !
+         !      two tables may each set a key. ------------------------------------------------------!
+         if (find_key(t, t%key(t%n)) < t%n) then
+            write(*,'(4a)') ' meds_toml: key "', trim(t%key(t%n)), '" is set twice in ', trim(path)
+            error stop 'meds_toml: a key set twice'
+         end if
       end do
       close(unit)
    end subroutine toml_parse_file

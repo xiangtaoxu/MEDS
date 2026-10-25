@@ -5,8 +5,10 @@
 # report in the log shows that region_finalize ran, and region_finalize is what closes the output
 # files after a failure (test_region reads them).
 #
-# The run is the reference config under a prepended override block (meds_toml returns the first
-# match of a key), and it runs in WORK_DIR, never in the source tree.
+# The run is the reference config under an override block, each key the block sets dropped from
+# the reference first: meds_toml refuses a key set twice. The reference sets each of those keys in
+# one block, at the start of a line (the tier blocks' `enabled` lines are indented); a key it sets
+# in more than one stops the test here. The run is in WORK_DIR, never in the source tree.
 #
 # Usage: cmake -DMEDS_MAIN=<meds_main> -DSOURCE_DIR=<repo> -DWORK_DIR=<scratch dir>
 #              -P check_main_failure.cmake
@@ -28,6 +30,16 @@ enabled = true
 dir     = \"${WORK_DIR}/out\"
 ")
 file(READ "${SOURCE_DIR}/meds_config_main.toml" text)
+string(REGEX MATCHALL "\n[a-z_]+ *=" override_keys "\n${overrides}")
+foreach(match IN LISTS override_keys)
+   string(REGEX REPLACE "^\n([a-z_]+) *=$" "\\1" key "${match}")
+   string(REGEX MATCHALL "\n${key} *=" in_reference "${text}")
+   list(LENGTH in_reference n)
+   if(n GREATER 1)
+      message(FATAL_ERROR "the reference configuration sets ${key} in more than one block: the test cannot build its run")
+   endif()
+   string(REGEX REPLACE "\n${key} *=[^\n]*" "" text "${text}")
+endforeach()
 file(WRITE "${WORK_DIR}/main.toml" "${overrides}${text}")
 execute_process(COMMAND "${MEDS_MAIN}" "${WORK_DIR}/main.toml" WORKING_DIRECTORY "${WORK_DIR}"
                 OUTPUT_VARIABLE out ERROR_VARIABLE err RESULT_VARIABLE rc)

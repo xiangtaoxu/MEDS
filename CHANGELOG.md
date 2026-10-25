@@ -836,6 +836,10 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The driver tests** (#537). `test_several_sites` and `test_site_definitions` are `test_sites`. `test_region`
+  keeps its 8 region rules, and its other refusals move to the tests of what they check: 13
+  `check_main_refuses` cases, `test_maps`, `test_sites`, `test_state_file`, `test_init`. Three duplicates go.
+  The tests' config writers share one support module, and each sets a key once.
 - **`test_fast_loop` is `test_fast_driver`, and every block runs on forcing** (#536). Five blocks ran on the
   reference climate of a run without forcing. They now run on the test's diurnal forcing file, with all
   56 checks kept, and the header lists every section.
@@ -1911,6 +1915,8 @@ matrix's vector (#529).
 
 ### Fixed
 
+- **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
+  now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
 - **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`
   §2 and `ed2_comparison.md`. The 35.0 °C was where a test's temperature scan ended.
 - **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
