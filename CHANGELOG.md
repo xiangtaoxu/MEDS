@@ -1935,6 +1935,14 @@ matrix's vector (#529).
 
 ### Fixed
 
+- **The production build refused every PFT file with more than one PFT.** It stopped at the
+  configuration check with `hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)`,
+  so examples 03, 05 and 06 could not run on it. The PFTs' values were read correctly; the check read
+  them wrongly. It tested each pressure-volume curve key as an array expression over
+  `hydro(1:n)%leaf_curve%<key>`, and ifx 2026.1's AVX-512 code (`MEDS_CPU_TARGET=cascadelake`, with or
+  without IPO) took that array's elements from the wrong offsets: PFT 2's elastic modulus and PFT 3's
+  pi0 as their apoplastic fractions. `check_hydraulics` now checks the curves one PFT at a time. The
+  dev and debug builds, and every result, are unchanged.
 - **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
   now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
 - **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`
