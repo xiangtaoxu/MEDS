@@ -13,7 +13,7 @@
 !   4. a run of another growth-window length seeds each cohort's rings full of its growth_avg; !
 !   5. the reader refuses a file it cannot start from, and says why; and a run whose polygons  !
 !      the file does not each hold a row for is refused (restart_file_slots, as region_open    !
-!      matches them): a site run (polygon 0) a region's file, a region a site's file.           !
+!      matches them): a site run (polygon 0) a region's file, a region a site's file.          !
 ! A store a restart drops comes back at its default: stomata reopened mid-drought, phenology  !
 ! reborn at flush 1 and shed 0, soil bone dry at 0 K. Section 1 catches it for every variable !
 ! the file holds, and section 2 makes sure a new variable is stamped here before it counts.   !

@@ -6,7 +6,7 @@
 ! On the synthetic ED_ERA5land archive, a region over a box that crosses 180 degrees,      !
 ! holds a no-data cell and a mostly-water column, runs its three polygons for twelve days  !
 ! across a month boundary.                                                                 !
-!   1. Its polygons are the box's cells with land and data, each on its own cell's soil     !
+!   1. Its polygons are the box's cells with land and data, each on its own cell's soil    !
 !      from the [maps] files (docs/configuration.md §Input maps): depth, layers, bottom    !
 !      boundary (a leaky base drains at its cell's f_leak) and deep temperature.           !
 !   2. Each polygon is run again as a site at its cell (centre, orography, UTC), one slow  !

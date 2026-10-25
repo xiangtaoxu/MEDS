@@ -1,38 +1,38 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_sites -- a polygon of several sites (docs/configuration.md, Several sites).          !
+! test_sites -- a polygon of several sites (docs/configuration.md, Several sites).         !
 !                                                                                          !
-! 1. THE SITES FROM [[sites]] (meds_config_io: load_sites; meds_region: region_open): two   !
-!    sites, 0.25 of the polygon on its own 0.6 m soil and terrain, 0.75 on [soil]. The      !
+! 1. THE SITES FROM [[sites]] (meds_config_io: load_sites; meds_region: region_open): two  !
+!    sites, 0.25 of the polygon on its own 0.6 m soil and terrain, 0.75 on [soil]. The     !
 !    config holds them, the polygon is built with them, and they run three days.           !
-! 2. THE SITE AXIS IN THE FILES (meds_output_setup: attach_output): the daily file holds    !
+! 2. THE SITE AXIS IN THE FILES (meds_output_setup: attach_output): the daily file holds   !
 !    the two sites, each one's share, and the shallow site's soil coordinate filled below  !
 !    its bottom layer.                                                                     !
-! 3. A CENSUS BY census_site_id (meds_init_census: init_from_census): each site is built    !
+! 3. A CENSUS BY census_site_id (meds_init_census: init_from_census): each site is built   !
 !    from its own rows.                                                                    !
-! 4. THE STANDS EVOLVE AS ONE-SITE POLYGONS (meds_stepper: advance_one_step). Two identical !
-!    sites of areas 0.3 and 0.7 each evolve as a polygon of one site does, over 31 days of  !
-!    fast and slow steps on a short calendar -- a month boundary every 15 days and a year   !
-!    boundary at day 30, which day 31's step performs, with a disturbance and patch fusion: !
-!    every site's stand is the one-site stand, and the polygon totals are the one site's to !
-!    round-off. Two sites on different soils each evolve as a one-site polygon on its own  !
-!    soil, and their soil columns differ.                                                  !
-! 5. THREADS (meds_stepper: advance_one_step's patch loop): the same polygon on one thread  !
+! 4. THE STANDS EVOLVE AS ONE-SITE POLYGONS (meds_stepper: advance_one_step). Two          !
+!    identical sites of areas 0.3 and 0.7 each evolve as a polygon of one site does, over  !
+!    31 days of fast and slow steps on a short calendar -- a month boundary every 15 days  !
+!    and a year boundary at day 30, which day 31's step performs, with a disturbance and   !
+!    patch fusion: every site's stand is the one-site stand, and the polygon totals are    !
+!    the one site's to round-off. Two sites on different soils each evolve as a one-site   !
+!    polygon on its own soil, and their soil columns differ.                               !
+! 5. THREADS (meds_stepper: advance_one_step's patch loop): the same polygon on one thread !
 !    and on four.                                                                          !
-! 6. RESTART (meds_init_restart): the run of 1 restarts from its state file with the        !
-!    config's sites (region_open), and the two-soil stand of 4 comes back from a state file  !
-!    (read_restart_file) with each patch's site and each site's patches, plant carbon and   !
-!    soil water.                                                                           !
-! 7. WHAT meds_main REFUSES (meds_config_check: check_sites, check_key_use): shares that do  !
-!    not sum to 1, a table without area_fraction, a key no table takes, a census run       !
-!    without census_site_id, [[sites]] in a region, and a site's soil keys beside the soil  !
+! 6. RESTART (meds_init_restart): the run of 1 restarts from its state file with the       !
+!    config's sites (region_open), and the two-soil stand of 4 comes back from a state     !
+!    file (read_restart_file) with each patch's site and each site's patches, plant carbon !
+!    and soil water.                                                                       !
+! 7. WHAT meds_main REFUSES (meds_config_check: check_sites, check_key_use): shares that   !
+!    do not sum to 1, a table without area_fraction, a key no table takes, a census run    !
+!    without census_site_id, [[sites]] in a region, and a site's soil keys beside the soil !
 !    maps.                                                                                 !
 !                                                                                          !
-! The configs of 1-3, 6 and 7 are derived from example 04's meds_config_eval.toml (the test !
-! runs from its directory) by derive_config: a case's own keys, then a run block that cuts  !
-! the run to a few days without the fast loop or forcing, then the template, each key       !
-! written once, at its first value. Everything the test writes goes under the work          !
-! directory, the first argument; meds_main is the second.                                   !
+! The configs of 1-3, 6 and 7 are derived from example 04's meds_config_eval.toml (the     !
+! test runs from its directory) by derive_config: a case's own keys, then a run block that !
+! cuts the run to a few days without the fast loop or forcing, then the template, each key !
+! written once, at its first value. Everything the test writes goes under the work         !
+! directory, the first argument; meds_main is the second.                                  !
 !==========================================================================================!
 program test_sites
    use iso_c_binding,           only : c_int, c_size_t, c_double
