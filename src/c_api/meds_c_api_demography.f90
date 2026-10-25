@@ -33,6 +33,7 @@ module meds_c_api_demography
    use meds_init_census, only : init_from_census, restructure_census_stand
    use meds_slow_dynamics, only : vegetation_dynamics, restructure_stand
    use meds_slow_ledger,   only : slow_ledger_t
+   use meds_slow_state,    only : clear_litter
    use meds_slow_update, only : accumulate_recruit_pool, update_cohort_states, fill_cohort_deriv,        &
                                 age_patches, update_overtopping_lai, sort_cohorts
    use meds_output_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
@@ -135,7 +136,8 @@ contains
       type(slow_ledger_t) :: no_ledger   !< inactive: this path books no ledger
       !----- The litter this step accumulates lands in poly%patch%litter_in and is left there: no
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
-      !      wired here either.
+      !      wired here either. The accumulator starts each step empty.
+      call clear_litter(g_poly(sh))
       call vegetation_dynamics(g_poly(sh), g_cfg(ch), no_ledger)
       call age_patches(g_poly(sh)%patch, g_cfg(ch)%dt_years)
       call restructure_stand(g_poly(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int, no_ledger)
@@ -174,6 +176,7 @@ contains
             end do
          end do
 
+         call clear_litter(poly)   ! the accumulator starts each step empty, as on the carbon path
          n_window = growth_window_steps(cfg)
          poly%growth_hist_pos = mod(poly%growth_hist_pos, n_window) + 1_ik
          !----- Empirical growth + mortality via the TENDENCY seam: per cohort, forward-derive the   !

@@ -142,7 +142,9 @@ are `RUN_*`, a run lists its calendar steps once, its output tick is the output 
 site run chooses its cell and reads its maps the way a region does, with no change to any result
 (#526). The stepper is one polygon's whole slow step in the order of processes and takes the
 polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
-no change to any result (#531).
+no change to any result (#531). The cull's and the treefall's dead carbon reach the soil through the
+litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
+and patch termination merges and re-sorts as patch fusion does (#523).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -793,6 +795,12 @@ no change to any result (#531).
   `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
   `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
   and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
+- **Fortran: the cull and the treefall report their dead** (#523). `terminate_cohorts` and
+  `apply_patch_disturbance` take a required `kill_report_t` (`meds_slow_state`), and
+  `kill_litter(poly, kills, carbon)` turns it into patch litter; `clear_litter` empties the
+  accumulator after the soil step, which no longer happens at the start of the allocation.
+  `KGC_PER_UMOL_C` is gone: use `meds_constants`' `umol_2_kgc`. `check_kernel_state.py` takes the
+  source tree and stops on any other directory.
 - **Fortran: the run's status codes, its steps and its start** (#526). `DRIVER_*` are `RUN_*` (the
   same values: the C API and `meds.model` are unchanged) and the CMake target `meds_driver` is
   `meds_run`. `polygon_step` takes a `calendar_step_t` (`meds_time`, built by `calendar_step`),
@@ -1790,6 +1798,17 @@ no change to any result (#531).
 
 ### Fixed
 
+- **The slow ledger missed the carbon of culled and treefall-killed plants with soil carbon off**
+  (#523). The cull and the treefall added their dead carbon straight to the soil pools, and only
+  with soil carbon on, so with it off the carbon left undeclared and the ledger warned (−0.143
+  kgC/m² on a census case). Their carbon now goes into the patch litter, as background mortality's
+  does, and is declared where they run; the next soil step takes it up. With soil carbon on, a
+  boundary's dead carbon reaches the pools one step later; the litter outputs now include it.
+- **The canopy air got 1.00089 times the carbon of the slow loop's CO2** (#523). The slow loop
+  converted with 1.2e-8 kgC/µmol, the fast loop with 1.20107e-8; both now use the latter, and annual
+  NEE moves by 0.03–0.09 %.
+- **The cohort fusion after a patch termination scanned the merged cohorts out of height order**
+  (#523). Termination now re-sorts them tallest first, as patch fusion does.
 - **`meds_main` left its output files open when a step failed** (#521). It stopped with `error stop`
   before `region_finalize`, so the files the run had open were never closed: the sub-daily tier is
   never synced, and no tier is under `[output].sync_every = "never"`, so the failed month's records

@@ -91,9 +91,11 @@ would hide it. The declared terms:
 - **The CO₂ owed to the canopy air** (grow+mortality, out): the growth respiration and storage upkeep,
   less the starvation deficit (plant_respiration.md §6). It leaves the plants in this window and
   reaches the canopy air in the next fast window.
-- **The litter** (grow+mortality, out; soil carbon, in). Declared at both ends, the seam between the
-  live and the dead pools is **tested**, not assumed. With soil carbon off, the litter leaves the model
-  as a declared outflow and nothing arrives.
+- **The litter** (grow+mortality, cohort fuse/fiss, disturbance and patch fuse/term, out; soil carbon,
+  in). Declared at both ends, the seam between the live and the dead pools is **tested**, not assumed.
+  The cull and the treefall report the carbon they kill, which is declared where they run and arrives
+  with the next soil step; grow+mortality declares only the litter its own step adds. With soil carbon
+  off, the litter leaves the model as a declared outflow and nothing arrives.
 - **The heterotrophic respiration** (soil carbon, out). The fast loop has already credited it to the
   canopy air, against the frozen pool. The daily step debits it, and the ledger declares the step's
   own debit, so what is left in the residual is exactly the seam gap the soil-carbon contract asserts

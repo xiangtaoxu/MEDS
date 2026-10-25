@@ -51,7 +51,7 @@ program test_patch
    poly%patch%area(4) = 1.0e-6_wp                  ! and another
    call add_cohort(poly, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
    call add_cohort(poly, cfg, 3_ik, 1_ik, 0.4_wp,  8.0_wp)
-   call add_cohort(poly, cfg, 4_ik, 1_ik, 0.3_wp,  7.0_wp)
+   call add_cohort(poly, cfg, 4_ik, 1_ik, 0.3_wp, 15.0_wp)   ! taller than the survivor's own cohort
    call finalize_init(poly)
    !----- Give the doomed patch content UNLIKE its neighbours', which is the realistic case (a    !
    !      sliver is usually a fresh gap). Dropping it and renormalizing the survivors would       !
@@ -72,6 +72,8 @@ program test_patch
                     'terminate_patches must MERGE the sliver, not discard its content')
    call check_close(total_nplant(poly), n0, 1.0e-12_wp,                                            &
                     'terminate_patches must carry the slivers'' plants into the survivor')
+   call check(tallest_first(poly), 'terminate_patches leaves each patch''s cohorts tallest first, '  &
+              // 'the order the cohort fusion after it scans in')
 
    !=== Fast-biophysics reservoirs ride the patch lockstep. ================================!
    !    (a) area-weighted MERGE on fusion conserves the area-extensive store; (b) SORT keeps  !
@@ -139,6 +141,18 @@ program test_patch
    write(*,'(a)') '   PASS'
 
 contains
+
+   !----- Each patch's cohorts in height order, tallest first. -------------------------------!
+   logical function tallest_first(p)
+      type(polygon_t), intent(in) :: p
+      integer(ik) :: q, i
+      tallest_first = .true.
+      do q = 1_ik, p%patch%n
+         do i = p%patch%cohort_offset(q), p%patch%cohort_offset(q) + p%patch%cohort_count(q) - 2_ik
+            if (p%cohort%height(i) < p%cohort%height(i + 1_ik)) tallest_first = .false.
+         end do
+      end do
+   end function tallest_first
 
    !----- Two equal-area patches: a closed stand of 30 cm trees, and 5 cm saplings alone. ------!
    subroutine two_unlike_patches()

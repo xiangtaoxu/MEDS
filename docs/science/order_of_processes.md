@@ -175,7 +175,9 @@ Then, in `advance_slow_dynamics`:
 8. **The canopy-air depth refresh**: each patch's canopy-air volume is resized to its tallest cohort,
    with the entrained or detrained air booked as an exchange.
 9. **Soil biogeochemistry** (`soil_carbon_on`): the daily CENTURY step, which consumes the litter
-   accumulator and the fast loop's environmental integral ([soil_carbon](soil_carbon.md)).
+   accumulator (the step's litter and the last boundary's kills) and the fast loop's environmental
+   integral ([soil_carbon](soil_carbon.md)). The accumulator is then emptied, with soil carbon off
+   too.
 
 The slow ledger marks each phase, so a conservation residual is attributed to the operator that made
 it.

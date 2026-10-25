@@ -27,6 +27,7 @@ module meds_slow_dynamics
                                        SLOW_PHASE_COHORT, SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH,          &
                                        slow_co2_handoff, litter_carbon_total
    use meds_slow_state,         only : slow_step_data_t, decide_recruitment, decide_disturbance,         &
+                                       kill_report_t, kill_litter, clear_litter,                         &
                                        advance_leaf_phenology, advance_plant_traits,                     &
                                        compute_carbon_allocation, shed_turnover_water,                   &
                                        compute_vital_rates, fill_new_leaf_water,                         &
@@ -82,6 +83,7 @@ contains
          call commit_soil_carbon(poly%patch, soil_pools)
       end if
       call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_SOILC)
+      call clear_litter(poly)
    end subroutine advance_slow_dynamics
 
    !---------------------------------------------------------------------------------------!
@@ -95,13 +97,17 @@ contains
       type(slow_ledger_t), intent(inout) :: ledger   !< the slow ledger; an inactive one books nothing
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
       type(slow_step_data_t) :: step
-      real(wp)               :: mort_water, seed_rain_carbon, handover
+      real(wp)               :: mort_water, seed_rain_carbon, handover, litter_open
       real(wp), allocatable  :: leaf_carbon_new(:), storage_new(:)
 
       !----- 0. Leaf phenology: advance the leaf tendencies one daily step, before the allocation     !
       !         reads them (docs/science/plant_phenology.md). A caller with no calendar (the C-API's   !
       !         carbon mode) omits doy, and the tendencies are not advanced. -----------------------!
       if (present(doy)) call advance_leaf_phenology(poly, cfg, doy)
+
+      !----- The litter the step opens with, the last boundary's kills, was declared there. ---!
+      litter_open = 0.0_wp
+      if (ledger%active) litter_open = litter_carbon_total(poly, poly%patch%litter_in)
 
       !----- 0b. Light trait plasticity (opt-in): acclimate the leaf traits toward their shaded      !
       !          targets from last step's overtopping LAI, before the allocation reads them. The     !
@@ -160,6 +166,7 @@ contains
       if (ledger%active) then
          call slow_ledger_declare(ledger, carbon_in  = handover,                                    &
                                           carbon_out = litter_carbon_total(poly, poly%patch%litter_in)  &
+                                                     - litter_open                                    &
                                                      + slow_co2_handoff(poly, cfg),                &
                                           water_out  = mort_water)
       end if
@@ -204,9 +211,10 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year   !< which boundary this is
       type(slow_ledger_t), intent(inout) :: ledger   !< the slow ledger; an inactive one books nothing
-      real(wp) :: cull_water, rec_carbon, rec_heat, rec_water, dist_water, frac
+      real(wp) :: cull_water, rec_carbon, rec_heat, rec_water, dist_water, frac, kill_carbon
       logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       logical, allocatable :: found(:,:), survives(:)
+      type(kill_report_t)  :: kills
 
       !----- The calendar cadence, and the demography and fusion/fission switches. ----------!
       do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
@@ -224,10 +232,11 @@ contains
          call slow_ledger_heat_open(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_RECRUIT)
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, cull_water)
+         call terminate_cohorts(poly, cfg, cull_water, kills)
+         call kill_litter(poly, kills, kill_carbon)
          call split_cohorts(poly, cfg)
          call sort_cohorts(poly)
-         call slow_ledger_declare(ledger, water_out = cull_water)
+         call slow_ledger_declare(ledger, carbon_out = kill_carbon, water_out = cull_water)
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_COHORT)
       end if
@@ -236,8 +245,9 @@ contains
       if (do_patch_disturbance) then
          call decide_disturbance(poly, cfg, PATCH_DYNAMICS_INTERVAL, frac, survives)
          call slow_ledger_heat_open(ledger, poly)
-         call apply_patch_disturbance(poly, cfg, frac, survives, dist_water)
-         call slow_ledger_declare(ledger, water_out = dist_water)
+         call apply_patch_disturbance(poly, cfg, frac, survives, dist_water, kills)
+         call kill_litter(poly, kills, kill_carbon)
+         call slow_ledger_declare(ledger, carbon_out = kill_carbon, water_out = dist_water)
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_DISTURB)
       end if
@@ -247,9 +257,10 @@ contains
          call fuse_patches(poly, cfg)
          call terminate_patches(poly, cfg)
          call fuse_cohorts(poly, cfg)
-         call terminate_cohorts(poly, cfg, cull_water)
+         call terminate_cohorts(poly, cfg, cull_water, kills)
+         call kill_litter(poly, kills, kill_carbon)
          call sort_cohorts(poly)
-         call slow_ledger_declare(ledger, water_out = cull_water)
+         call slow_ledger_declare(ledger, carbon_out = kill_carbon, water_out = cull_water)
          call slow_ledger_heat_close(ledger, poly)
          call slow_ledger_mark(ledger, poly, cfg, SLOW_PHASE_PATCH)
       end if

@@ -47,7 +47,7 @@ program test_slow_diag_units
    use meds_soil_hydr_lib,       only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_dynamics
    use meds_init,                only : init_fast_state
-   use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics
+   use meds_slow_dynamics, only : advance_slow_dynamics, advance_boundary_dynamics, vegetation_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
    use meds_slow_ledger,  only : slow_ledger_t
@@ -97,8 +97,10 @@ program test_slow_diag_units
    elapsed_yr = poly%patch%diag%w(1) / yr_sec
 
    !=== 2. LITTER: reported rate x elapsed == the amount biogeochemistry consumed. ===============!
+   !    The cohorts' day writes the rows and fills the accumulator; the soil step would take    !
+   !    the litter up and clear it, so the check reads it before.                               !
    pool0 = sum(poly%patch%recruit_pool(:, 1))
-   call advance_slow_dynamics(poly, cfg, no_ledger)
+   call vegetation_dynamics(poly, cfg, no_ledger)
    pool1 = sum(poly%patch%recruit_pool(:, 1))
 
    call check(poly%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
