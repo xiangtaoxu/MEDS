@@ -36,26 +36,39 @@ fast loop, state and demography, output, config, and the docs math rules.
 
 ## Build and test
 
-netCDF is a hard dependency; every configure needs `-DCMAKE_PREFIX_PATH`. Toolchain activation for
-this machine is in `CLAUDE.local.md`.
+netCDF is a hard dependency; every configure needs `-DCMAKE_PREFIX_PATH`, which the presets take
+from `$CONDA_PREFIX`. Toolchain activation for this machine is in `CLAUDE.local.md`.
 
 ```bash
-cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 72 tests (73 with the Python library), ~70 s; -j 5: 25 s
+FC=ifx cmake --preset dev               # the dev kind (Release, -O2) in build-dev
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure          # 86 tests, ~90 s; -j 5: 33 s
+ctest --test-dir build-dev -L unit --output-on-failure  # the 67 unit tests, ~15 s
 
-# Debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
-cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test by regex
+# debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
+FC=ifx cmake --preset debug
+ctest --test-dir build-debug -R slow_update --output-on-failure   # one test by regex
 ```
+
+The tests mirror `src/`, one per module (ctest `slow_update` is `test/slow/test_slow_update.f90`),
+and each has one label: `unit` (67), `integration` (5), `lint` (10) or `python` (4).
+`-DMEDS_TEST_LONG=ON` adds the two `long` Palo Verde runs, to make before a physics change merges
+(`docs/building.md`, "Running the tests").
+
+Four build kinds, one preset each (`docs/building.md`, "Build kinds"): `debug`, `dev`, `profile`
+(dev with `-g`) and `production` (IPO and `-xCORE-AVX512`, 26–29 % faster, for long runs; it builds
+`meds_main` and `libmeds.so`, not the tests, whose bit-exact checks it breaks at round-off; the
+failures and production's output against dev's are in `docs/building.md`, "Running the tests"). A
+configure that names no build type builds dev. dev is the reference: compare outputs between commits
+on dev builds, never on production ones. dev builds `meds_main`, `libmeds.so` and the tests, and
+`build-dev` is the default: the example scripts run `build-dev/meds_main` and the Python package loads
+`build-dev/libmeds.so`, unless `--meds-main` (or `MEDS_MAIN`) or `MEDS_LIB` names another build.
 
 CMake auto-resolves Fortran module dependencies. This is the deliberate fix for ED2's "run `make`
 six times" hack — **never reintroduce manual object lists or repeated builds.**
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
-and gfortran. Seven traps, each invisible to ifx and each of which has bitten at least once:
+and gfortran. Eight traps, each invisible to an ifx dev build and each of which has bitten at least once:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's optimizer
   miscompiles the temporary descriptor — silently wrong at `-O2`, segfault at `-O0`. Bind to a named
@@ -66,6 +79,9 @@ and gfortran. Seven traps, each invisible to ifx and each of which has bitten at
 - **Never pass a component section `a(:)%c` as an actual argument when `c`'s type has allocatable
   components.** gfortran copies it through a temporary whose copy-out dangles them. Keep such
   objects in a contiguous array of their own.
+- **Never write an array expression over a two-level component section `a(:)%b%c`** (directly or
+  through an `associate`). ifx's AVX-512 code, which the production preset builds, reads it from the
+  wrong offsets. Read such values element by element.
 - **Never nest an implied-do inside a `pack` inside an array constructor.** nvfortran returns wrong
   elements at `-O2` and segfaults at `-O0`. Pack a named array.
 - **Keep `findloc` off LOGICAL arrays and off shorter character values.** nvfortran aborts on the
@@ -79,20 +95,27 @@ and gfortran. Seven traps, each invisible to ifx and each of which has bitten at
 Four rules, applied in order. The long form, with the library graph and a lookup table, is in
 [`src/README.md`](src/README.md).
 
-1. **Kernels never see `site_t`.** The kernel folders link `state_column` and `config` only, which
-   is what keeps them device-eligible and standalone-buildable. A routine that needs `site_t` is
-   driver code.
-2. **A kernel goes where its caller's timescale is**, then in its domain folder. A kernel called
-   from both tiers is a documented seam, never a folder — there is exactly one.
-3. **A derived type lives with whoever mutates it.** Two mutators means boundary state, which is
-   `state/column`. Parameters are not state.
-4. **Laws and operators do not touch.** The appliers take rate arrays and never import the rate
-   laws. The slow driver is the one place they meet.
+1. **Kernels never see `polygon_t`.** The kernel folders take only the per-patch store types from the
+   state layer (`meds_patch_state_vars`, through an only-list), which is what keeps them
+   device-eligible and standalone-buildable; ctest `kernels_patch_only` checks it. A routine that
+   needs `polygon_t` is driver code. The integrator also takes the patch's site (`site_surface_t`) and
+   nothing past it; ctest `integrator_boundary` checks it.
+2. **A kernel goes where its caller's timescale is**, then in its process module (fast:
+   `fast_dynamics/processes/`; slow: `slow_dynamics/processes/`). A kernel called
+   from both timescales is a documented seam, never a folder — there is exactly one.
+3. **A derived type lives with whoever mutates it.** Two mutators means state, in the `state/` file
+   of the level that holds it (`meds_cohort_state_vars`, `meds_patch_state_vars`,
+   `meds_site_state_vars`, `meds_polygon_state_vars`). Parameters are not state.
+4. **Laws and operators do not touch.** The appliers (`meds_slow_update`) take rate and decision
+   arrays and never import the laws (`meds_demography`). `meds_slow_dynamics` is the one place they meet.
 
 ## Invariants that break quietly
 
-- **State is a flat site-wide structure of arrays**; adding a per-cohort field means updating the
-  **one centralized lockstep reorder**, every creation site, and the fusion policy.
+- **State is a flat site-wide structure of arrays**; adding a per-cohort field means adding it to its
+  section of `cohort_block` and of **each lockstep list** in `meds_cohort_state_vars` (one section
+  order throughout), every creation site, the fusion policy, and, if it persists, the same section
+  of the state file (`meds_init_restart`: define, write, read). Patch fields: the same, in
+  `meds_patch_state_vars`.
 - **Persistent ids** are stamped at creation and carried through every sort, fusion and compaction.
   Never reused.
 - **Tendencies arrive as plain data.** The engine applies; the driver computes. The bundle is
@@ -129,6 +152,15 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 `dbh_critical`, `hgt_max`. Keep terse loop indices and the established domain tokens `dbh`,
 `nplant`, `pft`. Inside `associate`, alias to the full word. Readability beats succinctness when
 performance is equal. Name a helper by its operation, not by its caller's domain.
+
+**Constants.** A named constant is spelled by its kind, not by who uses it. The physical,
+mathematical and unit-conversion constants and the kinds, in `meds_constants` and `meds_kinds`, are lower
+case: they read as symbols in a formula (`grav`, `rho_h2o`, `day_sec`, `wp`). Every other named constant
+is UPPER case, public or private, module-level or local: a selector code, an index or a flag, with one
+prefix per family (`SOIL_RETENTION_VG`, `INTEG_ESDIRK2`), and a number chosen in the code, a tolerance, a
+floor, a table size or a fitted coefficient (`RWC_FLOOR`, `KIRCHHOFF_TABLE_NTAB`). A constant keeps its name
+when another module starts to use it. ctest `constants_named` (`scripts/lint/check_constant_case.py`)
+enforces it.
 
 **Style.** `implicit none` everywhere; explicit interfaces via modules; parameterized kinds (never
 bare `real*8` or `1.0d0`); `allocatable` over `pointer`; `pure`/`elemental` for leaf math;

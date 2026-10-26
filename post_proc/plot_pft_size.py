@@ -18,15 +18,15 @@ It draws six panels:
 and prints the two closure identities the aggregation contract promises
 (docs/science/diagnostics.md eq. (3)):
 
-    sum over PFTs of agb_pft  ==  agb_site
-    sum over classes of agb_size  ==  agb_site
+    sum over PFTs of mean_agb_pft_py  ==  mean_agb_py
+    sum over classes of mean_agb_size_py  ==  mean_agb_py
 
 Those are worth printing rather than assuming. They are the statement that the two axes partition
 the stand, and a half-open/closed class-edge error or a wrong reduction weight breaks them while
 every individual number still looks plausible.
 
-EMPTY SETS ARE NOT ZEROS. A *mean* over an empty PFT or size class (mort_rate_size, mean_dbh_pft)
-is the fill value, while a *sum* over one (agb_size, nplant_size) is a true zero -- otherwise the
+EMPTY SETS ARE NOT ZEROS. A *mean* over an empty PFT or size class (mean_mort_rate_size_py, mean_dbh_pft_py)
+is the fill value, while a *sum* over one (mean_agb_size_py, mean_nplant_size_py) is a true zero -- otherwise the
 identities above would break the moment a class emptied. netCDF4 returns masked arrays, so the fill
 is masked out here rather than plotted as 1e37; a reader that strips the mask with np.array() gets
 the raw fill and a ruined axis.
@@ -112,8 +112,12 @@ class _ConcatVar:
 
 
 def get(ds, name):
-    """Variable by name, or None when the run's config did not enable it."""
-    return ds.variables[name][:] if name in ds.variables else None
+    """Variable by name, on the run's one polygon, or None when the run's config did not enable it."""
+    if name not in ds.variables:
+        return None
+    var = ds.variables[name]
+    x = var[:]
+    return x.take(0, axis=var.dimensions.index("polygon")) if "polygon" in var.dimensions else x
 
 
 def class_labels(lower, upper):
@@ -159,22 +163,22 @@ def main():
     labels = class_labels(lower, upper)
     npft = len(pft_ids) if pft_ids is not None else 0
 
-    agb_pft = get(ds, "agb_pft")
-    lai_pft = get(ds, "lai_pft")
-    agb_size = get(ds, "agb_size")
-    npl_size = get(ds, "nplant_size")
-    grow_size = get(ds, "agb_growth_size")
-    mort_size = get(ds, "mort_rate_size")
+    mean_agb_pft_py = get(ds, "mean_agb_pft_py")
+    mean_lai_pft_py = get(ds, "mean_lai_pft_py")
+    mean_agb_size_py = get(ds, "mean_agb_size_py")
+    npl_size = get(ds, "mean_nplant_size_py")
+    grow_size = get(ds, "mean_agb_growth_size_py")
+    mort_size = get(ds, "mean_mort_rate_size_py")
 
     #----- The identities first: a figure drawn from axes that do not partition the stand is a     !
     #      picture of a bug, so say whether they do before drawing anything. ----------------------#
     print(f"\nclosure of the reduction axes ({len(t)} records, {npft} PFT(s), {len(labels)} DBH classes):")
-    report_closure(ds, agb_pft, "agb_site", "PFT", "sum_pft agb_pft == agb_site")
-    report_closure(ds, agb_size, "agb_site", "class", "sum_class agb_size == agb_site")
-    report_closure(ds, get(ds, "nplant_size"), "nplant_site", "class",
-                   "sum_class nplant_size == nplant_site")
-    report_closure(ds, get(ds, "nplant_pft"), "nplant_site", "PFT",
-                   "sum_pft nplant_pft == nplant_site")
+    report_closure(ds, mean_agb_pft_py, "mean_agb_py", "PFT", "sum_pft mean_agb_pft_py == mean_agb_py")
+    report_closure(ds, mean_agb_size_py, "mean_agb_py", "class", "sum_class mean_agb_size_py == mean_agb_py")
+    report_closure(ds, get(ds, "mean_nplant_size_py"), "mean_nplant_py", "class",
+                   "sum_class mean_nplant_size_py == mean_nplant_py")
+    report_closure(ds, get(ds, "mean_nplant_pft_py"), "mean_nplant_py", "PFT",
+                   "sum_pft mean_nplant_pft_py == mean_nplant_py")
     if npft == 1:
         print("\n   NOTE: this run has ONE active PFT, so panels 1-2 are a single flat trace.\n"
               "         They are drawn anyway -- the composition story is what they are for, and a\n"
@@ -184,15 +188,15 @@ def main():
     fig.suptitle("MEDS stand composition and size structure", fontsize=14)
 
     #----- 1-2. Composition by PFT. ------------------------------------------------------------#
-    for ax, dat, name in ((axes[0, 0], agb_pft, "aboveground biomass"),
-                          (axes[0, 1], lai_pft, "leaf area index")):
+    for ax, dat, name in ((axes[0, 0], mean_agb_pft_py, "aboveground biomass"),
+                          (axes[0, 1], mean_lai_pft_py, "leaf area index")):
         if dat is None:
             ax.set_axis_off()
             continue
         for p in range(dat.shape[1]):
             ax.plot(t, dat[:, p], color=pft_color(p), lw=2, label=f"PFT {int(pft_ids[p])}")
         ax.set_xlabel("year")
-        ax.set_ylabel(f"{name} [{ds.variables[('agb_pft' if dat is agb_pft else 'lai_pft')].units}]")
+        ax.set_ylabel(f"{name} [{ds.variables[('mean_agb_pft_py' if dat is mean_agb_pft_py else 'mean_lai_pft_py')].units}]")
         ax.set_title(f"{name} by PFT")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
@@ -202,7 +206,7 @@ def main():
     #      inverse-J is the signal, and a linear axis shows only the smallest class. ---------------#
     x = np.arange(len(labels))
     for ax, dat, name, logy in ((axes[0, 2], npl_size, "stem density", True),
-                                (axes[1, 0], agb_size, "aboveground biomass", False)):
+                                (axes[1, 0], mean_agb_size_py, "aboveground biomass", False)):
         if dat is None:
             ax.set_axis_off()
             continue
@@ -213,7 +217,7 @@ def main():
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
         ax.set_xlabel("DBH class [cm]")
-        ax.set_ylabel(f"{name} [{ds.variables['nplant_size' if logy else 'agb_size'].units}]")
+        ax.set_ylabel(f"{name} [{ds.variables['mean_nplant_size_py' if logy else 'mean_agb_size_py'].units}]")
         ax.set_title(f"{name} by size class")
         ax.legend(fontsize=8, title="year")
         ax.grid(alpha=0.3, axis="y")
@@ -221,11 +225,11 @@ def main():
     #----- 5. Where the biomass sits, over the run. Stacked, so the panel answers "is the stand     !
     #      moving carbon into bigger trees" rather than six separate line questions. ---------------#
     ax = axes[1, 1]
-    if agb_size is not None:
-        ax.stackplot(t, np.ma.filled(agb_size, 0.0).T,
+    if mean_agb_size_py is not None:
+        ax.stackplot(t, np.ma.filled(mean_agb_size_py, 0.0).T,
                      labels=labels, colors=plt.cm.viridis(np.linspace(0.15, 0.95, len(labels))))
         ax.set_xlabel("year")
-        ax.set_ylabel(f"aboveground biomass [{ds.variables['agb_size'].units}]")
+        ax.set_ylabel(f"aboveground biomass [{ds.variables['mean_agb_size_py'].units}]")
         ax.set_title("biomass by size class over time")
         ax.legend(fontsize=7, title="DBH [cm]", loc="upper left", ncol=2)
         ax.grid(alpha=0.3)
@@ -238,12 +242,12 @@ def main():
     n_empty = 0
     if grow_size is not None:
         ax.bar(x, grow_size[-1], color="seagreen", alpha=0.8, label="AGB growth")
-        ax.set_ylabel(f"AGB growth [{ds.variables['agb_growth_size'].units}]", color="seagreen")
+        ax.set_ylabel(f"AGB growth [{ds.variables['mean_agb_growth_size_py'].units}]", color="seagreen")
         ax.tick_params(axis="y", labelcolor="seagreen")
     if mort_size is not None:
         ax2 = ax.twinx()
         ax2.plot(x, mort_size[-1], "o-", color="firebrick", lw=2, label="mortality rate")
-        ax2.set_ylabel(f"mortality rate [{ds.variables['mort_rate_size'].units}]", color="firebrick")
+        ax2.set_ylabel(f"mortality rate [{ds.variables['mean_mort_rate_size_py'].units}]", color="firebrick")
         ax2.tick_params(axis="y", labelcolor="firebrick")
         n_empty = int(np.ma.getmaskarray(mort_size[-1]).sum())
     #----- The empty-class note goes under the axis, not inside it: the tallest growth bar is in    !

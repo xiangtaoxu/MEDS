@@ -100,10 +100,10 @@ def main():
     # as lines in the classic ED / Moorcroft 2001 colour scheme (PFT 1 green, 2 blue, 3 magenta).
     npft = int(np.max(ds.variables["pft"][:])) if ds.dimensions["time"].size else 0
     if npft > 0:
-        agb_pft = per_pft_total(ds, "agb", npft)
+        mean_agb_pft_py = per_pft_total(ds, "agb", npft)
         fig2, ax2 = plt.subplots(figsize=(8, 5))
         for i in range(npft):
-            ax2.plot(t, agb_pft[:, i], color=pft_color(i), lw=2.0, label=f"PFT {i + 1}")
+            ax2.plot(t, mean_agb_pft_py[:, i], color=pft_color(i), lw=2.0, label=f"PFT {i + 1}")
         ax2.set_xlabel("year")
         ax2.set_ylabel("aboveground biomass (kgC m$^{-2}$)")
         ax2.set_title("Per-PFT aboveground biomass (successional composition)")

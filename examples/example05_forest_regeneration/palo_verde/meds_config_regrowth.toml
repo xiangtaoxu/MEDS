@@ -15,9 +15,8 @@ n_threads  = 12                # threads over the patches; the output is the sam
 [fast]
 fast_biophysics_on  = true
 dt_fast             = "900s"
-time_integrator     = "ark"
-ark_adaptive        = true
-ark_rtol            = 1.0e-3
+time_integrator     = "esdirk2"
+rtol                = 2.0e-3
 canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 # Each cohort's Vcmax25, Rd25, SLA and leaf turnover rate follow the leaf area above it.
@@ -28,9 +27,10 @@ fineroot_turnover_plastic = true      # fine roots, like leaves, turn over more 
 #----- The demography (example 03). -------------------------------------------------------------------
 [demography]
 demography_on             = true
-do_cohort_fissfuse        = true
-do_patch_disturbance      = true
-do_patch_fissfuse         = true
+recruitment_on            = true
+cohort_fusion_on          = true
+patch_disturbance_on      = true
+patch_fusion_on           = true
 max_cohort                = 60
 n_cohort_fusion_iter      = 6
 cohort_size_tol_min       = 0.02
@@ -39,59 +39,39 @@ cohort_lai_cap            = 1.0
 min_cohort_agb            = 1.0e-6
 negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
-enable_cohort_fission     = true
+cohort_fission_on         = true
 n_height_layers           = 16
 max_patch                 = 25       # enough that gaps stay apart from the closed canopy
 n_patch_fusion_iter       = 6
 patch_light_tol           = 0.05
 patch_light_tol_max       = 0.10
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
-# Treefall opens 1.4 % of the forest each year; trees above 10 m die on that ground.
-[disturbance]
-patch_disturbance_rate     = 0.014
+patch_disturbance_rate    = 0.014
 disturbance_survive_height = 10.0
-
-[recruitment]
-min_recruit_size = 1.0e-2
-
-# The PFT file's [derived] table sets the light-plasticity slopes; mortality follows wood density ([camac]).
-[options]
-override_derived = true
-
-#----- Start: 3 recruits per m2 of each PFT at 1.5 m (data/pv_bare_start.csv, read as a census). -----
+min_recruit_size          = 1.0e-2
 [init]
 init_mode    = 1
-restart_file = "none"
 census_file  = "data/pv_bare_start.csv"
 pft_config   = "pft_parameters.toml"
 soil_temp    = 300.0              # [K]
 soil_theta   = 0.42               # [m3/m3] wet: wet-season start (87 % of the way from residual to saturation)
 
-[state]
-output_dir     = "output"
-output_prefix  = "regrowth"
-write_state    = false
-interval_years = 20
-
 [output]
+state_write       = false
+state_interval    = "20 years"
+state_file_dir    = "output"
+state_file_prefix = "regrowth"
 enabled       = true
 dir           = "output"
 prefix        = "regrowth"
 sync_every    = "flush"
 # Monthly and yearly site and PFT totals (io_config_regrowth.toml); trees above and below 10 cm.
-axes_cohort   = false
-axes_patch    = false
-radiation     = false
 io_config     = "io_config_regrowth.toml"
 dbh_class_edges = [0.0, 10.0, 1000.0]
-ecophys       = false
 
 [output.fast]
 enabled    = false
@@ -108,9 +88,6 @@ file_chunk = "run"
 [output.annual]
 enabled    = true
 file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3               # required by the loader; unused with the column on
 
 #----- Leaf physiology (example 04's calibrated configuration). ----------------------------------------
 [leaf_physiology]
@@ -152,7 +129,7 @@ apply_elevation_lapse = false
 forcing_on     = true
 # ERA5-Land at Palo Verde's cell, 2003-2022 (run_palo_verde.py cuts it from the archive), repeated: model
 # year Y reads 2003 + (Y - 2003) mod 20.
-format         = "ED_default"
+format         = "default"
 path           = "data/pv_era5land_2003-2022.nc"
 grid_index     = 1
 grid_match     = "explicit"
@@ -184,7 +161,7 @@ soil_carbon_on = true             # starts empty; the start file carries no soil
 # eqs. (6)-(7)); one van Genuchten curve is fitted to their thickness-weighted average over the column, ksat
 # is their geometric mean, and the thermal properties are CLM5's from the texture (eq. (9)). The layers are
 # MEDS's default SoilGrids cut at the depth.
-[soil_column]
+[soil]
 depth       = 1.5712           # [m]
 theta_sat   = 0.4456
 theta_res   = 0.2354
@@ -194,8 +171,6 @@ ksat        = 3.00e-6          # [m/s]
 solid_conductivity = 5.57      # [W/m/K]
 dry_conductivity   = 0.208     # [W/m/K]
 dry_heat_capacity  = 1.26e6    # [J/m3/K]
-
-[energy]
-bottom_bc  = "dirichlet"
+thermal_bottom_bc = "dirichlet"
 deep_temp  = 300.0               # [K] the map's deep_temp at this cell is 299.99
 deep_depth = 2.68               # [m] bottom node (1.29 m) + 1.973/sqrt(2) (docs/science/soil_biophysics.md eq. (13))

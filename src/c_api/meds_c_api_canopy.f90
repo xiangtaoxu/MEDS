@@ -2,8 +2,8 @@
 !==========================================================================================!
 ! meds_c_api_canopy -- the C-API shim for the CANOPY kernels (`meds.canopy`): the leaf solve   !
 ! over many leaves and the two-stream over a frozen stand, with every parameter taken from a   !
-! run's own configuration through the model's own builders (build_leaf_photo_table,             !
-! build_rad_optics), so a caller outside the model computes what the fast loop computes.        !
+! run's own configuration: the leaf table and the optics its loader derives on the PFT table    !
+! (meds_pft_derive), so a caller outside the model computes what the fast loop computes.        !
 !                                                                                          !
 ! The fast calibration (scripts/calibrate_fast) uses it for its optics and photosynthesis       !
 ! stages: the radiation solver alone against the tower's albedo, and a canopy of leaf solves     !
@@ -18,13 +18,11 @@ module meds_c_api_canopy
    use meds_kinds,                only : wp, ik
    use meds_config,               only : meds_config_t
    use meds_config_io,            only : load_meds_config
-   use meds_plant_types,          only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t
+   use meds_pft_params,           only : leaf_photo_pft_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
    use meds_leaf_gas_exchange,    only : solve_leaf_gas_exchange, leaf_params_at_capacity
-   use meds_fast_config,          only : build_leaf_photo_table, build_rad_optics
-   use meds_plant_trait_dynamics, only : light_plastic_traits
-   use meds_canopy_types,         only : rad_pft_optics_t, rad_forcing_t, rad_flux_t,               &
-                                         ground_optics_state_t, alloc_rad_forcing,                  &
-                                         N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
+   use meds_plant_traits,         only : light_plastic_traits
+   use meds_canopy_radiation, only : rad_env_t, rad_out_t, ground_optics_env_t, alloc_rad_env
    use meds_canopy_radiation,     only : canopy_radiation, ground_optics
    use meds_numerics,             only : ascending_order
    implicit none
@@ -33,10 +31,8 @@ module meds_c_api_canopy
    public :: meds_canopy_open, meds_canopy_n_pft, meds_canopy_plastic, meds_canopy_leaf
    public :: meds_canopy_two_stream
 
-   type(meds_config_t),      save :: g_cfg
-   type(leaf_photo_table_t), save :: g_leaf
-   type(rad_pft_optics_t),   save :: g_rad
-   logical,                  save :: g_open = .false.
+   type(meds_config_t), save :: g_cfg
+   logical,             save :: g_open = .false.
 
 contains
 
@@ -50,20 +46,18 @@ contains
       end do
    end function f_string
 
-   !----- Load a run's main configuration (and the PFT file it names), and build the leaf table   !
-   !      and the radiation optics from it. 0 on success; -1 when thermal acclimation is on. ------!
+   !----- Load a run's main configuration (and the PFT file it names), with the leaf table and the  !
+   !      radiation optics its loader derives. 0 on success; -1 when thermal acclimation is on. ----!
    function meds_canopy_open(path, path_len) result(status) bind(c, name="meds_canopy_open")
       character(kind=c_char), intent(in) :: path(*)
       integer(c_int), value,  intent(in) :: path_len
       integer(c_int)                     :: status
       g_open = .false.
       call load_meds_config(f_string(path, path_len), g_cfg)
-      if (g_cfg%leaf_thermal_acclimation) then
+      if (g_cfg%leaf_physiology%thermal_acclimation) then
          status = -1_c_int
          return
       end if
-      call build_leaf_photo_table(g_cfg, g_leaf)
-      call build_rad_optics(g_cfg, g_rad)
       g_open = .true.
       status = 0_c_int
    end function meds_canopy_open
@@ -87,9 +81,9 @@ contains
       associate (t => g_cfg%pft)
          do i = 1_ik, int(n, ik)
             pf = int(pft(i), ik)
-            if (g_cfg%trait_plasticity_on) then
+            if (g_cfg%trait_dynamics%trait_plasticity_on) then
                call light_plastic_traits(real(lai_above(i), wp), t%sla(pf), t%vcmax25(pf), t%rd25(pf),  &
-                                         t%leaf_turnover_rate_toc(pf), t%kplastic_sla(pf), t%kplastic_vm0(pf), &
+                                         t%leaf_turnover_rate_toc(pf), t%kplastic_sla(pf), t%kplastic_vcmax(pf), &
                                          t%kplastic_rd(pf), t%kplastic_leaf_turnover(pf), sla_t, vc_t, rd_t,   &
                                          turnover_t)
             else
@@ -111,16 +105,18 @@ contains
       real(c_double),        intent(in)  :: psi_leaf(n), gb(n), psi(n)
       real(c_double),        intent(out) :: a_gross(n), a_net(n), gs(n), ci(n)
       type(leaf_env_t)          :: env
-      type(leaf_flux_t)         :: flux
-      type(leaf_photo_params_t) :: p
+      type(leaf_out_t)         :: flux
+      type(leaf_photo_pft_t)    :: p
       integer(ik) :: i
       do i = 1_ik, int(n, ik)
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
          env%ca = ca(i) ; env%pressure = pressure(i) ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
          env%psi = psi(i)
-         p = leaf_params_at_capacity(g_leaf, int(pft(i), ik), real(vcmax25(i), wp), real(rd25(i), wp))
-         call solve_leaf_gas_exchange(env, p, g_leaf%stomatal_model, g_leaf%temp_response_form,     &
-                                      g_leaf%colimitation, g_leaf%use_boundary_layer, flux)
+         associate (leaf_photo => g_cfg%pft%leaf_photo)
+            p = leaf_params_at_capacity(leaf_photo, int(pft(i), ik), real(vcmax25(i), wp), real(rd25(i), wp))
+            call solve_leaf_gas_exchange(env, p, leaf_photo%stomatal_model, leaf_photo%temp_response_form,   &
+                                         leaf_photo%colimitation, leaf_photo%use_boundary_layer, flux)
+         end associate
          a_gross(i) = flux%A_gross ; a_net(i) = flux%A_net ; gs(i) = flux%gs ; ci(i) = flux%ci
       end do
    end subroutine meds_canopy_leaf
@@ -142,9 +138,9 @@ contains
       integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
       integer(ik) :: perm(max(ncoh,1)), pft_bt(max(ncoh,1))
       real(wp)    :: hgt_bt(max(ncoh,1)), lai_bt(max(ncoh,1)), wai_bt(max(ncoh,1)), tcan_bt(max(ncoh,1))
-      type(rad_forcing_t)         :: rf
-      type(rad_flux_t)            :: flux
-      type(ground_optics_state_t) :: surf
+      type(rad_env_t)         :: rf
+      type(rad_out_t)            :: flux
+      type(ground_optics_env_t) :: surf
       logical     :: he(NB)
       integer(ik) :: h, j, nc
       nc = int(ncoh, ik)
@@ -154,7 +150,7 @@ contains
          lai_bt(j) = lai(perm(j)) ; wai_bt(j) = wai(perm(j))
       end do
       tcan_bt = 298.15_wp                                     ! longwave only; its outputs are unused
-      call alloc_rad_forcing(rf, NB)
+      call alloc_rad_env(rf, NB)
       surf%n_band = NB
       allocate(surf%soil_albedo(NB))
       surf%soil_albedo = [g_cfg%soil%ground_albedo_vis, g_cfg%soil%ground_albedo_nir, 0.0_wp]
@@ -167,8 +163,8 @@ contains
          rf%incid_beam(RAD_VIS) = vis_beam(h) ; rf%incid_diff(RAD_VIS) = vis_diff(h)
          rf%incid_beam(RAD_NIR) = nir_beam(h) ; rf%incid_diff(RAD_NIR) = nir_diff(h)
          rf%incid_beam(RAD_LW)  = 0.0_wp      ; rf%incid_diff(RAD_LW)  = 0.0_wp
-         call canopy_radiation(g_rad, rf, nc, pft_bt(1:nc), hgt_bt(1:nc), lai_bt(1:nc), wai_bt(1:nc), &
-                               tcan_bt(1:nc), flux)
+         call canopy_radiation(g_cfg%pft%optics, rf, nc, pft_bt(1:nc), hgt_bt(1:nc), lai_bt(1:nc),       &
+                               wai_bt(1:nc), tcan_bt(1:nc), tcan_bt(1:nc), flux)
          up_vis(h)     = flux%albedo(RAD_VIS) * (vis_beam(h) + vis_diff(h))
          up_nir(h)     = flux%albedo(RAD_NIR) * (nir_beam(h) + nir_diff(h))
          leaf_vis(h)   = sum(flux%abs_leaf(RAD_VIS, 1:nc))

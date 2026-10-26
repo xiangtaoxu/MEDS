@@ -141,26 +141,34 @@ def write_census(rows, out, header_lines):
 # --------------------------------------------------------------------------------------------- #
 def pft_params(pft_file, pft):
     """The allometry and turnover of one PFT from a MEDS PFT file (the same formulas as
-    src/shared/functions/meds_allometry.f90)."""
+    src/share/functions/meds_allometry_lib.f90)."""
     with open(pft_file, "rb") as fh:
         t = tomllib.load(fh)
     a, p, k = t["allometry"], t["pft"], int(pft) - 1
     pick = lambda name: float(p[name][k])        # noqa: E731
-    return {"b1Ht": a["b1Ht"], "b2Ht": a["b2Ht"], "agb_c1": a["agb_c1"], "agb_c2": a["agb_c2"],
-            "height_allometry": a.get("height_allometry", "power"),
-            "gmm": (a.get("gmm_a"), a.get("gmm_b"), a.get("gmm_k")),
-            "lai_b1": a["lai_b1"], "lai_b2": a["lai_b2"], "hgt_max": pick("hgt_max"),
+
+    def allom(name, default=None):
+        """An [allometry] value of this PFT: one value for every PFT, or one per PFT."""
+        v = a.get(name, default)
+        return v[k] if isinstance(v, list) else v
+
+    return {"b1Ht": allom("b1Ht"), "b2Ht": allom("b2Ht"), "agb_c1": allom("agb_c1"), "agb_c2": allom("agb_c2"),
+            "height_allometry": allom("height_allometry", "power"),
+            "chave": (allom("chave_a", 0.893), allom("chave_b", 0.760), allom("chave_c", -0.0340),
+                      allom("chave_rse", 0.243), a.get("chave_e", 0.0)),
+            "lai_b1": allom("lai_b1"), "lai_b2": allom("lai_b2"), "hgt_max": allom("hgt_max"),
             "rho": pick("wood_density"), "sla": pick("sla"), "root_to_leaf": pick("root_to_leaf_ratio"),
-            "aboveground_frac": pick("aboveground_frac"), "leaf_turnover": pick("leaf_turnover_rate_toc"),
+            "aboveground_frac": allom("aboveground_frac"), "leaf_turnover": pick("leaf_turnover_rate_toc"),
             "fineroot_turnover": pick("fineroot_turnover_rate"), "f_labile_leaf": pick("f_labile_leaf"),
             "f_labile_stem": pick("f_labile_stem")}
 
 
 def allometry(dbh_cm, pp):
     """Height [m], leaf area [m2] and AGB [kgC] per tree."""
-    if pp.get("height_allometry", "power") == "gmm":
-        a, b, k = pp["gmm"]
-        h = np.minimum(a * dbh_cm ** b / (k + dbh_cm ** b), pp["hgt_max"])
+    if pp.get("height_allometry", "power") == "chave2014":
+        ca, cb, cc, rse, e = pp["chave"]
+        x = np.log(dbh_cm)
+        h = np.minimum(np.exp(ca - e + 0.5 * rse * rse + cb * x + cc * x * x), pp["hgt_max"])
     else:
         h = np.minimum(np.exp(pp["b1Ht"] + pp["b2Ht"] * np.log(dbh_cm)), pp["hgt_max"])
     x = dbh_cm * dbh_cm * h
@@ -182,7 +190,7 @@ def biomass_mortality(earlier, later):
 
 def litter_input(dbh_cm, plot_area, pp, wood_mortality):
     """The four steady-state litter streams [kgC m-2 day-1] of the stand, routed as
-    meds_litter_partition%necromass_to_litter routes necromass."""
+    meds_soil_carbon's necromass_to_litter routes necromass."""
     _, la, agb = allometry(dbh_cm, pp)
     leaf_c = la.sum() / pp["sla"] / plot_area
     root_c = pp["root_to_leaf"] * leaf_c

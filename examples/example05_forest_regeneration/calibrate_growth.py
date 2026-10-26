@@ -46,6 +46,7 @@ Usage:
 Needs example 03's census files: python ../example03_demography/prepare_census.py CENSUS_DIR
 """
 import argparse
+import calendar
 import json
 import os
 import subprocess
@@ -69,7 +70,7 @@ WORK = os.path.join(HERE, "output", "calibration")
 RESULT = os.path.join(HERE, "calibration.json")
 
 #: The fitted parameters and their boxes.
-FIT = {"reproduction_height_fraction": (0.15, 0.9),   # [--] of the local maximum height (5-30 m at BCI)
+FIT = {"min_repro_height": (5.0, 30.0),             # [m] the height a cohort reproduces from
        "fineroot_turnover": (1.5, 5.0),          # [--] fine-root turnover / leaf_turnover_rate_toc
        "vcmax_scale": (0.7, 1.2)}                # [--] on the PFT file's Vcmax25
 #: Stand totals of the trial's years 2-5, (mean, sd) each, added to the loss as ((x - mean) / sd)^2.
@@ -87,9 +88,9 @@ MIN_N = 5                            # cohorts a class needs to count
 MIN_TREES = 20                       # census trees a class needs to count
 
 with open(os.path.join(HERE, "pft_parameters.toml"), "rb") as _fh:
-    _PFT = tomllib.load(_fh)["pft"]
-AGF = _PFT["aboveground_frac"][0]       # the coarse roots' share of wood is 1 - AGF
-GRF = _PFT["growth_resp_factor"][0]     # construction cost, charged on growth
+    _PFT_FILE = tomllib.load(_fh)
+AGF = _PFT_FILE["allometry"]["aboveground_frac"][0]   # the coarse roots' share of wood is 1 - AGF
+GRF = _PFT_FILE["pft"]["growth_resp_factor"][0]       # construction cost, charged on growth
 
 
 def plasticity_slopes(vcmax25, rd_vcmax_ratio):
@@ -103,11 +104,12 @@ def apply(cfg, par):
     vc = [v * par["vcmax_scale"] for v in cfg.get("pft.vcmax25", file="pft")]
     k_vc, k_rd = plasticity_slopes(vc, cfg.get("pft.rd_vcmax_ratio", file="pft"))
     cfg.set("pft.vcmax25", vc, file="pft")
-    cfg.set("derived.kplastic_vcmax", k_vc, file="pft")
-    cfg.set("derived.kplastic_rd", k_rd, file="pft")
+    cfg.set("pft.kplastic_vcmax", k_vc, file="pft")
+    cfg.set("pft.kplastic_rd", k_rd, file="pft")
     cfg.set("pft.fineroot_turnover_rate",
             [par["fineroot_turnover"] * r for r in cfg.get("pft.leaf_turnover_rate_toc", file="pft")], file="pft")
-    cfg.set("pft.reproduction_height_fraction", par["reproduction_height_fraction"], file="pft")
+    cfg.set("pft.min_repro_height", [par["min_repro_height"]] * len(cfg.get("pft.wood_density", file="pft")),
+            file="pft")
     return cfg
 
 
@@ -118,7 +120,7 @@ def trial_config(par, threads):
     for key, value in {"run.start_time": f"{START}-01-01", "run.end_time": f"{START + YEARS}-01-01",
                        "run.n_threads": threads, "init.init_mode": 1, "init.census_file": GROWTH_CENSUS,
                        "output.enabled": True, "output.prefix": "trial", "output.monthly.enabled": False,
-                       "state.write_state": False}.items():
+                       "output.state_write": False}.items():
         cfg.set(key, value)
     return apply(cfg, par) if par else cfg
 
@@ -139,7 +141,7 @@ def run_trial(cfg, out):
             if start is None or step.date.day == 1:
                 c = run.cohorts("global_id", "dbh", "overtopping_lai", "nplant", "pft", "owner_patch")
                 t = step.date.toordinal() / 365.25
-                area = run.patches("area")["area"][c["owner_patch"] - 1]
+                area = run.patches("share")["share"][c["owner_patch"] - 1]
                 if start is None:
                     start = {int(i): (d, l, a * n, p, t) for i, d, l, a, n, p in
                              zip(c["global_id"], c["dbh"], c["overtopping_lai"], area, c["nplant"], c["pft"])}
@@ -158,16 +160,26 @@ def run_trial(cfg, out):
 
 
 #: the stand totals a trial keeps, the mean of its years 2-5 [kgC/m2/yr]
-BUDGET = ("gpp_site", "leaf_resp_site", "stem_resp_site", "root_resp_site", "growth_resp_site",
-          "npp_leaf_site", "npp_fineroot_site", "npp_wood_site", "npp_repro_site", "npp_storage_site",
-          "root_exudate_site")
+BUDGET = ("mean_gpp_py", "mean_leaf_resp_py", "mean_stem_resp_py", "mean_root_resp_py", "mean_growth_resp_py",
+          "mean_npp_leaf_py", "mean_npp_fineroot_py", "mean_npp_wood_py", "mean_npp_repro_py", "mean_npp_storage_py",
+          "mean_root_exudate_py")
+
+
+#: the fast loop's carbon fluxes, which the files give as mean rates [umol CO2 m-2 s-1]
+UMOL_RATES = ("mean_gpp_py", "mean_leaf_resp_py", "mean_stem_resp_py", "mean_root_resp_py")
+UMOL_TO_KGC = 1.20107e-8                              # [kgC/umol CO2], meds_constants' umol_2_kgc
 
 
 def carbon_budget(path):
     from netCDF4 import Dataset
     with Dataset(path) as ds:
         ds.set_auto_mask(False)
-        return {k: float(np.mean(ds[k][1:])) for k in BUDGET}
+        yr = np.array([366.0 if calendar.isleap(int(y)) else 365.0 for y in ds["year"][:]]) * 86400.0
+
+        def per_year(k):                              # [kgC/m2/yr]: a mean rate times its year's length
+            x = np.asarray(ds[k][:], dtype=float)
+            return x * UMOL_TO_KGC * yr.reshape((-1,) + (1,) * (x.ndim - 1)) if k in UMOL_RATES else x
+        return {k: float(np.mean(per_year(k)[1:])) for k in BUDGET}
 
 
 def shares(b):
@@ -175,15 +187,15 @@ def shares(b):
     shares of reproduction and fine roots in it; GPP; and the roots' autotrophic respiration
     [kgC/m2/yr]: the fine roots' maintenance, the coarse roots' share of stem respiration, and the
     construction cost of fine- and coarse-root growth."""
-    npp = sum(float(b[k]) for k in ("npp_leaf_site", "npp_fineroot_site", "npp_wood_site",
-                                    "npp_repro_site", "npp_storage_site"))
-    g = float(b["gpp_site"])
-    root_resp = (float(b["root_resp_site"]) + (1 - AGF) * float(b["stem_resp_site"])
-                 + GRF * (float(b["npp_fineroot_site"]) + (1 - AGF) * float(b["npp_wood_site"])))
-    return {"cue": npp / g, "repro": float(b["npp_repro_site"]) / npp, "repro_c": float(b["npp_repro_site"]),
-            "fineroot": float(b["npp_fineroot_site"]) / npp, "gpp": g, "root_resp": root_resp,
-            "stem_resp_above": AGF * float(b["stem_resp_site"]), "leaf_npp": float(b["npp_leaf_site"]),
-            "wood_npp_above": AGF * float(b["npp_wood_site"]), "exudate": float(b["root_exudate_site"])}
+    npp = sum(float(b[k]) for k in ("mean_npp_leaf_py", "mean_npp_fineroot_py", "mean_npp_wood_py",
+                                    "mean_npp_repro_py", "mean_npp_storage_py"))
+    g = float(b["mean_gpp_py"])
+    root_resp = (float(b["mean_root_resp_py"]) + (1 - AGF) * float(b["mean_stem_resp_py"])
+                 + GRF * (float(b["mean_npp_fineroot_py"]) + (1 - AGF) * float(b["mean_npp_wood_py"])))
+    return {"cue": npp / g, "repro": float(b["mean_npp_repro_py"]) / npp, "repro_c": float(b["mean_npp_repro_py"]),
+            "fineroot": float(b["mean_npp_fineroot_py"]) / npp, "gpp": g, "root_resp": root_resp,
+            "stem_resp_above": AGF * float(b["mean_stem_resp_py"]), "leaf_npp": float(b["mean_npp_leaf_py"]),
+            "wood_npp_above": AGF * float(b["mean_npp_wood_py"]), "exudate": float(b["mean_root_exudate_py"])}
 
 
 # ----- scoring ----------------------------------------------------------------------------------------

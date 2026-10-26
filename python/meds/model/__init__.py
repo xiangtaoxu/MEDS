@@ -15,8 +15,9 @@ Python:
             if step.is_new_year:
                 print(step.date, run.total_agb, run.soil_carbon)
 
-``Run.step`` calls the same ``driver_step`` the executable calls, so a Python-driven run
-and a ``meds_main`` run of the same config produce byte-identical output. ``run(config)``
+``Run.step`` takes one slow step of the same run (``meds_region``) the executable steps a
+month at a time, so a Python-driven run and a ``meds_main`` run of the same config produce
+byte-identical output. ``run(config)``
 runs a config to its end, and ``python -m meds.model CONFIG`` does that from the shell in
 place of ``meds_main CONFIG``. ``meds.config`` reads and changes the config files. Importing
 this sub-module loads the shared library; ``import meds`` alone does not.

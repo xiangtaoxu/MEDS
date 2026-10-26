@@ -1,16 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_toml -- a minimal TOML reader for MEDS run configuration.                           !
-!                                                                                          !
-! A full TOML library (toml-f) is not usable here: like netCDF-Fortran, its compiled       !
-! `.mod` is compiler-specific and unavailable for ifx/nvfortran on this machine. MEDS      !
-! configs are a flat set of `key = value` lines under `[section]` headers, so we parse     !
-! that subset directly: `# comments`, `[section]` headers, and scalar int/real/bool/string !
-! values plus `[a, b, c]` real arrays. Keys are stored fully qualified as `section.key`.   !
-! The typed getters return the supplied default ONLY when the key is ABSENT; a key that is !
-! PRESENT but unparseable is a HARD ERROR (error stop with the offending key + raw text)   !
-! -- silently zero-filling malformed values would let a typo'd REQUIRED parameter (every   !
-! PFT trait is one) pass validation.                                                       !
+! meds_toml -- a minimal TOML reader for the MEDS configuration: `# comments`, `[section]` !
+! headers, `[[name]]` tables (keys `name.<i>.key`), scalar int/real/bool/string values and !
+! `[a, b, c]` arrays, each key stored as `section.key`. toml-f is not used: its compiled   !
+! .mod is compiler-specific, as netCDF-Fortran's is (docs/building.md). A getter returns   !
+! its default only for an absent key; a present value it cannot parse stops the run, so a  !
+! typo in a required value cannot pass as zero; and a key set twice stops the parse, so a  !
+! second value cannot be ignored in silence.                                               !
 !==========================================================================================!
 module meds_toml
    use meds_kinds, only : wp, ik
@@ -19,26 +15,30 @@ module meds_toml
 
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
+   public :: toml_is_array, toml_string_array
+   public :: toml_table_count
    public :: toml_write_record, toml_record_reset
 
    !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds     !
    !      the forcing path fields (MET_PATH_LEN) with room for the key. --------------------------!
-   integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512
+   integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512, MAXARRAYS = 8
 
    type :: toml_table_t
       integer(ik)                     :: n = 0_ik
       character(len=KEYLEN), allocatable :: key(:)
       character(len=VALLEN), allocatable :: val(:)
-      character(len=256)              :: source = ''   !< the file it was parsed from (the record's label)
+      character(len=256)              :: source = ''   !< the file read into it (the record's label)
+      !----- The arrays of tables, `[[name]]`, and how many tables each holds. ------------------!
+      integer(ik)           :: n_array = 0_ik
+      character(len=KEYLEN) :: array_name(MAXARRAYS) = ''
+      integer(ik)           :: array_count(MAXARRAYS) = 0_ik
    end type toml_table_t
 
-   !----- The parameter record. Every value a toml_* reader returns is logged here with the file  !
-   !      it came from and whether the key was in that file or took the caller's default, so a run !
-   !      can write down every setting it actually read (toml_write_record). A key the loader never !
-   !      reads -- a misspelling, or a block that is not consulted -- is absent, which is how a     !
-   !      caller that set a key checks that it landed. A re-read replaces the earlier row. Loading  !
-   !      a run's config starts a new record (toml_record_reset), so a process that runs several    !
-   !      configs in turn, as the Python API can, writes each run's own settings. --------------------!
+   !----- The parameter record (docs/configuration.md, "The parameter philosophy"): every         !
+   !      value a toml_* getter returns, with its file and whether the file sets the key or       !
+   !      the default stands. A key never read has no row, so a caller can check that a key it    !
+   !      set is read. A re-read replaces its row; toml_record_reset starts a new record for      !
+   !      each config a process loads. -----------------------------------------------------------!
    integer, parameter :: MAXREC = 4096, RECVAL = 512
    integer(ik), save :: rec_n = 0_ik
    character(len=256),    save :: rec_source(MAXREC)
@@ -50,14 +50,14 @@ module meds_toml
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Parse a TOML file into the (section.key -> raw-value) table. ok=.false. if it cannot    !
-   ! be opened (the caller then keeps all defaults).                                         !
+   ! Parse a TOML file into the (section.key -> raw-value) table; ok = .false. if it       !
+   ! cannot be opened.                                                                     !
    !---------------------------------------------------------------------------------------!
    subroutine toml_parse_file(path, t, ok)
       character(len=*),    intent(in)  :: path
       type(toml_table_t),  intent(out) :: t
       logical,             intent(out) :: ok
-      integer                :: unit, ios, ieq, nb
+      integer                :: unit, ios, ieq, nb, ia
       character(len=VALLEN)  :: line
       character(len=KEYLEN)  :: section
       character(len=VALLEN)  :: raw
@@ -79,6 +79,22 @@ contains
          line = adjustl(line)
          if (len_trim(line) == 0) cycle
 
+         if (line(1:2) == '[[') then                      ! [[name]]: the array's next table
+            nb = index(line, ']]')
+            if (nb > 3) then
+               section = adjustl(line(3:nb-1))
+               ia = int(findloc(t%array_name(1:t%n_array), section, dim=1))
+               if (ia == 0) then
+                  if (t%n_array >= MAXARRAYS) error stop 'meds_toml: too many [[array]] names in '//trim(path)
+                  t%n_array = t%n_array + 1_ik
+                  ia = int(t%n_array)
+                  t%array_name(ia) = section
+               end if
+               t%array_count(ia) = t%array_count(ia) + 1_ik
+               write(section, '(a,".",i0)') trim(t%array_name(ia)), t%array_count(ia)
+            end if
+            cycle
+         end if
          if (line(1:1) == '[') then                       ! [section] header
             nb = index(line, ']')
             if (nb > 2) section = adjustl(line(2:nb-1))
@@ -95,6 +111,13 @@ contains
             t%key(t%n) = trim(adjustl(line(1:ieq-1)))
          end if
          t%val(t%n) = adjustl(line(ieq+1:))
+         !----- TOML forbids setting a key twice, and a getter would read only the first value, so a !
+         !      second one would be ignored in silence. A [[name]] table's keys carry its index, so  !
+         !      two tables may each set a key. ------------------------------------------------------!
+         if (find_key(t, t%key(t%n)) < t%n) then
+            write(*,'(4a)') ' meds_toml: key "', trim(t%key(t%n)), '" is set twice in ', trim(path)
+            error stop 'meds_toml: a key set twice'
+         end if
       end do
       close(unit)
    end subroutine toml_parse_file
@@ -135,15 +158,21 @@ contains
       yes = find_key(t, key) > 0_ik
    end function toml_has
 
-   !----- Is there ANY key under `[section]`? Keys are stored flattened ("section.key"), so a     !
-   !      section header leaves no entry of its own and toml_has cannot see one.                  !
-   !                                                                                              !
-   !      This is the right gate for an optional block whose keys become REQUIRED once the        !
-   !      block is present. Sentinelling that on one chosen key inside the block instead          !
-   !      means a config that writes the block under a stale or misspelled name is skipped in     !
-   !      silence, with the presence map never consulted: a whole subsystem can be switched       !
-   !      off that way. Ask whether the AUTHOR meant to configure this section, not whether       !
-   !      they happened to spell one particular key correctly. -----------------------------------!
+   !----- How many tables the array `[[name]]` holds (0 when the file has none). -----------------!
+   pure integer(ik) function toml_table_count(t, name) result(n)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: name
+      integer(ik) :: ia
+      n = 0_ik
+      do ia = 1_ik, t%n_array
+         if (trim(t%array_name(ia)) == trim(name)) n = t%array_count(ia)
+      end do
+   end function toml_table_count
+
+   !----- Is there any key under `[section]`? Keys are stored flattened (section.key), so a       !
+   !      header leaves no entry for toml_has to find. The gate for an optional block whose       !
+   !      keys are required once it is present: gating on one key inside it would skip, in        !
+   !      silence, a block that misspells that key. ----------------------------------------------!
    pure logical function toml_has_section(t, section) result(yes)
       type(toml_table_t), intent(in) :: t
       character(len=*),   intent(in) :: section
@@ -154,13 +183,15 @@ contains
       yes = .false.
       do i = 1_ik, t%n
          if (len_trim(t%key(i)) > n) then
-            if (t%key(i)(1:n) == pre) then ; yes = .true. ; return ; end if
+            if (t%key(i)(1:n) == pre) then
+               yes = .true.
+               return
+            end if
          end if
       end do
    end function toml_has_section
 
-   !----- One place for the 'present-but-malformed value' hard error: prints the offending key  !
-   !      + raw text then aborts (mirrors the missing-key error-stop style in meds_config_io). --!
+   !----- A present value that cannot be parsed: print its key and raw text, and stop. ---------!
    subroutine toml_parse_error(key, raw, what)
       character(len=*), intent(in) :: key, raw, what
       write(*,'(5a)') ' meds_toml: cannot parse ', trim(what), ' for key "', trim(key), '"'
@@ -233,7 +264,8 @@ contains
       idx = find_key(t, key)
       if (idx /= 0_ik) then
          s = adjustl(t%val(idx))
-         if (len_trim(s) >= 2 .and. s(1:1) == '"') then
+         if (s(1:1) == '"') then
+            if (index(s(2:), '"') == 0) call toml_parse_error(key, s, 'string (no closing quote)')
             v = s(2:index(s(2:), '"'))
          else
             v = trim(s)
@@ -242,7 +274,52 @@ contains
       call record_value(t, key, 0_ik, idx /= 0_ik, v)
    end function toml_string
 
-   !----- Parse `[a, b, c]` into out(:) reals; nout = count read (0 if absent). ------------!
+   !----- True when the key's value is an array literal, [...]. -----------------------------!
+   pure logical function toml_is_array(t, key) result(yes)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: key
+      integer(ik) :: idx
+      yes = .false.
+      idx = find_key(t, key)
+      if (idx /= 0_ik) yes = index(adjustl(t%val(idx)), '[') == 1
+   end function toml_is_array
+
+   !----- A string array, ["a", "b", ...], or one string, which counts as one entry. ------!
+   subroutine toml_string_array(t, key, out, nout)
+      type(toml_table_t), intent(in)  :: t
+      character(len=*),   intent(in)  :: key
+      character(len=*),   intent(out) :: out(:)
+      integer(ik),        intent(out) :: nout
+      integer(ik) :: idx, lb, rb, q1, q2
+      character(len=VALLEN) :: s
+      nout = 0_ik
+      out  = ''
+      idx = find_key(t, key)
+      if (idx == 0_ik) return
+      if (.not. toml_is_array(t, key)) then
+         nout = 1_ik
+         out(1) = toml_string(t, key, '')
+         return
+      end if
+      s  = adjustl(t%val(idx))
+      lb = index(s, '[')
+      rb = index(s, ']', back=.true.)
+      if (rb <= lb) call toml_parse_error(key, t%val(idx), 'string array (expected [..] literal)')
+      s = s(lb+1:rb-1)
+      do
+         q1 = index(s, '"')
+         if (q1 == 0) exit
+         q2 = index(s(q1+1:), '"')
+         if (q2 == 0) call toml_parse_error(key, t%val(idx), 'string array (unclosed quote)')
+         nout = nout + 1_ik
+         if (nout > size(out, kind=ik)) call toml_parse_error(key, t%val(idx), 'string array (too many entries)')
+         out(nout) = s(q1+1:q1+q2-1)
+         call record_value(t, key, nout, .true., out(nout))
+         s = s(q1+q2+1:)
+      end do
+   end subroutine toml_string_array
+
+   !----- Parse `[a, b, c]` into out(:) reals; nout = the count read (0 if absent). --------!
    subroutine toml_real_array(t, key, out, nout)
       type(toml_table_t), intent(in)  :: t
       character(len=*),   intent(in)  :: key
@@ -254,7 +331,8 @@ contains
       idx = find_key(t, key)
       if (idx == 0_ik) return                       ! absent -> nout = 0 (caller records missing key)
       s  = t%val(idx)
-      lb = index(s, '[') ; rb = index(s, ']', back=.true.)
+      lb = index(s, '[')
+      rb = index(s, ']', back=.true.)
       if (lb == 0 .or. rb <= lb) call toml_parse_error(key, t%val(idx), 'real array (expected [..] literal)')
       s = s(lb+1:rb-1)
       do i = 1, len_trim(s)                         ! commas -> spaces for list-directed read
@@ -265,14 +343,14 @@ contains
          integer(ik) :: k, ntok
          ntok = count_tokens(s)
          if (ntok == 0_ik) return                   ! empty [] -> nout = 0
-         !----- Bound by the receiving buffer BEFORE reading (prevents an out-of-bounds read on  !
-         !      an over-length list, e.g. > MAXPFT trait entries into a MAXPFT-sized buffer). ----!
+         !----- Bound by the receiving buffer before reading, so an over-long list stops         !
+         !      instead of overrunning it. ------------------------------------------------------!
          if (ntok > size(out, kind=ik)) call toml_parse_error(key, t%val(idx), 'real array (too many entries)')
          tmp = 0.0_wp
          read(s, *, iostat=ios) (tmp(k), k = 1_ik, ntok)
          if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real array')   ! any unparseable token -> hard error
          out(1:ntok) = tmp(1:ntok)
-         nout = ntok                                ! TRUE parsed count (never over-reported)
+         nout = ntok                                ! the parsed count, never more
          do k = 1_ik, ntok
             call record_value(t, key, k, .true., real_text(out(k)))
          end do
@@ -289,15 +367,20 @@ contains
       slot = 0_ik
       do i = 1_ik, rec_n
          if (rec_index(i) == index .and. rec_key(i) == key .and. rec_source(i) == t%source) then
-            slot = i ; exit
+            slot = i
+            exit
          end if
       end do
       if (slot == 0_ik) then
          if (rec_n >= MAXREC) return
-         rec_n = rec_n + 1_ik ; slot = rec_n
+         rec_n = rec_n + 1_ik
+         slot = rec_n
       end if
-      rec_source(slot) = t%source ; rec_key(slot) = key ; rec_index(slot) = index
-      rec_present(slot) = present ; rec_value(slot) = adjustl(text)
+      rec_source(slot) = t%source
+      rec_key(slot) = key
+      rec_index(slot) = index
+      rec_present(slot) = present
+      rec_value(slot) = adjustl(text)
    end subroutine record_value
 
    !----- Empty the record: what a run reads from here on is the whole of its record. -------!
@@ -344,7 +427,11 @@ contains
       integer :: i
       q = '"'
       do i = 1, len_trim(text)
-         if (text(i:i) == '"') then ; q = q // '""' ; else ; q = q // text(i:i) ; end if
+         if (text(i:i) == '"') then
+            q = q // '""'
+         else
+            q = q // text(i:i)
+         end if
       end do
       q = q // '"'
    end function csv_quote
@@ -354,7 +441,8 @@ contains
       character(len=*), intent(in) :: s
       integer(ik) :: i
       logical     :: in_tok
-      nt = 0_ik ; in_tok = .false.
+      nt = 0_ik
+      in_tok = .false.
       do i = 1_ik, len_trim(s)
          if (s(i:i) /= ' ') then
             if (.not. in_tok) nt = nt + 1_ik

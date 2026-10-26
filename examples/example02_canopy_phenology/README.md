@@ -4,8 +4,8 @@ The leaf-phenology module of MEDS on its own. **This example shows how the modul
 kernel, three cues, and leaf habits as parameter sets — at four forests; it is not a calibration of
 any of them.** A temperate deciduous broadleaf, an evergreen pine, a tropical tree that renews its
 leaves in the dry season and a drought-deciduous dry forest all run the same compiled kernel
-([`meds_phenology.f90`](../../src/slow_dynamics/plant/meds_phenology.f90)) and differ only in
-parameter values. A Python script drives it through
+([`meds_plant_phenology.f90`](../../src/slow_dynamics/processes/meds_plant_phenology.f90)) and
+differ only in parameter values. A Python script drives it through
 [`meds.plant.pheno`](../../python/meds/plant/pheno.py); the equations are in
 [`docs/science/plant_phenology.md`](../../docs/science/plant_phenology.md).
 
@@ -54,8 +54,8 @@ first (about 45 minutes on 40 cores). The records are short, so the fits capture
 seasonal cycle, not its year-to-year variation, and each fit holds the leaves shed per year to a
 literature value (one canopy for the broadleaf forests, 0.3 for the pine).
 
-The hours of light in `drivers/` are committed. Remaking them needs a built `meds_main` (`--meds-main`,
-default `build-ifx/meds_main`) and the processed ERA5-Land archive
+The hours of light in `drivers/` are committed. Remaking them needs a built `meds_main` (`--meds-main`
+or `MEDS_MAIN`, default `build-dev/meds_main`) and the processed ERA5-Land archive
 ([`scripts/prepare_era5`](../../scripts/prepare_era5)), named by `--archive` or the environment
 variable `ERA5LAND_ARCHIVE`:
 

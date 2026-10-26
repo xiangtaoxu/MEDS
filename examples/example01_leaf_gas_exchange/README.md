@@ -3,7 +3,7 @@
 The leaf gas-exchange module of MEDS on its own: C3 photosynthesis (Farquhar–von Caemmerer–Berry),
 stomatal conductance, and their coupled solution for the intercellular CO₂ Cᵢ. A Python script sets
 every parameter and driver; there is no site, config file or canopy. The same compiled kernels
-([`meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/plant/meds_leaf_gas_exchange.f90)) run inside
+([`meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/processes/meds_leaf_gas_exchange.f90)) run inside
 the coupled model, where canopy radiation, the leaf energy balance and plant hydraulics supply their
 drivers. The equations are in [`docs/science/leaf_gas_exchange.md`](../../docs/science/leaf_gas_exchange.md).
 
@@ -17,9 +17,8 @@ Build the Python library once, then run the script from the repository root (a f
 
 ```bash
 source /opt/intel/oneapi/setvars.sh
-cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-py --target meds_py                     # -> build-py/libmeds.so
+FC=ifx cmake --preset dev                                   # the dev kind in build-dev
+cmake --build build-dev --target meds_py                    # -> build-dev/libmeds.so
 PYTHONPATH=python python examples/example01_leaf_gas_exchange/reproduce_slot2017.py
 ```
 

@@ -10,6 +10,7 @@ stand's and each PFT's, against the BCI 50-ha plot's censuses 1985-2010 on the m
 respiration, with the BCI tower's GPP (2012-2017, corrected as in example 04); evapotranspiration; and
 the stems of 10 cm and more, against the censuses.
 """
+import calendar
 import os
 import sys
 
@@ -25,24 +26,36 @@ CENSUS = os.path.join(os.path.dirname(HERE), "example03_demography", "census_sta
 PFT_COLOR = {1: "#008300", 2: "#2a78d6", 3: "#e87ba4"}   # the ED colours, as in example 03
 PFT_NAME = {1: "early", 2: "mid", 3: "late"}
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
-TOWER_GPP = 31.3          # [MgC/ha/yr] the BCI tower 2012-2017, corrected for its low bias (example 04)
+TOWER_GPP = 31.5          # [MgC/ha/yr] the BCI tower 2012-2017, corrected for its low bias (example 04)
 plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK,
                      "xtick.color": MUTED, "ytick.color": MUTED, "axes.spines.top": False,
                      "axes.spines.right": False, "axes.grid": True, "grid.color": GRID,
                      "grid.linewidth": 0.6, "legend.frameon": False})
 
 
+UMOL_TO_KGC = 1.20107e-8                          # [kgC/umol CO2], meds_constants' umol_2_kgc
+
+
+def year_seconds(years):
+    """The length [s] of each record's year: the files give fluxes as mean rates."""
+    return np.array([366.0 if calendar.isleap(int(y)) else 365.0 for y in years]) * 86400.0
+
+
 def read(path):
     """The run's yearly output, in field units."""
     with Dataset(path) as ds:
         ds.set_auto_mask(False)
-        v = lambda k: np.array(ds[k][:], dtype=float)
+        def v(k):                                          # a variable on the run's one polygon
+            x, dims = np.array(ds[k][:], dtype=float), ds[k].dimensions
+            return x.take(0, axis=dims.index("polygon")) if "polygon" in dims else x
         lower = v("dbh_lower")
-        return {"year": v("year"), "agb": v("agb_pft") * 10.0,                 # kgC/m2 -> MgC/ha
-                "ba": v("basal_area_pft") * 1e4, "lai": v("lai_pft"),          # m2/m2 -> m2/ha
-                "gpp": v("gpp_site") * 10.0, "npp": v("npp_site") * 10.0, "rh": v("rh_site") * 10.0,
-                "et": v("et_site"),                                            # kg/m2/yr = mm/yr
-                "stems10": v("nplant_size")[:, lower >= 10.0].sum(axis=1) * 1e4}
+        yr = year_seconds(v("year"))                                    # a mean rate times this: per year
+        return {"year": v("year"), "agb": v("mean_agb_pft_py") * 10.0,                 # kgC/m2 -> MgC/ha
+                "ba": v("mean_basal_area_pft_py") * 1e4, "lai": v("mean_lai_pft_py"),          # m2/m2 -> m2/ha
+                "gpp": v("mean_gpp_py") * UMOL_TO_KGC * yr * 10.0,                # umol/m2/s -> MgC/ha/yr
+                "npp": v("mean_npp_py") * UMOL_TO_KGC * yr * 10.0, "rh": v("mean_rh_py") * UMOL_TO_KGC * yr * 10.0,
+                "et": v("mean_et_py") * yr,                                       # kg/m2/s -> mm/yr
+                "stems10": v("mean_nplant_size_py")[:, lower >= 10.0].sum(axis=1) * 1e4}
 
 
 def census():

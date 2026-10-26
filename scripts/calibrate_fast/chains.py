@@ -33,9 +33,9 @@ def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, r
     cfg = with_keys(base, keys, values, overrides)
     threads = threads_for(lead_days, max_threads)
     for k, v in {"run.start_time": stamp(start), "run.end_time": stamp(window.start), "run.slow_on": False,
-                 "run.n_threads": threads, "init.init_mode": 1, "init.restart_file": "none",
-                 "state.write_state": True, "state.output_dir": str(cdir / "out"),
-                 "state.output_prefix": PREFIX, "state.interval_years": 1000,
+                 "run.n_threads": threads, "init.init_mode": 1,
+                 "output.state_write": True, "output.state_file_dir": str(cdir / "out"),
+                 "output.state_file_prefix": PREFIX, "output.state_interval": "1000 years",
                  "output.enabled": False}.items():
         cfg.set(k, v)
     (cdir / "out").mkdir(parents=True, exist_ok=True)

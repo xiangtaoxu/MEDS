@@ -21,7 +21,7 @@ species' wood density) by PFT and size class in every census.
 A tree is described by what it is at the start of an interval: its dbh, its PFT (from its species'
 wood density) and its overtopping LAI, the leaf area of TALLER trees within 20 m of it per m2 of
 ground -- the competition index the MEDS engine computes for every cohort. Height and leaf area are
-MEDS's allometry as the example's PFT config sets it (the BCI height curve of Cano et al. 2019). A quadrat's recruits are described
+MEDS's allometry as the example's PFT config sets it (the local log-quadratic for BCI). A quadrat's recruits are described
 by the leaf area index within 20 m of the quadrat's centre, all of it and the PFT's own. Trees and
 quadrats whose 20 m circle crosses the plot's edge are not described (they still count as
 neighbours). A MEDS tree is one stem, so a tree alive with no main stem to measure has died, and is a
@@ -62,7 +62,13 @@ SIZE_CLASSES = [1, 2, 5, 10, 20, 50, 100, 1000]   # dbh class edges [cm] for cen
 wood_density = pd.read_csv(os.path.join(HERE, "bci_wood_density.csv")).set_index("sp").rho
 with open(os.path.join(HERE, "example_config_pft.toml"), "rb") as fh:
     PFT_CONFIG = tomllib.load(fh)
-ALLOM, HGT_MAX = PFT_CONFIG["allometry"], np.array(PFT_CONFIG["pft"]["hgt_max"])
+ALLOM, NPFT = PFT_CONFIG["allometry"], len(PFT_CONFIG["pft"]["wood_density"])
+
+
+def per_pft(name, default=None):
+    """An [allometry] value for each PFT: one value for every PFT, or a list of one per PFT."""
+    v = ALLOM.get(name, default)
+    return np.array(v if isinstance(v, list) else [v] * NPFT)
 
 
 def load(year):
@@ -87,22 +93,29 @@ def basal_area_m2(dbh_cm):
 
 
 def height_m(dbh_cm, pft):
-    """MEDS's dbh_to_height: the config's height curve, capped at the PFT's hgt_max."""
-    if ALLOM.get("height_allometry", "power") == "gmm":
-        h = ALLOM["gmm_a"] * dbh_cm ** ALLOM["gmm_b"] / (ALLOM["gmm_k"] + dbh_cm ** ALLOM["gmm_b"])
-    else:
-        h = np.exp(ALLOM["b1Ht"] + ALLOM["b2Ht"] * np.log(dbh_cm))
-    return np.minimum(h, HGT_MAX[pft - 1])
+    """MEDS's dbh_to_height: each PFT's height curve (power law or log-quadratic), capped at its hgt_max."""
+    i = np.asarray(pft) - 1
+    x = np.log(dbh_cm)
+    h = np.exp(per_pft("b1Ht")[i] + per_pft("b2Ht")[i] * x)
+    form = per_pft("height_allometry", "power")[i]
+    if np.any(form == "chave2014"):
+        a, b, c, rse = (per_pft(n, d).astype(float)[i] for n, d in
+                        (("chave_a", 0.893), ("chave_b", 0.760), ("chave_c", -0.0340), ("chave_rse", 0.243)))
+        e = float(ALLOM.get("chave_e", 0.0))
+        h = np.where(form == "chave2014", np.exp(a - e + 0.5 * rse * rse + b * x + c * x * x), h)
+    return np.minimum(h, per_pft("hgt_max").astype(float)[i])
 
 
 def agb_kgc(dbh_cm, pft, rho):
     """MEDS's dbh_to_agb: agb_c1 (rho D^2 h)^agb_c2 [kgC per tree]."""
-    return ALLOM["agb_c1"] * (rho * dbh_cm ** 2 * height_m(dbh_cm, pft)) ** ALLOM["agb_c2"]
+    i = np.asarray(pft) - 1
+    return per_pft("agb_c1")[i] * (rho * dbh_cm ** 2 * height_m(dbh_cm, pft)) ** per_pft("agb_c2")[i]
 
 
 def leaf_area_m2(dbh_cm, pft):
     """MEDS's dbh_to_leaf_area: lai_b1 (D^2 h)^lai_b2 [m2 per tree]."""
-    return ALLOM["lai_b1"] * (dbh_cm ** 2 * height_m(dbh_cm, pft)) ** ALLOM["lai_b2"]
+    i = np.asarray(pft) - 1
+    return per_pft("lai_b1")[i] * (dbh_cm ** 2 * height_m(dbh_cm, pft)) ** per_pft("lai_b2")[i]
 
 
 def overtopping_lai(c):

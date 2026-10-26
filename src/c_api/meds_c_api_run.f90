@@ -6,48 +6,48 @@
 ! `meds_c_api_canopy` the kernels, and `meds_c_api_demography` the slow loop alone (no            !
 ! biophysics, no forcing, no output streams). This one drives what the `meds_main` EXECUTABLE     !
 ! drives -- coupled fast + slow, live met forcing, netCDF output, both conservation ledgers -- by !
-! holding a `meds_run_t` from `meds_driver` and handing the caller the OPEN / STEP / FINALIZE     !
-! seam.                                                                                           !
+! holding a run (`meds_region_t`) and handing the caller the OPEN / STEP / FINALIZE seam. The     !
+! getters read the run's first polygon: the site of a one-polygon run.                            !
 !                                                                                          !
 ! The caller owns the time loop: a Python process opens a run, steps it, reads the site state as   !
 ! it goes, and finalizes it. `python -m meds.model CONFIG` is that loop, and                       !
 ! scripts/calibrate_fast runs its trials through it. Nothing here re-implements the model --       !
-! `driver_step` is the same call the executable makes, so a Python-driven run and a `meds_main`    !
-! run of the same config produce byte-identical output.                                            !
+! `region_step` takes one slow step of what the executable steps a month at a time, so a          !
+! Python-driven run and a `meds_main` run of the same config produce byte-identical output.        !
 !                                                                                          !
-! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
+! Conventions match the other shims: `polygon_t` and friends never cross the boundary. A run is an  !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !
 ! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_c_api_run`     !
 ! can call them -- a shim no test calls can stop compiling without anyone noticing.                 !
 !                                                                                          !
-! `driver_step` RETURNS a NaN status rather than `error stop`ping, which is what makes this safe to  !
+! `region_step` RETURNS a NaN status rather than `error stop`ping, which is what makes this safe to  !
 ! call from an interpreter: a bad state surfaces as a Python exception, not a dead process.           !
 !==========================================================================================!
 module meds_c_api_run
    use iso_c_binding
    use meds_kinds,             only : wp, ik
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
-   use meds_site_diag_types,   only : CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, &
-                                      CS_GROWTH_RESP, CS_EXUDATE
-   use meds_driver,            only : meds_run_t, driver_open, driver_step, driver_finalize,   &
-                                      driver_free, driver_done
-   use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
-                                      count_cohorts
+   use meds_diag_vars,         only : CO_NPP_LEAF, CO_NPP_FINEROOT, CO_NPP_WOOD, CO_NPP_STORAGE, CO_NPP_REPRO, CO_GROWTH_RESP, &
+                                      CO_EXUDATE
+   use meds_region,            only : meds_region_t, region_open, region_step, region_finalize,  &
+                                      region_free, region_done
+   use meds_polygon_state_vars, only : patch_polygon_area
+   use meds_output_reduce, only : total_agb, total_lai, total_nplant, total_basal_area
    implicit none
    private
 
    public :: meds_run_open, meds_run_step, meds_run_is_done, meds_run_finalize, meds_run_free
    public :: meds_run_year, meds_run_month, meds_run_day, meds_run_istep, meds_run_iyear
-   public :: meds_run_n_patch, meds_run_n_cohort
+   public :: meds_run_n_patch, meds_run_n_cohort, meds_run_n_site
    public :: meds_run_total_agb, meds_run_total_lai, meds_run_total_nplant
    public :: meds_run_total_basal_area, meds_run_soil_carbon, meds_run_get_real, meds_run_get_int
-   public :: meds_run_get_patch_real
+   public :: meds_run_get_patch_real, meds_run_get_patch_int, meds_run_get_site_real
 
    !----- Small registry: a handful of concurrent runs is plenty (the example opens two, one per   !
    !      stage, and could hold both at once). Fixed-size and module-`save` for the same reason    !
    !      meds_c_api_demography's is: the handle has to survive across ctypes calls.               !
    integer, parameter :: MAXR = 4
-   type(meds_run_t), target, save :: g_run(MAXR)
+   type(meds_region_t), target, save :: g_run(MAXR)
    logical,                  save :: run_used(MAXR) = .false.
 
 contains
@@ -88,19 +88,19 @@ contains
          if (.not. run_used(i)) then ; h = int(i, c_int) ; exit ; end if
       end do
       if (h < 0_c_int) return
-      call driver_open(f_string(path, path_len), g_run(h), ok, verbose=(verbose /= 0_c_int))
+      call region_open(f_string(path, path_len), g_run(h), ok, verbose=(verbose /= 0_c_int))
       if (.not. ok) then ; h = -2_c_int ; return ; end if
       run_used(h) = .true.
    end function meds_run_open
 
-   !----- Advance ONE slow step. Returns the driver status (DRIVER_* in meds_polygon): 0 stepped,  !
+   !----- Advance ONE slow step. Returns the run status (RUN_* in meds_polygon): 0 stepped,     !
    !      1 already finished, 2 NaN in the state, 4 a cohort or soil-carbon state out of bounds. -!
    function meds_run_step(h) result(status) bind(c, name="meds_run_step")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: status
       integer(ik) :: st
       if (.not. live(h)) then ; status = -1_c_int ; return ; end if
-      call driver_step(g_run(h), st)
+      call region_step(g_run(h), st)
       status = int(st, c_int)
    end function meds_run_step
 
@@ -110,7 +110,7 @@ contains
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: d
       if (.not. live(h)) then ; d = 1_c_int ; return ; end if
-      d = merge(1_c_int, 0_c_int, driver_done(g_run(h)))
+      d = merge(1_c_int, 0_c_int, region_done(g_run(h)))
    end function meds_run_is_done
 
    !----- Terminal checkpoint + conservation reports + close the streams. The state stays readable !
@@ -120,14 +120,14 @@ contains
       integer(c_int)                    :: status
       integer(ik) :: st
       if (.not. live(h)) then ; status = -1_c_int ; return ; end if
-      call driver_finalize(g_run(h), st)
+      call region_finalize(g_run(h), st)
       status = int(st, c_int)
    end function meds_run_finalize
 
    subroutine meds_run_free(h) bind(c, name="meds_run_free")
       integer(c_int), value, intent(in) :: h
       if (.not. live(h)) return
-      call driver_free(g_run(h))
+      call region_free(g_run(h))
       run_used(h) = .false.
    end subroutine meds_run_free
 
@@ -171,37 +171,44 @@ contains
    function meds_run_n_patch(h) result(v) bind(c, name="meds_run_n_patch")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: v
-      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly%site%patch%n, c_int)
+      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%patch%n, c_int)
    end function meds_run_n_patch
+
+   function meds_run_n_site(h) result(v) bind(c, name="meds_run_n_site")
+      integer(c_int), value, intent(in) :: h
+      integer(c_int)                    :: v
+      v = -1_c_int
+      if (live(h)) v = int(g_run(h)%poly(1)%site%n, c_int)
+   end function meds_run_n_site
 
    function meds_run_n_cohort(h) result(v) bind(c, name="meds_run_n_cohort")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: v
-      v = -1_c_int ; if (live(h)) v = int(count_cohorts(g_run(h)%poly%site), c_int)
+      v = -1_c_int ; if (live(h)) v = int(g_run(h)%poly(1)%cohort%n, c_int)
    end function meds_run_n_cohort
 
    function meds_run_total_agb(h) result(v) bind(c, name="meds_run_total_agb")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_agb(g_run(h)%poly%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_agb(g_run(h)%poly(1)), c_double)
    end function meds_run_total_agb
 
    function meds_run_total_lai(h) result(v) bind(c, name="meds_run_total_lai")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_lai(g_run(h)%poly%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_lai(g_run(h)%poly(1)), c_double)
    end function meds_run_total_lai
 
    function meds_run_total_nplant(h) result(v) bind(c, name="meds_run_total_nplant")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_nplant(g_run(h)%poly%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_nplant(g_run(h)%poly(1)), c_double)
    end function meds_run_total_nplant
 
    function meds_run_total_basal_area(h) result(v) bind(c, name="meds_run_total_basal_area")
       integer(c_int), value, intent(in) :: h
       real(c_double)                    :: v
-      v = 0.0_c_double ; if (live(h)) v = real(total_basal_area(g_run(h)%poly%site), c_double)
+      v = 0.0_c_double ; if (live(h)) v = real(total_basal_area(g_run(h)%poly(1)), c_double)
    end function meds_run_total_basal_area
 
    !----- Site total soil carbon [kgC/m2], area-weighted over patches: all seven CENTURY pools.    !
@@ -216,15 +223,9 @@ contains
       v = 0.0_c_double
       if (.not. live(h)) return
       tot = 0.0_wp
-      associate (p => g_run(h)%poly%site%patch)
+      associate (p => g_run(h)%poly(1)%patch)
          do ip = 1_ik, p%n
-            tot = tot + p%area(ip) * (p%soil_carbon(ip)%fast_grnd_carbon                        &
-                                    + p%soil_carbon(ip)%fast_soil_carbon                        &
-                                    + p%soil_carbon(ip)%struct_grnd_carbon                      &
-                                    + p%soil_carbon(ip)%struct_soil_carbon                      &
-                                    + p%soil_carbon(ip)%microbial_carbon                        &
-                                    + p%soil_carbon(ip)%slow_carbon                             &
-                                    + p%soil_carbon(ip)%passive_carbon)
+            tot = tot + patch_polygon_area(g_run(h)%poly(1), ip) * sum(p%soil_carbon(ip)%carbon)
          end do
       end associate
       v = real(tot, c_double)
@@ -239,7 +240,7 @@ contains
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (c => g_run(h)%poly%site%cohort)
+      associate (c => g_run(h)%poly(1)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -275,16 +276,16 @@ contains
             end if
             select case (field_id)
             case (9_c_int)
-               buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF, 1:n) + c%sdiag%v(CS_NPP_FINEROOT, 1:n)          &
-                             + c%sdiag%v(CS_NPP_WOOD, 1:n) + c%sdiag%v(CS_NPP_STORAGE, 1:n)          &
-                             + c%sdiag%v(CS_NPP_REPRO, 1:n), c_double)
-            case (10_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_WOOD,     1:n), c_double)
-            case (18_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF,     1:n), c_double)
-            case (19_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_FINEROOT, 1:n), c_double)
-            case (20_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_STORAGE,  1:n), c_double)
-            case (21_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_REPRO,    1:n), c_double)
-            case (22_c_int) ; buf(1:n) = real(c%sdiag%v(CS_GROWTH_RESP,  1:n), c_double)
-            case (23_c_int) ; buf(1:n) = real(c%sdiag%v(CS_EXUDATE,      1:n), c_double)
+               buf(1:n) = real(c%sdiag%v(CO_NPP_LEAF, 1:n) + c%sdiag%v(CO_NPP_FINEROOT, 1:n)          &
+                             + c%sdiag%v(CO_NPP_WOOD, 1:n) + c%sdiag%v(CO_NPP_STORAGE, 1:n)          &
+                             + c%sdiag%v(CO_NPP_REPRO, 1:n), c_double)
+            case (10_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_WOOD,     1:n), c_double)
+            case (18_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_LEAF,     1:n), c_double)
+            case (19_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_FINEROOT, 1:n), c_double)
+            case (20_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_STORAGE,  1:n), c_double)
+            case (21_c_int) ; buf(1:n) = real(c%sdiag%v(CO_NPP_REPRO,    1:n), c_double)
+            case (22_c_int) ; buf(1:n) = real(c%sdiag%v(CO_GROWTH_RESP,  1:n), c_double)
+            case (23_c_int) ; buf(1:n) = real(c%sdiag%v(CO_EXUDATE,      1:n), c_double)
             end select
          end select
       end associate
@@ -295,7 +296,7 @@ contains
       integer(c_int),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (c => g_run(h)%poly%site%cohort)
+      associate (c => g_run(h)%poly(1)%cohort)
          n = c%n
          if (n < 1_ik) return
          select case (field_id)
@@ -306,22 +307,57 @@ contains
       end associate
    end subroutine meds_run_get_int
 
-   !----- Copy-out per-patch getter (caller allocates buf of length n_patch). A cohort's      !
-   !      owner_patch indexes it, so a site total of a cohort quantity is                     !
-   !      sum(area(owner_patch) * nplant * x).                                                !
+   !----- Copy-out per-patch getters (caller allocates buf of length n_patch). A cohort's     !
+   !      owner_patch indexes them, so a polygon total of a cohort quantity is                 !
+   !      sum(share(owner_patch) * nplant * x), the share being the patch's fraction of the     !
+   !      polygon: its area in its site times the site's area. ----------------------------------!
    subroutine meds_run_get_patch_real(h, field_id, buf) bind(c, name="meds_run_get_patch_real")
+      integer(c_int), value, intent(in)  :: h, field_id
+      real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n, ip
+      if (.not. live(h)) return
+      associate (p => g_run(h)%poly(1)%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)   ! fraction of its site
+         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)   ! [yr] since disturbance
+         case (2_c_int)                                            ! fraction of the polygon
+            do ip = 1_ik, n
+               buf(ip) = real(patch_polygon_area(g_run(h)%poly(1), ip), c_double)
+            end do
+         end select
+      end associate
+   end subroutine meds_run_get_patch_real
+
+   subroutine meds_run_get_patch_int(h, field_id, buf) bind(c, name="meds_run_get_patch_int")
+      integer(c_int), value, intent(in)  :: h, field_id
+      integer(c_int),        intent(out) :: buf(*)
+      integer(ik) :: n
+      if (.not. live(h)) return
+      associate (p => g_run(h)%poly(1)%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int)                                            ! its site (1-based)
+            buf(1:n) = int(p%owner_site(1:n), c_int)
+         end select
+      end associate
+   end subroutine meds_run_get_patch_int
+
+   !----- Copy-out per-site getter (caller allocates buf of length n_site). ------------------!
+   subroutine meds_run_get_site_real(h, field_id, buf) bind(c, name="meds_run_get_site_real")
       integer(c_int), value, intent(in)  :: h, field_id
       real(c_double),        intent(out) :: buf(*)
       integer(ik) :: n
       if (.not. live(h)) return
-      associate (p => g_run(h)%poly%site%patch)
-         n = p%n
-         if (n < 1_ik) return
+      associate (s => g_run(h)%poly(1)%site)
+         n = s%n
          select case (field_id)
-         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)   ! fraction of the site
-         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)   ! [yr] since disturbance
+         case (0_c_int)                                            ! fraction of the polygon
+            buf(1:n) = real(s%area(1:n), c_double)
          end select
       end associate
-   end subroutine meds_run_get_patch_real
+   end subroutine meds_run_get_site_real
 
 end module meds_c_api_run

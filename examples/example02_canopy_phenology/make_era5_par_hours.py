@@ -13,7 +13,10 @@ from ERA5-Land). Regenerating needs the archive (--archive, or the environment v
 and a MEDS build whose shortwave split uses the interval-mean sun, so a sunrise or sunset hour still
 splits its light (docs/science/forcing.md §6):
 
-    python make_era5_par_hours.py --meds-main ../../build-ifx/meds_main --archive /path/to/ED_ERA5land
+    python make_era5_par_hours.py --archive /path/to/ED_ERA5land
+
+It runs build-dev/meds_main, the dev preset's build, unless --meds-main (or the environment variable
+MEDS_MAIN) names another, such as build-production/meds_main from the repository root.
 """
 import argparse
 import glob
@@ -51,15 +54,15 @@ def configure(site, work, archive):
         "run.dt_slow": "1d", "run.start_time": first, "run.end_time": stop,
         "fast.fast_biophysics_on": True, "fast.dt_fast": "900s",
         "demography.demography_on": False,
-        "init.init_mode": 0, "init.census_file": "none", "init.restart_file": "none",
-        "state.write_state": False,
+        "init.init_mode": 0,
+        "output.state_write": False,
         "output.enabled": True, "output.dir": "out", "output.prefix": site,
         "output.io_config": os.path.join(work, "variables.toml"), "output.fast_interval_steps": 1,
         "output.fast.enabled": True, "output.fast.file_chunk": "year",
         "output.daily.enabled": False, "output.monthly.enabled": False, "output.annual.enabled": False,
         "site.latitude": lat, "site.longitude": lon, "site.elevation": elev,
         "site.apply_elevation_lapse": False,
-        "forcing.forcing_on": True, "forcing.format": "ED_ERA5land", "forcing.data_path": archive,
+        "forcing.forcing_on": True, "forcing.format": "ERA5land", "forcing.data_path": archive,
         "forcing.max_distance_km": 15.0, "forcing.timestep": "3600s", "forcing.avg_convention": "end",
         "forcing.sw_partition": "clearidx", "forcing.lwdown_source": "file",
         "forcing.co2_source": "const", "forcing.co2_const": 400.0, "forcing.recycle": False,
@@ -69,7 +72,7 @@ def configure(site, work, archive):
     }.items():
         cfg.set(key, value)
     with open(os.path.join(work, "variables.toml"), "w") as fh:
-        fh.write('[variables]\npar_beam_fast = "F"\npar_diffuse_fast = "F"\n')
+        fh.write('[variables]\nmean_par_beam_py = "F"\nmean_par_diffuse_py = "F"\n')
     return cfg.write(work)
 
 
@@ -78,7 +81,7 @@ def count(site, work):
     rows = []
     for f in sorted(glob.glob(os.path.join(work, "out", f"{site}*.nc"))):
         d = nc.Dataset(f)
-        par = (d["par_beam_fast"][:].filled(0.0) + d["par_diffuse_fast"][:].filled(0.0)) * PAR_W_2_UMOL
+        par = (d["mean_par_beam_py"][:, 0].filled(0.0) + d["mean_par_diffuse_py"][:, 0].filled(0.0)) * PAR_W_2_UMOL
         stamps = pd.to_datetime(dict(year=d["year"][:], month=d["month"][:], day=d["day"][:])) \
             if "hour" not in d.variables else None
         if stamps is None:
@@ -94,7 +97,8 @@ def count(site, work):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--meds-main", default=os.path.join(ROOT, "build-ifx", "meds_main"))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main to run (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     ap.add_argument("--work", default=os.path.join(HERE, "data", "era5_par_runs"))
     ap.add_argument("sites", nargs="*", default=list(SITES))

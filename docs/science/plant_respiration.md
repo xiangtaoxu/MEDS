@@ -1,27 +1,29 @@
 # Plant respiration
 
-Autotrophic respiration returns a large fraction of gross photosynthesis to the atmosphere, and MEDS charges
-it in **three separate places on two timescales**: leaf dark respiration inside the sub-daily gas-exchange
-solver, stem and fine-root **maintenance** respiration in `meds_plant_respiration` (also sub-daily), and
-**growth (construction)** respiration once a day inside the carbon allocator. This page collects the three
-limbs, states the accounting rule that keeps them from being double-counted, and gives the equations for the
-two non-leaf maintenance terms — ED2 forms (Chambers et al. 2004 for stem), re-referenced to the 25 °C datum.
+Autotrophic respiration returns a large fraction of gross photosynthesis to the atmosphere. MEDS charges
+it in **three places on two timescales**: leaf dark respiration inside the gas-exchange solver and stem
+and fine-root **maintenance** respiration in `meds_respiration`, both on the fast step (`dt_fast`), and
+**growth (construction)** respiration once per slow step (`[run].dt_slow`, a day by default) inside the
+carbon allocator. This page collects the three limbs, states the accounting rule that keeps them from
+being double-counted, and gives the equations for the two non-leaf maintenance terms: ED2 forms (Chambers
+et al. 2004 for stem), re-referenced to the 25 °C datum. Their inputs come from the fast loop's
+state: the cohort's wood temperature, the soil temperature by layer, and the cohort's size and pools.
 
-## 1. The autotrophic budget in one place
+## 1. The autotrophic budget
 
 ```math
-R_a \;=\; \underbrace{R_d}_{\text{leaf, sub-daily}} \;+\; \underbrace{R_{\mathrm{stem}} + R_{\mathrm{root}}}_{\text{maintenance, sub-daily}} \;+\; \underbrace{R_g}_{\text{growth, daily}} \qquad(1)
+R_a \;=\; \underbrace{R_d}_{\text{leaf, fast step}} \;+\; \underbrace{R_{\mathrm{stem}} + R_{\mathrm{root}}}_{\text{maintenance, fast step}} \;+\; \underbrace{R_g}_{\text{growth, slow step}} \qquad(1)
 ```
 
 - **Leaf dark respiration** $R_d$ is part of the photosynthesis solution, not a separate flux: the leaf kernel
   scales a per-PFT (and plastic) $`R_{d25}`$ to leaf temperature and returns $`A = A_g - R_d`$. It is derived
-  in `docs/science/leaf_gas_exchange.md` and only *placed* here.
-- **Stem and fine-root maintenance** are computed every `dt_fast` from the two kernels in §2 and §3.
+  in [`leaf_gas_exchange.md`](leaf_gas_exchange.md) and only *placed* here.
+- **Stem and fine-root maintenance** are computed every fast step from the two kernels in §2 and §3.
 - **Growth respiration** $R_g$ is charged once per slow step by the allocator, on realized growth (§5).
 
-The fast loop integrates the three sub-daily limbs onto the cohort as `leaf_resp_accum`,
-`stem_resp_accum` and `root_resp_accum` $`[\mathrm{kgC\,plant^{-1}}]`$ (converting with `umol_2_kgC` at
-each sub-step), and the daily step sums exactly those three into the allocator's `resp_maint`, so
+The fast loop integrates the three fast-step limbs onto the cohort as `leaf_resp_accum`,
+`stem_resp_accum` and `root_resp_accum` $`[\mathrm{kgC\,plant^{-1}}]`$ (converting with `umol_2_kgc` at
+each fast step), and the slow step sums exactly those three into the allocator's `resp_maint`, so
 
 ```math
 \mathrm{NPP} \;=\; G \;-\; \big(R_d + R_{\mathrm{stem}} + R_{\mathrm{root}}\big) \qquad(2)
@@ -58,9 +60,9 @@ branch term to a per-plant area). The result is per plant
 $`[\mathrm{\mu mol\,CO_2\,plant^{-1}\,s^{-1}}]`$; the caller multiplies by `nplant` for the patch total.
 Four details are load-bearing:
 
-- **Temperature driver.** $`T_w`$ is the cohort's own **wood temperature** (`patch_biophys_t%wood_temp`),
+- **Temperature driver.** $`T_w`$ is the cohort's own **wood temperature** (`fast_dynamic_state_t%wood_temp`),
   the prognostic store solved by the vegetation energy balance — not canopy air, not leaf temperature. Its
-  larger heat capacity damps the diurnal cycle (`docs/science/vegetation_energy_dynamics.md`).
+  larger heat capacity damps the diurnal cycle ([`vegetation_energy_dynamics.md`](vegetation_energy_dynamics.md)).
 - **Aboveground fraction.** The cylinder-plus-branch area is the *aboveground* surface; dividing by
   $`f_{\mathrm{ag}}`$ = `aboveground_frac` scales it to the whole woody plant, so belowground structure
   respires in proportion. It is a per-PFT trait gathered per cohort — the same number demography and
@@ -69,7 +71,7 @@ Four details are load-bearing:
 - **Surface or sapwood.** Maintenance respiration of stems is linear in sapwood (live-cell) volume in
   conifers (Ryan 1990; Ryan et al. 1995), while tropical stem efflux follows surface and volume both
   (Cavaleri et al. 2006; Rowland et al. 2018). The two bases spread a stand's stem respiration over
-  sizes differently: per m² of leaf, the surface term rises about 3-fold from a 1 cm to a 120 cm stem
+  sizes differently: per m² of leaf, the surface term rises about 2.6-fold from a 1 cm to a 120 cm stem
   on the tropical allometry, the sapwood term about 40-fold, so the sapwood basis charges saplings far
   less and canopy trees more. Volume rather than carbon: biomass grows as $`\rho^{0.976}`$, so
   $`V_{\mathrm{sap}}`$ barely depends on the wood density, and denser sapwood respires less per gram
@@ -102,13 +104,13 @@ The peaked form is convex below its optimum and concave near it, so the error a 
 would make flips sign with the season rather than biasing one way. At Ithaca on a 2 m column the
 layer sum differs from the response at the mean by +4.8 % in December and −8.3 % in June, but only
 −0.17 % in the annual mean: a seasonal correction to root respiration, not an annual-budget one. The
-sum is patch-uniform, so `root_zone_temp_scale` evaluates it once per patch per sub-step and the
+sum is patch-uniform, so `root_zone_temp_scale` evaluates it once per patch per fast step and the
 kernel broadcasts it over the cohorts. A cohort with no fine roots respires nothing.
 
 ## 4. The shared temperature response
 
-Both maintenance limbs — and leaf $R_d$ — scale from a 25 °C baseline through the **same two functions**
-in `meds_temp_response`:
+Both maintenance limbs, and leaf $R_d$, scale from a 25 °C baseline through the **same two functions**
+in `meds_therm_lib`:
 
 ```math
 s_{\mathrm{arr}}(T) = \exp\!\Big[\frac{E_a}{R\,T_{25}}\Big(1 - \frac{T_{25}}{T}\Big)\Big],
@@ -125,11 +127,13 @@ PFT file is written**, never at runtime.
 
 Leaf $R_d$ reaches these functions through the dispatcher `temp_response(form, …)`, so its form follows the
 run's configured selection; stem and root call `peaked_arrhenius_scale` directly and are always peaked.
-Both routes end in the same code, and that is the point: `meds_temp_response` sits in the shared library at
-the root of the dependency DAG precisely so leaf, stem and root cannot drift into three near-copies of an
-Arrhenius — a change to the deactivation normalisation or to the clamped `safe_exp` reaches every tissue at
-once. $`E_a, H_d, \Delta S`$ live separately on `wood_params_t` and `root_params_t`, defaulted to the leaf
-$R_d$ values (46390 / 200000 / 490), so the three tissues share one thermal shape but may diverge.
+Both routes end in the same code, and that is the point: the temperature response (`meds_therm_lib`) sits
+in the shared library at the root of the dependency DAG precisely so leaf, stem and root cannot drift
+into three near-copies of an Arrhenius — a change to the deactivation normalisation or to the clamped
+`safe_exp` reaches every tissue at once. Stem and root take the leaf's $`E_a, H_d, \Delta S`$ too,
+`[leaf_physiology]`'s `ea_rd`, `hd_rd` and `ds_rd` (46390 / 200000 / 490 in the reference config), set in
+one place. Stem and root always use them in the peaked form, while leaf $`R_d`$ takes
+`temp_response_form`, so the three tissues share one thermal shape under the default `peaked`.
 
 ## 5. Growth respiration on realized growth
 
@@ -142,7 +146,7 @@ R_g \;=\; g\,\big(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_
 ```
 
 over the growth $`a_p`$ the cohort actually built this step, and the root exudate $E$ of the sink limit on
-wood growth, which costs the same to make and export (`plant_carbon_allocation.md` §2; zero without a
+wood growth, which costs the same to make and export ([`plant_carbon_allocation.md`](plant_carbon_allocation.md) §2; zero without a
 limit). **Storage refill is exempt** — moving carbon
 into a nonstructural pool is a transfer of sugar, not construction.
 
@@ -152,47 +156,50 @@ available for growth, which changes the growth. It gets the degenerate cases rig
 carbon-starved cohort that funds no growth pays no construction cost, whereas a charge on the
 pre-allocation balance would bill it for tissue it never built. And it keeps carbon bound for storage out
 of the charge, which a balance-based form cannot. This is a real term in the ecosystem carbon balance,
-not a rounding detail: in the reference run it is roughly **23 %** of all carbon entering growth.
+not a rounding detail: it is $`g/(1+g)`$ of all carbon entering growth, 23 % at the shipped $g = 0.3$.
 
 ## 6. Where the respired carbon goes
 
 All four limbs reach the canopy air space as part of the biotic CO₂ source driving the prognostic
-`can_co2` twin, assembled in the fast pre-pass as
+`can_co2`, assembled at the start of each fast step (`build_frozen`) as
 
 ```math
 \mathrm{NEE}_{\mathrm{biotic}} \;=\; R_d + R_{\mathrm{stem}} + R_{\mathrm{root}} + R_h \;-\; G \;+\; \dot{c}_{\mathrm{slow}} \qquad(7)
 ```
 
-$`[\mathrm{\mu mol\,m^{-2}\,ground\,s^{-1}}]`$, positive toward the canopy air. The three sub-daily limbs
-are exhaled in the very sub-step that computes them. Growth respiration cannot be — it is known only once a
-day — so the allocator commits the per-patch total as `slow_co2_rate`, a frozen rate the *next* fast window
-emits, exactly the handoff the shed-tissue water uses. The storage maintenance of
-`plant_carbon_allocation.md` eq. (2) rides the same rate. That rate carries an opposite-signed starvation
+$`[\mathrm{\mu mol\,m^{-2}\,ground\,s^{-1}}]`$, positive toward the canopy air. The three fast-step limbs
+are exhaled in the very fast step that computes them. Growth respiration cannot be, because it is known
+only once per slow step, so the slow step's allocation driver commits the per-patch total as
+`slow_co2_rate`, a frozen rate the *next* fast window emits. That rate carries an opposite-signed starvation
 correction (`growth_resp - deficit`): when storage could not fund the maintenance the fast loop had already
-reported, the over-report is netted back here rather than by rewriting the previous step.
+reported, the over-report is netted back here rather than by rewriting the previous step. Real maintenance
+respiration is limited by the substrate the plant has, so a maintenance flux no pool could pay is read as
+an over-report of the fast loop, which respires without that limit (§7); an operator-split model corrects
+it on the next step, in one channel with one sign convention.
 
-$`R_h`$ is the heterotrophic limb from the CENTURY pools — see `docs/science/soil_carbon.md`; the
-canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophysics.md`.
+$`R_h`$ is the heterotrophic limb from the CENTURY pools ([`soil_carbon.md`](soil_carbon.md)); the
+canopy-air budget these fluxes enter is in [`canopy_air_space_biophysics.md`](canopy_air_space_biophysics.md).
 
 ## 7. What is not here
 
 - **No thermal acclimation of respiration** — no running-mean-temperature reference shift for any
   tissue: the 25 °C baselines are fixed traits, and the kernels carry no acclimation-temperature
-  argument (photosynthetic capacity does acclimate, `leaf_gas_exchange.md` §"Thermal acclimation").
-- **No reproductive-tissue maintenance**, and storage maintenance off by default — seed carbon respires
-  nothing; the non-structural pool pays a fractional turnover (`storage_turnover_rate`, default 0,
-  `plant_carbon_allocation.md` eq. (2)) that leaves through `slow_co2_rate` (§6).
+  argument (photosynthetic capacity does acclimate, [`leaf_gas_exchange.md`](leaf_gas_exchange.md), "Thermal acclimation").
+- **No reproductive-tissue or storage maintenance** — seed carbon and the non-structural pool respire
+  nothing.
 - **No per-layer root biomass** — the temperature response is resolved by layer (§3), but the fine-root
   pool is one per-plant pool spread over the layers by the root profile, not a prognostic pool per layer.
 - **No substrate or moisture limitation of maintenance respiration** — it runs at the temperature-set rate
   whatever the carbon status; §6's starvation correction is after-the-fact bookkeeping, not a rate law.
 - **No size factor on the stem surface rate** (ED2's optional DBH exponent, §2). Stem respiration
-  still grows with size through its basis: the shipped example 05 and 06 PFTs scale it through the
-  sapwood term, which charges saplings less and canopy trees more than the surface term (§2).
+  still grows with size through its basis: the example 05 PFTs scale it through the sapwood term, which
+  charges saplings less and canopy trees more than the surface term (§2).
 
-See `docs/ROADMAP.md` §7 for the open items.
+The open items are in [`ROADMAP.md`](../ROADMAP.md) §7.
 
-## Parameters (per-PFT traits consumed)
+## Parameters
+
+Per-PFT traits the respiration consumes (PFT file, `[pft]`).
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -202,21 +209,37 @@ See `docs/ROADMAP.md` §7 for the open items.
 | $`r^{\mathrm{root}}_{25}`$ | `root_resp_factor25` | fine-root baseline $`[\mathrm{\mu mol\,CO_2\,kgC^{-1}\,s^{-1}}]`$ at 25 °C (shipped 0.30) |
 | $`f_{\mathrm{ag}}`$ | `aboveground_frac` | aboveground fraction of woody carbon; scales the stem area (eq. (3)) |
 | $g$ | `growth_resp_factor` | construction-cost fraction charged on realized growth (shipped 0.3) |
-| $`R_{d25}`$ | `rd25` (plastic per cohort) | leaf dark-respiration capacity — see `plant_traits.md`, `leaf_gas_exchange.md` |
-| $`E_a, H_d, \Delta S`$ | `wood_params_t` / `root_params_t` | peaked-Arrhenius parameters, defaulted to the leaf $R_d$ values |
+| $`R_{d25}`$ | `rd25` (plastic per cohort) | leaf dark-respiration capacity — see [`plant_traits.md`](plant_traits.md), [`leaf_gas_exchange.md`](leaf_gas_exchange.md) |
+| $`E_a, H_d, \Delta S`$ | `[leaf_physiology]` `ea_rd`, `hd_rd`, `ds_rd` | peaked-Arrhenius parameters, the leaf $R_d$'s, shared by stem and root |
 
-## Where the code is
+## Code map
 
 | Concept | Routine |
 |---|---|
-| stem maintenance respiration (eq. (3)) | `meds_plant_respiration`: `stem_maintenance_respiration` (`elemental pure`: scalar = one cohort, array = one patch) |
-| fine-root maintenance respiration (eq. (4)) | `meds_plant_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
-| shared temperature response (eq. (5)) | `meds_temp_response`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
-| leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see `leaf_gas_exchange.md`) |
-| per-sub-step call site + patch totals | `meds_fast_prepass`: `canopy_maintenance_respiration`, `column_prepass` (eq. (7)) |
-| sub-daily → daily integration | `meds_fast_dynamics` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |
-| daily maintenance sum handed to the allocator | `meds_vegetation_dynamics`: `cohort_carbon_demand` (`resp_maint`) |
+| stem maintenance respiration (eq. (3)) | `meds_respiration`: `stem_maintenance_respiration` (`elemental pure`: scalar = one cohort, array = one patch) |
+| fine-root maintenance respiration (eq. (4)) | `meds_respiration`: `fine_root_maintenance_respiration`, with the layer-summed temperature scale `root_zone_temp_scale` |
+| shared temperature response (eq. (5)) | `meds_therm_lib`: `arrhenius_scale`, `peaked_arrhenius_scale`, `temp_response` |
+| leaf dark respiration $R_d$ | `meds_leaf_gas_exchange` (inside the Ci solve; see [`leaf_gas_exchange.md`](leaf_gas_exchange.md)) |
+| per-fast-step call site + patch totals | `meds_fast_integ_frozen`: `canopy_maintenance_respiration`, `build_frozen` (eq. (7)) |
+| fast step → slow step integration | `meds_fast_state`: `accumulate_fast_to_slow` → `leaf_resp_accum` / `stem_resp_accum` / `root_resp_accum` on the cohort SoA |
+| slow-step maintenance sum handed to the allocator | `meds_cohort_state_vars`: `cohort_carbon_supply` (`resp_maint`) |
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
-| growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_prepass` |
-| per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required) |
-| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |
+| growth respiration → canopy air | `meds_slow_state`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_integ_frozen` |
+| per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block; every key is required except `stem_resp_sapwood25`, §2) |
+| tests | `test/fast/test_respiration.f90` (the 25 °C identity, the layered root response, the sapwood term, the grass gate, `aboveground_frac` inverse scaling; the soil's heterotrophic respiration there too, [soil_carbon.md](soil_carbon.md)); growth respiration in `test/slow/test_plant_carbon_allocation.f90` |
+
+## References
+
+- **Chambers et al. (2004)**, *Ecol. Appl.* 14:S72 — respiration of a central Amazonian forest, the stem
+  maintenance form ED2 uses.
+- **Ryan (1990)**, *Can. J. For. Res.* 20:48 — stem maintenance respiration scales with sapwood volume.
+- **Medlyn et al. (2002)**, *Plant Cell Environ.* 25:1167 — the peaked temperature response of Rubisco
+  and electron-transport rates.
+- **Ryan et al. (1995)**, *Oecologia* 101:133 — woody-tissue maintenance respiration of four conifers
+  tracks sapwood volume.
+- **Cavaleri et al. (2006)**, *Glob. Change Biol.* 12:2442 — wood CO₂ efflux in a primary tropical rain
+  forest, by surface area, volume and biomass.
+- **Rowland et al. (2018)**, *New Phytol.* 218:1393 — drought stress and tree size determine stem CO₂
+  efflux in a tropical forest.
+- **Westerband et al. (2022)**, *Ann. Bot.* 129:633 — nitrogen and tissue density as drivers of
+  woody-tissue respiration.

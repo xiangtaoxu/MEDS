@@ -62,7 +62,7 @@ def trial_config(efficiency, threads, fitted=False, seed_rain=None):
         cg.apply(cfg, cg.best_parameters())
     for key, value in {"run.start_time": f"{START}-01-01", "run.end_time": f"{START + YEARS}-01-01",
                        "run.n_threads": threads, "init.init_mode": 1, "init.census_file": cg.CENSUS,
-                       "output.enabled": False, "state.write_state": False}.items():
+                       "output.enabled": False, "output.state_write": False}.items():
         cfg.set(key, value)
     for p, e in enumerate(efficiency, start=1):
         cfg.set("pft.recruit_carbon_efficiency", float(e), file="pft", pft=p)
@@ -83,7 +83,7 @@ def run_trial(cfg, out):
         prev = {}
         for step in run:
             c = run.cohorts("global_id", "pft", "nplant", "dbh", "leaf_area", "owner_patch")
-            area = run.patches("area")["area"]
+            area = run.patches("share")["share"]
             ip = c["owner_patch"] - 1
             lai = np.zeros(len(area))
             np.add.at(lai, ip, c["nplant"] * c["leaf_area"])

@@ -73,12 +73,18 @@ def _fmt(v) -> str:
     raise TypeError(f"cannot write a {type(v).__name__} to TOML")
 
 
+def _is_array_of_tables(v) -> bool:
+    return isinstance(v, list) and len(v) > 0 and all(isinstance(x, dict) for x in v)
+
+
 def dumps(d: dict) -> str:
-    """Nested dicts to TOML text, each table's values before its sub-tables."""
+    """Nested dicts to TOML text, each table's values before its sub-tables, and a list of
+    tables (the [[sites]] of a run) as one [[name]] table each, last."""
     def walk(table: dict, prefix: str, out: list):
-        scalars = {k: v for k, v in table.items() if not isinstance(v, dict)}
+        arrays = {k: v for k, v in table.items() if _is_array_of_tables(v)}
+        scalars = {k: v for k, v in table.items() if not isinstance(v, dict) and k not in arrays}
         tables = {k: v for k, v in table.items() if isinstance(v, dict)}
-        if prefix and (scalars or not tables):
+        if prefix and (scalars or not (tables or arrays)):
             out.append(f"[{prefix}]")
         for k, v in scalars.items():
             out.append(f"{k} = {_fmt(v)}")
@@ -86,6 +92,12 @@ def dumps(d: dict) -> str:
             out.append("")
         for k, v in tables.items():
             walk(v, f"{prefix}.{k}" if prefix else k, out)
+        for k, items in arrays.items():
+            for item in items:
+                out.append(f"[[{prefix}.{k}]]" if prefix else f"[[{k}]]")
+                for kk, vv in item.items():
+                    out.append(f"{kk} = {_fmt(vv)}")
+                out.append("")
     lines: list[str] = []
     walk(d, "", lines)
     return "\n".join(lines) + "\n"
@@ -153,16 +165,18 @@ class RunConfig:
 
     def get(self, key: str, file: str = "main", pft: int | None = None, default=None):
         """A key's value in the main file or the PFT file. With ``pft`` (1-based), one PFT's element
-        of a per-PFT array."""
+        of a per-PFT array; a key the PFT file gives as one value for every PFT ([allometry],
+        [hydraulics]) returns that value."""
         v = deep_get(self._table(file), key, default)
-        if pft is None or v is default:
+        if pft is None or v is default or not isinstance(v, list):
             return v
         return v[pft - 1]
 
     def set(self, key: str, value, file: str = "main", pft: int | None = None) -> None:
         """Set a key in the main file or the PFT file. With ``pft`` (1-based), set that PFT's element
-        of a per-PFT array and keep the others. A per-PFT key the PFT file does not list can be set
-        only when there is one PFT, because the other PFTs' values would be unknown."""
+        of a per-PFT array and keep the others; a key given as one value for every PFT stays one
+        value with one PFT and becomes one per PFT with more. A per-PFT key the PFT file does not
+        list can be set only when there is one PFT, because the other PFTs' values would be unknown."""
         table = self._table(file)
         if pft is None:
             deep_set(table, key, value)
@@ -173,6 +187,12 @@ class RunConfig:
                 raise KeyError(f"'{key}' is not in the PFT file, and with {self.n_pft} PFTs the other "
                                "PFTs' values are unknown: add it to the PFT file")
             arr = [value]
+        elif not isinstance(arr, list):
+            if self.n_pft == 1:
+                deep_set(table, key, value)
+                return
+            arr = [arr] * self.n_pft
+            arr[pft - 1] = value
         else:
             arr = list(arr)
             arr[pft - 1] = value

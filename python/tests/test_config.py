@@ -43,16 +43,35 @@ def test_set_one_pft_keeps_the_others(tmp_path):
 def test_a_missing_trait_needs_a_single_pft():
     cfg = RunConfig(main={}, pft={"pft": {"wood_density": [0.6, 0.7]}})
     with pytest.raises(KeyError):
-        cfg.set("pft.leaf_pi0", -1.8, file="pft", pft=1)
+        cfg.set("pft.leaf_width", 0.05, file="pft", pft=1)
     one = RunConfig(main={}, pft={"pft": {"wood_density": [0.6]}})
-    one.set("pft.leaf_pi0", -1.8, file="pft", pft=1)
-    assert one.get("pft.leaf_pi0", file="pft") == [-1.8]
+    one.set("pft.leaf_width", 0.05, file="pft", pft=1)
+    assert one.get("pft.leaf_width", file="pft") == [0.05]
+
+
+
+def test_a_key_for_every_pft_reads_and_sets_one_pft():
+    cfg = RunConfig(main={}, pft={"pft": {"wood_density": [0.6, 0.7]}, "hydraulics": {"root_beta": 0.1}})
+    assert cfg.get("hydraulics.root_beta", file="pft", pft=2) == 0.1
+    cfg.set("hydraulics.root_beta", 0.2, file="pft", pft=2)
+    assert cfg.get("hydraulics.root_beta", file="pft") == [0.1, 0.2]
+    one = RunConfig(main={}, pft={"pft": {"wood_density": [0.6]}, "hydraulics": {"root_beta": 0.1}})
+    one.set("hydraulics.root_beta", 0.2, file="pft", pft=1)
+    assert one.get("hydraulics.root_beta", file="pft") == 0.2
 
 
 def test_dumps_writes_every_digit_and_nested_tables():
     d = {"run": {"dt_slow": "1d", "slow_on": False}, "output": {"enabled": True, "fast": {"enabled": True}},
          "pft": {"vcmax25": [45.0, 0.1 + 0.2]}}
     assert tomllib.loads(dumps(d)) == d
+
+
+def test_dumps_writes_the_sites_as_tables_of_an_array():
+    d = {"run": {"dt_slow": "1d"}, "soil": {"depth": 2.0},
+         "sites": [{"area_fraction": 0.25, "depth": 0.6}, {"area_fraction": 0.75}]}
+    text = dumps(d)
+    assert text.count("[[sites]]") == 2
+    assert tomllib.loads(text) == d
 
 
 def test_read_record_labels_the_files(tmp_path):

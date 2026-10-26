@@ -1,5 +1,10 @@
 # Example 06: dry-forest leaf habits across Central America — PFT and phenology design
 
+> **Status, 2026-10-25: implemented.** Example 06 ([`examples/example06_regional_run/`](../../examples/example06_regional_run/))
+> runs the regional simulation this plan designed, and example 05's Palo Verde PFT file follows §6,
+> which it cites. "Design only" below is the status on the day the plan was written. The
+> [index](README.md) keeps the plan as the record of the PFT and phenology design.
+
 Written 2026-10-10. Design only: nothing here is implemented. The owner asked for an example06
 that reproduces the regional simulation of Xu et al. (2016, *New Phytol.* 212:80–95) over Central
 America. Before any regional run, the PFTs and the phenology have to be designed so the model can

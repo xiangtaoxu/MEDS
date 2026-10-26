@@ -31,8 +31,8 @@ from the 1985 census instead, the same rates track the plot through 2010. Reprod
 *Ten days in one patch of the Barro Colorado Island forest, Panama, every half hour, at the end of
 the 2016 El Niño dry season. **Of what is drawn, only the top panel and the grey air temperature are
 inputs**, from the flux tower's own meteorology. The canopy air, the top tree's leaves and the soil
-are solved: the leaves run 3–6 K above the air at midday, the canopy draws its air's CO₂ down by
-day, and the first storm wets the soil from the top down. The same run starts from the plot's
+are solved: the leaves run several kelvin above the air at midday, the canopy draws its air's CO₂
+down by day, and the first storm wets the soil from the top down. The same run starts from the plot's
 census and is calibrated against the tower's fluxes:
 [`examples/example04_column_biophysics/`](examples/example04_column_biophysics/).*
 
@@ -42,30 +42,33 @@ census and is calibrated against the tower's fluxes:
 |---|---|---|
 | Canopy radiation | ED2 two-stream (`icanrad = 2`), multi-band, Beta leaf-angle distribution | [canopy_radiation_transfer](docs/science/canopy_radiation_transfer.md) |
 | Aerodynamics | CLM5 Monin-Obukhov, ED2 Nusselt leaf and wood boundary layers | [canopy_aerodynamics](docs/science/canopy_aerodynamics.md) |
-| Canopy air space | three prognostic twins: enthalpy, humidity, CO₂ | [canopy_air_space](docs/science/canopy_air_space_biophysics.md) |
+| Canopy air space | three prognostic variables: enthalpy, humidity and CO₂ | [canopy_air_space](docs/science/canopy_air_space_biophysics.md) |
 | Photosynthesis | FvCB C3 and Collatz C4, three stomatal models, two-limb water stress | [leaf_gas_exchange](docs/science/leaf_gas_exchange.md) |
 | Plant hydraulics | pressure-volume tissues, Kirchhoff xylem, per-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
 | Soil water | mixed-form Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
 | Soil and plant water solve | one implicit network per patch: pond, soil layers, each cohort's wood and leaves | [soil_plant_water](docs/science/soil_plant_water.md) |
-| Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
+| Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [coupled_biophysics](docs/science/coupled_biophysics.md) |
 | Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
 | Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |
 | Phenology | one cue kernel (temperature, hours of light, water) → flush and senescence tendencies; evergreen as a leaf-cover floor | [plant_phenology](docs/science/plant_phenology.md) |
-| Carbon allocation | daily FATES PARTEH-H1 priority ladder | [plant_carbon_allocation](docs/science/plant_carbon_allocation.md) |
+| Leaf traits | light-driven plasticity of SLA, Vcmax, dark respiration and leaf turnover down the canopy | [plant_traits](docs/science/plant_traits.md) |
+| Carbon allocation | FATES PARTEH-H1 priority ladder, once per slow step | [plant_carbon_allocation](docs/science/plant_carbon_allocation.md) |
 | Respiration | leaf, stem and fine-root maintenance; growth charged on realized growth | [plant_respiration](docs/science/plant_respiration.md) |
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |
-| Demography | cohort and patch fusion/fission, treefall disturbance, wood-density PFT axis | [ed2_comparison](docs/ed2_comparison.md) |
-| Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the accuracy baseline | [numerical_scheme](docs/science/numerical_scheme.md) |
-| Output | 284 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
+| Demography | growth, mortality and recruitment as rates; cohort and patch fusion and fission; treefall disturbance | [demography](docs/science/demography.md) |
+| Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the explicit alternative | [numerical_scheme](docs/science/numerical_scheme.md) |
+| Output | several hundred variables at cohort, patch, site and polygon level, by PFT, size class or soil layer, each switchable per output tier | [diagnostics](docs/science/diagnostics.md) |
 | Regional runs | every cell of a box of the ERA5-Land grid as its own polygon, in one process | [configuration](docs/configuration.md#regional-runs) |
+| Several sites | a polygon divided into sites, each on its own soil, elevation and slope | [configuration](docs/configuration.md#several-sites) |
 
-Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
-threaded and the output is byte-identical at any thread count.
+Every process closes a conservation budget each step, asserted in the test suite. A site's patches, or
+a region's polygons, run on threads, and the output is byte-identical at any thread count.
 
-**Status: v0.3.5, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
-been compared flux-for-flux, and no output has been scored against observations. What is verified is
-internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
-Treat the numbers a MEDS run produces as a working model's numbers.
+**Status: v0.4.0, and not yet benchmarked.** The examples fit some parameters to observations (a flux
+tower, a forest census, leaf area and litter) and set a regional run against satellite leaf area, but no
+EDTS-equivalent regression suite has been run and no systematic evaluation against observations has
+been made. What is verified is internal: the test suite on two compilers, per-step conservation
+ledgers, and thread invariance. Treat the numbers a MEDS run produces as a working model's numbers.
 [`CHANGELOG.md`](CHANGELOG.md) states the release's known limitations and which numbers each release
 moved.
 
@@ -74,10 +77,9 @@ moved.
 ```bash
 ./scripts/install_netcdf.sh                    # if you do not have netCDF; prints the prefix
 
-cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+FC=ifx cmake --preset dev                      # the dev build in build-dev; netCDF from $CONDA_PREFIX
+cmake --build build-dev -j
+ctest --test-dir build-dev --output-on-failure
 
 # A forest regrowing from near-bare ground for 300 years (example 03's demography; about a minute)
 PYTHONPATH=python python examples/example03_demography/run_demography.py --start bare
@@ -86,11 +88,14 @@ python post_proc/plot_site_timeseries.py \
 ```
 
 netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. Details, including
-the parallel builds and three compiler traps that cost real time, are in
-[`docs/building.md`](docs/building.md). `-DMEDS_BUILD_PYLIB=ON` adds the library the Python front end
-loads ([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. A
-run of `meds_main` itself takes a config, `./build/meds_main CONFIG.toml`: the examples' READMEs say
-which data each needs, and [`post_proc/README.md`](post_proc/README.md) which plots read its output.
+the four build kinds (debug, dev, profile, and production for long runs), the parallel builds and the
+compiler traps that cost real time, are in [`docs/building.md`](docs/building.md).
+The dev preset also builds `libmeds.so`, the library the Python front end loads
+([`python/README.md`](python/README.md)); the plotting needs numpy, matplotlib and netCDF4. The
+example scripts run `build-dev/meds_main` and the Python front end loads `build-dev/libmeds.so`
+unless told otherwise. A run of `meds_main` itself takes a config,
+`./build-dev/meds_main CONFIG.toml`: the examples' READMEs say which data each needs, and
+[`post_proc/README.md`](post_proc/README.md) which plots read its output.
 
 ## Where to go next
 
@@ -98,7 +103,8 @@ which data each needs, and [`post_proc/README.md`](post_proc/README.md) which pl
 |---|---|
 | run MEDS, coming from ED2 | [`docs/ed2_comparison.md`](docs/ed2_comparison.md) — process by process, keyed to `ED2IN` |
 | set up a run | [`docs/configuration.md`](docs/configuration.md) — the two TOML files and the three ways to start |
-| see worked examples | [`examples/`](examples/) — demography, biophysics, leaf gas exchange, phenology |
+| see worked examples | [`examples/`](examples/) — leaf gas exchange, phenology, demography, a flux tower, forest regrowth, a region |
+| prepare forcing and census inputs | [`scripts/prepare_era5/`](scripts/prepare_era5/), [`scripts/prepare_flux_tower/`](scripts/prepare_flux_tower/), [`scripts/prepare_census/`](scripts/prepare_census/) |
 | understand the equations | [`docs/science/`](docs/science/) |
 | change the code | [`src/README.md`](src/README.md) — the layout, the placement rules, the library graph |
 | drive it from Python | [`python/README.md`](python/README.md) |
@@ -109,12 +115,12 @@ which data each needs, and [`post_proc/README.md`](post_proc/README.md) which pl
 ## Design goals
 
 - **Modern Fortran 2018** — modules, derived-type encapsulation, explicit interfaces, `allocatable`
-  ownership, parameterized kinds, `pure` and `elemental` kernels, OpenMP `target` array kernels.
+  ownership, parameterized kinds, `pure` and `elemental` kernels.
 - **Modular** — one responsibility per module, no hidden global mutable state, parameters and rates
   passed explicitly as data.
 - **Testable** — the kernel libraries build and unit-test standalone, without the demographic state.
-- **Reproducible** — no hard-coded model parameters; every run writes back the per-PFT table it
-  actually used.
+- **Reproducible** — no hard-coded model parameters; every run with output writes a record of each
+  parameter it used, to the last digit.
 
 ## Scientific reference
 

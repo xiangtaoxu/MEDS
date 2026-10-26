@@ -8,20 +8,21 @@
 ! EVERY bind(c) struct here is an ABI CONTRACT with `python/meds/plant/_ffi.py`: the field     !
 ! ORDER must match, member for member. It is compiled by a mandatory ctest target              !
 ! (`test_c_api_leaf`) precisely so a mismatch is a BUILD failure, not a silent wrong answer: a !
-! component inserted mid-type in `leaf_photo_params_t` breaks the C API while the rest of the  !
+! component inserted mid-type in `leaf_photo_pft_t` breaks the C API while the rest of the    !
 ! suite stays green, and only a target that compiles this file sees it.                        !
 !==========================================================================================!
 module meds_c_api_leaf
    use iso_c_binding,          only : c_double, c_int
    use meds_kinds,             only : wp, ik
-   use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
+   use meds_leaf_gas_exchange, only : leaf_env_t, leaf_out_t
+   use meds_pft_params,        only : leaf_photo_pft_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics
-   use meds_temp_response,     only : peaked_arrhenius_scale, arrhenius_scale
+   use meds_therm_lib,         only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 
-   public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c, leaf_kinetics_c
+   public :: leaf_env_c, leaf_args_c, leaf_flux_c, leaf_c3_demand_c, leaf_kinetics_c
    public :: meds_leaf_solve, meds_leaf_solve_batch, meds_assimilation_demand_c3, meds_electron_transport_j
    public :: meds_rubisco_kinetics
    public :: meds_peaked_arrhenius, meds_arrhenius
@@ -31,16 +32,16 @@ module meds_c_api_leaf
       real(c_double) :: par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi
    end type leaf_env_c
 
-   !----- C-interoperable mirror of leaf_flux_t (7 doubles + 2 ints; converged 0/1). --------!
+   !----- C-interoperable mirror of leaf_out_t (7 doubles + 2 ints; converged 0/1). --------!
    type, bind(c) :: leaf_flux_c
       real(c_double) :: A_net, A_gross, gs, ci, cs, transpiration, rd
       integer(c_int) :: limitation
       integer(c_int) :: converged
    end type leaf_flux_c
 
-   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 37 doubles, same order), less  !
-   !      psi_onset and medlyn_vpd_min (see to_params). ---------------------------------------!
-   type, bind(c) :: leaf_params_c
+   !----- C-interoperable mirror of leaf_photo_pft_t (1 int + 37 doubles, same order), less    !
+   !      psi_onset and vpd_min (see to_params). ---------------------------------------------!
+   type, bind(c) :: leaf_args_c
       integer(c_int) :: pathway
       real(c_double) :: vcmax25, jmax25, tpu25, rd25, kp25
       real(c_double) :: g0, g1, d0, quantum_yield, theta_j
@@ -50,7 +51,7 @@ module meds_c_api_leaf
       real(c_double) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
       real(c_double) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
       real(c_double) :: o2_mol_frac, absorptance, phi_psii
-   end type leaf_params_c
+   end type leaf_args_c
 
    !----- C-interoperable C3 demand rates at a prescribed Ci (4 doubles). -------------------!
    type, bind(c) :: leaf_c3_demand_c
@@ -66,20 +67,21 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Coupled leaf gas-exchange: unpack the C structs into the model types, solve, pack back. !
-   ! sm/tresp/colim are the SM_*/TRESP_*/COLIM_* integer codes; use_boundary_layer is 0/1.               !
+   ! sm, temp_response_form and colim are the SM_*, TEMP_RESPONSE_* and COLIM_* integer      !
+   ! codes; use_boundary_layer is 0/1.                                                       !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_leaf_solve(env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
+   subroutine meds_leaf_solve(env_c, p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c) bind(c, name="meds_leaf_solve")
       type(leaf_env_c),    intent(in)  :: env_c
-      type(leaf_params_c), intent(in)  :: p_c
-      integer(c_int), value, intent(in) :: sm, tresp, colim, use_boundary_layer
+      type(leaf_args_c),   intent(in)  :: p_c
+      integer(c_int), value, intent(in) :: sm, temp_response_form, colim, use_boundary_layer
       type(leaf_flux_c),   intent(out) :: flux_c
       type(leaf_env_t)          :: env
-      type(leaf_photo_params_t) :: p
-      type(leaf_flux_t)         :: flux
+      type(leaf_photo_pft_t)    :: p
+      type(leaf_out_t)         :: flux
 
       env = to_env(env_c) ; p = to_params(p_c)
 
-      call solve_leaf_gas_exchange(env, p, int(sm), int(tresp), int(colim), use_boundary_layer /= 0_c_int, flux)
+      call solve_leaf_gas_exchange(env, p, int(sm), int(temp_response_form), int(colim), use_boundary_layer /= 0_c_int, flux)
 
       flux_c%A_net = flux%A_net ; flux_c%A_gross = flux%A_gross ; flux_c%gs = flux%gs
       flux_c%ci = flux%ci ; flux_c%cs = flux%cs ; flux_c%transpiration = flux%transpiration
@@ -92,16 +94,16 @@ contains
    ! that sweeps drivers (a light response, a canopy). env_c and flux_c are arrays of the       !
    ! mirror structs; each leaf is exactly meds_leaf_solve's.                                     !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_leaf_solve_batch(n, env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) &
+   subroutine meds_leaf_solve_batch(n, env_c, p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c) &
                                     bind(c, name="meds_leaf_solve_batch")
       integer(c_int), value, intent(in)  :: n
       type(leaf_env_c),      intent(in)  :: env_c(n)
-      type(leaf_params_c),   intent(in)  :: p_c
-      integer(c_int), value, intent(in)  :: sm, tresp, colim, use_boundary_layer
+      type(leaf_args_c),     intent(in)  :: p_c
+      integer(c_int), value, intent(in)  :: sm, temp_response_form, colim, use_boundary_layer
       type(leaf_flux_c),     intent(out) :: flux_c(n)
       integer(c_int) :: i
       do i = 1_c_int, n
-         call meds_leaf_solve(env_c(i), p_c, sm, tresp, colim, use_boundary_layer, flux_c(i))
+         call meds_leaf_solve(env_c(i), p_c, sm, temp_response_form, colim, use_boundary_layer, flux_c(i))
       end do
    end subroutine meds_leaf_solve_batch
 
@@ -133,10 +135,10 @@ contains
    ! eq. (3)): the solver's own values, for callers of meds_assimilation_demand_c3.          !
    !---------------------------------------------------------------------------------------!
    subroutine meds_rubisco_kinetics(params_c, t_leaf, pressure, kin_c) bind(c, name="meds_rubisco_kinetics")
-      type(leaf_params_c),   intent(in)  :: params_c
+      type(leaf_args_c),     intent(in)  :: params_c
       real(c_double), value, intent(in)  :: t_leaf, pressure
       type(leaf_kinetics_c), intent(out) :: kin_c
-      type(leaf_photo_params_t) :: p
+      type(leaf_photo_pft_t)   :: p
       real(wp) :: kc, ko, gstar, o2
       p = to_params(params_c)
       call rubisco_kinetics(p, real(t_leaf, wp), real(pressure, wp), kc, ko, gstar, o2)
@@ -179,7 +181,7 @@ contains
       type(leaf_env_t)             :: env
       !----- KEYWORD form, deliberately. A positional structure constructor silently re-binds every !
       !      value when a component is inserted mid-type, and components WITH defaults cannot be    !
-      !      skipped positionally at all; leaf_photo_params_t has such components (see to_params    !
+      !      skipped positionally at all; leaf_photo_pft_t has such components (see to_params      !
       !      below). -------------------------------------------------------------------------------!
       env = leaf_env_t(par=env_c%par, leaf_temp=env_c%leaf_temp, vpd=env_c%vpd, ca=env_c%ca,      &
                        pressure=env_c%pressure, psi_leaf=env_c%psi_leaf, gb=env_c%gb,             &
@@ -187,19 +189,19 @@ contains
    end function to_env
 
    pure function to_params(p_c) result(p)
-      type(leaf_params_c), intent(in) :: p_c
-      type(leaf_photo_params_t)       :: p
+      type(leaf_args_c),   intent(in) :: p_c
+      type(leaf_photo_pft_t)          :: p
       !----- KEYWORD form (see to_env). A positional constructor here would shift every trailing value !
-      !      by one each time leaf_photo_params_t gains a component mid-type, and could not omit       !
-      !      psi_onset and medlyn_vpd_min, which carry defaults.                                       !
+      !      by one each time leaf_photo_pft_t gains a component mid-type, and could not omit         !
+      !      psi_onset and vpd_min, which carry defaults.                                              !
       !                                                                                          !
-      !      psi_onset and medlyn_vpd_min are absent from leaf_params_c and take their type defaults   !
+      !      psi_onset and vpd_min are absent from leaf_args_c and take their type defaults            !
       !      (0 MPa, 0.05 kPa; meds.canopy builds its parameters from the run's config instead).       !
       !      Adding a field to a bind(c) struct breaks the ABI for every existing caller, so they stay !
       !      out. psi_open/psi_close do cross: the caller sets the ramp of the fast capacity limb      !
       !      (docs/science/leaf_gas_exchange.md §4.1, eq. (9)), which is always applied; sref_stomata  !
       !      with the default psi_onset sets the slow stomatal factor (§4.2, eq. (10)). ---------------!
-      p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &
+      p = leaf_photo_pft_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,          &
              tpu25=p_c%tpu25, rd25=p_c%rd25, kp25=p_c%kp25, g0=p_c%g0, g1=p_c%g1, d0=p_c%d0,      &
              quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j,                                &
              theta_cj_c3=p_c%theta_cj_c3, theta_ip_c3=p_c%theta_ip_c3,                            &

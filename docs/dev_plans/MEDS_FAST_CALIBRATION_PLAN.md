@@ -1,5 +1,11 @@
 # MEDS fast-parameter calibration plan
 
+> **Status, 2026-10-25: implemented, and superseded as a procedure.** The tool is
+> [`scripts/calibrate_fast/`](../../scripts/calibrate_fast/README.md), and its protocol is
+> [`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md`](MEDS_FAST_CALIBRATION_BEST_PRACTICE.md). The plan is kept
+> for §4, the argument for each fitted key's range, which `scripts/calibrate_fast/parameters.toml`
+> cites. The status below is from 2026-10-01.
+
 **Status:** written 2026-09-29 against `beta` at `522def6`, and revised the same day after the
 owner's decisions (§12). P0d (#327) and P0h (#328) are merged. P0a, P0b, P0c and P0g are #329
 (`feat/fast-calibration-p0`). P1–P3 are #330 (`feat/fast-calibration-tool`), stacked on it, and the

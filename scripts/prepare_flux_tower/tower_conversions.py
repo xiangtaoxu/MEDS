@@ -6,13 +6,13 @@ longwave, moving pressure to the ground).
 The copies mirror the Fortran term for term, so a value the tool computes is the value the model
 would compute from the same inputs:
 
-  sat_vapor_pressure, rh_to_specific_humidity,      meds_therm_lib, meds_forcing_kernels
-  dewpoint_to_specific_humidity,
+  sat_vapor_pressure, rh_to_specific_humidity,      meds_therm_lib (a dewpoint's q is
+  dewpoint_to_specific_humidity,                    sat_specific_humidity at the dewpoint)
   specific_humidity_to_vapor_pressure
-  pressure_at_height                                meds_lapse_rate%lapse_pressure (isothermal form)
-  equation_of_time, solar_declination,              meds_forcing_kernels, meds_time
+  pressure_at_height                                meds_therm_lib%lapse_pressure (isothermal form)
+  equation_of_time, solar_declination,              meds_time
   solar_cosz, window_mean_cosz
-  clearness_index, clear_sky_emissivity,            meds_forcing_kernels
+  clearness_index, clear_sky_emissivity,            meds_radiation_lib
   synthesize_lwdown
 
 A forcing file stores the humidity its source measured (RHair, Tdew or Qair) and the model converts
@@ -24,7 +24,7 @@ Dependencies: numpy.
 import numpy as np
 
 # ---------------------------------------------------------------------------------------------
-# Constants, as the model defines them (meds_constants, meds_forcing_kernels).
+# Constants, as the model defines them (meds_constants, meds_radiation_lib, meds_met).
 # ---------------------------------------------------------------------------------------------
 GRAV = 9.80665             # [m s-2]
 R_DRY = 287.04             # [J kg-1 K-1]
@@ -38,9 +38,13 @@ LW_CLOUD_A = 0.22          # [-] the model's default cloud coefficient ([forcing
 
 
 # ---------------------------------------------------------------------------------------------
-# Humidity and pressure (meds_therm_lib, meds_forcing_kernels, meds_lapse_rate): docs/science/forcing.md
+# Humidity and pressure (meds_therm_lib): docs/science/forcing.md
 # eq. (11), and the isothermal limit of eq. (13).
 # ---------------------------------------------------------------------------------------------
+#: Water's molar mass over dry air's (meds_constants: h2o_dry_ratio = mmh2o / mmdry).
+H2O_DRY_RATIO = 0.01801528 / 0.0289655
+
+
 def sat_vapor_pressure(t_k):
     """Saturation vapour pressure [Pa] over liquid water at t_k [K]: Bolton (1980)."""
     tc = np.asarray(t_k, dtype=float) - 273.15
@@ -50,29 +54,29 @@ def sat_vapor_pressure(t_k):
 def rh_to_specific_humidity(rh, t_k, p_pa):
     """q [kg/kg] from relative humidity (a fraction, clipped to [0, 1]), temperature and pressure."""
     e = np.clip(rh, 0.0, 1.0) * sat_vapor_pressure(t_k)
-    return 0.622 * e / (np.asarray(p_pa, dtype=float) - 0.378 * e)
+    return H2O_DRY_RATIO * e / (np.asarray(p_pa, dtype=float) - (1.0 - H2O_DRY_RATIO) * e)
 
 
 def dewpoint_to_specific_humidity(td_k, p_pa):
     """q [kg/kg] from dewpoint and pressure: the actual vapour pressure is e_sat(Td)."""
     e = sat_vapor_pressure(td_k)
-    return 0.622 * e / (np.asarray(p_pa, dtype=float) - 0.378 * e)
+    return H2O_DRY_RATIO * e / (np.asarray(p_pa, dtype=float) - (1.0 - H2O_DRY_RATIO) * e)
 
 
 def specific_humidity_to_vapor_pressure(q, p_pa):
     """e [Pa] from q and pressure: the exact inverse of the two conversions above."""
     q = np.asarray(q, dtype=float)
-    return q * np.asarray(p_pa, dtype=float) / (0.622 + 0.378 * q)
+    return q * np.asarray(p_pa, dtype=float) / (H2O_DRY_RATIO + (1.0 - H2O_DRY_RATIO) * q)
 
 
 def pressure_at_height(p_pa, t_k, dz):
     """Pressure dz [m] above (dz > 0) or below (dz < 0) a level at p_pa, t_k: the isothermal
-    hypsometric form of meds_lapse_rate%lapse_pressure."""
+    hypsometric form of meds_therm_lib%lapse_pressure."""
     return np.asarray(p_pa, dtype=float) * np.exp(-GRAV * np.asarray(dz, dtype=float) / (R_DRY * np.asarray(t_k)))
 
 
 # ---------------------------------------------------------------------------------------------
-# Solar geometry on the UTC clock (meds_forcing_kernels, meds_time; docs/science/forcing.md eqs. (2)-(4)
+# Solar geometry on the UTC clock (meds_time; docs/science/forcing.md eqs. (2)-(4)
 # and (6)). `stamps` are numpy datetime64 values in UTC; the day of year is the UTC date's, as in the model.
 # ---------------------------------------------------------------------------------------------
 def _day_of_year_and_seconds(stamps):
@@ -85,7 +89,7 @@ def _day_of_year_and_seconds(stamps):
 
 
 def equation_of_time(doy):
-    """[s] Spencer (1971), as meds_forcing_kernels%equation_of_time."""
+    """[s] Spencer (1971), as meds_time%equation_of_time."""
     b = 2.0 * np.pi * (np.asarray(doy, dtype=float) - 1.0) / 365.0
     return 229.18 * (0.000075 + 0.001868 * np.cos(b) - 0.032077 * np.sin(b)
                      - 0.014615 * np.cos(2.0 * b) - 0.040849 * np.sin(2.0 * b)) * 60.0
@@ -105,14 +109,14 @@ def _cosz(doy, sec_utc, latitude, longitude):
 
 
 def solar_cosz(stamps, latitude, longitude):
-    """cos(solar zenith) at UTC instants, floored at 0 (met_solar_cosz)."""
+    """cos(solar zenith) at UTC instants, floored at 0 (solar_cosz_utc)."""
     doy, sec = _day_of_year_and_seconds(stamps)
     return _cosz(doy, sec, latitude, longitude)
 
 
 def window_mean_cosz(window_start, window_seconds, latitude, longitude, nsub=N_COSZ_SUB):
     """The mean cos z over [start, start + window) by the model's midpoint rule, night samples 0,
-    with every sample on the window start's day of year (cosz_reconstruct_factor)."""
+    with every sample on the window start's day of year (mean_solar_cosz)."""
     doy, sec0 = _day_of_year_and_seconds(window_start)
     total = np.zeros(np.shape(sec0))
     for i in range(1, nsub + 1):
@@ -129,7 +133,7 @@ def clearness_index(sw_total, cosz):
 
 
 # ---------------------------------------------------------------------------------------------
-# Longwave synthesis (meds_forcing_kernels; docs/science/forcing.md eq. (17)).
+# Longwave synthesis (meds_radiation_lib; docs/science/forcing.md eq. (17)).
 # ---------------------------------------------------------------------------------------------
 def clear_sky_emissivity(t_k, q, p_pa, form="brutsaert"):
     """Brutsaert (1975) from the vapour pressure of q, or Idso & Jackson (1969); bounded [0.5, 1]."""

@@ -1,6 +1,6 @@
 # `prepare_flux_tower/` — MEDS forcing from flux-tower data
 
-Builds an `ED_default` forcing file (`[forcing].format = "ED_default"`) from a flux tower's
+Builds a MEDS forcing file (`[forcing].format = "default"`) from a flux tower's
 meteorology: AmeriFlux BASE, FLUXNET/ONEFlux, or any CSV. A site TOML **declares** what the data
 are. The tool **checks** each declaration against the sun and the data, converts everything to
 MEDS's own conventions, fills gaps explicitly with a flag on every value, and states the tower's
@@ -15,6 +15,11 @@ the design record is
 python make_tower_forcing.py --site my_site.toml --out my_forcing.nc
 python compare_longwave_fill.py --site my_site.toml --out lw.json --figure lw.png
 ```
+
+`make_tower_forcing.py` also takes `--start` and `--end` (the first UTC stamp written, and the first
+not written), `--short-gap-max` (overrides `[gapfill]`) and `--report` (the JSON report, default
+`<out>.report.json`). `compare_longwave_fill.py` takes `--holdout` (share of the observed longwave
+hidden, 0.2), `--block-days` (10) and `--seed` (1).
 
 Needs numpy, pandas and netCDF4, plus tomli on Python < 3.11: the `meds-era5` environment of
 [`../prepare_era5/environment.yml`](../prepare_era5/environment.yml) has them. The tests use pytest:
@@ -61,7 +66,8 @@ PAR    = { column = "Par_tot", units = "umol m-2 s-1" }   # optional, reports on
 [gapfill]
 short_gap_max = 4                  # [records] interpolate gaps up to this long
 
-[fluxes]                           # optional: the calibration's data (column, units, and when measured)
+[fluxes]                           # optional: the calibration's data (column, units, and when measured);
+                                   #   also G, GPP_DT and RECO_DT, where the provider gives them
 SW_out = { column = "Rs_dn", units = "W m-2" }
 LW_out = { column = "Rl_dn", units = "W m-2" }
 Rnet   = { column = "Rnet",  units = "W m-2" }
@@ -79,8 +85,8 @@ flag = "..."                       # what the quality flag screened
 # notes = "...";  uncertainty = { NEE = "NEE_RANDUNC" }   (random-uncertainty columns, by flux)
 ```
 
-`LWdown` points at `Rl_up` because the BCI file labels its two longwave columns the wrong way round
-(the example's README shows how that was found). For AmeriFlux BASE and FLUXNET, point each
+`LWdown` points at `Rl_up` because the BCI file labels its two longwave columns the wrong way round.
+Tair, PSurf, Rainf, SWdown, Wind and a humidity (RH, or VPD with its `curve`) are required. For AmeriFlux BASE and FLUXNET, point each
 variable at its column, e.g. `TA_1_1_1` or `TA_F`.
 With `timestamp = "TIMESTAMP_END"`, `stamp` must be `"end"`. FLUXNET's `_QC` columns mark the values
 the provider filled.
@@ -100,7 +106,7 @@ calibration reports them instead of stopping.
 |---|---|
 | V1 | the time axis is uniform at `timestep`, sorted, without duplicates |
 | V2 | under the declared clock and stamp, the shortwave fits the model's own sun within 10 min, and less than 0.1 % of it falls where the model sees night. This catches a local-time file declared UTC and a stamp at the wrong end of the interval, errors that keep daily totals right and scramble the sub-daily phase |
-| V3 | with RH and VPD both given, the VPD is (1 − RH)·e_s(T) under the declared curve to 1 Pa. A wrong declaration is answered with the curve that fits |
+| V3 | with RH and VPD both given, the VPD is (1 − RH)·e_s(T) under the declared curve, to 1 Pa at the 99th percentile. A wrong declaration is answered with the curve that fits |
 | V4 | physical bounds in MEDS units, for the fluxes too. Out-of-bounds values become missing; more than 5 % of a variable is taken as a unit error |
 | F1 | net radiation against its four components: the median of \|Rnet − (SW_in − SW_out + LW_in − LW_out)\| within 25 W m⁻² |
 | F2 | at night the upwelling longwave is above the downwelling (median). Below it, the two columns are swapped |
@@ -128,14 +134,14 @@ MEDS never gap-fills, so the tool fills explicitly and flags each fill. Filling 
 such as ERA5-Land or a nearby station, is the user's to do in the tower file before the build.
 - **Short gaps** of up to `short_gap_max` records are interpolated. Shortwave is interpolated through
   its clearness index, and wind in the energy form.
-- **Long gaps** in the states and shortwave take the mean diurnal variation within ±7 days.
+- **Long gaps** in the states and shortwave take the mean diurnal variation of the observed records
+  at the same time of day within ±7 days, widening to ±14 and ±30 days when there are too few.
 - **Rain** is never interpolated: a rain gap stops the build.
 - **Longwave:** the model's own synthesis split into its clear-sky part εσT⁴ and its cloud part
   εσT⁴(1 − kt), regressed onto the tower by month and day/night, so the site sets the cloud
-  coefficient instead of the model's 0.22. At Barro Colorado Island the fit gives 0.10, and the two
-  parts beat one regression on the whole synthesis on every held-out draw. With fewer than 48
-  observed longwave records there is nothing to fit, and the fill is the model's synthesis as MEDS
-  computes it, with a warning.
+  coefficient instead of the model's 0.22. A month and day/night group of fewer than 48 records
+  takes the pooled fit. With fewer than 48 observed longwave records in all there is nothing to fit, and
+  the fill is the model's synthesis as MEDS computes it, with a warning.
 - [`compare_longwave_fill.py`](compare_longwave_fill.py) scores the longwave fill against
   observations it never saw, beside a monthly climatology and the synthesis as MEDS computes it.
 

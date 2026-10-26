@@ -17,9 +17,8 @@ n_threads  = 8                 # threads over the patches; the output is the sam
 [fast]
 fast_biophysics_on  = true
 dt_fast             = "900s"
-time_integrator     = "ark"
-ark_adaptive        = true
-ark_rtol            = 1.0e-3
+time_integrator     = "esdirk2"
+rtol                = 2.0e-3
 canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 # Each cohort's Vcmax25, Rd25, SLA and leaf turnover rate follow the leaf area above it.
@@ -30,9 +29,10 @@ fineroot_turnover_plastic = true      # fine roots, like leaves, turn over more 
 #----- The demography (example 03). -------------------------------------------------------------------
 [demography]
 demography_on             = true
-do_cohort_fissfuse        = true
-do_patch_disturbance      = true
-do_patch_fissfuse         = true
+recruitment_on            = true
+cohort_fusion_on          = true
+patch_disturbance_on      = true
+patch_fusion_on           = true
 max_cohort                = 60
 n_cohort_fusion_iter      = 6
 cohort_size_tol_min       = 0.02
@@ -41,58 +41,38 @@ cohort_lai_cap            = 1.0
 min_cohort_agb            = 1.0e-6
 negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
-enable_cohort_fission     = true
+cohort_fission_on         = true
 n_height_layers           = 16
 max_patch                 = 25       # enough that gaps stay apart from the closed canopy
 n_patch_fusion_iter       = 6
 patch_light_tol           = 0.05
 patch_light_tol_max       = 0.10
 patch_light_maxdev_factor = 1.5
-patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
-patch_min_area_remain     = 0.99
-enable_patch_fission      = false
 conservation_tol          = 0.001
 growth_memory_days        = 365.0
 
-# Treefall opens 1.4 % of the forest each year; trees above 10 m die on that ground.
-[disturbance]
-patch_disturbance_rate     = 0.014
+patch_disturbance_rate    = 0.014
 disturbance_survive_height = 10.0
-
-[recruitment]
-min_recruit_size = 1.0e-2
-
-# The PFT file's [derived] table sets each PFT's mortality (example 03's census fit).
-[options]
-override_derived = true
-
-#----- Start: bare ground. Six empty patches; the first trees arrive with the seed rain. -------------
+min_recruit_size          = 1.0e-2
 [init]
 init_mode    = 0
-restart_file = "none"
-census_file  = "none"
 pft_config   = "pft_parameters.toml"
-soil_temp    = 298.65             # [K] as [energy].deep_temp
+soil_temp    = 298.65             # [K] as [soil].deep_temp
 soil_theta   = 0.42               # [m3/m3] example 04's start
 
-[state]
-output_dir     = "output"
-output_prefix  = "regen"
-write_state    = true             # a checkpoint every 20 years and at the end, to restart from
-interval_years = 20
-
 [output]
+state_write       = true           # a checkpoint every 20 years and at the end, to restart from
+state_interval    = "20 years"
+state_file_dir    = "output"
+state_file_prefix = "regen"
 enabled       = true
 dir           = "output"
 prefix        = "regen"
 sync_every    = "flush"
 # Site, PFT and size-class totals only: per-cohort and per-patch records over 421 years would be
-# gigabytes. The checkpoints hold the full stand.
-axes_cohort   = false
-axes_patch    = false
-radiation     = false
-ecophys       = false
+# gigabytes (io_config_regeneration.toml). The checkpoints hold the full stand.
+io_config     = "io_config_regeneration.toml"
 
 [output.fast]
 enabled    = false
@@ -107,9 +87,6 @@ file_chunk = "run"
 [output.annual]
 enabled    = true
 file_chunk = "run"
-
-[carbon]
-gpp_ref       = 0.3               # required by the loader; unused with the column on
 
 #----- Leaf physiology (example 04's calibrated configuration). ----------------------------------------
 [leaf_physiology]
@@ -151,7 +128,7 @@ apply_elevation_lapse = false
 # model's own date: 279 umol/mol in 1600, 282 in 1800, 413 in 2020.
 [forcing]
 forcing_on     = true
-format         = "ED_default"
+format         = "default"
 path           = "data/bci_era5land_2003-2022.nc"
 grid_index     = 1
 grid_match     = "explicit"
@@ -178,15 +155,13 @@ start_clamp    = "error"
 [soil_carbon]
 soil_carbon_on = true             # starts empty, filled by the regrowing forest's litter
 
-[soil_column]
+[soil]
 depth       = 2.0
 theta_sat   = 0.60
 theta_res   = 0.10
 curve_par_a = 2.0
 curve_par_n = 1.23
 ksat        = 1.0e-5
-
-[energy]
-bottom_bc  = "dirichlet"
+thermal_bottom_bc = "dirichlet"
 deep_temp  = 298.65
 deep_depth = 3.145

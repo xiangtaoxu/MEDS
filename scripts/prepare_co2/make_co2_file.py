@@ -6,7 +6,7 @@ CO2 concentrations. This is how data/co2/co2_cmip7_global_annual_1000-2022.txt, 
 
 The format is defined in docs/science/forcing.md §12, and summarised in the header this
 tool writes, so every file it makes is its own template. MEDS reads the file on model time
-(src/io/input/forcing/meds_co2_series.f90), so the CO2 keeps rising while recycled met repeats.
+(src/io/met/meds_met_co2.f90), so the CO2 keeps rising while recycled met repeats.
 
 Input: the CMIP7 historical files, source_id CR-CMIP-1-0-0, grid "gm" (global mean), frequency "yr",
 in time order. They are small (53-89 KB) and served by ESGF:
@@ -34,7 +34,7 @@ FORMAT_BLOCK = """\
 # ============================================================================================
 # MEDS CO2 file, format 1
 # ============================================================================================
-# FORMAT (full definition: docs/science/forcing.md, section "CO2")
+# FORMAT (full definition: docs/science/forcing.md section 12)
 #   Plain text. '#' starts a comment that runs to the end of the line; blank lines are ignored.
 #   Two keyword lines come before the first data row, each exactly once:
 #     timestep  <n> <unit>    n: a whole number >= 1; unit: year | month | day | hour | minute

@@ -14,6 +14,2079 @@ before and after.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-26
+
+A **reviewed code base** release, and the last MEDS release before the model moves to ED-MORE. Every
+folder of `src/` and `test/` is reviewed file by file and restructured where the review called for
+it: the state layer by model hierarchy, one library per domain in `src/share`, a configuration that
+reads only the keys MEDS uses, `src/io` by folder with one name per output variable, the fast loop's
+integrator by stage and its kernels by process, the slow loop by role, and tests that mirror `src/`.
+Three model changes come with it: a run is a region of one polygon or many, and a polygon can hold
+several sites on their own soil and terrain (#449–#454); a cohort's tissue state is its leaf and wood
+energy (#457); and the fast-kernel review's physics corrections (#503–#512) and the slow loop's one
+necromass path (#523) move results. The documentation is checked against the code (#542), every
+example is rerun on the production build, example 06 as eight regions (#552), a final sweep fixes two
+bugs the documentation review found (#551), and the production build accepts multi-PFT files again
+(#543). Every output variable and many configuration keys are renamed, and a state file written
+before this release does not restart: read the upgrade notes below.
+
+The soil column's parameters become configuration, the ground becomes one block of the main config,
+and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
+reorganized by model hierarchy, with no change to any result (#448). A run is a region of one polygon
+or many, and every output and state file has a `polygon` dimension (#449). The polygon's state is
+`polygon_t`, with a site block beside its patch and cohort blocks, ready for several sites (#450).
+Each site owns its soil column and the column's bottom, and the run keeps one configuration (#451).
+A polygon can hold several sites, each on its own soil, and its files report each site's soil (#452).
+A site run divides its polygon into sites with `[[sites]]` tables (#453). Each site's forcing follows
+its elevation and slope, and its phenology and leaf acclimation its own air (#454). A cohort's
+tissue state is its leaf and wood energy, with its temperatures derived from them, and the water it
+sheds takes its enthalpy to the ground (#457). `meds_constants` is grouped by kind, and every name in it
+is lower case; `src/shared` keeps one subfolder, `functions/`, and its linear solvers are one module,
+`meds_linear_algebra` (#458). Each PFT has its own size allometry, and reproduces from its own height
+(#459). `src/shared/functions` holds one library per domain, its conversions are named
+`<input>_to_<output>`, and the Newton solvers share their step safeguards (#460). Every PFT trait is
+the PFT file's, its hydraulics among them, and the traits that follow a fitted relation are computed
+outside the model, by `scripts/pft_traits` (#461). New leaves fill to the wood's potential (#461).
+`src/shared` is `src/share` (#462). A named constant is spelled by its kind (#463). The configuration
+reads only keys it uses, checks them in one module, and names every field as its key; `src/config/params`
+holds one module per block, and the reference config describes each key in a line or two (#464).
+The configuration's leaves are the run's parameters, `src/config/params`, and a kernel's parameter
+bundle is its `*_args_t` (#465). `src/init` and `src/io` drop the code nothing called, name the polygon
+their output reduces to, write one statement per line and keep their longer explanations on the science
+pages, with no change to any result (#468). `src/io` holds every file a run reads or writes in four
+folders, `init/`, `met/`, `maps/` and `output/`: each start is a module of `init/`, the restart file is
+laid out by level, the met grid serves any gridded product, the maps only read, the output is a module
+per stage, and a reader that refuses a file says why, with no change to any result (#469). The
+forcing's physics joins the model's other laws in `src/share`: the sun's position in `meds_time`, the
+radiation above the canopy in a new `meds_radiation_lib`, the humidity conversions, the rain/snow split
+and the air at another height in `meds_therm_lib`; `src/io/met` keeps the reader and where it samples
+the air. The restart and the diagnostic files name each site's statics alike (#470). A state file
+holds every variable, and the reader requires each one instead of filling in what an older file
+lacks (#471, #477). Every output value is a mean over its record's period: the fast loop's
+carbon and water totals are mean rates, and the solvers' work counters means per fast step (#472).
+Every variable of the diagnostic and restart files is named `[mean_]<quantity>[_<breakdown>]_<level>`, one
+name at every tier, each fast twin merged into its daily variable (#473). Every state's mean has its
+snapshot, its value at the period's end, under the name without `mean_`, off until an `io_config` names
+its tiers; a flux or a rate is a mean only (#474, #477). An `io_config` line names a variable or a pattern (`"*_co" = false`, `"mean_*_py" = "M Y"`), the
+most specific line winning, and `[output]`'s group and axis switches go (#475). The state files are
+`[output]`'s too (`state_write`, `state_interval` in days, months or years, `state_file_dir`,
+`state_file_prefix`), and `[forcing].format` is `"default"` or `"ERA5land"` (#476). The fast loop
+drops its RK4 test oracle, so RK45 is its one explicit integrator and the tests' explicit reference; it
+drops the code and fields nothing read and three evaluations whose results nothing used, writes one
+statement per line and keeps its longer explanations on the science pages, with no change to any result
+(#478). The fast loop's setup is one module, nothing below it reads `meds_config_t`, its configuration has
+a run part and a site part, three constants no key set become one source each, and its starting stores
+are set in `io/init` (#479). Six `[fast]` options no shipped run changes retire, and a run without forcing
+gets the same canopy radiation as a forced one (#480). Each configuration block is read into one record,
+`<block>_params_t`: `[soil]` is one `soil_params_t` per site, its `[fast]` keys back in `[fast]`, and the
+soil kernels read one profile per site, `soil_profile_t`, derived in `src/config/meds_soil_derive`, with
+no change to any result (#482). The PFT table holds the per-PFT tables the fast loop reads, each site its
+acclimated leaf table, and the fast step takes the configuration, the site and five records: its static
+state, its forcing, the dynamic state it advances, its output and its workspace; the fast driver is four
+modules, one per job, and `src/fast_dynamics/numerics` is `integrator`, with no change to any result on
+gfortran (#483). The fast integrator is nine modules, one per stage of the step: the frozen record, the
+soil-plant water network's step, the march, and one update through which both schemes commit and close
+their ledgers. Each site's soil-layer curves and the cohorts' water paths are computed once rather than
+every step, and the implicit scheme's `[fast].time_integrator` value and its two keys are named
+`esdirk2`. The condensate now lands before the soil temperatures are diagnosed, which moves ESDIRK2's
+results a little on dew steps and RK45's within its tolerance (#484). The forcing record names its
+fields by quantity (`air_temp`, `air_shv`, `air_pressure`, `air_density`, `lw_down`, `sw_down()`, `rain`),
+and the patch's soil and snow stores are `<store>_state_t`. The fast step keeps its frozen record from
+step to step, the canopy radiation finds each PFT's beam extinction once and skips a band with no light,
+the fast loop hands its patches to the threads costliest first, and a patch-fusion pass regroups the
+cohorts once instead of after every fusion, with no change to any result; a lint keeps the integrator
+to one patch's records (#485). A start below freezing seeds its soil water as ice, and a start's canopy
+air is the air of its first forcing sample, its patches' stores seeded as they are laid out with the
+fast loop on or off; the `[forcing]` CO₂ keys apply without forcing too. Under snow, the pack's base
+conducts into the top soil layer's own conductivity and its vapour exchange is set against the canopy
+air's humidity over the step, which closes the water ledger at Ithaca in January. The stage clamp and
+RK45's railed check share one pair of bounds and the clamp leaves a state in range as it is, and moist
+air takes its molar-mass ratios exactly (#486). The fast march's warm-start seed can grow back after a
+rejection, its error norm measures only the states it integrates, the leaf's Ci root is found by the
+Illinois method, and the default `[fast].rtol` is 2e-3: a simulated day costs 10 % less, on one thread
+or on 20 (#487). Examples 04 and 05 are rerun on it: example 04 moves by at most 0.2 %, and the examples
+run 24–35 % faster (#490). The soil-plant water network's step costs a simulated day 8–9 % less
+again: four changes leave every result as it was, and three move results at round-off (#488). MEDS builds in four kinds,
+`debug`, `dev`, `profile` and `production`, one CMake preset each: `production` adds interprocedural
+optimisation and code for Cascade Lake and runs 26–29 % faster than dev, and a configure that names no
+build type now builds dev (Release) instead of Debug (#489). The snow pack exchanges with the canopy
+air inside the march; the surface layer's convective velocity follows each sweep's buoyancy flux, as
+in CLM5, so the wind has no jump at neutral; root uptake's rounded corner is 10⁻² MPa wide; RK45 takes
+`rtol` 1e-4 by default and refuses a looser one; the C-API shims compile once; and the build defaults
+to `build-dev`: a simulated day costs 7 % less on one thread and 5 % less on 20 (#492). The fast
+kernels' comments and science pages say what the code computes, with no change to any result (#495). The
+Kirchhoff mean and the plant's flows are plant hydraulics', and each PFT's Kirchhoff table is config's (#496). The
+fast kernels are one folder of eleven process modules, `fast_dynamics/processes`, with no change to any
+result (#497). The canopy's process modules hold their own formulas, and the reference-level air and the
+canopy geometry are stored once (#498). The plants' process modules hold their own formulas, and a
+tissue's energy balance takes its two latent pathways as records (#499). The ground's process modules hold
+their own formulas, the ground surface's surroundings are one record, and the soil water routines take the
+soil's potential in MPa (#500). One module holds the plants' maintenance respiration and the soil's
+heterotrophic respiration, and the fast half no longer links the slow kernels (#501). The process
+modules' comments say what each kernel computes, and every bare number in them has a name, with no
+change to any result (#502). Eleven physics fixes from the process-kernel review: ground evaporation
+takes the air's pressure, the leaf boundary layer its air properties at the right reference, every
+Monin-Obukhov sweep CLM5's stability bounds, snow and bare soil the ground's radiation at their own
+optics, a snow pack buries the canopy's roughness, the drought limb reaches C4 leaves, Katul's solve
+brackets behind a boundary layer and at the dew point, the configuration refuses impossible traits and
+NaN soil layers, and the reported net radiation includes the wood (#503). The two-stream solves each
+layer's scattered beam through its depth, so a canopy's light no longer depends on how it is cut into
+cohorts (#504). The Monin-Obukhov surface layer sweeps until the canopy air's coupling settles, and
+the transpiration demand stops re-solving it at the state the pre-pass already solved (#505). Bare
+ground couples to the canopy air through CLM5's soil coefficient, at its own roughness (#506). The
+snow-cover fraction's length scale is the ground's roughness, as Niu and Yang's (#507). The aquifer
+face takes the column's own rule, the geometric mean of the bottom layer's and the table's
+conductivity (#508). The plant hydraulics page says how far the Kirchhoff sapflow law is from the
+exact steady flux under gravity, and a test pins it (#509). A canopy film is part of its tissue's
+energy, at the tissue's temperature, so the canopy-water runs close their energy (#510). A soil layer
+freezes on its freezing curve, holding supercooled liquid; its ice impedes the water and fills its
+pores, and the soil heat step solves the latent heat with the heat (#511). A tissue's longwave is
+linearized about the emission the two-stream gave it, and the output reports the net radiation the
+balances booked (#512). Examples 04 and 05 are rerun on that physics, and example 04 is refitted (#513).
+Leaves and wood each pay their own longwave emission, `[leaf_physiology]` is read into one record, and
+one helper groups the cohorts of one height into a layer (#514). The slow loop's science is on two new
+pages, `demography.md` and `conservation.md`, and its code keeps short comments (#515). The slow loop
+is a `driver/` and a flat `processes/`, one module per process and one job per driver module, with no
+change to any result (#516). Its routines take one required ledger, which keeps the soil-carbon seam's
+worst values; the demographic laws make the founding and treefall decisions the operators apply; and
+`meds_slow_update` is the one writer of the stand's carbon, with no change to any result (#520). A
+step that fails no longer leaves `meds_main`'s output files open, a run that cannot open no longer
+leaves its C-API slot half built, and a state file written in a month a polygon failed in owes the
+calendar's restructuring (#521). `src/main` checks a step's state in one guard, keeps no dead resets
+and states its own rationale briefly, with no change to any result (#522). The run's status codes
+are `RUN_*`, a run lists its calendar steps once, its output tick is the output library's, and a
+site run chooses its cell and reads its maps the way a region does, with no change to any result
+(#526). The stepper is one polygon's whole slow step in the order of processes and takes the
+polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
+no change to any result (#531). The cull's and the treefall's dead carbon reach the soil through the
+litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
+and patch termination merges and re-sorts as patch fusion does (#523). The stand's operators have
+one switch each, and the stand's keys are one `[demography]` block (#525). The slow tests are one
+per module of the new layout (#528). The soil-carbon state holds its pools as the matrix's vector
+(#529). Every documentation page and README is checked against the code and rewritten for
+readability, with no change to any result (#542). Before the release, a sweep: the default forcing
+reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
+`spinup_xi`, and four code oddities go (#551). The production build accepts a PFT file of
+several PFTs again (#543). All six examples are rerun on the production build, and example 06
+runs as eight regions (#552).
+
+**Upgrading from v0.3.5:**
+- **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
+  (default 1.0) for every pool, where it decomposed nothing before. A fast-off spin-up with soil
+  carbon on now ends with less soil carbon: set `spinup_xi` to the site's mean scalar, or turn the
+  soil carbon off.
+- **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
+  `_co`, `_pa`, `_si` or `_py`; the breakdown `_pft`, `_size` or `_layer`; `mean_` for a mean over the
+  record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
+  `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
+  are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (on the F tier the per-cohort
+  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). The map from every old name to its new one, the per-site statics (`site_area` is
+  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) included, is
+  [`docs/output_renames.md`](https://github.com/xiangtaoxu/MEDS/blob/7223449d/docs/output_renames.md),
+  retired from the documentation in #542.
+  - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
+    tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
+    lists every variable.
+  - A script that reads the files by name takes the new names, as the examples, `post_proc`, the fast
+    calibration and `meds.canopy` do.
+  - A state file this release wrote before the rename does not restart either.
+- **`[state]` is gone: the state files are `[output]`'s** (#476). Rename the keys, and move them into
+  `[output]`; a `[state]` key stops the run as unknown:
+
+  | was | is |
+  |---|---|
+  | `[state].write_state` | `[output].state_write` |
+  | `[state].interval_years = N` | `[output].state_interval = "N years"` |
+  | `[state].output_dir` | `[output].state_file_dir` |
+  | `[state].output_prefix` | `[output].state_file_prefix` |
+
+  `state_write` is required, as `write_state` was, and the other three with it. `state_interval` also
+  takes `"N days"` (whole slow steps) and `"N months"`, so a run can leave a state file every day or
+  month. A script that sets `state.*` sets `output.state_*`, as the examples and `scripts/calibrate_fast`
+  do.
+- **`[forcing].format` is `"default"` or `"ERA5land"`** (#476): `"ED_default"` and `"ED_ERA5land"`
+  stop the run. `"ERA5land"` still reads the ED_ERA5land archive that `scripts/prepare_era5` builds.
+- **State files carry the forcing reader's night-time clearness** (#476), so a state file written
+  before does not restart.
+- **`[output]`'s group and axis switches are gone** (#475): `structure`, `carbon`, `water`, `energy`,
+  `biogeochem`, `numerics`, `forcing`, `radiation`, `ecophys` and `axes_cohort`, `axes_patch`,
+  `axes_pft`, `axes_size`, `axes_soil_patch` stop the run as unknown keys; delete them. The defaults
+  write what the switches' defaults did (the `radiation` and `ecophys` groups and the soil by patch
+  off); say the rest in `[output].io_config` (`docs/science/diagnostics.md` §5):
+  - `axes_cohort = false` → `"*_co" = false`; `axes_patch = false` → `"*_pa" = false`; `axes_pft` or
+    `axes_size = false` → `"*_pft_*" = false` or `"*_size_*" = false`;
+  - every group off, then the names (as examples 04 and 06 did) → `"*" = false`, then the names;
+  - `ecophys = true` → its variables or a pattern, with their tiers (`"mean_*_co" = "D M"`): they are off
+    by default, so `true` does not turn them on;
+  - the axes' bookkeeping (`owner_patch`, `global_cohort_id`, `cohort_offset`, `cohort_count`,
+    `global_patch_id`, `patch_site`) is written with its axis, at each tier a variable on the axis is,
+    and naming it stops the run: delete such a line;
+  - `[output.<tier>].enabled = false` writes nothing at that tier, whatever `io_config` says.
+- **An `io_config`'s `true` needs a variable with default tiers** (#474). The snapshots are off by
+  default, and `cas_temp_py = true` stops the run, saying so: name the tiers, `cas_temp_py = "D M"`.
+  `meds_main --dump-io-config` lists such a variable as `false`.
+- **The F tier writes with forcing off** (#474). A run with `[output.fast].enabled = true` and
+  `[forcing].forcing_on = false` wrote no F records; it writes the sub-steps under the reference climate.
+- **The diagnostic files' totals are mean rates** (#472). Each is a mean over its record's period, so
+  one variable has one unit at every tier:
+  - `gpp_*`, `npp_*`, `leaf_resp_site`, `stem_resp_site`, `root_resp_site` and `rh_*`: kgC m⁻² per
+    record → µmol CO₂ m⁻² s⁻¹ (`gpp_cohort`, `npp_cohort`: µmol CO₂ plant⁻¹ s⁻¹);
+  - `et_site`, `runoff_site`, `runoff_surf_site` and `drainage_site`: kg m⁻² per record → kg m⁻² s⁻¹;
+  - the `work_*_site` counters: a count per record → a mean per fast step, over the polygon's patches.
+
+  A record's total is its mean times its length: for GPP in kgC m⁻², `gpp_site` × 1.20107 × 10⁻⁸ ×
+  the record's seconds. A script that added up records multiplies each by its length first, as
+  examples 05's and 06's do. The slow step's rates (allocation, litterfall, growth, mortality) keep
+  their per-year units.
+- **State files written before this release do not restart** (#471, #477). The reader requires every
+  variable, and a file without one stops the run, naming it, where the reader used to fill in what an
+  older file lacked: the polygon axis, the carbon pools, the tissue water and
+  energies, the fast reservoirs, the soil carbon, a leaf lifespan (`llspan`), films per m² of ground,
+  and the rest. Start such a run again from its census or bare ground. v0.3.5's archived example
+  state files no longer restart.
+- **`[forcing].format = "const"` is gone** (#469). It opened no file and drove the run with a fixed
+  reference climate; no shipped config used it. `format` takes `"default"` or `"ERA5land"` (#476), and a
+  run without forcing sets `forcing_on = false`.
+- **`[output].io_config` takes TOML's `true` and `false` only** (#469), as every reader takes only the
+  names it lists: `.true.`, `True` and `TRUE` (and their `false` twins) stop the run.
+- **The diagnostic files name each site's map inputs as the restart file does** (#470): `soil_depth`,
+  `bottom_bc`, `drain_factor` and `deep_temp` are `site_soil_depth`, `site_bottom_bc`,
+  `site_drain_factor` and `site_deep_temp`, and the files gain `site_n_soil`, each site's layer count.
+  A script that reads them by name takes the new names, as `examples/example06_regional_run/
+  summarize_regions.py` does. The restart file gains `site_bottom_bc`, `site_drain_factor` and
+  `site_deep_temp`; an older restart file reads as before.
+- **Six keys nothing read are gone** (#464): `[demography].patch_diff_age_tol`,
+  `patch_min_area_remain` and `enable_patch_fission`, `[snow].snow_stab_thresh`, and `[pft].huber_value`
+  and `wood_carbon_density`. Delete them; a config that keeps one stops the run. The PFT CSV loses
+  their two columns, and its `height_form` column is `height_allometry`.
+- **One relative tolerance and one snow roughness** (#464). `[fast].rtol` replaces `ark_rtol`,
+  `water_rtol` and `rtol_all`, which set the same accuracy (1e-3 by default; `rtol_all` overrode both);
+  `water_atol` and `atol_scale` stay. `[aerodynamics].snow_rough` replaces itself and `[snow].z0_snow`,
+  which held the same value (0.001 m) under the same definition. Every result is unchanged at the
+  defaults; a config that set `rtol_all` or `ark_rtol` sets `rtol`.
+- **Fewer required keys** (#464): `[init].restart_file` is required only with `init_mode = 2` and
+  `census_file` only with `init_mode = 1` (the Python census start reads it in any mode);
+  `[carbon].gpp_ref` only with the fast loop off. The `"none"` placeholders can go.
+- **A selector takes only the names it lists** (#464). `[fast].error_level`, `step_controller`,
+  `[soil_carbon].decomp_scheme`, `step_solver` and `[output].sync_every` read any other value as their
+  default, `time_integrator` took `"rk4"` and `error_level` `"l0"` and `"l2"`; each now stops the run
+  with the names allowed. `[forcing].avg_convention` takes `"end"` or `"begin"`, the two it has a
+  disaggregation for.
+- **An old key is an unknown key** (#464). The table of retired keys is gone, with the loader's
+  retired spellings (`format = "netcdf"` and `"era5land"`, `height_allometry = "gmm"`, the `[io]` block,
+  `time_integrator = "split"`): an old key stops the run as one MEDS does not read, with the listed key
+  it most likely meant when one is close, and this file lists every rename.
+- **The `chave_*` keys need a PFT on `"chave2014"`** (#464): with every PFT on the power law they stop
+  the run.
+- **A key a setting makes inapplicable is reported with the unknown and missing ones** (#464), all
+  together, rather than stopping the load at the first.
+- **Fortran: every configuration field has its key's name** (#464), `cfg%<record>%<key>` for a block
+  with its own record and `cfg%<key>` otherwise:
+  - `cfg%init%init_mode`, `%restart_file`, `%census_file`, `%pft_config`, `%soil_temp`, `%soil_theta`,
+    `%reacclimate_traits` and `cfg%state%output_dir`, `%output_prefix`, `%write_state`, `%interval_years`
+    replace the `init_*` and `state_*` fields;
+  - `cfg%soil_carbon%soil_carbon_on` and `%spinup_*`; `cfg%mask%<store>` (a `process_mask_t`);
+    `cfg%mode`, `cfg%use_boundary_layer`, `cfg%thermal_acclimation`, `cfg%rtol`;
+  - `soil%water_bottom_bc`, `soil%water_atol`, `energy%thermal_bottom_bc`,
+    `energy%soil_energy_budget_atol`; `forcing%format`, `%timestep`, `%latitude`, `%longitude`,
+    `%elevation`, `%grid_elevation`; a site's `elevation`, `slope`, `aspect`; `output%dbh_class_edges`;
+    `allom%height_allometry`; `pft%pheno(pf)%<key>` in place of `pft%pheno_<key>(pf)`.
+- **Fortran: the configuration's modules** (#464). `validate_config`, `check_config_keys`,
+  `nearest_key` and the key lists are in `meds_config_check`, and `meds_config_keys` is gone.
+  `INTEG_*`, `CTRL_*` and `process_mask_t` come from `meds_fast_params`, `site_spec_t` from
+  `meds_sites_params`, `MAX_RECYCLE_YEARS` from `meds_forcing_params`, and `DIST_PRIMARY` and
+  `DIST_TREEFALL` from `meds_patch_state_vars`. `meds_forcing_config` and `meds_output_config` are
+  `meds_forcing_params` and `meds_output_params`, named like the other leaves; their types keep their
+  names. `snow_cover_fraction` takes the snow roughness.
+  `BK_*`, `cfg%backend` and `INTERP_COSZ` are gone. The per-block modules are in `src/config/params/`,
+  and hold types and codes: the soil column's builders (`soil_column_params`, `soil_column_layers`,
+  `build_soil_hydr_params`, `top_soil_psi`, …) and `alloc_pft_table` and `derive_leaf_params` come
+  from `meds_config`. `soil_matric_potential` comes from `meds_soil_hydr_lib`.
+- **Fortran: parameters and kernel arguments** (#465). The per-block modules are the run's
+  parameters, `meds_<block>_params` in `src/config/params/`: `meds_biogeochem_opts`,
+  `meds_biophysics_opts`, `meds_leaf_opts`, `meds_maps_opts` and `meds_region_opts` are `*_params`,
+  as are the new `meds_fast_params` and `meds_sites_params`, and `meds_soil_column_config` is
+  `meds_soil_params`. `meds_soil_params` holds the whole `[soil]` block: `soil_opts_t`,
+  `energy_opts_t`, `SOIL_BC_*`, `ENERGY_BC_*` and `ANNUAL_DAMPING_DEPTH` come from it, and
+  `meds_biophysics_params` keeps `[snow]` and `[aerodynamics]`. The types a kernel takes its
+  parameter values in are its arguments, `*_args_t`: `leaf_photo_args_t`, `hydro_args_t` and
+  `hydro_args_table_t`, `pheno_args_t`, `wood_args_t`, `root_args_t`, `veg_thermal_args_t`, and the
+  C API's `leaf_args_c` and `pheno_args_c`. `diag_params_t` is `diag_setup_t`. `soil_params_t`,
+  `soil_thermal_params_t` and `snow_params_t` are the configuration's and keep their names.
+- **The PFT file's size allometry is per PFT** (#459). `[pft].hgt_max`, `wai_b1`, `wai_b2`,
+  `sapwood_area_b1`, `sapwood_area_b2` and `aboveground_frac` move to `[allometry]`, and every
+  `[allometry]` key takes one value, for every PFT, or an array with one per PFT; `height_allometry`
+  may name a curve per PFT. A key left in `[pft]` stops the run.
+- **The gMM height curve is gone** (#459): `height_allometry = "gmm"` and `gmm_a`, `gmm_b`, `gmm_k`
+  stop the run. Fit the log-quadratic, `"chave2014"` with `chave_a`, `chave_b` and `chave_c`, to the
+  heights instead, as examples 03 and 05 now do for Barro Colorado Island.
+- **`[pft].reproduction_height_fraction` is `[pft].min_repro_height` [m], one per PFT** (#459): the
+  height a cohort reproduces from, worked out outside MEDS. The old rule was the fraction times the
+  height of a 100 cm tree on the curve, capped at `hgt_max`: 0.33 of the power law's 42.16 m is
+  13.912064431085485 m. The shipped configs carry the height their old rule gave.
+- **`[pft].dbh_critical` is gone** (#459): a cohort's size is limited by its height cap and the growth
+  sink limits. Delete the key.
+- **`[allometry].light_ext` is `[demography].light_ext_coeff_fusefiss`** in the main config (#459),
+  optional, default 0.5: patch fusion's light profiles were all it set.
+- **Fortran code that uses the allometry takes its PFT's record** (#459): `pft%allom(pf)` (the polygon's
+  `cohort%pft_table%allom(pf)`, which carries its cell's `chave_e`) in place of `cfg%allom` and
+  `cohort%allom`. `dbh_to_height`, `agb_to_dbh`, `wood_to_dbh`, `carbon_to_structure`,
+  `npp_to_growth` and `growth_sink_limitation` drop their `hgt_max` argument and `size2wood_carbon`,
+  `wood_to_dbh` and the rest their `aboveground_frac`; `dbh_to_wai` and `sapwood_fraction` take the
+  record in place of their coefficients; `alloc_polygon` drops its `allom` argument; `local_hmax` is gone.
+- **`[soil]` is the one block for the ground, and the solver settings are in `[fast]`.** Each old
+  key stops the run:
+  - the `[soil_column]` keys (`depth`, `layer_bottoms`, `retention`, the hydraulic texture, `psi_fc`
+    and the thermal texture) move to `[soil]` under the same names;
+  - `[soil].bottom_bc` is now `[soil].water_bottom_bc`, and `[energy].bottom_bc` is
+    `[soil].thermal_bottom_bc`;
+  - `[energy].deep_temp` and `deep_depth` move to `[soil]`;
+  - `[soil].rtol` and `atol` are now `[fast].rtol` and `water_atol` (#464), `[energy].atol` is
+    `[fast].soil_energy_budget_atol`, and `[energy].debug_error` is `[fast].debug_error`;
+  - `[soil].intercept_alpha` and `intercept_k` move to `[fast]`, beside `canopy_water_on`.
+
+  There are no `[soil_column]` and `[energy]` blocks any more. With the soil maps, `[soil]`'s column
+  keys, `water_bottom_bc`, `deep_temp` and `deep_depth` are refused, as their old spellings were.
+- **A site run's files have a `polygon` dimension of length 1** (#449), as a region's do: an output
+  variable is `(time, polygon, ...)`, `soil_z` is `(polygon, soil)`, and every state variable has a
+  leading `polygon` axis. The values are unchanged. A script that reads a site run's files takes the
+  polygon's row (`[:, 0]` after `time`, or `[0]` in a state file). A site run still restarts from a
+  state file written before, without the axis.
+- **Fortran callers of `meds_driver` use `meds_region`** (#449): `region_open`, `region_step` (one
+  slow step), `region_step_month`, `region_finalize` and `region_free` run every run. The Python API
+  is unchanged.
+- **Fortran code that names `site_t` names `polygon_t`** (#450), from `meds_polygon_state_vars`;
+  `site_alloc`, `site_free` and `rebuild_csr` are `alloc_polygon`, `free_polygon` and
+  `rebuild_cohort_map`. `io_read_state` sets the restructuring a checkpoint owes on the polygon it
+  reads (`poly%restructure_pending`, `poly%restructure_new_year`) and no longer returns it through
+  two arguments. Output and state files do not change.
+- **Fortran code that builds a soil column from the configuration reads the site's** (#451):
+  `poly%site%surface(is)` holds the column (`soil_column`, `soil`, `soil_thermal`), each layer's
+  starting water (`theta_start`, which replaces `fast_context_t%theta_init`) and the column's bottom.
+  `patch_physical_state` takes the patch's site's surface in place of a soil column, and
+  `slow_site_store` no longer takes one. `polygon_run_t` has no config: `polygon_prepare`,
+  `polygon_step`, `polygon_report` and `attach_output` take the run's.
+- **Every output file has a `site` axis behind `polygon`** (#452), of length 1 in every run until
+  sites can be defined. The soil columns (`soil_water_site` and its kin, daily and sub-daily) are
+  `(time, polygon, site, soil)`; `soil_z` is `(polygon, site, soil)` and `soil_z_bnds`
+  `(polygon, site, soil, nv)`; `soil_depth`, `bottom_bc`, `drain_factor` and `deep_temp` are
+  `(polygon, site)`. The values are unchanged. A script that reads them takes the site's row too
+  (`[:, 0, 0]` after `time` for a site run's soil column). State files gain the site axis as new
+  variables only.
+- **The growth temperature and the phenology's air temperature are each site's** (#454):
+  `poly%t_growth_avg`, `poly%pheno_tair_sum` and `poly%pheno_tair_n` are
+  `poly%site%t_growth_avg(:)`, `pheno_tair_sum(:)` and `pheno_tair_n(:)`. The state file's
+  `t_growth_avg` is `(polygon, site)`; a file written before reads as before.
+- **Fortran: the output and state writers take the site counts** (#452). `state_file_open` takes
+  `n_site`, and `open_output_files` and `manager_set_polygons` each polygon's site count.
+  `reduce_patch_column_to_site` is `reduce_patch_columns_to_sites` (each site's column, with a
+  validity mask), and `gather_patch_columns` reads each patch's layer count from its site.
+  `manager_set_soil_params` goes: a soil potential reads its site's retention curve, and
+  `diag_setup_t%soil_ready` says the fast loop runs.
+- **State files carry each cohort's tissue energy** (#457). `leaf_energy` and `wood_energy` [J per
+  plant] are the prognostic tissue state; `leaf_temp` and `wood_temp` are written beside them as
+  diagnosed twins. The canopy films `leaf_surf_water` and `wood_surf_water` are per plant, marked
+  `units = "kg/plant"`, and `shed_water_enth` holds the shed water's enthalpy. A state file written
+  before is read as before: the energies come from its temperatures, its films (per m² of ground)
+  are divided by the cohort's density, and its shed water is valued at the canopy air's temperature.
+- **Fortran code that changes a cohort's tissue mass or temperature keeps the energy in step**
+  (#457). After setting a tissue's carbon or water, `leaf_temp` or `wood_temp` by hand, call
+  `hold_cohort_tissue_temps`, which keeps the temperatures and re-derives the energies; after
+  setting the energies, call `set_cohort_tissue_temps`. The fast loop stops a run whose stored
+  temperature is more than 10⁻⁶ K from the one its energy gives. `leaf_surf_water` and
+  `wood_surf_water` are per plant (`cohort_film_water` gives a cohort's per m² of ground).
+  `slow_tissue_heat` is `slow_tissue_energy`; `tissue_coefficients_t%water_store_enth` is the
+  per-cohort `leaf_water_enth` and `wood_water_enth`; `veg_thermal_args_t` loses `c_leaf` and
+  `c_wood_dry`, and `tissue_dry_heat_capacity` (`meds_therm_lib`) gives the dry capacities.
+- **Fortran code that names three constants uses their new names** (#458): `halfpi` is `pio2`,
+  `stefan` is `stefan_boltzmann` and `vonkarman` is `von_karman`. `C2B_WOOD`, `TISSUE_C_LEAF`,
+  `TISSUE_C_WOOD_DRY`, `umol_2_kgC` and `kgCday_2_umols` are spelled in lower case; Fortran ignores
+  case, so the old spellings still compile.
+- **Fortran code that uses `meds_arrowhead_solve`, or `thomas_solve` or `matrix_exp` from
+  `meds_numerics`, uses `meds_linear_algebra`** (#458). `matrix_exp_fixed` and `matmul_sq` are
+  private to it.
+- **Fortran code that used one of `src/shared`'s unused names writes it out** (#458), as listed under
+  Removed. `HYDRO_TABLE_NTAB`, `HYDRO_TABLE_RMAX`, `UPTAKE_RAMP_WIDTH`, `TRANSP_CLOSE_WIDTH`
+  (`meds_hydr_lib`), `leaf_class_angle` (`meds_optics_lib`) and `pv_rwc_tlp` (`meds_water_retention`)
+  are private to their modules.
+- **Fortran code that uses `src/shared/functions` uses its new modules** (#460):
+  - `meds_hydr_lib`, and the tissue half of `meds_water_retention`, are `meds_plant_hydr_lib`;
+  - the soil and pond half of `meds_water_retention`, and `meds_pedotransfer`, are
+    `meds_soil_hydr_lib`;
+  - `meds_temp_response` is part of `meds_therm_lib`, as is `soil_thermal_from_texture`;
+  - `meds_allometry` is `meds_allometry_lib`;
+  - `smooth_max0` is in `meds_numerics`, and `supply_limited_transpiration` in `meds_plant_hydraulics`,
+    beside the solver it keeps solvable.
+- **Fortran code that calls a renamed routine uses its new name** (#460). Conversions are named
+  `<input>_to_<output>`, and the pressure-volume routines carry `tissue_`:
+
+  | old | new |
+  |---|---|
+  | `psi_from_rwc`, `rwc_from_psi` | `tissue_rwc_to_psi`, `tissue_psi_to_rwc` |
+  | `water_content`, `psi_from_water_content` | `tissue_psi_to_water`, `tissue_water_to_psi` |
+  | `tissue_rwc_from_water`, `tissue_unknown_from_rwc` | `tissue_water_to_rwc`, `tissue_rwc_to_unknown` |
+  | `pv_psi_tlp`, `capacitance`, `shared_potential`, `clamp_water_to_capacity` | `tissue_psi_tlp`, `tissue_capacitance`, `tissue_shared_potential`, `tissue_capped_water` |
+  | `wood_kmax_from_density` | `wood_density_to_kmax` |
+  | `plc_retained` | `conductance_retained_fraction` |
+  | `soil_theta_from_psi`, `soil_psi_from_theta` | `soil_head_to_theta`, `soil_theta_to_head` (the head is in metres) |
+  | `soil_unknown_from_theta`, `pond_head_from_water` | `soil_theta_to_unknown`, `pond_water_to_head` |
+  | `soil_hydraulics_from_texture` | `soil_texture_to_hydraulics` |
+  | `soil_layer_curve_t%psi_switch` | `soil_layer_curve_t%head_switch` |
+  | `cas_enthalpy_of_temp`, `cas_temp_of_enthalpy` | `cas_temp_to_enthalpy`, `cas_enthalpy_to_temp` |
+  | `temp_of_liquid_enthalpy` | `liquid_energy_to_temp` |
+  | `tissue_energy`, `tissue_temp` | `tissue_temp_to_energy`, `tissue_energy_to_temp` |
+  | `soil_thermal_cond`, `soil_heat_cap_vol` | `soil_thermal_conductivity`, `soil_volumetric_heat_capacity` |
+  | `size2leaf_carbon`, `size2wood_carbon` | `size_to_leaf_carbon`, `size_to_wood_carbon` |
+  | `beta_params_from_mean` | `moments_to_beta_params` |
+  | `time_from_string` | `string_to_time` |
+  | `TRESP_ARRHENIUS`, `TRESP_PEAKED` | `TEMP_RESPONSE_ARRHENIUS`, `TEMP_RESPONSE_PEAKED` |
+- **`soil_thermal_from_texture` is `soil_texture_to_thermal(sand, clay, theta_sat, ...)`** (#460): it
+  takes the sand and clay shares [%] in place of the soil texture record.
+- **`flux_potential` and `flux_potential_lin` are private** (#460): call
+  `kirchhoff_potential(psi, psi50, kexp, table)`, the potential the sapflow uses, which is psi above
+  zero potential.
+- **Named constants are spelled by their kind** (#463): lower case in `meds_constants` and
+  `meds_kinds`, UPPER case everywhere else. Fortran ignores case, so a caller's old spelling still
+  compiles; the names that changed are `ANNUAL_DAMPING_DEPTH` (`meds_soil_params`), the
+  `BUDGET_*` tolerances (`meds_budget_check`) and `N_SOIL_POOL` (`meds_biogeochem_types`).
+- **The plant hydraulics are the PFT file's `[hydraulics]` block** (#461). Every key of the main
+  config's `[hydraulics]`, and every per-PFT hydraulic key of `[pft]`, moves there; each is required,
+  and takes one value for every PFT or an array with one per PFT, as `[allometry]` keys do.
+  `wood_kmax` is required too: `scripts/pft_traits/pft_traits.py` gives Xu et al. (2016)'s value for a
+  wood density. A main-config `[hydraulics]` key or a `[pft]` hydraulic key stops the run.
+- **The mortality hazard and the light-plasticity slopes are per-PFT values** (#461): set
+  `[pft].mort_gamma`, `mort_alpha`, `mort_beta`, `kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and
+  `kplastic_leaf_turnover`. `[camac]`, `[derived]` and `[options].override_derived` stop the run.
+  `scripts/pft_traits` computes the values the model used to derive: Camac et al. (2018)'s power laws
+  in wood density, and ED2's fits (Lloyd et al. 2010) to `vcmax25` and `leaf_turnover_rate_toc`. A
+  calibration of `vcmax25` (`scripts/calibrate_fast`) no longer moves the slopes with it; recompute
+  them for the calibrated value if they should follow it.
+- **Fortran code that reads the hydraulics takes the PFT's record** (#461): `cfg%pft%hydro(pf)`
+  (`plant_hydraulics_t`, in `meds_plant_hydr_lib`) in place of `cfg%hydraulics` and
+  `pft_tissue_curves`. `apply_hydraulics_config` and `init_cohort` drop their hydraulics argument,
+  `hydro_args_t` extends `plant_hydraulics_t`, and `pft%kplastic_vm0` is `pft%kplastic_vcmax`.
+- **`src/shared` is `src/share`, and its CMake library `meds_shared` is `meds_share`** (#462). A
+  build script or an out-of-tree target that links `meds_shared` links `meds_share`.
+- **Python: `meds.config` reads and sets one PFT of a key given for every PFT** (#461):
+  `get(key, file="pft", pft=k)` of a single value returns it, and `set` turns it into one value per PFT
+  only when the PFTs then differ. The fast calibration's `root_beta` is the PFT file's
+  `hydraulics.root_beta`.
+- **Fortran: the state-file settings** (#476): `state_opts_t` and `meds_config_t%state` go;
+  `output_config_t` holds `state_write`, `state_every`, `state_unit` (`STATE_DAYS`, `STATE_MONTHS`,
+  `STATE_YEARS`), `state_file_dir` and `state_file_prefix`. `MET_BACKEND_ED_DEFAULT` and
+  `MET_BACKEND_ED_ERA5LAND` are `MET_BACKEND_DEFAULT` and `MET_BACKEND_ERA5LAND`. `polygon_t` gains
+  `kt_last_day`, which the forcing cursor copies in and out around each fast loop.
+- **Fortran: the output selection** (#475): `output_config_t` loses `grp_on` and `axis_on`, and
+  `meds_output_params` its `AXIS_*` codes and `N_AXIS`; `apply_group_toggles`, `apply_axis_toggles`,
+  `apply_freq_enables` and `dim_axis_index` go. `apply_selections(reg, sel)` applies `selection_t` lines
+  (a name or pattern, `OVR_TRUE`/`OVR_FALSE`/`OVR_MASK` and the tiers), `resolve_streams` clears the
+  tiers switched off (`output_registry_t%tier_on`) and sets the bookkeeping's (`var_desc_t%coord`), and
+  `usable_tiers` and `glob_match` are public; `alloc_output_set` takes an optional selection.
+- **Fortran: the output registry's snapshots** (#474, #477): `var_desc_t%snap_staged` marks a snapshot
+  the D, M and Y tiers read from the last staged sub-step, and `var_desc_t%flux` (`add_variable`'s
+  `flux=`, implied by `AGG_RATE`) a flux or a rate, which has none; `add_variable` derives `source_fast` from a fast-loop
+  row (`FLD_C_DIAG0 + CO_*`, `FLD_P_DIAG0 + PA_*`, `FLD_PY_DIAG0 + PY_*`), so `fast_source=` names only
+  another source; `append_variable` stores a built descriptor; `check_fast_tier` takes the descriptor;
+  `extract_variable` takes an optional `cohort_x`, a cohort field to reduce in place of the live one.
+  `SRC_F_COH_LEAF_TEMP` and `output_buffers_t%fast_cohort_leaf_temp` are gone.
+- **Fortran: the output registry** (#473): `add_variable` takes the F tier's source as `fast_source=`
+  beside the D, M and Y tiers' (`SRC_NONE` for none), held as `var_desc_t%source_fast`; `FAST_ONLY` is
+  `FAST`. A variable's F records are the dt-weighted mean of its staged samples whatever its coarse
+  operator.
+- **Fortran: the restart reader** (#471): `read_restart_file` takes the polygon's row as a required
+  argument and loses `fast_found`, and `init_polygon` loses `fast_found`: a restart always restores
+  the fast reservoirs, and the region keeps them for every restart.
+- **Fortran: the forcing's physics in `src/share`** (#470), for code built against MEDS's modules.
+  `meds_forcing_kernels` and `meds_lapse_rate` are gone:
+  - `meds_numerics`: `linear_interpolate(a, b, w)` replaces `interpolate_forcing` and its
+    `INTERP_LINEAR` / `INTERP_STEP` codes;
+  - `meds_time`: `solar_cosz_utc` (was `met_solar_cosz`), `utc_to_solar_seconds` (was the private
+    `apparent_solar_seconds`), `mean_solar_cosz` and `slope_incidence_cosz`;
+  - `meds_radiation_lib` (new): `clearness_index`, `partition_shortwave`, `clear_sky_emissivity`,
+    `synthesize_lwdown`, `lapse_longwave`, `slope_beam_factor`, `COSZ_MIN`, and the `SWPART_*` and
+    `LW_CLEAR_*` codes, which `meds_forcing_params` no longer exports;
+  - `meds_therm_lib`: `vapor_pressure_to_specific_humidity`, `specific_humidity_to_vapor_pressure`,
+    `rh_to_specific_humidity`, `precip_phase`, `lapse_air_temperature`, `lapse_pressure`,
+    `lapse_specific_humidity` and `dry_adiabat_temperature`; `dewpoint_to_specific_humidity` is gone
+    (a dewpoint's humidity is `sat_specific_humidity` at the dewpoint);
+  - `meds_met`: `met_at_site`, `met_to_cas_top`, `cas_top_wind_factor`, `cosz_reconstruct_factor` and
+    `disaggregate_sw`; `cas_top_air_temperature` (`dry_adiabat_temperature`) and `monthly_lapse_rate`
+    (an index into `lapse_rate_tair`) are gone;
+  - `meds_netcdf_write`: `define_site_statics` and `write_site_statics`; `meds_netcdf_c`:
+    `NC_FILL_DOUBLE` and `NC_FILL_INT`.
+- **Fortran: `src/io` by folder** (#469), for code built against MEDS's modules. `src/init` is
+  `src/io/init`, and `src/io/input/{forcing,maps}` are `src/io/met` and `src/io/maps`. Libraries:
+  `meds_forcing` is `meds_met`, `meds_io_prep` is `meds_output` and `meds_io_stream` is
+  `meds_output_stream`; the restart file is in `meds_init`, and `meds_netcdf_c` also holds
+  `meds_netcdf_write`. Modules and their routines:
+  - `meds_io` is `meds_init_restart`: `restart_file_t`, `restart_file_open`, `restart_file_write`,
+    `restart_file_close` and `read_restart_file` replace `state_file_t`, `state_file_open`,
+    `state_file_put`, `state_file_close` and `io_read_state`, which also returns `why`;
+    `restart_file_slots` replaces `state_file_polygons` and `state_file_refusal`;
+  - `meds_init` is split: `meds_init_bare_ground` (`init_bare_ground`, `init_bare_sites`,
+    `seed_bare_ground`, `add_cohort`, `finalize_init`, `N_PATCH_INIT`, from `meds_polygon`),
+    `meds_init_census` (`census_table_t`, `read_census_file`, which returns `why` in place of
+    `opened`, `init_from_census`, `restructure_census_stand`) and `meds_init` (`init_polygon`, the start
+    of a polygon by `[init].init_mode`, with a census stand's acclimation);
+  - `meds_met_driver` is `meds_met`, `meds_forcing_types` `meds_met_types`, `meds_met_source_common`
+    `meds_met_share`, `meds_co2_series` `meds_met_co2`; `meds_met_file_source` is `meds_met_default`
+    (`default_file_open`, `default_file_record`) and `meds_met_archive_source` `meds_met_era5land`
+    (`era5land_open`, `era5land_prefetch`, `era5land_record`). `meds_era5land_reader` is gone: its
+    grid is `meds_met_grid` (`select_site_cell`, `select_box_cells`, `keep_cells`, `same_grid` and
+    `GRID_*` codes, on a `met_grid_t` that `era5land_grid` gives for the archive, with
+    `great_circle_distance` and `nearest_grid_index` from `meds_forcing_kernels`), and its month files
+    are `meds_met_era5land`'s. The `MET_*` codes come from `meds_met_share` only;
+  - `meds_surface_maps` is `meds_maps`, which only reads: `map_inputs_t` and `MAP_BC_*` come from
+    `meds_maps_params`, `apply_map_inputs` from `meds_config`, and `site_map_inputs` is
+    `meds_region`'s. The maps take the grid (`met_grid_t`) where they took the static file's path;
+  - `meds_diagnostic_reduce` is `meds_output_reduce`, which also holds `dbh_class_index`; the source
+    ids and `extract_variable` and `extract_fast_scalar` come from `meds_output_extract`; the file
+    set's setup (`setup_output_files`, `finalize_output_files`, `alloc_output_buffers`,
+    `set_output_polygons`, `alloc_output_set`, `activate_polygon_diag`) and `open_output_files` and
+    `attach_output`, from `meds_polygon`, come from `meds_output_setup`; `output_serialize` and
+    `output_close` from `meds_output_stream`. `open_output_files` takes the polygons' lat, lon, row and
+    col, and `attach_output` a polygon's row;
+  - `soil_wetness` is `soil_theta_to_saturation` in `meds_soil_hydr_lib`, `(theta, theta_sat,
+    theta_res)`; `has_nan` is gone (`cohort_bad_field`, `cohort_field_finite` and
+    `canopy_air_bad_field` check the state).
+
+  No netCDF variable name, TOML key other than `format = "const"`, or C API changes.
+- **Fortran names in the output layer** (#468), for code built against MEDS's modules:
+  `reduce_cohort_to_site` and `reduce_patch_to_site` are `reduce_cohort_to_polygon` and
+  `reduce_patch_to_polygon`, `activate_site_diag` is `activate_polygon_diag`, and `manager_setup`,
+  `manager_finalize`, `manager_alloc_buffers`, `manager_set_polygons` and `manager_alloc` are
+  `setup_output_files`, `finalize_output_files`, `alloc_output_buffers`, `set_output_polygons` and
+  `alloc_output_set`. `add_variable` takes `xtype=`, `weight=`, `mean=` and `scale=`. The convenience
+  totals `total_gpp`, `total_npp`, `mean_can_temp`, `mean_soil_temp_top`, `total_soilc_*`, `total_rh`,
+  `total_et` and `count_cohorts` are gone (read `poly%et_accum` and `poly%cohort%n`). No netCDF variable
+  name, TOML key or C API changes; the `meds_io_config.toml` that `--dump-io-config` writes labels the
+  scalar axis `polygon`.
+- **Fortran names in the fast loop** (#478), for code built against MEDS's modules:
+  `meds_fast_rk4_oracle` and its `rk4_column_step` are gone; `PATH_C3` and `PATH_C4` come from
+  `meds_pft_params`, not `meds_plant_types`, and the radiation types from `meds_canopy_types`, not
+  `meds_canopy_radiation`; the fields listed under Removed are gone, so `assemble_soil_energy_forcing`
+  takes no geothermal flux, `run_spac_solver` takes the ground's water input and its temperature
+  (`precip_ground`, `t_pond_inflow`) as arguments, and `newton_surface_solve` returns no end-of-step
+  canopy-air enthalpy and humidity. Nineteen routines and constants used only in their own module are
+  private, among them `adaptive_rk45_march`, `solve_band`, `water_enthalpy_faces` and the pre-pass's six
+  stages. No netCDF variable name, TOML key or C API changes.
+- **The fast loop's setup and starting state** (#479), for code built against MEDS's modules:
+  - `fast_context_t`, `build_fast_context`, `site_column_configs`, `apply_hydraulics_config` and
+    `apply_canopy_film_config` come from `meds_fast_config`; `apply_hydraulics_config` takes `cfg`;
+  - `column_fast_step`, `column_fast_step_ark`, `column_fast_step_rk45`, `build_column_frozen`,
+    `column_prepass` and `run_spac_solver` take no `cfg` and take the site part, `column_site_t`, beside
+    `column_config_t`; `column_be_stage`, `ark2_column_step`, `adaptive_ark_march`, `rk45_column_step`,
+    `adaptive_rk45_march` and `column_derivs` take `column_site_t` in its place;
+  - `column_config_t`'s `soil`, `soil_thermal`, `soil_water_opts`, `energy` and `leaf_photo` are
+    `column_site_t`'s; it gains `soil_carbon` and `ea_rd`, `hd_rd`, `ds_rd`, and loses `veg_thermal`,
+    `wood`, `root` and `hydraulics_opts`;
+  - `stem_maintenance_respiration` and `root_zone_temp_scale` take `ea, hd, ds`; `crown_gravity_head`
+    and `leaf_node_psi` take no options record;
+  - `init_fast_reservoirs(poly, ctx)` is `init_fast_state(poly, cfg)` in `meds_init`, called by
+    `init_polygon`; `polygon_prepare` takes no `keep_fast_state`.
+
+  No netCDF variable name, TOML key or C API changes.
+- **Six `[fast]` keys retire** (#480): `error_level`, `ark_coupled`, `ark_dt_init`, `cas_condensation`,
+  `mask.*` (`veg_energy`, `cas_energy`, `cas_vapour`, `cas_co2`, `soil_heat`, `soil_water`,
+  `hydraulics`) and `fast_probe` with `fast_probe_file`. A configuration that sets one stops on an
+  unknown key: delete the line. Each one's default is what the model now always does; for sub-daily
+  output use the F tier or the snapshots ([diagnostics](docs/science/diagnostics.md) §5). In Fortran,
+  `CTRL_L0_FIXED`/`_L1_ADAPTIVE`/`_L2_STRICT`, `process_mask_t`, `mask_is_full` and `apply_process_mask`
+  are gone; `column_be_stage`, `ark2_column_step` and `adaptive_ark_march` take no `niter`, and
+  `commit_tissue_energy` no mask flags.
+- **The no-forcing climate** (#480): `fast_context_t`'s `u_ref`, `press`, `air_temp`, `shv_atm`,
+  `co2_atm`, `rad_sw_top`, `rad_sw_ground` and `precip` are gone. A run without forcing reads
+  `met_forcing_t`'s defaults, or the record a caller passes to `fast_dynamics` as `met_fixed`.
+  `ensure_patch_biophys_capacity` takes no seed values.
+- **Fortran names in the configuration** (#482), for code built against MEDS's modules:
+  - `soil_column_config_t`, `soil_opts_t` and `energy_opts_t` (`cfg%soil_column`, `cfg%soil`,
+    `cfg%energy`) are one `soil_params_t` (`cfg%soil`). Its `water_atol`, `intercept_alpha`,
+    `intercept_k`, `soil_energy_budget_atol` and `debug_error` are `meds_config_t`'s, read by
+    `load_fast_params`; the copy of `rtol` is gone;
+  - the old `soil_params_t` and `soil_thermal_params_t` are one `soil_profile_t`
+    (`site_surface_t%soil_profile`, `column_site_t%soil_profile`), with no `nzg_active` and its thermal
+    fields without the `soil_` prefix. `site_surface_t%soil` is the site's `soil_params_t`, which holds
+    the `water_bottom_bc`, `drain_factor`, `deep_temp` and `deep_depth` the site surface held;
+    `column_site_t`'s `soil_water_opts` and `energy` are `soil`, `debug_error` and
+    `soil_energy_budget_atol`, and `column_config_t` gains `intercept_alpha` and `intercept_k`;
+  - `init_opts_t`, `maps_opts_t`, `region_opts_t`, `aero_cfg_t`, `forcing_config_t`, `output_config_t`
+    and `decomp_opts_t` are `init_params_t`, `maps_params_t`, `region_params_t`, `aero_params_t`,
+    `forcing_params_t`, `output_params_t` and `soil_carbon_params_t`. Their loaders are
+    `load_aero_params`, `load_soil_carbon_params`, `load_forcing_params`, `load_output_params`,
+    `load_region_params` and `load_maps_params`; `load_soil` and `load_soil_ground` replace
+    `load_soil_column`, `load_soil_opts` and `load_energy_opts`;
+  - `soil_column_layers`, `soil_column_texture`, `soil_column_params`, `soil_column_start_theta`,
+    `layer_texture`, `build_soil_hydr_params(_layers)` and `build_soil_therm_params(_layers)` are
+    `meds_soil_derive`'s `soil_layers`, `soil_layer_textures`, `build_soil_profile`, `soil_start_theta`,
+    `map_layer_texture`, `build_profile_hydraulics(_layers)` and `build_profile_thermal(_layers)`. The
+    hydraulic builder starts the whole profile, so the thermal builder is called after it;
+  - `soil_energy_time_deriv`, `soil_energy_step_implicit`, `deep_conductance`, `bottom_flux` and
+    `ground_evaporation_rate` take the profile and the site's `soil_params_t`, and `bottom_heat_face`
+    the `soil_params_t` alone; `energy_flux_t` gains `heat_capacity`, and the soil heat's budget stop
+    is `column_be_stage`'s.
+
+  No netCDF variable name, TOML key or C API changes.
+- **Fortran names in the fast loop** (#483), for code built against MEDS's modules:
+  - the PFT table holds the fast loop's per-PFT tables, built by `derive_parameters`:
+    `cfg%pft%leaf_photo` (`leaf_photo_table_t` of `leaf_photo_pft_t`, which was `leaf_photo_args_t`),
+    `cfg%pft%hydraulics` (`hydraulics_table_t` of `hydraulics_pft_t`) and `cfg%pft%optics`
+    (`rad_pft_optics_t`). Their types are `meds_pft_params`'s; `meds_pft_derive` has
+    `derive_leaf_params`, `derive_pft_tables`, `derive_rad_optics`, `moments_to_beta_params` and the
+    four per-PFT water-potential helpers, which take `(cfg%pft, pf)`. `leaf_gas_exchange` is gone: call
+    `leaf_gas_exchange_batch`;
+  - each site's acclimated leaf table is `poly%site%leaf_photo(is)`, set by the slow step's
+    `acclimate_site_leaf_tables`. `advance_growth_temperature` is gone;
+  - `xi_accum_t` is `decomp_xi_t` (`xi_days(N_SOIL_POOL)`, `rh_fast`), `patch%xi_accum` is
+    `patch%decomp_xi` and `blend_xi_accum` is `blend_decomp_xi`; `N_SOIL_POOL` and the `IP_*` pool
+    indices are `meds_biogeochem_params`'s;
+  - `column_fast_step` is `fast_step(dt_fast, cfg, site, static, forcing, dynamic, out, work)`.
+    `column_cohort_t` is `fast_static_state_t`, which also holds the canopy geometry, the canopy-air top,
+    the slow loop's daily inputs, the site's leaf table and the cohorts' order; `patch_biophys_t` is
+    `fast_dynamic_state_t`; `column_forcing_t` is `fast_forcing_t`, with `wind`, `press` and `rho_air`;
+    `column_budget_t` is `step_report_t` (`ledgers`, `exports`, `work(N_WORK)`), inside `fast_output_t`
+    with the aerodynamics, the per-cohort fluxes, H and LE. `column_config_t`, `column_site_t`,
+    `integrator_opts_t`, `fast_context_t` and `meds_fast_config` are gone: the step reads `cfg` and the
+    site, and builds its tolerances with `build_tol_set` and `build_error_control` (`meds_fast_control`);
+  - `fast_dynamics` and `advance_one_step` take no context, and their patch threads as `patch_threads`;
+    `polygon_run_t%patch_threads` holds them. `column_cohort_init` is `meds_fast_state`'s
+    `static_state_fixture`;
+  - `src/fast_dynamics/numerics` is `src/fast_dynamics/integrator`.
+
+  No netCDF variable name, TOML key or C API changes.
+- **`[fast].time_integrator = "ark"` is `"esdirk2"`, and its two keys follow** (#484), the name of the
+  scheme they set: `"ark"` stops the run, listing `esdirk2 | rk45`, and `[fast].ark_adaptive` and
+  `ark_fixed_substep` are `esdirk2_adaptive` and `esdirk2_fixed_substep`, the old names stopping the run
+  as unknown keys. `"esdirk2"` is still the default. A script that sets `fast.time_integrator` or
+  `fast.ark_*` sets the new value and names, as examples 04 and 05, `test/region` and
+  `meds_config_main.toml` do.
+- **Fortran names in the fast integrator** (#484), for code built against MEDS's modules:
+  - the modules are named by stage: `meds_fast_types`, `meds_fast_control` and `meds_fast_time_derivs`
+    are `meds_fast_integ_types`, `_control` and `_derivs`; `meds_fast_be_stage` is
+    `meds_fast_integ_backward_euler`, `meds_fast_ark` is `_esdirk2`, `meds_fast_rk45` is `_rk45`, and
+    `meds_fast_frozen` with `meds_fast_prepass` is `_frozen`; `meds_fast_step` is `_stepper`, beside
+    the new `_update`. `meds_column_state_ops` is gone: the state's arithmetic and
+    `diagnose_soil_temps` are `_types`', the commits and the store totals `_update`'s, and
+    `assemble_soil_energy_forcing` is `_derivs`';
+  - `meds_spac_solver` is gone with `spac_solver_t`, `spac_eval_t`, `spac_allocate`, `spac_set_state`,
+    `spac_advance` and `spac_jacobian_error`. The water network's records are `meds_fast_integ_types`'
+    `water_drive_t`, `water_state_t`, `water_tend_t`, `water_flows_t` and `water_work_t` (sized by
+    `ensure_water_capacity`); `set_water_state` and `water_derivs` are `_derivs`', `water_step` and
+    `water_jacobian_error` `_backward_euler`'s, and `water_scales` `_control`'s. `record_water_flows`
+    (`_frozen`) checks the soil faces for both schemes;
+  - `column_state_t`, `column_tend_t`, `column_frozen_t` and `column_bflux_t` are `march_state_t`,
+    `march_tend_t`, `frozen_t` and `boundary_flux_t`; `cas_column_t`, `cas_column_time_deriv` and
+    `cas_column_step_implicit` are `cas_box_t`, `cas_box_time_deriv` and `cas_box_step_implicit`, and
+    `cas_boundary_t` holds a `cas_box_t` as `box` in place of its eight copied fields;
+    `chydro_forcing_t` is `meds_soil_water`'s `ground_evap_env_t`;
+  - `ark2_column_step` is `esdirk2_step`, `ark_stages_t` is `esdirk2_stages_t`, `rk45_column_step` is
+    `rk45_step`, `build_column_frozen` is `build_frozen`, `column_derivs` is `march_derivs`,
+    `adaptive_ark_march` is `adaptive_march` (both schemes), `column_be_stage` is
+    `backward_euler_stage`, and `INTEG_ARK` is `INTEG_ESDIRK2`; `cfg%ark_adaptive` and
+    `cfg%ark_fixed_substep` are `cfg%esdirk2_adaptive` and `cfg%esdirk2_fixed_substep`.
+    `column_fast_step_ark`, `column_fast_step_rk45` and `column_prepass` are gone into `fast_step` and
+    `build_frozen`. `update_dynamic_state` and `close_ledgers` (`_update`) commit the step and close its
+    ledgers for both schemes, so `rk45_ledgers_stop` is gone;
+  - `soil_profile_t` gains each layer's water-retention curve (`layer_curve`) and the faces' weights
+    (`face_weight`), built with the profile. `meds_fast_state`'s `derive_cohort_terms` fills the static
+    state's root profiles, xylem and rhizosphere conductances, crown head, wood water mass and dry heat
+    capacities, and `static_state_fixture` takes the site's `soil_profile_t`;
+  - the tests `test_spac_solver` and `test_column_ark` are `test_water_network` and
+    `test_column_esdirk2` (ctest `water_network`, `column_esdirk2`).
+
+  No netCDF variable name or C API changes.
+- **Fortran names in the forcing record and the stores** (#485), for code built against MEDS's modules:
+  - `met_forcing_t`'s `tair_k`, `qair`, `psurf_pa`, `rho_air` and `lwdown` are `air_temp`, `air_shv`,
+    `air_pressure`, `air_density` and `lw_down`, and its `swdown()` is `sw_down()` (`met_sw_down`);
+    `met_record_t`'s `rainf` is `rain`;
+  - `snow_column_t`, `soil_water_column_t` and `soil_energy_column_t` are `snow_state_t`,
+    `soil_water_state_t` and `soil_energy_state_t`;
+  - the frozen record is the workspace's, `work%frozen`. `prepare_frozen(n, nsl, frozen)` sizes it and
+    resets it each step, where `allocate_frozen` built a new one, and `build_frozen` takes the
+    aerodynamic environment and the water network's records (`aenv`, `water`) in place of the workspace;
+  - the patch block gains `fast_cost`, the wall time of the patch's last fast-loop window. The state file
+    does not hold it.
+
+  No netCDF variable name, TOML key or C API changes.
+- **A run without forcing reads the `[forcing]` CO₂ keys** (#486). `co2_source`, `co2_const` and
+  `co2_file` apply with `forcing_on = false` too, so one key sets a constant CO₂ for every run and the
+  CO₂ file works without a met file. With forcing off `co2_const` is optional, at 420 µmol/mol; a run
+  that named the keys before was refused, and one that did not now starts its canopy air at 420, not
+  400. With forcing on they are required as before.
+- **Fortran names at the start and in the fast step** (#486), for code built against MEDS's modules:
+  - `init_bare_sites` seeds each patch's stores (`seed_patch_stores`, `meds_init_bare_ground`), and
+    `init_fast_state` seeds the final stand again, settles its cohorts and lays the snow, with the fast
+    loop on or off. `patch_physical_state(cas, soil_water, surf, temp, psi)` drops its `cfg` and its
+    fallback to `[init]`;
+  - `fast_dynamics` and `advance_one_step` take an optional `seed_canopy_air`, which
+    `polygon_run_t%seed_canopy_air` carries; `meds_fast_state`'s `seed_start_canopy_air` does the
+    seeding. `meds_met` gains `met_open_co2` and `met_co2`;
+  - `meds_constants` gains `h2o_dry_ratio` and `virtual_temp_factor`; therm_lib's private
+    `H2O_DRY_RATIO` and `ONE_MINUS_H2O_DRY_RATIO` go;
+  - `meds_fast_integ_types` gains `STATE_TEMP_MIN`, `STATE_TEMP_MAX` and `at_temp_bound`;
+  - `advance_snow_stage` takes the top soil layer's conductivity and the canopy air's mass, its vapour
+    conductance to the atmosphere and the atmosphere's humidity; `snow_env_t%k_soil_top` has no default
+    (0), the caller sets it.
+
+  No netCDF variable name or C API changes; state files written before restart.
+- **The default `[fast].rtol` is 2e-3** (#487), where it was 1e-3. A configuration that sets `rtol`
+  keeps its value; the shipped ones (examples 04 and 05, `test/region`) now set 2e-3. 1e-3 still gives
+  the earlier march, a little tighter than before for a patch with many cohorts (the norm below). An
+  `rk45` run wants 1e-4 or tighter (`docs/science/numerical_scheme.md` §6).
+- **Fortran: `ground_evaporation_rate` reads its per-step terms from its boundary** (#488). It no
+  longer takes the soil profile: `ground_evaporation_rate(theta1, psi1, forcing, soil, e_soil,
+  de_dtheta, de_dpsi)`. Call `ground_evaporation_setup(profile, soil, forcing)` after filling a
+  `ground_evap_env_t` and before the first rate; it fills the record's new fields `rv_t`, `q_sat`,
+  `theta_init`, `theta_span` and `dsl_diffusivity`. `water_step` does this itself, so its `drive`
+  argument, and `water_jacobian_error`'s, is now `intent(inout)`.
+- **A configure with no `CMAKE_BUILD_TYPE` now builds Release (dev), not Debug** (#489). Ask for the
+  checked build with `-DCMAKE_BUILD_TYPE=Debug` or `cmake --preset debug`. A build directory configured
+  earlier keeps the build type in its cache.
+- **A production binary runs only on Cascade Lake or newer Xeons** (#489); `-DMEDS_CPU_TARGET=` builds a
+  portable one. On a production build, `meds.model` and `meds_main` agree to round-off rather than bit
+  for bit, and the suite's bit-exact checks fail, so run the suite on dev.
+- **RK45 refuses an `rtol` above 1e-4** (#492), and takes 1e-4 when the key is absent. An `rk45`
+  configuration that sets a looser `rtol` (1e-3 was the old default) now stops at the check: remove the
+  key or tighten it.
+- **A source-tree run looks for `build-dev`** (#492). The Python package no longer finds libmeds.so in
+  `build-py`, `build-pylib`, `build` or `build-ifx`, nor the scripts `meds_main` in `build-ifx`: build
+  with `cmake --preset dev`, or point them elsewhere with `MEDS_LIB`, `--meds-main` or `MEDS_MAIN`.
+- **Fortran: the snow stage before the march only takes in and drains** (#492).
+  `advance_snow_stage` is `prepare_snow_stage(snow, snow_params, snow_rough, dz_soil_top, k_soil_top,
+  snowfall, rainfall, t_air, dt_fast, st)`, and `snow_stage_t` no longer holds the step's fluxes
+  (`h_snow`, `le_snow`, `g_base`, `subl_rate`, `ground_rad`) or the pack after them (`swe1`, `enth1`):
+  the march computes them with `snow_surface_balance`, and the update commits them with
+  `snow_take_exchange`.
+- **Fortran: `ground_evaporation_rate` and `bottom_flux` take the soil's matric potential in MPa** (#500),
+  not metres of head, and their potential derivatives are per MPa. `snow_env_t` is `surface_env_t`, which
+  also holds the bare ground's `soil_evap`, the pack, its cover, the snow parameters and the step:
+  `snow_surface_balance(env, flux)` reads them from it, and `surface_derivs` has no `snow` argument.
+  `prepare_snow_stage(snowfall, rainfall, t_air, snow_rough, env, st)` is `meds_surface`'s; it advances
+  `env`'s pack and returns its hand-off in `snow_out_t`.
+- **Fortran: `meds_plant_respiration` is `meds_respiration`** (#501), which also holds the soil's
+  respiration chemistry: `assemble_env_scalar`, `assemble_transfer_matrix` and
+  `heterotrophic_respiration_matrix` are its `decomposition_env_scalar`, `decomposition_transfer_matrix`
+  and `heterotrophic_respiration`, their parameter argument `params`. `pack_pool_vector` and
+  `unpack_pool_vector` are `meds_patch_state_vars`'.
+- **`[leaf_physiology].medlyn_vpd_min` is `vpd_min`** (#503): the VPD floor now serves Katul as well.
+- **`[aerodynamics].t_ref_air` is 273.15 K** (#503). A configuration copied from the old main config
+  keeps 293.15 K, and with it air viscosity and diffusivity 12 % low: remove the key or set 273.15.
+- **Fortran: the ground surface's radiation is per tile** (#503). `surface_env_t`'s `abs_sw` and
+  `abs_lw` are `rnet_soil`, `sw_snow` and `lw_down`; `fast_forcing_t` adds `rnet_soil`, `sw_snow` and
+  `lw_down_ground` beside its ground totals. `ground_evap_env_t` adds `press`, `patch_diag_row` takes
+  the pressure, and `meds_canopy_aerodynamics` drops `psim` and adds `canopy_burial_fraction`.
+- **`[aerodynamics].n_iter_mo` is the most Monin-Obukhov sweeps** (#505), 20; the sweeps stop when the
+  coupling settles. A configuration copied from the old main config, which set 4, keeps a cap of 4.
+- **`[aerodynamics].soil_rough`** (#506), 0.01 m, is new: the bare soil's roughness length. A patch
+  without cohorts, or with only shorter ones, takes it as its z0m; the 1 m bare-canopy height goes.
+- **A state file whose tissue energies leave out the films it holds is refused** (#510) at the first
+  fast step, where its cohorts' energies and temperatures disagree; a file with no water on the canopy
+  reads as before. **Fortran:** `canopy_water_out_t`'s `film_liquid_enthalpy` is `rain_liquid_enthalpy`,
+  `soil_hydrology_t` drops `t_film_valuation`, and `commit_tissue_energy` and `clamp_canopy_film` take
+  the films' start and end and the tissues' start-of-step temperatures.
+- **A state file written below freezing reads its soil on the freezing curve** (#511): a layer the
+  old plateau held at t_3ple reads a little below it, partly frozen. **Fortran:** `soil_layer_temp`
+  takes the layer's curve and `diagnose_soil_temps` the profile; `set_water_state`,
+  `soil_water_relations` and `soil_theta_to_unknown` take the layers' ice (`soil_ice_t`), and
+  `bottom_flux` the bottom layer's impedance; `ground_evap_env_t` drops `ground_fliq`;
+  `soil_heat_be_solve` goes, and `soil_heat_out_t` gains `iterations`.
+- **Fortran: each tissue's longwave, the `[leaf_physiology]` record** (#514). `canopy_radiation` takes
+  `leaf_temp` and `wood_temp` in place of `canopy_temp`, and `radiative_temperature` goes. The
+  `[leaf_physiology]` keys are `cfg%leaf_physiology%<key>` (`leaf_physiology_params_t`, in
+  `meds_leaf_params`), and `acclimate_site_leaf_tables` takes that record. `meds_numerics` adds
+  `equal_height_layers`.
+- **Fortran: the slow loop's modules** (#516). The laws are in `slow_dynamics/processes/`:
+  `meds_plant_phenology` (was `meds_phenology` and `meds_phenology_types`; the `CUE_*` bits are
+  `meds_pft_params`'), `meds_plant_carbon_allocation` (now also `growth_sink_limitation`,
+  `cohort_carbon_demand`, `growth_window_so_far`), `meds_plant_traits` (was
+  `meds_plant_trait_dynamics`), `meds_soil_carbon` (was `meds_soil_biogeochem`,
+  `meds_biogeochem_types` and `meds_litter_partition`; `soilc_audit_t` is `soil_carbon_out_t`) and
+  `meds_demography` (was `meds_demography_rates`). The drivers are in `slow_dynamics/driver/`:
+  `vegetation_dynamics` and `restructure_stand` are `meds_slow_dynamics`'; the per-process routines
+  (`advance_leaf_phenology`, `advance_plant_traits`, `reacclimate_plant_traits`,
+  `acclimate_site_leaf_tables`, the tissue-water routines) are `meds_slow_state`'s, and they take the
+  step record `slow_step_data_t` in place of `pool_change_block`; the operators (the old
+  `meds_demography_update` and both `*_fusefiss`, `accumulate_recruit_pool`,
+  `update_cohort_derivatives`, `refresh_canopy_depth`) are `meds_slow_update`'s; `soilc_seam_t` is
+  `meds_slow_ledger`'s. `soil_carbon_t` is `soil_carbon_state_t`. The `meds_demography` library is
+  part of `meds_slow`, and the `MEDS_GPU` build option is gone.
+- **Fortran: the slow loop's signatures** (#520). `advance_slow_dynamics(poly, cfg, ledger[, step_start])`
+  and `vegetation_dynamics(poly, cfg, ledger[, doy])`; `restructure_stand`, `advance_boundary_dynamics`,
+  `settle_tissue_water`, `refresh_canopy_depth`, `shed_turnover_water` and `advance_soil_carbon` take a
+  required `slow_ledger_t` (an inactive one books nothing), and the amounts an operator reports are
+  required. `soilc_seam_t` is gone: the seam's worst values are fields of `slow_ledger_t`, kept by
+  `slow_ledger_soil_check`. `apply_recruitment` and `apply_patch_disturbance` take the decisions of
+  `decide_recruitment` and `decide_disturbance` (`meds_slow_state`), made by the laws `founds_cohort`,
+  `disturbed_fraction` and `survives_treefall` (`meds_demography`).
+  `advance_plant_traits(poly, dt_yr, leaf_carbon_new, storage_new[, instantaneous])` and
+  `reacclimate_plant_traits(poly, cfg, leaf_carbon_new, storage_new)` return the carbon
+  `commit_trait_carbon` writes; `soil_carbon_step` takes its pools `intent(in)` and returns the new ones in
+  `soil_carbon_out_t%pools`, which `commit_soil_carbon` writes. `phenology_kernel` takes
+  `phenology_traits_t` (`pheno_args_t` is gone); `plant_carbon_allocation` requires `wood_growth_max` and
+  `exudate`; `solve_soil_carbon_steady_state` has no `params`; `soil_carbon_diagnostics` is gone.
+  `new_fuse_cohorts`, `new_fuse_patches` and `update_patch_states` are `fuse_cohorts`, `fuse_patches`
+  and `age_patches`. The ctest `kernels_no_site_state` is `kernels_patch_only`.
+- **Fortran: the cull and the treefall report their dead** (#523). `terminate_cohorts` and
+  `apply_patch_disturbance` take a required `kill_report_t` (`meds_slow_state`), and
+  `kill_litter(poly, kills, carbon)` turns it into patch litter; `clear_litter` empties the
+  accumulator after the soil step, which no longer happens at the start of the allocation.
+  `KGC_PER_UMOL_C` is gone: use `meds_constants`' `umol_2_kgc`. `check_kernel_state.py` takes the
+  source tree and stops on any other directory.
+- **Config: the stand's keys** (#525). `[disturbance]` and `[recruitment]` are gone:
+  `patch_disturbance_rate`, `disturbance_survive_height` and `min_recruit_size` are `[demography]`
+  keys. `[carbon]` is gone: `gpp_ref` is `[fast].gpp_ref`. In `[demography]`, `do_cohort_fissfuse` is
+  `recruitment_on` and `cohort_fusion_on`, `enable_cohort_fission` is `cohort_fission_on`,
+  `do_patch_disturbance` is `patch_disturbance_on` and `do_patch_fissfuse` is `patch_fusion_on`, each
+  required. `max_cohort` and `max_patch` are at least 1: 0 no longer turns fusion off and a negative
+  value no longer forces it. With `patch_disturbance_on`, `patch_disturbance_rate` must be positive.
+  In Fortran the keys are `cfg%demography%<key>` (`demography_params_t`) and
+  `cfg%trait_dynamics%<key>` (`trait_dynamics_params_t`).
+- **The slow ctests** (#528). `slow_update` holds `fusion_cohort`, `patch` and `disturbance`;
+  `slow_step` holds `phenology_driver`, `mortality_pathways`, `biogeochem_dynamics` and
+  `slow_diag_units`; `carbon_growth` is split among `plant_carbon_allocation`, `slow_step` and
+  `slow_update`; `plant_phenology` holds `c_api_phenology`; `plant_trait_dynamics` is `plant_traits`
+  and `soil_biogeochem` is `soil_carbon`. `demography` is new.
+- **Fortran: the soil-carbon pools by index** (#529). `soil_carbon_state_t` holds `carbon(N_SOIL_POOL)`
+  and `lignin(2)`: `%slow_carbon` is `%carbon(IP_SLOW)`, and so on for each pool, and
+  `%struct_grnd_lignin` / `%struct_soil_lignin` are `%lignin(1)` / `%lignin(2)`. `pack_pool_vector` and
+  `unpack_pool_vector` are gone: read and write `%carbon`. `soil_carbon_pool_name(k)` is
+  `SOIL_POOL_NAME(k)` in `meds_biogeochem_params`. Restart files keep their variable names and load.
+
+### Changed
+
+- **The examples are rerun on the production build** (#552), on beta 1a5d8a9d with #543. Example 06
+  runs as eight cost-balanced regions, one per 40-core node (9.3–10.9 h each, 3,230 core-hours), instead
+  of two 128-thread runs. Example 01 moves by at most 2e-5 and example 02 not at all; example 03's refit
+  follows the allometry changes (the census's AGB −0.8 %); examples 04 and 05 move little (BCI's AGB
+  126.9 MgC/ha in 2010, Palo Verde's 78 MgC/ha at 150 years); example 06's results move beyond rounding
+  (ET 74 % of the rain, the soft-wooded Ds half of the wettest tenth's AGB). Two example scripts had gone
+  stale: example 02's `make_era5_par_hours.py` asked for the PAR outputs by their old names (#473), and
+  example 03's `census_laws.py` read the treefall keys from `[disturbance]` (#525).
+- **The documentation is checked against the code** (#542). Every science page, guide and README is
+  checked against the code and rewritten for a modeller: the science pages end Parameters, Code map,
+  References, and example results, stale counts and history leave the reference pages.
+  `docs/ed2_comparison.md` describes the current code (#422), `scripts/prepare_era5/README.md` is
+  new, `docs/ROADMAP.md` lists every open issue, and six finished plans move to
+  `docs/dev_plans/archive/`. Corrected on the pages: `vegetation_energy_dynamics.md` eqs. (1) and (6)
+  linearize the emission about the tissue's start-of-step temperature, as the code does; the
+  boundary-layer conductance ratio in `leaf_gas_exchange.md` is 1.4; `soil_carbon.md` eq. (4) has no
+  nitrogen factor; `order_of_processes.md` follows the code's order; ice saturation is 9, 18 and 26 %
+  below liquid at −10, −20 and −30 °C. Comment lines that cited the wrong equation or key are
+  corrected. No code changes.
+  - `docs/science/column_biophysics.md` is `docs/science/coupled_biophysics.md` ("column" is the soil
+    or snow profile); its sections and equation keep their numbers.
+  - Lettered equations are numbered: `canopy_aerodynamics.md` eqs. (3b), (4)–(10) are (4)–(11), and
+    `canopy_radiation_transfer.md` eqs. (10b), (11)–(15) are (11)–(16); every citation follows.
+  - `docs/output_renames.md` is retired (the naming rule is `docs/science/diagnostics.md` §3), and so is
+    `post_proc/evaluate_ithaca.ipynb`, which needed a run the repository does not hold.
+  - The region runs' file layout moves from `docs/configuration.md` to `diagnostics.md` §3.
+  - CLAUDE.md's compiler traps gain an eighth: ifx's AVX-512 code misreads an array expression over
+    `a(:)%b%c`.
+  - `docs/ROADMAP.md` cites the issues filed with it: #544 and #545 (two defects the review found),
+    #546–#549.
+- **Three gaps a mutation check found are tested** (#541):
+  - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
+  - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
+  - the frozen build leaves the canopy films out of the tissue heat capacity, as the end-of-step commit
+    requires.
+  Each check fails under a mutation that every test passed before.
+- **`test/` is in folders that mirror `src/`** (#540): `support/`, `share/`, `config/`, `state/`, `fast/`,
+  `slow/`, `io/`, `driver/`, `c_api/` and `checks/`. `test/CMakeLists.txt` registers every test through one
+  helper, with commands, directories and limits unchanged. Every test has one label (`unit`, `integration`,
+  `lint`, `python`), so `ctest -L unit` runs the quick ones. `-DMEDS_TEST_LONG=ON` adds the full Palo
+  Verde inventory and 150-year regrowth, labelled `long`.
+- **The last test merges** (#539). `test_output_registry`, `test_diagnostic_reduce` and
+  `test_output_integrate` are `test_output`, one section per `src/io/output` module. `test_tissue_energy`
+  dissolves into `test_therm_lib`, `test_plant_energy` and `test_slow_update`. `test_pft_optics_config` is
+  `test_pft_config`, and checks the shipped PFT file instead of the fixture's own values.
+- **The tests' config fixture runs on the shipped values, with distinct PFTs** (#538). `build_test_config`
+  said it mirrored the shipped config but ran at `dt_fast` 150 s, `growth_memory_days` 90, a 20 m
+  reproduction height and a storage cushion of 1. It now takes the shipped values. Its three PFTs, which
+  shared one allometry and one set of hydraulics, each have their own, so a test that reads the wrong
+  PFT's traits fails. Two such indexing errors, made on purpose, now fail tests that passed before.
+- **The driver tests** (#537). `test_several_sites` and `test_site_definitions` are `test_sites`. `test_region`
+  keeps its 8 region rules, and its other refusals move to the tests of what they check: 13
+  `check_main_refuses` cases, `test_maps`, `test_sites`, `test_state_file`, `test_init`. Three duplicates go.
+  The tests' config writers share one support module, and each sets a key once.
+- **`test_fast_loop` is `test_fast_driver`, and every block runs on forcing** (#536). Five blocks ran on the
+  reference climate of a run without forcing. They now run on the test's diurnal forcing file, with all
+  56 checks kept, and the header lists every section.
+- **The slow side's remaining tests** (#535). The decomposition chemistry moves from `test_soil_carbon` to
+  `test_respiration`, whose fast/slow-seam section now runs a diurnal day through the src routines rather
+  than retyping the laws. Thermal acclimation (`acclimate_leaf_photo_table` and the sites' tables) and
+  `fineroot_turnover_plastic` are tested, the latter's refusal without plasticity included.
+  `test_therm_lib`'s optimum scan reaches 55 °C.
+- **The soil-carbon state is the matrix's vector** (#529), with no change to any result. The kernels
+  read and write `%carbon` as it is, without packing it into an array and back, and the pool names
+  are one table beside the pool indices; the restart reads and writes the pools in one loop.
+- **One slow test per module** (#528), the tests only. Each module of `driver/` and `processes/` has
+  its test, and a test that merged into another keeps its fixture as a private module of its new
+  file. `test_demography` checks each demographic law by a property it must have, and
+  `test_slow_update` runs a stand through a month-and-year boundary with soil carbon on: every phase
+  closes, the recruit, cull and treefall declare their carbon, ids stay distinct, and the boundary's
+  dead carbon reaches the soil with the next step. The slow ledger's store test perturbs every member
+  of every reservoir. `meds_slow_ledger`'s verdict is the public `slow_ledger_failures`.
+
+- **One switch per operator of the stand** (#525), with no change to any result. Recruitment, cohort
+  fusion, cohort fission, the treefall gaps and patch fusion each have a `[demography]` switch under
+  `demography_on`, in place of the two block switches and the numeric settings that also turned
+  fusion off or forced it. The cull and patch termination, which keep the stand bounded, run
+  whenever its structure does.
+- **Fortran: the run's status codes, its steps and its start** (#526). `DRIVER_*` are `RUN_*` (the
+  same values: the C API and `meds.model` are unchanged) and the CMake target `meds_driver` is
+  `meds_run`. `polygon_step` takes a `calendar_step_t` (`meds_time`, built by `calendar_step`),
+  `meds_config`'s `site_configs` replaces `meds_region`'s `polygon_sites`, `output_tick`
+  (`meds_output_integrate`) is the polygon's output tick, and `test_c_api_run` takes a work
+  directory.
+- **Fortran: the stepper and the start** (#531). `advance_one_step(poly, cfg, ledgers[, met_src,
+  met_cur, step_start, out_bufs, patch_threads])` takes a `run_ledgers_t` (`meds_stepper`: the
+  energy, water and face budgets and the slow ledger) and performs the owed restructuring and the
+  thermal acclimation itself; `advance_boundary` goes, and a caller owes a restructuring by
+  `poly%restructure_pending`. The canopy air a start owes is `poly%seed_canopy_air` (no
+  `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
+  `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
+  (`meds_soil_carbon`) is the spin-up's steady state.
+- **Physics no test reached is tested** (#532):
+  - the snow's burial of the canopy and its blend of roughness and displacement;
+  - the canopy-air conductances against the log law;
+  - ground evaporation and the VPD at the air's pressure;
+  - evaporation from frozen ground, ice on the aquifer face, and the frozen dry layer's porosity;
+  - a patch with no cohorts;
+  - the wood's share of the reported net radiation;
+  - `meds_apply_rates`;
+  - the initial snowpack;
+  - `meds_main`'s refusal of impossible hydraulic traits, a NaN soil layer and a malformed value.
+- **The fast integrator's tests are three, on one fixture** (#527).
+  - `test_column_derivs`, `test_state_combinators`, `test_column_dynamics`, `test_column_esdirk2` and
+    `test_column_rk45` become `test_fast_integ_kernels` (the RHS, the backward-Euler stage, the
+    assembler, every state-vector field), `test_fast_integ_schemes` (ESDIRK2's and RK45's orders, the
+    adaptive march on both) and `test_fast_integ_step` (the column scenarios, each on both schemes).
+  - They share `meds_test_fast_fixture`, assembled as a run assembles a column, in place of three drifted
+    copies of the setup.
+  - Checks that compared a path with itself, or held by construction, go.
+  - New checks:
+    - ESDIRK2 and RK45 agree on a forced day, both closing every ledger;
+    - the error norm `state_wrms_grouped`, the step factor, and RK45's branch of the adaptive march;
+    - in `test_plant_energy`, `canopy_tissue_energy`'s film enthalpies and its tissue longwave, exact at
+      the emission temperature and second order away from it.
+- **The fast-loop process tests are one per module** (#524). Each `processes/` module has its test,
+  named after it (`test_canopy_aerodynamics`, `test_canopy_air_space`, `test_canopy_radiation`,
+  `test_canopy_water`, `test_leaf_gas_exchange`, `test_plant_energy`, `test_plant_hydraulics`,
+  `test_respiration`, `test_soil_heat`, `test_soil_water`, `test_surface`). So do the libraries the
+  processes use (`test_therm_lib`, `test_optics_lib`, `test_soil_hydr_lib`, `test_plant_hydr_lib`), and
+  each links only what it tests.
+  - `test_surface_energy`, `test_snow`, `test_column_energy`, `test_column_hydrology`,
+    `test_water_processes`, `test_pedotransfer`, `test_plant_respiration` and `test_leaf_physiology`
+    dissolve into them. The forcing's moist-air and lapse checks leave `test_met_file` for the library tests.
+  - Checks that restated the code's formula, or held by construction, give way to properties: the log-law
+    wind, Monteith & Unsworth's flat plate, the Ross G-function's closed forms, a column gaining exactly
+    the heat let in at its top.
+  - The snow tests step the pack as the integrator does.
+  - `test_c_api_leaf` calls the canopy shim, which no test called before.
+- **The stepper owns the order of processes; the start is complete in `init_polygon`** (#531), with
+  no change to any result. The tests that step a polygon now run the run's order, the owed
+  restructuring and the acclimation included, and the canopy-air depth, the spin-up and the sites'
+  terrain belong to the start.
+- **A site run chooses its forcing cell and reads its maps the way a region does** (#526). The cell
+  is chosen once, and each polygon applies its cell's map inputs to its own configuration, so a site
+  run's configuration no longer carries the map's values: the PFT table beside its state files
+  shows the configured `chave_e`, not the cell's. Every output file is the same.
+- **`src/main` cleaned up** (#522), with no change to any result. `check_polygon_state` is the step's
+  one guard, its messages word for word the same; `polygon_prepare` no longer resets a freshly
+  allocated run record and takes the polygon's cell (`polygon_run_t%cell` goes); no `;` joins.
+  Comment lines 339 → 271; ED2's run loop is `docs/ed2_comparison.md` §4.11.
+- **The slow loop's routines are consolidated** (#520), with no change to any result on gfortran. One PFT
+  table is read everywhere, and each derived value has one source (`recruit_carbon`, `leaf_psi_tlp`,
+  `cohort_carbon_supply`); the patch stores blend in one place; the commit is a plain loop; the code
+  nothing read is gone, and each line holds one statement. The run's worst soil-carbon seam gap is dated
+  by the start of its slow step.
+- **The tests of `src/share`, `src/config` and `src/io` are one per module** (#519).
+  - `test_time` is `test_numerics`' calendar section. `test_numerics` also takes the sun on a slope and
+    linear interpolation.
+  - `test_allometry` and `test_allometry_defaults` are `test_allometry_lib`.
+  - `test_biophysics_params_config` and `test_soil_column_config` are `test_params_config`. The soil column
+    is built by the production `build_soil_profile`.
+  - `test_init_census`, its refusal ctests and `test_init_soil_state` are `test_init`. All twelve census
+    refusals run in one process.
+  - `test_surface_maps` is `test_maps`.
+  - `test_met_driver`, `test_met_tower` and `test_site_terrain` are two tests. `test_met_file` covers the
+    forcing file and what `meds_met` does with it; `test_radiation_lib` covers the radiation laws.
+- **`io_config_example` regenerates `meds_io_config.toml`** (#519) with `meds_main --dump-io-config` and
+  compares the result with the tracked file byte for byte. Before, it checked only that each registry name
+  appeared in the file.
+- **`test_state_file` checks every variable of the state file** (#519). It replaces `test_state_roundtrip`,
+  which checked about thirty stores by hand.
+  - A polygon of two sites, three patches and four cohorts, with every store stamped, is written, read back
+    and written again. The two files must be the same bit for bit.
+  - Every variable must be stamped away from the value a reader that skipped it would hold.
+  - It also checks the restructuring owed, a run of another growth-window length, and the reader's refusals.
+- **One script checks the runs `meds_main` refuses** (#518), `test/check_main_refuses.cmake`, with five
+  cases: unknown config keys, an RK45 `rtol` too loose, a missing or empty census, and a missing restart.
+  Each is a one-day run in a directory of the build tree; the three scripts it replaces ran the reference
+  config's whole window in the source tree. Every ctest has a 600 s time limit; `march_derivs` is
+  `column_derivs` again, after its file; `test_several_sites` runs 30 days, not 60; and the met tests
+  write their files in the build tree, not the repository root.
+- **The slow loop is a `driver/` and a flat `processes/`** (#516), with no change to any result on
+  gfortran. Each slow process is one module named after its science page, and the drivers have one
+  job each: `meds_slow_dynamics` orders a step and marks the ledger, `meds_slow_state` reads the
+  stand and calls the processes, `meds_slow_update` is the one place a step writes the stand's
+  carbon and structure, and `meds_slow_diag` writes the slow rows. A step's working values travel in
+  one record, `slow_step_data_t`. GPU offload, measured slower than the CPU, has no build option any
+  more.
+- **The slow loop's science moves to the science pages** (#515), with no change to any result.
+  `docs/science/demography.md` (new) gives the vital rates, how they are applied, the cohort and patch
+  operators and what each conserves; `docs/science/conservation.md` (new) the slow site ledger, its
+  phases, declared terms and tolerance. `diagnostics.md` gains "The slow rows", and the ED2 notes move
+  to `ed2_comparison.md` §4.10. The slow modules' comments go from 1,743 lines to 933, and those that
+  no longer matched the code are corrected.
+- **Each tissue pays its own longwave emission** (#514). A cohort's net longwave was split between
+  leaves and wood by their share of the absorption, so the leaves paid a share of the wood's emission
+  whatever their temperatures. Leaves and wood now share what the cohort takes in, the two-stream's net
+  plus all it emits, by that share, and each pays its own emission at its own temperature; tied cohorts
+  share their layer the same way. The cohort emits at its tissues' σT⁴ weighted by absorptivity (was the
+  unclumped LAI/(LAI+WAI)), and the tissue balance linearizes each tissue's longwave about its own
+  start-of-step temperature. With the sky, the ground and the leaves at 295 K and the wood at 305 K,
+  the leaves gain 19.4 W/m² where they lost 10. Means move under 0.05 % in every harness case (ex04 H
+  −0.03 %, GPP +0.004 %; Palo Verde's inventory H −0.03 %, GPP +0.003 %).
+- **`[leaf_physiology]` is one record, and one helper groups the cohorts of one height** (#514), with no
+  change to any result. The radiation, the in-canopy wind and the overtopping LAI take their layers from
+  `equal_height_layers`.
+- **Examples 04 and 05 rerun, example 04 refitted** (#513). Example 04's calibration is redone on the
+  fast-kernel physics (vcmax25 33.6, stomatal_g1 2.88, leaf_angle_mean 51.6, z0m_ratio 0.049, κ 0.714);
+  its validation fails on H alone (RMSE +11 %, the limit 10 %), and it ships with H flagged. Against
+  the tower the calibrated GPP is 8.75 (target 8.23), LE 66.9 (75.5), daytime H 174.9 (target 166.6)
+  and the net radiation 139.3 (136.3; it was 13–14 W/m² short). BCI's regrowth reaches 126.6 MgC/ha in
+  2010 (was 124.9; the census 117.9); Palo Verde's reaches 76.5 MgC/ha at 150 years, 87 % of the 2009
+  inventory's.
+- **A tissue's longwave about the emission the two-stream gave it** (#512). The two-stream emits each
+  cohort at its start-of-step radiative temperature, but the tissue balance linearized the change in
+  emission about the canopy air's, so a tissue warmer than the canopy air lost 4εσT³·AI·(T_rad − T_cas)
+  it never emitted: at BCI the booked canopy net radiation sat 20–25 W/m² below the two-stream's at
+  midday. The slopes are now taken at T_rad and the balance books A_lw − slope·(T − T_rad). The
+  reported net radiation (`mean_rnet_*`) is what the canopy's and the ground's balances booked, and
+  the reported upwelling longwave carries the change in emission within the step, so the reported
+  budget closes on the radiation the ledger books. More of the absorbed energy leaves as sensible heat:
+  BCI (ex04) H +7.3 %, LE +1.1 %, GPP −0.3 %; the region H +5.6 %, GPP −1.0 %; Palo Verde's inventory
+  H +5.5 %, NPP −0.6 %. Accepted integrator steps rise 0.5–2.6 %, ex04's wall time 1 %.
+- **Frozen soil on the soil freezing curve** (#511), CLM5's form. A layer held no liquid below 273.16 K
+  and froze on a plateau at it, and its water drained, infiltrated and fed roots at its unfrozen
+  conductivity through the ice. Below the triple point a layer now holds the liquid its retention
+  curve holds at the freezing-point-depression head L_f (T − T_f)/(g T) (Niu & Yang 2006), the rest
+  ice. In the water network each layer's ice is held over the step: the liquid takes the curve's
+  potential at its own content, the ice impedes the conductivity by 10^(−6 θ_ice/θ_sat), in full on
+  the pond and aquifer faces, and once the liquid fills the pores the ice leaves, the layer holds
+  θ_sat while its head rises to zero. Ground evaporation reads the liquid's potential over liquid
+  saturation, and the dry surface layer CLM5's effective porosity. Ithaca in January: drainage 3.49 →
+  2.69 mm/d, surface runoff 0 → 0.54 mm/d, the wettest day's runoff 7.0 → 22.9 mm/d, the top layer's
+  water 0.24 → 0.37 m³/m³ (cryosuction) and its liquid fraction 0.08 → 0.26; in spring the snowmelt
+  runs off frozen ground (surface runoff 0 → 2.2 mm/d, the wettest day 6.1 → 35 mm/d). Unfrozen runs
+  move under 0.03 %.
+- **The soil heat step solves for the energies** (#511). It solved for T^{n+1} with the sensible heat
+  capacity at the step's start, so no latent heat entered the step, and the water's enthalpy was
+  outside its matrix. It is now Newton on the layers' energies, the Jacobian the faces' slopes over
+  each layer's apparent heat capacity, the energies committed from the faces at the solution so the
+  budget closes to round-off. A column frozen from the top gives the same profile at 30-minute and
+  1-minute steps, to 0.007 K. ex04's wall time is unchanged; Ithaca in January takes 38 % longer, from
+  the frozen water network's extra Newton iterations.
+- **A canopy film is part of its tissue's energy** (#510), ED2's form. The films had no energy of their
+  own: each step valued them at the rain's temperature, or at `tsupercool_liq` under a pack, where rain
+  held on the canopy was worth 0 J/kg and cost the leaf about 0.95 MJ/kg extra to evaporate, and their
+  sensible heat went uncounted. Each film now joins its tissue's heat capacity and energy at the
+  tissue's temperature, in the fast loop and at the cohort level; capture brings the rain's liquid
+  enthalpy and evaporation takes the vapour's, so the canopy-water column runs close their energy to
+  round-off (they were bounded at 5e6 J). Within a step a tissue's balance runs on its own heat
+  capacity, and the commit reads the temperature back with the end-of-step film: with the film in the
+  step's capacity, a film far heavier than its tissue that evaporated within the step left its heat to
+  the tissue, and at Palo Verde a nearly leafless cohort's leaf read back at 107 K and the inventory run
+  stopped. Water one film passes to the other within a cohort, as the cohort's film is re-shared by
+  capacity, is valued at the giver's temperature: valued at the rain's, a falling leaf handing its film
+  to its wood was charged the difference against couplings near 1e-17 W/m²/K, and Palo Verde's
+  regrowth stopped in 1880. The region's LE −0.23 %, H +0.47 %, GPP −0.21 %; Palo Verde's inventory (2008–2011) LE
+  −0.48 %, H +0.53 %. `t_film_valuation` and `film_liquid_enthalpy` go.
+- **The Kirchhoff sapflow law under gravity, documented** (#509). The law is the exact steady flux
+  without gravity; with it the exact flux solves an implicit equation, and the law overstates it by
+  3.4 % at a = 2 and 15.5 % at a = 4 in an embolised case, under 1 % on the shipped PFTs' realistic
+  ranges. The law stays; `test_plant_hydraulics` pins the 3.4 % against the a = 2 closed form.
+- **The aquifer face takes the geometric mean** (#508). The aquifer boundary took K_sat for capillary
+  rise, the upper bound of the half-layer between the bottom node and the table: a 0.5 m bottom layer
+  at −2 m head drew 7 K_sat however dry it was, and dq/dψ jumped by K_sat/K(θ_n) at zero gradient. It
+  is now eq. (3) with the table a saturated node, √(K(θ_n)·K_sat) both ways, as the pond face and ED2;
+  smooth, with the same equilibrium. No harness case uses the aquifer; BCI on it moves under 0.2 %.
+- **The snow-cover length scale is the ground's roughness** (#507). The Niu-Yang scale took the snow
+  surface's 1 mm roughness, so 1 cm of snow covered 92 % of the ground; with `soil_rough` (0.01 m), as
+  Niu & Yang (2007) and CLM4, it covers 16 %, and 10 cm 92 %. Ithaca: SWE +7 % in January, +23 % in
+  the spring thaw.
+- **Bare ground couples through CLM5's soil coefficient** (#506). The bare-ground conductance was the
+  canopy air's own factor u*·temp1, so bare ground crossed the surface layer twice, and a patch without
+  cohorts was a 1 m canopy (z0 0.13 m): bare ground was coupled at 1.8–2.1 times CLM5's rate. It is now
+  κu*/(0.13 (z0g u*/ν)^0.45) with z0g = `soil_rough`, and a bare patch has the soil's roughness, so its
+  resistance to zref is CLM5's bare-soil one. The ground couples to the canopy air about three times
+  more strongly under a sparse canopy, and a bare patch's u* falls with its roughness: the region's LE
+  +7 % and H −8.8 % (GPP +1.2 %), BCI's regrowth (ex05) LE +10 % and H −8 %, Niwot (near bare) u* −37 %
+  and LE +19 %, Ithaca in January LE −31 % and SWE +6.6 %; closed canopies under 0.3 %.
+- **The surface layer sweeps to a tolerance** (#505). Four fixed Monin-Obukhov sweeps missed the
+  canopy air's coupling by up to 21 % in free convection (a 30 m forest at 0.5 m/s, the canopy air 5 K
+  warmer: −18.7 %); the sweeps now stop when u*·temp1 moves by less than 1e-4 of itself, at most
+  `n_iter_mo` (20) of them, with 0.6 % the largest error on a 784-case grid. u* +0.1 to +0.3 %, Niwot's
+  LE −1.1 %; the cost is within run-to-run noise, since the transpiration demand's two start-of-step
+  solves now take the pre-pass's conductances (bit-identical) instead of solving again.
+- **The two-stream solves each layer's scattered beam through its depth** (#504). The beam a layer
+  scattered entered at its two faces, unattenuated inside it, so the light depended on the cohort cut
+  (default optics, LAI 5: VIS albedo 0.075 for one cohort, 0.053 for five, 0.043 converged).
+  `layer_beam_sources` gives each layer's exact emergent sources, so any cut gives the converged light.
+  ex04's midday albedo 0.178 → 0.165 (the tower's is 0.13); net radiation +0.9 % at BCI and +2.1 % in
+  the census cases, mostly as sensible heat; GPP −0.2 to −0.4 %.
+- **Physics fixes from the fast process-kernel review** (#503), each measured against the one before
+  on the harness:
+  - **Ground evaporation and the canopy-air VPD at the air's pressure,** not 1 atm: at 3,050 m (Niwot,
+    July) ET 16.7 → 28.6 W/m² of LE, the reported VPD +40 %; the region's LE +0.7 %, BCI's +1.4 %.
+  - **The leaf boundary layer:** the air's viscosity and diffusivity are referenced at 0 °C (they are
+    0 °C values; they were 12 % low), and Re = uℓ/ν (ED2 uses the diffusivity; `ed2_comparison.md`
+    §4.9): a 5 cm leaf at 1 m/s conducts 21 % more. BCI GPP +0.6 %, the region's +1.4 %.
+  - **Every Monin-Obukhov sweep holds ζ in [−100, `zeta_max_stable`],** as CLM5: a stable night no
+    longer runs to `ustmin` (a 30 m forest 3 K colder than the air coupled at 0.0038 m/s at both 1 and
+    2 m/s, now 0.0115 and 0.0231). Ithaca's spring thaw: H −4.2 %, LE +2.4 %.
+  - **The canopy-top wind profile shares u*'s stability ranges**; **the leaf-angle distribution sums
+    to one however narrow it is** (a spread ≤ 3° left the beam uncaught); both round-off on the
+    harness.
+  - **The drought limb scales a C4 leaf's light rate and PEP slope:** the census cases' GPP −0.2 %.
+  - **Snow and bare soil take the ground's radiation at their own albedo and temperature:** half cover
+    under 300 W/m² gave each tile 77 W/m², now about 38 to the snow and 117 to the soil.
+  - **A pack buries the canopy's roughness** by ED2's burial fraction: Ithaca January LE −1.5 %.
+  - **Katul** brackets its Ci to where Ci = Cs (behind a thin boundary layer it fell back to g0) and
+    floors D at `vpd_min` (gs jumped three orders at the dew point).
+  - **The configuration refuses** impossible pressure-volume and vulnerability traits and NaN soil
+    layers; **the soil column's bottom face** is one expression for the solve and the ledger.
+  - **The reported net radiation includes the wood:** ex04's `mean_rnet_py` 105.3 → 116.9 W/m², with no
+    prognostic change.
+- **The process modules' comments and named constants** (#502). Every kernel in
+  `fast_dynamics/processes` says what it computes and why, with units on each argument, and not which
+  integrator routine calls it; internal jargon goes from the comments and the science pages. The canopy
+  interception section moves to `vegetation_energy_dynamics.md`, beside the film's evaporation. The
+  in-canopy wind extinction, Katul's difference step, the vapour diffusivity, the hydraulics' `kexp`
+  tolerance and Niu & Yang's reference density are named constants. Every variable of the 10 harness
+  cases is identical on gfortran, and on ifx to #501's.
+- **One respiration module, plant and soil** (#501). `meds_plant_respiration` is `meds_respiration`, and
+  the soil's respiration chemistry moves into it from `meds_soil_biogeochem`: the decomposition scalar,
+  the CENTURY transfer matrix and Rh. `meds_soil_biogeochem` keeps the pools' daily dynamics and takes the
+  matrix from there, so the fast loop and the daily step still debit the same CENTURY matrix. The fast
+  half imports nothing from `slow_dynamics/` any more, so `meds_fast` drops its link to the slow kernels,
+  and `meds_slow_kernels` links `meds_fast_kernels` instead. Every variable of the 10 harness cases is
+  identical on gfortran, and on ifx to #500's.
+- **The ground's process modules hold their own formulas** (#500). `set_soil_heat_env` is the soil
+  column's forcing from the ground heat flux and the water network's flows, which the ESDIRK2 stage and
+  `march_derivs` each assembled (it replaces `assemble_soil_energy_forcing`); `soil_layer_temp` is one
+  layer's temperature from its energy; `pond_inflow` is the water reaching the pond, its temperature and
+  the enthalpy it brings. What the ground surface reads is one `surface_env_t` (was `snow_env_t`), held
+  for the step: `ground_boundary_t`'s radiation, conductance and soil evaporation, the top soil node, and
+  the snow stage's pack, cover, parameters and step. What the stage hands on (the melt as a rate and
+  temperature, the precipitation's enthalpy, the pack before it) joins `snow_out_t`, so the stage's own
+  record goes. `ground_surface_exchange` is the snow/bare blend `surface_derivs` held, and
+  `prepare_snow_stage` is `meds_surface`'s.
+  `soil_water_store` and `soil_energy_store` move to `meds_patch_state_vars`, and the slow ledger takes the
+  soil column's totals from them. These moves leave every variable of the 10 harness cases identical on
+  gfortran. `ground_evaporation_rate` and `bottom_flux` then take the soil's potential in MPa, the unit the
+  water network solves in, and convert it to head once inside: gfortran stays identical, and on ifx
+  Release the PR moves results by round-off (at most 6.9e-8 relative on ex04), the moves' ifx Debug runs
+  being identical.
+- **The plants' process modules hold their own formulas** (#499). `veg_energy_balance` is
+  `tissue_energy_balance`, with its eight optional arguments replaced by two `latent_pathway_t` records,
+  the stomata's and the film's, which `latent_pathway` builds from a conductance; wood is the case with no
+  stomatal pathway. `canopy_tissue_energy` is the per-cohort loop `surface_derivs` held, and
+  `commit_tissue_energy` moves to `meds_plant_energy`. `tissue_coefficients_t` is `plant_energy_env_t` and
+  `canopy_film_capacity_t` is `canopy_water_out_t`, each in the module that owns it. The interception
+  cascade (`canopy_interception`), the cap on a film's evaporation (`limit_film_evaporation`) and
+  `clamp_canopy_film` are `meds_canopy_water`'s, and `intercept_canopy_layer` drops `e_canopy`, which every
+  caller passed as 0. The leaf's two water-stress controls are `capacity_stress_factor` and
+  `stomatal_stress_factor`, and `cohort_leaf_par` is the leaf module's. Every variable of the 10 harness
+  cases is identical on gfortran; on ifx Release they move by round-off (at most 6.5e-8 relative on ex04),
+  and the ifx Debug runs are identical.
+- **The canopy's process modules hold their own formulas** (#498). `canopy_aerodynamics` takes the
+  gather's bottom-to-top order and reorders the cohorts itself, so the integrator's `aero_bottom_to_top`
+  is gone, and the per-stage surface-layer re-solve is its `canopy_air_conductances`. `aero_env_t` drops
+  `co2_atm`, `can_co2`, `press`, `rho_air` and `can_theta`, and `set_aero_env_atm`/`_canopy` fill it;
+  `cas_boundary_t` carries the step's `aero_env_t` and `aero_args_t` in place of its seven `mo_*` copies.
+  The canopy air's capacities are `cas_capacities` in `meds_patch_state_vars`, which the frozen build and
+  the slow ledger share, and its condensation sink is `cas_condensation`. A cohort's emission temperature
+  is `radiative_temperature`, and the ground's optics under a pack `snow_blend_ground_optics`. Every
+  variable of the 10 harness cases is identical on gfortran; on ifx Release they move by round-off (at
+  most 5e-8 relative on ex04), and the ifx Debug runs are identical.
+- **The fast kernels are one folder of process modules, `fast_dynamics/processes`** (#497).
+  `canopy/`, `plant/` and `soil/` become eleven modules, each named after its science page:
+  `meds_canopy_air_space` was `meds_cas_biophysics`, `meds_plant_energy` was `meds_plant_biophysics`
+  (its interception bucket is `meds_canopy_water`), `meds_soil_heat` was `meds_soil_energy`, and
+  `meds_surface` was `meds_ground_biophysics`. `meds_canopy_types`, `meds_plant_types` and
+  `meds_soil_types` are gone: each record lives in the kernel that reads it. `energy_forcing_t` and
+  `energy_flux_t` are `soil_heat_forcing_t` and `soil_heat_flux_t`, `root_heat_sink` is `water_heat_out`,
+  `boundary_gbh_mos` is `boundary_layer_conductance`, and `aero_out_t`'s `temp1`/`temp2` are
+  `heat_transfer_factor`/`vapour_transfer_factor`. A kernel's records are named by role: `*_env_t` what it
+  reads, `*_args_t` what is fixed for the slow step, `*_out_t` what it returns (`rad_env_t`, `rad_out_t`,
+  `ground_optics_env_t`, `aero_args_t`, `leaf_out_t`, `soil_heat_env_t`, `soil_heat_out_t`); `cas_box_t` and
+  `cas_source_t` are one `cas_env_t`, and `snow_flux_t` and `snow_melt_t` one `snow_out_t`, without the
+  never-set `mass_resid` and the never-read `melted_out`. Every variable of the 10 harness cases is
+  identical on gfortran and ifx.
+- **The Kirchhoff mean and the plant's flows move to `meds_plant_hydraulics`; the Kirchhoff table is
+  config's** (#496). The Kirchhoff potential is the vulnerability curve integrated, used only as the
+  sapflow's path-mean conductance, so its evaluation, `xylem_sapflow` and `root_water_uptake(_profile)`
+  leave `share/functions/meds_plant_hydr_lib` for the fast plant-hydraulics module, beside the soil's
+  Darcy flux. Each PFT's lookup stays on the PFT table: `hydro_table_t` is `kirchhoff_table_t` in
+  `meds_pft_params`, built by `build_kirchhoff_table` (was `build_hydro_table`) in `meds_pft_derive`;
+  `plant_hydraulics_t` moves to `meds_pft_params`. `meds_plant_hydr_lib` keeps the laws. Every
+  variable of the 10 harness cases is identical on gfortran and ifx.
+- **The fast kernels' comments and science pages say what the code computes** (#495). Sixteen comments
+  stated something the code does not do and are fixed, among them the surface layer's "converged" last
+  sweep, the leaf PAR's `leaf_absorptance`, stem and root respiration's response (always peaked) and the
+  soil curves' floors. The science pages now say that the two-stream is an adding method whose scattered
+  beam enters at a layer's faces, that the Kirchhoff mean is exact only without gravity, that the uptake
+  ramp is 10⁻² MPa wide, that λ is in µmol CO₂ per mol H₂O, that eq. (8)'s leaf water carries
+  `n_plant`, that the pond stays liquid, that every cohort's leaves take their water from their own curve,
+  and where four corners remain in the curves. No code changed.
+- **The snow pack exchanges with the canopy air inside the march** (#492). The pack's sensible, latent
+  and vapour exchange and its conduction to the soil top were set once before the march, against the
+  step's start; the march now solves the pack's surface balance at every evaluation against that
+  evaluation's canopy air and top soil node, as it does each tissue's, and the pack then takes the time
+  integral of its exchange. The stage before the march keeps the step's snowfall and rain and drains the
+  liquid the pack holds, so meltwater reaches the pond the step after it melts. On Ithaca's January the
+  canopy-air temperature rises 0.06 K in the mean (5.3 K in its worst hour), H moves −0.16 %, LE
+  −0.31 %, SWE +0.3 %, and ESDIRK2 takes 10 % fewer sub-steps (1.84 → 1.65 per `dt_fast`).
+  Snow-free runs are unchanged on gfortran.
+- **The surface layer's convective velocity follows each sweep's buoyancy flux, as in CLM5** (#492).
+  The Monin–Obukhov solve kept its first guess's fixed `wc` = 0.5 m/s for every sweep when the air was
+  unstable, so the wind jumped from u to √(u² + 0.25) at neutral, 26 % at the 0.65 m/s floor. Each
+  sweep now takes w_c = β w_* from its own buoyancy flux (β = 1, a 1000 m mixed layer;
+  `canopy_aerodynamics.md` eq. (3b)), which vanishes at neutral. A convective daytime layer couples
+  more strongly: example 04's August H +1.0 %, LE +0.6 %, GPP +0.45 %; the regeneration run's GPP
+  +1.7 %; the region test's LE +1.7–1.9 %; ESDIRK2's sub-steps +1–2 %.
+- **Root uptake's rounded corner is 10⁻² MPa wide** (#492), where it was 10⁻³. At night the wood
+  settles towards its wettest layers, which sat in the narrow corner's near-flat slope, so Newton
+  overshot and backtracked at dawn and in changing rain. The wider corner is still 10–100 times below
+  the 0.1–1 MPa a root works across (`soil_plant_water.md` eq. (1)); results move little (the region
+  test's means by ≤ 5e-4 relative), and it gives most of this release's last speed-up: a simulated day
+  on example 04's stand costs 1.053 s on one thread where it cost 1.134 s, and 0.100 s on 20 where it
+  cost 0.105 s, together with the next two entries.
+- **RK45 takes `rtol` 1e-4 by default and refuses a looser one** (#492). Its step is set by stability,
+  not by `rtol`: from 1e-4 to 1e-3 it saves 2–4 % of the CPU while its own error grows six- to
+  eightfold, and looser still its fluxes leave the answer (`numerical_scheme.md` §6).
+- **The Illinois steps of a bracketed root live in `meds_numerics`** (#492): `root_bracket_t`,
+  `regula_falsi_point` and `illinois_narrow`, with `root_ci` keeping its loop and its own residual. No
+  change to any result.
+- **The C-API shims compile once** (#492), into the object library `meds_c_api` that libmeds.so and the
+  C-API tests link.
+- **`build-dev` is the default build** (#492): the dev preset builds libmeds.so, the scripts run
+  `build-dev/meds_main`, and the Python package loads `build-dev/libmeds.so`.
+- **`docs/building.md` says why the suite runs on dev, and how far production lands from dev** (#492).
+  With the tests on, production fails 4 of the 84 tests with ifx and 2 with gfortran, each a bit-exact
+  or near-exact check that IPO, FMA under LTO or AVX-512 vectorisation parts at round-off; on ten runs
+  its LE, H and GPP run means stay within 2.1e-5 relative of dev's.
+- **Build kinds** (#489; `docs/building.md`, "Build kinds"). `CMakePresets.json` (CMake ≥ 3.21) names
+  four, each in `build-<kind>`:
+  - `debug`;
+  - `dev`: Release, the project's `-O2`, any x86-64 CPU, the reference for comparing outputs;
+  - `profile`: dev with `-g`, whose output is dev's byte for byte;
+  - `production`: Release with `MEDS_IPO=ON` and `MEDS_CPU_TARGET=cascadelake`; it builds `meds_main`
+    and `libmeds.so`, not the tests.
+
+  `MEDS_IPO` (default OFF) turns on interprocedural optimisation and names the link's level, `-O3`.
+  `MEDS_CPU_TARGET` (default empty) maps `cascadelake` and `host` to `-xCORE-AVX512` and `-xHost` (ifx)
+  or `-march=cascadelake` and `-march=native` (gfortran). Both options are for ifx and gfortran only. On
+  example 04's stand, ifx production costs a simulated day 0.836 s on one thread where dev costs 1.133 s
+  (−26 %), and 0.073 s on 20 where dev costs 0.103 s (−29 %), with results within round-off; an edit
+  takes ~35 s to rebuild instead of ~4 s. A plain Release configure's command lines are those of the
+  former explicit Release build; the dev preset also builds libmeds.so (#492), which adds `-fPIC`.
+- **The water network's step is cheaper** (#488). Per simulated day on example 04's 120-patch stand
+  (ifx dev build, `rtol` 2e-3): 1.257 → 1.140 s on one thread (−9 %), 0.113 → 0.104 s on 20 (−8 %).
+  Four changes leave results unchanged on gfortran and ifx:
+  - one pass over the stores gives each evaluation's residual, its merit and its worst store;
+  - the ground evaporation's terms that depend only on its boundary and the top layer's curve (R_v T,
+    the ground skin's saturation humidity, the dry surface layer's span and vapour diffusivity) are set
+    once per water step by `ground_evaporation_setup`;
+  - root uptake calls `smooth_max0` only inside its rounded corner;
+  - the retained conductance fraction squares r by a product for exponent 2.
+
+  Three more move results at round-off:
+  - the exponent-2 Kirchhoff difference is one arctangent;
+  - the van Genuchten conductivity's slope takes its powers from those the conductivity already took;
+  - the sub-step's error estimate solves with the last Newton iteration's factorisation instead of a
+    fresh one, and a sub-step that took no iteration has zero error.
+
+  Example 04's hourly LE moves by at most 3×10⁻⁴ W/m², and its canopy-air temperature by 1×10⁻⁷ K.
+  The regeneration and site cases move by at most 0.32 W/m² in an hour (median 5×10⁻⁵); the base
+  run's own gfortran–ifx difference there is 0.09 W/m².
+- **Examples 04 and 05 are rerun** on the fast-loop follow-up at `rtol` 2e-3 (#490):
+  - **Example 04** (against v0.3.5): the tower-period means move by at most 0.2 % (GPP 10.48 → 10.47
+    µmol m⁻² s⁻¹ default, 8.60 calibrated; H by day 158.11 → 157.94 W m⁻² calibrated), and the window's
+    sunlit top leaves run about 0.2 K cooler. Every step takes 13.5 min on 8 threads, where it took 20.7.
+  - **Example 05's census check** (against v0.3.5): the stand budget moves by under 1 % (GPP 31.25 →
+    31.32 MgC ha⁻¹ yr⁻¹); 4.1 min, where it took 6.2. **The Palo Verde inventory check** moves by under
+    0.5 % (leaf litter 0.494 → 0.496 kg dry m⁻² yr⁻¹).
+  - **BCI 1600–2020 and the Palo Verde regrowth** are measured against v0.3.4, their last runs, so these
+    moves include every change since. BCI's AGB in 2020 is 127.4 → 129.8 MgC ha⁻¹, with the early PFT
+    33.4 → 22.9 and the mid 91.3 → 104.4; 151 min on 20 threads, where it took 200. Palo Verde's AGB at
+    150 years is 84.3 → 76.1 MgC ha⁻¹, with BD 33.2 → 10.0 and Ds 12.6 → 25.3, and the early basal-area
+    overshoot is gone; 36 min on 12 threads.
+- **The fast march is 10 % cheaper** (#487). Measured on example 04's
+  120-patch stand, ifx dev build, a simulated day costs 1.253 s on one thread where it cost 1.399 s, and
+  0.115 s on 20 threads where it cost 0.129 s. Against a 60 s truth, the hourly RMSE of LE and H falls
+  (BCI wet: LE 4.36 → 4.26 W/m², H 3.15 → 3.05; BCI dry: 3.63 → 3.44, 2.83 → 2.61; Palo Verde's drought:
+  4.76 → 4.70, 3.38 → 3.19), that of the canopy-air temperature rises by 0.01–0.03 K (BCI wet 0.019 →
+  0.028 K, Palo Verde 0.056 → 0.088 K), and Palo Verde's daily GPP bias goes 1.95 → 1.81 %. Four parts:
+  - **the warm-start seed can grow back** after a rejection. An accepted step the interval's end cut
+    short now raises the next interval's seed to the step the controller asked for before the cut,
+    capped at `dt_fast`; before, a seed below 900 s never grew back, so the patch took two sub-steps
+    for the rest of the run;
+  - **the error norm measures only the states the march integrates**, the canopy air and the soil heat.
+    Soil and plant water move at the water network's fixed rate, so their exact zeros diluted the norm
+    by a factor that grew with the cohort count (2.1× at 13 cohorts on 7 layers, 2.8× at 30);
+  - **the leaf's Ci root is found by the Illinois method**, on the same bracket and to the same
+    tolerance as the bisection it replaces, with fewer residuals: 2–5 % less CPU, hourly LE within
+    4e-4 W/m²;
+  - **the default `rtol` is 2e-3**, the loosest that holds the march's own share of the LE and H error
+    near 10–20 % of the 900 s step's (`docs/science/numerical_scheme.md` §6 gives the table and the
+    recipe for a new site).
+- **A start's canopy air is the air of the first forcing sample** (#486). A bare-ground or census start
+  put every patch's canopy air at 288 K, 0.008 kg/kg and 400 µmol/mol, and its tissues at 288 K,
+  whatever the site's air. At the start's first window the fast loop now sets each patch's canopy air
+  from its site's first sub-step sample and holds the tissues at that temperature; a restart keeps the
+  canopy air its file holds. Example 04's ten-day census start moves most: LE +0.86 % and H +0.81 % over
+  the window, 6.8 K in canopy-air temperature in its first hours; examples 05's runs move 6e-5 in LE,
+  the region test 4e-4.
+- **A start seeds its patches' stores as it lays them out, with the fast loop on or off** (#486). The
+  soil and the canopy air were seeded only with the fast loop on and after the setup cohorts were born,
+  so a cohort born in an unseeded patch took `[init].soil_temp` instead. `init_bare_sites` now seeds
+  them, so every cohort is born in its patch's state, and `init_fast_state` seeds the final stand again.
+  With the fast loop on no result moves; with it off, the stores are seeded and a cohort is born at the canopy air's 288 K
+  (example 03 after 50 years: every carbon and stand variable identical).
+- **The snow's base conducts into the top soil layer's own conductivity** (#486), the soil heat
+  solver's conductivity of layer 1 at the step's start, where it took a fixed 1.5 W/m/K. Only steps
+  with a snowpack move: Ithaca, December 2010 – January 2011, the top soil −0.01 K on average and
+  0.41 K at most in an hour, LE +0.21 %, H +0.16 %.
+- **One pair of temperature bounds for the stage clamp and RK45's railed check** (#486), 180 and 350 K,
+  where the railed check used 185 and 345 K; a state at or beyond a bound is railed. No harness case
+  moves.
+- **Moist air takes its molar-mass ratios exactly** (#486): `h2o_dry_ratio` = 0.62196 and
+  `virtual_temp_factor` = 0.60783, from `mmh2o` and `mmdry`, where the conversions used 0.622 and 0.378,
+  the virtual temperature 0.61 and the air density 0.608. Every humidity conversion moves by ~7e-5
+  relative and the virtual temperature by ~4e-5: GPP by ~1e-4, LE by a few 1e-5.
+- **A test case at Ithaca in January** joins the harness (`ithaca_jan`): ERA5-Land, bare ground, a pack
+  that peaks at 36 kg/m².
+ The step reads `cfg` and its site in place of the copies a fast context made; the
+  per-PFT tables are the PFT table's, built at load, and each site holds its leaf table, acclimated by the
+  slow step. The driver's modules are `meds_fast_dynamics` (the window), `meds_fast_state` (the gather and
+  the scatter, and the sums the slow step reads), `meds_fast_forcing` and `meds_fast_diag`; the cohorts'
+  order from the ground up is formed once a day where the radiation and the aerodynamics each sorted the
+  cohorts every sub-step. Results do not change on gfortran; on ifx they move at round-off.
+- **One fast step, in stages, for both schemes** (#484). `fast_step` runs the frozen record's build, the
+  soil-plant water network's step, the record of its flows, the march (ESDIRK2's or RK45's, under one
+  step controller, each scheme keeping its own error norm) and the update, the only writer of the
+  dynamic state, which then closes the ledgers. The frozen build reads the dynamic state and the snow
+  stage advances a copy of the pack, so a step the RK45 march cannot finish (its work cap, or a railed
+  temperature) marches again with ESDIRK2 on the same frozen record, with nothing to save and restore.
+  RK45 now closes all seven ledgers, as ESDIRK2 does, where it closed the two whole-column ones; the
+  soil faces' check is the water network's, for both schemes. Each site's soil-layer curves and face
+  weights are built with its soil profile, and the cohorts' root profiles, conductances, crown head and
+  dry heat capacities at the gather, where each step rebuilt them. RK45 now commits the water network's
+  end-of-step soil water, as ESDIRK2 did.
+- **The condensate lands before the soil temperatures are diagnosed** (#484). The update deposited the
+  step's dew and fog into soil layer 1 after diagnosing the soil temperatures, so the top layer's
+  temperature lagged its energy by the condensate until the next step, whose ground temperature and
+  respiration read it. Both schemes now deposit first; the ledgers do not change. ESDIRK2's results move
+  a little on and after dew steps: example 04 in August 2012 by at most 2×10⁻⁵ K in canopy-air
+  temperature and 5×10⁻⁴ W/m² in H or LE in any hour; the region test's two months by at most 0.003 K
+  and 0.17 W/m² in a daily mean, its GPP by +0.005%; example 05's first year from bare ground by under
+  10⁻⁵ in annual GPP. RK45's results move within its tolerance through its accept/reject decisions: with
+  this and the soil-water commit, example 04's configuration forced to `rk45` for August 2012 differs
+  from #483's by 0.011 K in canopy-air temperature at the median hour and 0.24 K at most, and by
+  0.8 W/m² in H or LE at the median hour and 28 W/m² at most; the month's mean H and LE change by
+  −0.07 and +0.07 W/m². On ifx, results also move at round-off with the code layout.
+- **The fast loop does less work for the same answer** (#485). No result changes, on gfortran or ifx:
+  - the fast step keeps its frozen record, one per thread, and resets it in place each step, where each
+    step allocated and freed its 37 arrays;
+  - the canopy radiation computes a PFT's beam extinction once per band, where it computed it once per
+    cohort, and skips a band with no light from the sky, the ground or the leaves (the night's
+    shortwave);
+  - the fast loop hands its patches to the threads costliest first. Each patch keeps the wall time of its
+    last window (`patch%fast_cost`), so the slowest patch starts at once instead of arriving last and
+    running alone while the other threads wait (`docs/science/numerical_scheme.md` §6a);
+  - a patch-fusion pass regroups the cohort block by patch once, at its end, where it regrouped it after
+    every fused pair. A one-day run from the BCI 2010 census, whose
+    1,250 quadrat patches fuse to 120, takes 12.3 s serial where it took 34.7 s.
+
+  On ifx, a 31-day BCI run from a restart takes 43.4 s serial where it took 46.1 s (−6 %), and 4.25 s
+  on 20 threads where it took 4.35 s.
+- **A lint holds the integrator to one patch's records** (#485). The ctest `integrator_boundary`
+  (`scripts/lint/check_integrator_boundary.py`) fails if a module of `src/fast_dynamics/integrator` uses
+  the polygon or its blocks, the driver, the clock, the forcing reader or the output: the integrator
+  sees one patch's five records, its site and the configuration.
+
+- **One record per configuration block** (#482). `[soil]` was read into three records, two of which
+  also held five `[fast]` keys; it is one, `soil_params_t`, and each site holds its own, with its
+  `[[sites]]` table's ground keys or its cell's soil maps in it. The soil kernels read one profile per
+  site, `soil_profile_t` (layers, hydraulic and thermal texture), where they read two records that
+  repeated the layer count; `src/config/meds_soil_derive` derives it. Every other block's record is
+  `<block>_params_t`. Shipped results do not change.
+- **A run without forcing runs the canopy radiation** (#480). It was a different model: the shortwave
+  split by LAI share with all of it taken as PAR, a fixed 15% at the ground, and no longwave. It now
+  runs the two-stream on one fixed record, the reference climate (`met_forcing_t`'s defaults: 288 K,
+  0.008 kg/kg, 400 W/m² of shortwave with the sun 60° from the zenith, 380 W/m² of longwave). Forced runs
+  do not change. A year without forcing (the all1y case), annual means: net radiation 460 → 283 W/m²,
+  H 375 → 243 W/m², LE 29.1 → 28.1 W/m², GPP 5.63 → 7.00 µmol/m²/s, AGB 6.40 → 6.53 kgC/m².
+- **Every ARK stage takes the coupled leaf ↔ canopy-air Newton, the canopy air's supersaturation sink
+  is always on, and the budget stops follow `[fast].debug_error` alone** (#480): what the retired keys'
+  defaults did. No result changes for a configuration that left them at their defaults.
+- **The fast loop's setup is one module** (#479). `meds_fast_config` builds the run's `fast_context_t`
+  and each site's configuration; nothing below it reads `meds_config_t`. What the numerics read from it
+  arrives in the fast loop's own records: the leaf and wood emissivities, PFT parameters, gathered per
+  cohort into the column view; the leaf water content at which the stomata close, computed once per PFT
+  into the hydraulics table rather than per cohort per sub-step; and `[soil_carbon]`.
+- **The column configuration has a run part and a site part** (#479). `column_config_t` keeps what the
+  run's configuration and the PFT table set; `column_site_t` holds a site's soil column, its thermal
+  texture, the water and heat solvers' options with its bottom boundary, and its acclimated leaf table.
+  Each slow step builds only these per site, where it deep-copied the whole configuration, PFT
+  vulnerability tables included.
+- **Three constants no key set become one source each** (#479): stem and fine-root maintenance
+  respiration take leaf Rd's `[leaf_physiology]` `ea_rd`, `hd_rd` and `ds_rd`, so a change to the leaf's
+  response reaches all three tissues; the leaves' sidedness (2 for heat, 1 for the film and for
+  transpiration) is three named constants; and the crown gravity head is always on. Shipped results do
+  not change.
+- **The fast loop's starting stores are set in `io/init`** (#479). `init_fast_state`, the last step of
+  a bare-ground or census start, seeds the soil, the canopy air (288 K, 0.008 kg/kg, 400 ppm, named
+  constants), the cohorts' tissues and the initial snowpack; `polygon_prepare` no longer does.
+
+- **RK45 is the fast loop's one explicit integrator** (#478). The RK4 oracle, a fixed-step RK4 march of
+  the column's state that only the tests ran, is gone; the backward-Euler and arrowhead tests compare
+  against an RK45 march at a 4 s step instead. `[fast].time_integrator = "rk45"` stays a full
+  production choice, with the ARK rescue, and the docs call it the explicit alternative rather than the
+  accuracy baseline.
+- **Three evaluations whose results nothing used are gone** (#478): the end-of-step temperature
+  inversion and `surface_derivs` call of an ARK step, which fed only a fallback the step never takes
+  (the tissues are committed from their time-averaged temperatures); the closing `surface_derivs` call
+  and canopy-air commit of `newton_surface_solve`, which its caller redid; and the per-branch canopy-air
+  commits of a backward-Euler stage, which commits the box once, after either branch. Every output is
+  bit-identical with gfortran and with ifx.
+- **The annotations of `src/fast_dynamics` are short, and their reasoning is on the science pages**
+  (#478). Module headers are 6-8 lines and field and routine comments a line or a few; whole-line
+  comments go from 3,709 to 1,980. New: in `numerical_scheme.md`, the ARK warm start, RK45's rescue
+  triggers and why explicit stepping is affordable (§3), and how the tissues' energy, the condensate and
+  the reported fluxes close the ledgers (§5b); `diagnostics.md` §4 "The patch row"; in
+  `soil_plant_water.md`, the film-evaporation cap (§4) and the ground inflow's heat (§5); in
+  `soil_biophysics.md`, the water-enthalpy faces and the interception drip; `leaf_gas_exchange.md` §2
+  and §4.2; a leafless cohort's leaf node in `plant_hydraulics.md` §2; the vapour enthalpy the tissues
+  pay in `vegetation_energy_dynamics.md`; and passages in `snow_biophysics.md`,
+  `canopy_radiation_transfer.md` §4, `soil_carbon.md` §7 and `column_biophysics.md`. Two compiler traps
+  join `docs/building.md`, and the fast loop's ED2 provenance is in `docs/ed2_comparison.md` §4.9.
+  Comments that had become wrong are fixed.
+- **Unused imports and locals in `src/fast_dynamics`** (#478): 119 imported names and 14 locals nothing
+  used go, and repeated `use` lines of one module merge.
+- **No `;` statement joins in `src/fast_dynamics`** (#478), as in `src/state`, `src/config`, `src/init`
+  and `src/io`.
+- **State files at any interval** (#476). `[output].state_interval` writes a state file every N days
+  from the run's start, or at every N-th month or year boundary, and one at the run's end; a month's
+  batch of steps ends at a state time, so a daily state file falls mid-month. A yearly interval
+  batches and writes as before.
+- **Selection by name or pattern** (#475). An `io_config` line names a variable or a pattern of names
+  (`*` any run of characters) and gives it tiers, `true` or `false`; each variable takes the most
+  specific line that matches it, its own name over any pattern, more literal characters over fewer. A
+  pattern gives each variable the tiers it asks that the variable can be on; two lines as specific as
+  each other that disagree, a line that matches nothing and a tier none of a line's variables can be on
+  stop the run. The registry's defaults replace the group and axis switches, and the axes' bookkeeping
+  follows its axis. `--dump-io-config` lists the variables by group, each with its default and the
+  tiers it can be on. Example 05's and 06's configs select what they did; example 04's three
+  `io_config` files start from `"*" = false` and keep the budget residuals, so they no longer write the
+  daily soil carbon, Rh and work counters the old switches left on, and they gain the patch bookkeeping
+  with their patch variables.
+- **A snapshot for every state** (#474, #477). Each state's `mean_<x>` has its `<x>` (`AGG_LAST`,
+  `time: point`), off by default, and the states written as snapshots (`nplant_co`, `area_pa`,
+  `age_pa`, `n_cohort_py`, `n_patch_py`) their means: 373 variables, 131 of them snapshots. A slow-step
+  state's snapshot is the state as the period's last step left it; one the fast loop records each
+  sub-step (the canopy air, a leaf's temperature, potential or conductance), its value at the period's
+  last fast step, the last sub-step its mean averages, read from the staging, so on an F tier one
+  sub-step long the two are one series (to the mean's last bit). A flux or a rate (energy, water and
+  carbon fluxes, radiation, growth, allocation, litter, mortality and recruitment) is a mean only, and
+  so is each site's forcing (`docs/science/diagnostics.md` §4, Snapshots). Every fast-loop row is
+  staged, so its variable may be on the F tier: `mean_gsw_co`, `mean_w_surface_py`, `mean_rough_pa` and
+  the rest of the cohort and patch rows gain it. The fast loop stages its sub-steps when the F tier or
+  a staged snapshot reads them. Six long names lose "mean rate" and "mean signed": the prefix and
+  `cell_methods` say mean. A tier's scratch record holds a slab column for each live slab variable
+  only, so the variables nobody writes cost no memory.
+- **`src/io` by folder, one module per job** (#469). `io/init/` holds the starts, one module each
+  (bare ground, a census, a restart file), and `init_polygon`, which runs the one `[init].init_mode`
+  names and its own finishing (a census stand's restructuring and acclimation, a restart's
+  re-acclimation); `io/met/` the atmosphere; `io/maps/` the maps; `io/output/` the diagnostics, a
+  module per stage (`meds_output_{types,registry,setup,extract,reduce,integrate,stream}`) and globbed
+  by CMake less the writer. The census reader returns a table, which the start builds the stand from.
+- **The restart file by level** (#469): `meds_init_restart` defines, writes and reads the polygon and
+  its sites, the cohorts and the patches each in one place, in the state modules' section order, and
+  derives what an older file lacks in one section after the read, in the order it ran before. A
+  per-cohort field that persists is three adjacent lines there.
+- **The met grid serves any gridded product** (#469): `meds_met_grid` takes a grid descriptor (the
+  static file, the names in it, the chunk edge) where `meds_era5land_reader` knew ERA5-Land.
+- **The maps only read** (#469); the derive from a cell's maps into its polygon's configuration is
+  `meds_config`'s.
+- **The state guard checks each level in its state module** (#469): `cohort_bad_field` also checks the
+  tissue energies as finite, and `canopy_air_bad_field` the canopy air. A non-finite value is still
+  `DRIVER_ERR_NAN` and an out-of-bounds one `DRIVER_ERR_BOUNDS`, and either message now names the field
+  and the cohort or patch.
+- **One netCDF writing layer** (#469): `meds_netcdf_write` defines a variable with its attributes,
+  chunks and compression, and the polygon axis, for the restart and the diagnostic files alike; the
+  zlib levels are `RESTART_DEFLATE` (1) and `OUTPUT_DEFLATE` (4). The restart file's `lat` and `lon`
+  carry `units` and `standard_name` in place of a `long_name`.
+- **A reader that refuses a file says why, and its opener prints it** (#469). The met readers return
+  their reasons to `met_open`, which prints them also when the caller takes the status; the census
+  and restart readers return theirs to `init_polygon` in place of stopping the run: a census with an
+  unknown, repeated or missing column, a malformed row or a non-positive value, or a restart file with
+  a PFT, site or soil-layer count unlike the run's, stops it with the reason. A forcing file the
+  reader cannot read at open is `MET_ERR_FILE`, with the netCDF library's text.
+- **One name per variable, at every tier** (#473). The registry's 294 entries are 244 variables: the 47
+  fast twins (the leaf solve's `gx_*` rows among them, which are the ecophysiology variables on the F
+  tier) merge into their coarse variable through a second source, and the duplicates go. The leaf
+  solve's PAR, canopy-air CO₂, pressure, molar boundary-layer conductance and predawn potential gain
+  the D and M tiers from the daily block. The guard checks each tier against its own source ("has no
+  sub-daily value", "exists only sub-daily"). The polygon scalars' long names say polygon.
+- **Every output value a mean over its period** (#472). `AGG_RATE`, the period's per-step amounts over
+  the time they took, replaces the sum; the unused minimum, maximum and flux-integral operators go;
+  every flux's `cell_methods` is `time: mean`. A variable's unit factor is applied on every path it is
+  read on (the raw cohort, patch and site fields and the polygon's own scalars, as well as the
+  reductions). The generated `meds_io_config.toml` is regenerated: its group labels had also drifted
+  since the polygon renames (#468).
+- **One restart-file layout** (#471, #477). The reader reads every variable, and its dozen fill-in
+  branches for older files go (`order_of_processes.md` §6); the file carries no layout number. A run whose growth window is another length than its
+  file's still fills the ring buffer with the saved `growth_avg`.
+- **The forcing's physics is in `src/share`, beside the model's other laws** (#470). The solar
+  geometry is `meds_time`'s; the shortwave partition, the clearness index, the clear-sky emissivity,
+  the longwave synthesis and its lapse, and the beam on a slope are `meds_radiation_lib`'s; the
+  humidity conversions (water's molar-mass ratio named once), the rain/snow split and the air at
+  another height (the terrain lapse of temperature, pressure and humidity, and the dry adiabat) are
+  `meds_therm_lib`'s; the linear interpolation is `meds_numerics`'. `meds_met` samples the forcing in
+  one section per place: at the forcing's height (`met_instant`, with the wind's energy form and the
+  shortwave disaggregation), at a site (`met_at_site`) and at a patch's canopy-air top
+  (`met_to_cas_top`). With gfortran every result is unchanged by the moves. With ifx, whose inlining
+  follows the modules, a run without forcing is unchanged, and a forced run starts apart by round-off,
+  after which the adaptive integrators accept other steps within their tolerance: a month at the BCI
+  tower moves by at most 5e-9 of a value's range, a year from bare ground by 7e-5 in its annual totals
+  and 2e-2 in a daily value, and the Palo Verde dry-forest region by up to a tenth of its daily NEE's
+  range (NEE is the small difference of two large fluxes).
+- **One vapour-pressure formula** (#470): Brutsaert's clear-sky emissivity takes `e` from
+  `specific_humidity_to_vapor_pressure`, the conversion the rest of the model and the flux-tower
+  tool's Python copy use, in place of its own copy. The products are taken in another order, so a run
+  whose longwave is synthesized or lapsed with the Brutsaert form starts apart by round-off. With
+  gfortran, a month at the BCI tower with synthesized longwave moves by at most 8e-10 of a value's
+  range, and a year from bare ground with the terrain lapse on, whose new stand grows the difference,
+  by 4e-4 in its annual totals and 1.5e-2 in a daily value. No shipped example synthesizes or lapses
+  longwave.
+- **Each site's statics, one definition for both files** (#470): `define_site_statics` and
+  `write_site_statics` (`meds_netcdf_write`) define and write a site's area, terrain, layer count and
+  map inputs, with their units, `long_name`s and fill values, for the restart and the diagnostic files
+  alike.
+- **The output layer names the polygon it reduces to** (#468). A polygon holds several sites, and a
+  scalar reduction weights each patch by its share of the polygon, so the reductions, the source family
+  of the polygon's own scalars (`SRCK_POLYGON`, `SRC_PY_*`) and the diagnostic activation say polygon;
+  the per-site family is `SRCK_SITE`. The tiers are `TIER_FAST`, `TIER_DAILY`, `TIER_MONTHLY` and
+  `TIER_ANNUAL` in `meds_output_params`, the cohort source codes are named after the field they read
+  (`FLD_C_NONSTRUCTURAL_CARBON`, ...), the FAST staging arrays are spelled out
+  (`fast_cohort_leaf_temp`, ...) and the maps' bottom-boundary codes are `MAP_BC_*`.
+- **The annotations of `src/init` and `src/io` are short, and their reasoning is on the science pages**
+  (#468). Module headers are 4-8 lines and routine and field comments a line or a few; whole-line
+  comments go from 1,972 to 1,411. New: `order_of_processes.md` §6 "The restart file" (why each group
+  of state is stored, and what a file without it restarts on); in `diagnostics.md`, where the stages
+  live (§1), the file chunking and the soil stride (§3), how the FAST tier is sampled (§4), the carbon
+  seam (§6) and the source ids (§8); in `forcing.md`, the record-spacing check (§1), the recycle drift
+  (§9) and the longwave synthesis (§11). The ED2 provenance of the forcing, the output and the
+  bare-ground start is in `docs/ed2_comparison.md` §4.2-§4.4. Comments that had become wrong are fixed.
+- **Named constants in the forcing and the writers** (#468): `day_sec` and `t_3ple` replace the literals
+  86400 and 273.16, `meds_constants` gains `deg_to_rad`, and the census reader's patch-area tolerance
+  and each netCDF writer's deflate level are named. The output stream compares instants with
+  `meds_time`'s `time_eq`, and every module names what it takes from `meds_netcdf_c`.
+- **No `;` statement joins in `src/init` and `src/io`** (#468), as in `src/state` and `src/config`.
+- **Two messages name what the code reads** (#468): a forcing file whose record spacing differs from
+  the config names `[forcing].timestep`, and the output's `dbh_upper` attribute says the last DBH class
+  also holds every larger plant.
+- **`meds_slow` no longer links `meds_io_prep`** (#468): no slow-loop module imports the output layer.
+- **The ctest target `biophysics_opts_config` is `biophysics_params_config`** (#466), named for the
+  `meds_soil_params` and `meds_biophysics_params` records whose loaders it checks.
+- **`src/config` is the configuration and its checks** (#464): `meds_config` (the aggregate, one field
+  per key, grouped by block in the reference's order, and the routines that derive what the parameters
+  imply: the soil column's layers and bundles, the PFT table's arrays and leaf capacities),
+  `meds_config_io` (the loader), `meds_config_check` and `meds_toml`. `src/config/params/` holds one leaf
+  per block, the types and selector codes the kernels import without `meds_config`: the PFT table, the
+  soil column, forcing, output, the fast loop
+  (`meds_fast_params`, new), biophysics, leaf, biogeochemistry, maps, region and sites
+  (`meds_sites_params`, new). The loader reads every selector through one reader, which replaces eleven
+  hand-written parsers, and the value checks are one routine per block.
+- **The reference config describes each key in a line or two** (#464), and the code annotates each field
+  in one; the longer explanations are on `docs/configuration.md` (new: "Threads and the slow tier") and
+  the science pages (`leaf_gas_exchange.md` on `phi_psii`, `soil_carbon.md` on `soil_carbon_on = false`).
+  The ED2 provenance of the configuration's defaults is in `docs/ed2_comparison.md` §4.8.
+- **No `;` statement joins in `src/config`** (#464), as in `src/state`.
+
+- **A named constant is spelled by its kind, not by who uses it** (#463). The physical,
+  mathematical and unit-conversion constants and the kinds, in `meds_constants` and `meds_kinds`, are
+  lower case; every other named constant, public or private, module-level or local, is UPPER case: a
+  selector code, an index or a flag, and a number chosen in the code (a tolerance, a floor, a table
+  size, a fitted coefficient). 184 constants changed case, 162 of them local to a test; ctest
+  `constants_named` (`scripts/lint/check_constant_case.py`) keeps the rule. Outputs are unchanged bit
+  for bit.
+- **Every PFT trait is the PFT file's** (#461). The model derives no PFT trait from another: the
+  sapwood conductivity from wood density (Xu et al. 2016), the mortality hazard from wood density
+  (Camac et al. 2018) and the light-plasticity slopes from Vcmax25 and the leaf turnover rate (ED2,
+  Lloyd et al. 2010) are computed by `scripts/pft_traits` and written into the PFT file. Each PFT's
+  hydraulic traits are one record, `pft%hydro(pf)`, read from the PFT file's `[hydraulics]` block, and
+  the PFT CSV lists them. The shipped PFT files carry the values the model computed before, to the last
+  digit, so ifx outputs are unchanged bit for bit. gfortran's math library rounds three of those
+  values (`wood_kmax`, one `mort_alpha` and one `kplastic_leaf_turnover` of the reference PFTs) one unit
+  differently from ifx's, so gfortran outputs move at the solvers' tolerance.
+- **New leaves fill to the wood's potential** (#461). A cohort's new leaf carbon takes water from its
+  wood store up to the wood's potential less the crown's gravity head, read once, in place of the
+  bisection for the potential the two would share at rest. The wood ends a little drier than the
+  leaves at rest, and the next fast step evens them out. On the 2-year census run of the reference
+  PFTs (evergreen), annual outputs move by at most 4×10⁻⁶ of their size; single values by up to 1.5 %
+  (a cohort's daily lowest leaf potential) and 0.1 % (GPP). A deciduous canopy re-flushing from bare
+  moves more on its flush days; examples 05 and 06 have not been rerun.
+
+- **`src/shared/functions` holds one library per domain** (#460): `meds_plant_hydr_lib` (a tissue's
+  pressure-volume curve and solver relations, the vulnerability curve and Kirchhoff potential, the
+  xylem, roots and leaves), `meds_soil_hydr_lib` (the pedotransfer function, the retention curve and
+  its solver relations, the pond), `meds_therm_lib` (the energy datum, moist air, plant tissue heat,
+  soil heat and the temperature response of enzyme rates), `meds_allometry_lib` and
+  `meds_optics_lib`. Each is ordered in sections, with a banner per section. Conversions are named
+  `<input>_to_<output>`, as the allometry's are.
+- **The Newton solvers share their step safeguards** (#460): `meds_numerics` holds `smooth_max0`,
+  `sufficient_decrease` (the Armijo test of a damped step, used by the soil-plant water solver and the
+  fast backward-Euler stage) and `fraction_to_boundary` (the step share that keeps a positive unknown
+  positive). Under gfortran every output is unchanged bit for bit. Under ifx's optimised build,
+  which fuses and orders the arithmetic differently once the tests are functions of their own, a
+  line-search step accepted at the margin can go the other way, and the solver then converges along
+  another path within its tolerance: on a 2-year census run annual outputs move by at most 10⁻⁷ of
+  their size, single sub-daily values (GPP, latent heat) by up to 10⁻³, the solvers' work counters by
+  up to 30 %, and the ledger residuals at round-off.
+
+- **Each PFT has its own size allometry** (#459). A PFT's record, `pft%allom(pf)` (`meds_allometry`),
+  holds its height curve and cap, its gMM and log-quadratic coefficients (the latter default to Chave
+  et al. 2014 eq. 6a, shifted by the site's E), its biomass, leaf-area, wood-area and sapwood
+  allometries and the share of its wood above ground, so an understorey specialist and a canopy
+  emergent can differ in stature and leaf display. Recruits and bare-ground seedlings start at
+  `min_cohort_height` on their own PFT's curve. The PFT CSV lists every PFT's allometry. With every
+  PFT on one set of values, as shipped, outputs are unchanged bit for bit.
+- **Height follows the power law or the log-quadratic** (#459). Examples 03 and 05 take Barro Colorado
+  Island's height from a local log-quadratic, ln H = 0.8898 + 0.7908 ln D − 0.04923 (ln D)², fitted
+  uniformly in ln D over 1–300 cm to Cano et al. (2019)'s generalized Michaelis–Menten curve, which
+  they used before; it is within 4.3 % of that curve, and example 03's recruits enter at its 1 cm
+  height, 2.435 m (2.544 m before). Their results move with it; they have not been rerun.
+- **A cohort reproduces once it reaches its PFT's `min_repro_height`** (#459), a height in metres
+  instead of a share of the height of a 100 cm tree on the curve. The shipped configs carry the heights
+  their old rule gave (20 m in examples 03 and 04, 5.27 m in example 05, 11.69 m at Palo Verde) and run
+  unchanged bit for bit. Under a Chave E map the height is the same in every cell, where it used to
+  follow each cell's E, so example 06's results will move; it has not been rerun.
+
+- **`meds_constants` is grouped by kind** (#458): mathematical constants, physical constants
+  (universal; dry air and water vapour; liquid water and ice; leaf diffusion; plant tissue heat),
+  reference conditions, conversions (time, units), array sizes and floating-point guards. Every name
+  is lower case. Outputs are unchanged bit for bit.
+- **`src/shared/base/` and `src/shared/util/` are folded into `src/shared/`** (#458). The kinds,
+  constants, numerics, calendar and budget checks sit at the top of the folder, and the constitutive
+  laws stay in `src/shared/functions/`. No module is renamed, so no `use` line changes.
+- **The linear solvers are one module, `meds_linear_algebra`** (#458): the Thomas sweep and the
+  matrix exponential from `meds_numerics`, the block arrowhead solve (`meds_arrowhead_solve` is gone),
+  and its dense LU, now public. The soil-carbon steady state solves its active block with that LU in
+  place of its own copy of Gaussian elimination, and stops if the block is singular. `meds_numerics`
+  keeps the small helpers. The solvers' details are in `docs/science/numerical_scheme.md` §9. Outputs
+  are unchanged bit for bit, a run that starts from the soil-carbon steady state included.
+- **`src/shared`'s comments say what each routine does and why, and the details are on the science
+  pages** (#458). Whole-line comments fall from 1,066 to 663. New or extended passages:
+  `numerical_scheme.md` §5b (how a ledger is judged) and §9 (the shared numerical tools, eq. (5));
+  `plant_carbon_allocation.md` §2 (the size allometry); `plant_hydraulics.md` §3 (the quadrature and
+  the flow's guards); `soil_biophysics.md` (the two retention curves); `vegetation_energy_dynamics.md`
+  (wood area and sapwood); `leaf_gas_exchange.md` §2 (temperature); `canopy_air_space_biophysics.md`
+  (the enthalpy datum); `forcing.md` §4; `soil_plant_water.md` §2. The ED2 provenance notes move from
+  the code to `docs/ed2_comparison.md` §4.7. Comments that were wrong are corrected (the reason for
+  64-bit day numbers, what `sp` and `lk` are for, `hydro_table_t%kexp`, the leaf-angle range).
+- **A new cohort starts in its patch's state** (#447). A recruit, a cohort made at setup, and a
+  restarted cohort whose state file lacks its tissue state start at the patch's canopy-air
+  temperature, holding the water their tissues hold at the potential of the patch's top soil layer
+  (`patch_physical_state`; the value the stomatal predawn potential is seeded with). Before, every cohort
+  but a recruit started at 288.15 K, and every cohort, recruits included, at −0.1 MPa: a census run
+  starting in an Ithaca January began with every tree about 20 K warmer than its air, and a recruit in
+  dry soil was born wetter than its soil. Until the fast loop seeds a patch, the run's `[init]` state
+  stands in, and `init_fast_reservoirs` re-seeds the setup cohorts from their patch. In a two-year
+  census run of the reference config with the fast loop on, site GPP, LAI and AGB growth move by less
+  than 0.01 %, nplant by +0.09 % and the mortality rate by +0.7 %; the water the recruits draw from
+  outside the model about halves. Every slow-ledger phase still closes.
+- **The soil column's parameters are configuration** (#447). `state/column/meds_column_params.f90` is
+  dissolved: the soil parameter bundles (`soil_params_t`, `soil_thermal_params_t`), their builders,
+  the layer template and `soil_layer_grid` join the soil-column block and `soil_column_params` (from
+  `meds_config`) in a new config leaf, now `src/config/params/meds_soil_params.f90` with its builders
+  in `meds_config`; the array ceilings
+  `n_soil_layer_max` and `n_snow_layer_max` and the tissue heat constants go to `meds_constants`.
+  `meds_config` links `meds_shared` only, so config reads nothing from state. Outputs are unchanged
+  bit for bit.
+- **The ground is one block of the main config** (#447), as listed under Upgrading. The Fortran option
+  types are unchanged: they stay grouped by the solver that reads them. Outputs are unchanged bit for
+  bit.
+
+- **The state layer is one library of four files, by model hierarchy** (#448;
+  `docs/dev_plans/MEDS_STATE_HIERARCHY_PLAN.md`). `src/state/column/` and `src/state/site/` become
+  `src/state/`: `meds_cohort_state_vars` (the cohort block and its lockstep),
+  `meds_patch_state_vars` (one patch's stores, their blends, and the patch block),
+  `meds_site_state_vars` (`site_t`) and `meds_diag_vars` (the diagnostic accumulators, formerly
+  `meds_site_diag_types`), named after ED2's `ed_state_vars`. Each file is laid out in sections,
+  and every list of a block's fields follows the same order.
+  - The cohort block carries the site's PFT table instead of 16 per-cohort copies of PFT traits
+    (the `p_*` fields and `gather_pft_params` are gone).
+  - The patch arrays have one reorder, `reorder_patch_block`, which `sort_patches` and
+    `patch_compact` call.
+  - `soil_column_t` is `soil_water_column_t`; the slow driver's pool-change type moves to
+    `meds_vegetation_dynamics` as `pool_change_block`.
+  - The patch's soil stores are `soil_water` and `soil_energy` (were `soil_w` and `soil_e`), mixed by
+    `blend_soil_water` and `blend_soil_energy`. The pond's heat is `w_surface_energy` (was
+    `w_surface_enth`), named like the snow and soil stores; the restart file keeps its variable names.
+  - `patch_birth_state` is `patch_physical_state`: it returns the canopy-air temperature and the top
+    soil layer's water potential a new cohort is born into.
+  - The block routines are named for what they do to the block: `alloc_cohort_block`,
+    `expand_cohort_block`, `move_cohort_block`, `reorder_cohort_block`, `compact_cohort_block`,
+    `free_cohort_block` and `copy_cohort`, and their patch twins `alloc_patch_block`,
+    `expand_patch_block`, `reorder_patch_block` and `free_patch_block`; `set_cohort_wood_geometry`
+    is `set_cohort_wood_allometry`.
+  - The "no value yet" markers and a newborn's phenology are in `meds_state_defaults`, and a tissue's
+    heat capacity is `tissue_heat_capacity` in `meds_therm_lib`.
+  - Two "no value yet" markers replace the per-field ones, by the sign of the field they mark:
+    `UNSET_POSITIVE` (−1) for a field never negative once set, `UNSET_NEGATIVE` (+1) for one never
+    positive, tested by `is_unset_positive` and `is_unset_negative`. The growth temperature and an
+    unseeded canopy air (was 0 K) use them too. A cohort's mean diameter growth can be negative, so
+    it counts as set once it has a sample (`growth_count > 0`).
+  - The four files write one statement per line: no `;` joins two statements.
+  - The diagnostic rows are renumbered by section, the patch's slow rows after its fast rows; every
+    reader takes them by name.
+  - The diagnostic routines follow the block routines' pattern (`alloc_cohort_diag`,
+    `expand_cohort_diag`, `reorder_cohort_diag`, `fuse_cohort_diag`, `blend_patch_diag`, ...), and
+    the fusion kinds are `FSK_*`. The rows take one prefix per level: `CO_` (cohort), `PA_` (patch,
+    was `PD_`), `PY_` (polygon). The cohort's are numbered once (was `CD_` and `CS_`, each from 1): the
+    fast loop's rows, then the slow step's, each block holding only its own, so a row used on the
+    wrong block is out of bounds; one table, `CO_FUSION_KIND`, gives every row's fusion kind.
+  - The kernels' rule never to see `site_t` is checked by a lint (ctest `kernels_no_site_state`),
+    since the library boundary could not hold it.
+
+  Results are unchanged: a two-year census run and a one-year run with every output group on match
+  the previous version bit for bit. Fortran code that imports the old modules imports the new ones;
+  the Python API is unchanged.
+- **One run path** (#449; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S0). A run is a region of one
+  polygon or many: `meds_region` opens, steps and finishes every run, and `meds_main`'s choice
+  between a site driver and a region driver is gone. `[run].mode = "site"` is one polygon at the
+  `[site]` location, on either forcing format, and gives its patch loop the run's threads as before.
+  `meds_main` steps a month at a time; the C API and Python step one slow step at a time.
+  - Every output and state file carries the `polygon` dimension and its coordinates (`polygon_id`,
+    `lat`, `lon`, `row`, `col`, the live counts, and each polygon's `soil_z`, `soil_depth`,
+    `bottom_bc`, `drain_factor` and `deep_temp`); the writers have no site-only branch.
+  - `meds_polygon_t` is `polygon_run_t`: what the run needs to step and check a polygon (its config,
+    fast context, forcing cursor, ledgers and status), beside the polygon's state. The region holds
+    `poly(:)`, each polygon's stand, and `run(:)`.
+
+  Results are unchanged: a two-year census run, a one-year run with every output group on, example
+  04's evaluation month, a Palo Verde inventory site on the ERA5-Land archive with the soil maps, a
+  four-cell region, and a site and a region restart match the previous version bit for bit, apart
+  from the new coordinate variables. A site restarted from its new state file runs as one restarted
+  from the old format.
+- **The polygon's state is `polygon_t`, with a site block** (#450; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`,
+  step S1). `site_t` held the polygon's cohort and patch blocks; with several sites per polygon to
+  come, it is `polygon_t` (`meds_polygon_state_vars`), argument `poly`, holding three blocks:
+  - the site block (`meds_site_state_vars`): each site's area, a fraction of the polygon, and its
+    slice of the patch block, mapped with an offset and a count as the patch block maps its cohorts.
+    One site of area 1 for now;
+  - the patch block, whose patches record their site in `owner_site` and are sorted by site, then by
+    age; a patch's area is a fraction of its site;
+  - the cohort block.
+
+  Every polygon total weights a patch by its share of the polygon, `patch_polygon_area` (its site's
+  area times its own): the output reductions, the fast loop's sums and budget merge, the slow ledger,
+  and the recruitment, termination and disturbance totals. The polygon's id, location and the
+  restructuring it owes move from the run machinery (`polygon_run_t`) to `polygon_t`.
+
+  Results are unchanged: the same eight cases match the previous version bit for bit, in every
+  variable of every output and state file.
+- **Each site owns its surface** (#451; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S2). A site
+  holds its soil column (from `[soil]` or its cell's soil maps) with the parameters derived from it
+  once, each layer's starting water, the column's bottom (water boundary, drainage factor, deep
+  temperature and depth) and its terrain (elevation, slope, aspect; not read yet). Every reader of
+  the soil column takes the patch's site's: the fast loop runs each patch on its site's column
+  configuration (the polygon's, with the site's soil and bottom), and the fast reservoirs, the slow
+  ledger's stores, a new cohort's birth state, recruitment and a restart's tissue fallback read the
+  site's surface. With the soil on the sites, the run keeps one configuration: a polygon's run
+  machinery no longer carries a copy. A run without the fast loop now writes its real soil layers
+  in the output's `soil_z` (it wrote an unbuilt column).
+
+  Results are unchanged: the eight cases match the previous version bit for bit.
+- **Several sites per polygon** (#452; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S3). A polygon
+  can be made of several sites, each with its own area, soil column and patches:
+  - `init_bare_sites` builds one bare, and `init_from_census` reads a census by `site_id` into one
+    site per listed id, each site's patch areas normalized to the site;
+  - patch fusion pairs patches of one site only, termination merges a sliver into its own site's
+    largest patch and renormalizes each site, and a disturbance cuts one gap per site from that
+    site's patches;
+  - the state file stores each site's area and surface and each patch's site, and a restart checks
+    each site's soil layers against its configuration;
+  - the output reports each site's soil column on its own layers, its patches area-weighted, and
+    each site's area, terrain and soil (see Upgrading); `patch_site` gives each patch's site;
+  - Python's `Run` gains `n_site`, `sites("area")` and the patch fields `site` and `share` (the
+    patch's fraction of the polygon), with their C API getters.
+
+  A run cannot define sites yet (`[[site]]` and site maps come with S4), so every run has one site.
+  Results are unchanged: the eight cases match the previous version bit for bit, the soil columns
+  behind a site axis of length 1. `test_several_sites` checks that two identical sites of areas 0.3
+  and 0.7 each evolve as a one-site polygon through disturbance and fusion, that two soils give two
+  stands, each its one-site polygon's, that four patch threads give one thread's polygon bit for bit,
+  and that a state file keeps the sites.
+
+- **A site run defines its sites** (#453; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S4). Each
+  `[[sites]]` table of the main config is one site of the polygon: its `area_fraction` (the shares sum
+  to 1), its terrain (`elevation`, `slope`, `aspect`), the census rows it reads (`census_site_id`) and,
+  under `[soil]`'s names, any of `[soil]`'s column keys, which give it its own ground, `[soil]`'s
+  values for the keys it leaves out. Bare ground, a census and a restart build the polygon from them,
+  and each site with its own ground is validated as `[soil]` is. With the soil maps the column keys
+  are refused, and a region refuses `[[sites]]` until a site map gives a cell its sites
+  (docs/configuration.md, "Several sites"). The TOML reader takes arrays of tables (`[[name]]`, its
+  keys `name.<i>.key`), the key check takes their keys, and the Python writer (`meds.config.dumps`)
+  writes them. A config without `[[sites]]` runs as before: the eight comparison cases match bit
+  for bit. `test_site_definitions` runs two sites from example 04's config (output, state file,
+  restart, a census by `census_site_id`) and checks what `meds_main` refuses.
+
+- **Terrain corrects each site's forcing** (#454; `docs/dev_plans/MEDS_MULTI_SITE_PLAN.md`, step S5;
+  `docs/science/forcing.md` §8, "Each site of a polygon"). Each sub-step, each site takes the polygon's
+  forcing to its own elevation, by the run's lapse (temperature, pressure, humidity at constant
+  relative humidity, longwave, air density), and its direct beam onto its slope, by the cosine of the
+  sun's incidence over that of its zenith angle, the beam normal to the sun held at most the solar
+  constant. Each patch works from its site's forcing. Each site's daily-mean air temperature drives
+  the phenology of its cohorts and its own growth temperature, and its leaves acclimate to that on
+  their own leaf table. The output reports each site's forcing and growth temperature on the site
+  axis: `air_temp_by_site`, `qair_by_site`, `psurf_by_site`, `rho_air_by_site`, `lwdown_by_site`,
+  `sw_in_by_site`, `par_beam_by_site`, `nir_beam_by_site` and `growth_temp_by_site` (the `forcing`
+  group). A flat site at the polygon's elevation takes the polygon's forcing exactly, so every run
+  without `[[sites]]` is unchanged: the eight comparison cases match bit for bit, the restarts from
+  state files of either format included. `test_site_terrain` checks the sun and the beam on a slope
+  and the lapse to a site; `test_region` runs two sites 500 m apart on the synthetic archive.
+- **A cohort's tissue state is its energy** (#457;
+  `docs/dev_plans/archive/MEDS_TISSUE_ENERGY_PLAN.md`; `docs/science/vegetation_energy_dynamics.md`,
+  "The tissue's energy is its state"). Each cohort carries its leaf and wood energy [J per plant] in
+  the soil's energy datum (the dry heat capacity times T, plus the water's liquid internal energy),
+  and its temperatures are derived from them.
+  - The fast step's commit adds the heat the tissue relaxed through and the enthalpy its water
+    brought, then derives the temperature, so the next step starts from the energy this one ended
+    with. Before, the tissue's heat (heat capacity × T) and its water's enthalpy were valued at two
+    datums, and the tissue was re-valued between steps.
+  - A slow operator that changes a tissue's mass keeps its temperature. Fusion sums the energy, and
+    a split keeps the parent's temperatures.
+  - Tissue water stays liquid below 0 °C.
+  - Site means move by at most 0.007 %; the declared energy of the cohort fusion and split phase
+    falls from 1.1×10⁻² J to 0.
+- **Canopy films are per plant** (#457), like the tissue water. A split, a patch fusion and a
+  disturbance no longer rescale them, and the films of the plants that die go to the ground with
+  their tissue water; before, they stayed on the survivors. Palo Verde's shed water rises 2.8 %;
+  site means elsewhere move by at most about 0.1 %.
+- **The wood's heat capacity counts the whole wood store's water** (#457), the fine roots' share
+  included, which the water flows already move at the wood's temperature. Before, only the sapwood
+  share counted. Site means move by at most 0.05 % (Palo Verde LE +0.04 %, H −0.04 %).
+- **Shed water carries its enthalpy to the ground** (#457). The water a plant sheds (turnover, the
+  excess over a shrunk store, mortality, the cull, a disturbance kill) brings the ground the
+  enthalpy it left its tissues with, at each tissue's temperature (`shed_water_enth`), and the pond
+  takes the mixture. Before, it was valued like the precipitation it joined, or at the canopy air's
+  temperature on a dry day.
+
+  Over the whole change, site means over a two-year census run, a Palo Verde year, a four-cell
+  region and its restart move by at most 0.04 % (Palo Verde LE +0.038 %, H −0.036 %, runoff
+  −0.017 %), and the half-hourly fluxes of example 04's month by 0.02 % on average. The energy and
+  water ledgers close as before.
+
+### Removed
+
+- **The `METAVG_CENTER` code and `record_mean_cosz`'s instantaneous-record branch** (#551), which
+  nothing reached: `[forcing].avg_convention` takes only `"end"` and `"begin"`.
+- **`fast_dynamics`' `met_fixed` argument** (#536), which nothing in production passed. A run without
+  forcing still steps on the reference climate.
+- **Storage maintenance** (#534): `[pft].storage_turnover_rate`, the cohort row `CO_STORAGE_RESP` and the
+  output `mean_storage_resp_py`. No shipped PFT set the rate, which defaulted to 0, and only tests ran it.
+  `plant_carbon_allocation.md` drops its eq. (2), and the later equations are renumbered. Results are
+  bit-identical on gfortran. On ifx, runs with the slow loop differ in the last bits (6e-8 relative at most,
+  outside the budget residuals), because the storage sum is reassociated without the zero term.
+- **The PI step controller and ESDIRK2's fixed sub-steps** (#530): `[fast].step_controller`,
+  `[fast].esdirk2_adaptive` and `[fast].esdirk2_fixed_substep`, with `CTRL_I`, `CTRL_PI`, the PI gains and
+  `fixed_march`. Only tests ran either option. The fast loop marches ESDIRK2 adaptively under the integral
+  controller, as before by default, and results are bit-identical. A config that still names one of the
+  keys is refused as an unknown key; the example configs drop their `esdirk2_adaptive = true`.
+- **`state_axpy` and `state_size`** (#527), which only tests used; `array_to_state` becomes private.
+- **`snow_energy_step`** (#524), which only the snow tests called, with `snow_out_t`'s `energy_resid` and
+  `fliq`, which only it wrote. Eight procedures only tests reached become private: `reduced_wind`,
+  `boundary_layer_conductance`, `alloc_rad_out`, `lw_emission_slope`, `latent_pathway`,
+  `cohort_root_depth`, `snow_surface_balance` and `snow_surface_fluxes`.
+- **`test_phenology_config` and `test_column_co2`** (#518). The first's section checks join
+  `test_config_keys`, and the canopy-air CO₂ update joins `test_surface_energy`. The wood-timescale check
+  (8εσT³) and the `G_top` identity go: neither checked the model.
+- **The process mask, the probe and the uncoupled stage** (#480): `apply_process_mask` and
+  `mask_is_full`, `write_fast_probe`, the uncoupled backward-Euler pass of `column_be_stage`, the
+  strict floor-step stop, and the LAI-split radiation and `reference_met` of a run without forcing.
+- **The RK4 oracle** (#478), `meds_fast_rk4_oracle` with `rk4_column_step`, and `test_column_derivs`'
+  RK4 march test.
+- **Fast-loop fields nothing read** (#478): `aero_out_t%qstar`, `%cstar` and `%can_depth`;
+  `energy_flux_t%ground_heat`, `%nsub` and `%converged`; `energy_forcing_t%w_flux_bot` and
+  `%t_water_bot`; `soil_hydrology_t%geothermal`, `%precip_ground` and `%t_pond_inflow`; and
+  `chydro_forcing_t%precip_ground` and `%t_pond_inflow`.
+- **The per-cohort leaf-temperature staging** (#474), which nothing read since the F twins merged
+  (#473): the fast loop filled it every sub-step.
+- **The `"const"` forcing backend** (#469), with `MET_BACKEND_CONST` and its test, and `met_cursor_t`'s
+  built-in location (Ithaca's), which `met_cursor_init` always set. `met_forcing_t` keeps its reference
+  climate, which a run without forcing still reads where the fast loop sets no value.
+- **Code in `src/io` nothing called** (#468): twelve convenience totals in `meds_diagnostic_reduce`,
+  the derive helpers `cohort_gsc`, `cohort_wue`, `cohort_ci_ca`, `bowen_ratio` and `safe_ratio` with the
+  two `meds_therm_lib` re-exports beside them, `agg_is_slabwise`, `slab_capacity` and
+  `met_forcing_t%rshort_diffuse`. `cohort_weight`, `mean_dbh`, `extract_scalar_source`,
+  `apparent_solar_seconds` and `era5land_default_static` are private.
+- **The retired-key table** (#464), 280 of `meds_config_keys`' 421 lines, and the loader's
+  retired-spelling branches; the keys nothing read (listed under Upgrading); the reporting-only
+  `backend` field with its `BK_*` labels; `INTERP_COSZ` and `METAVG_INSTANT`; `soil_opts_t%debug_error`,
+  a copy of `[fast].debug_error` nothing read (the budget stops read `energy_opts_t%debug_error`).
+
+- **`derive_pft_rates`, `wood_density_to_kmax`, `hydraulics_config_t` and `pft_tissue_curves`** (#461),
+  with `[camac]`, `[derived]` and `[options].override_derived` (see Changed). `tissue_shared_potential`
+  goes with the leaf fill's bisection.
+- **The general-exponent Kirchhoff quadrature** (#460), `kirchhoff_integral` and its panel width
+  `KIRCH_PANEL`: the sapflow reads the PFT's table for every vulnerability exponent other than 1 and 2,
+  so only the tests called it. They check the table against their own Simpson reference.
+- **`pft.dbh_critical`** (#459), which only the C API's empirical growth read, as a cap on the diameter.
+- **The gMM height curve** (#459), `HEIGHT_GMM` with its coefficients and the Newton inverse of its
+  biomass law.
+- **`local_hmax` and `HMAX_DBH`** (#459), the height of a 100 cm tree, which only the reproduction
+  threshold used.
+
+- **`TISSUE_HCAP_MIN`** (#447), the floor of 20 J K⁻¹ per m² of tissue under a tissue's dry heat
+  capacity. Per unit of tissue area it never binds: for leaves only above an SLA of 320 m² kgC⁻¹, and
+  a 1 cm sapling's dry wood holds about 150 J K⁻¹ against a floor of 0.2. Outputs are unchanged bit
+  for bit; `docs/science/vegetation_energy_dynamics.md` eq. (8) loses the floor.
+- **`LEAF_TEMP_INIT` and `PSI_INIT`** (#447), the constant birth temperature and potential (see
+  Changed).
+- **`meds_driver`** (#449), the site run's driver (`meds_run_t`), and `state_write_state`, the site
+  state writer: every run goes through `meds_region` and every state file through `state_file_open`,
+  `state_file_put` and `state_file_close`.
+- **`site_soil_temp_column` and `site_soil_water_column`** (#452), which nothing called.
+- **`scale_cohort_ground_fields`** (#457) and the film-conservation stops in a split and a patch
+  fusion: the films are per plant.
+- **`wood_thermal_water`** (#457), the sapwood share of the wood store's water (see Changed).
+- **`mon_per_yr`, `day_per_mon`, `umols_per_kgCyr` and `k_air`** (#458), which nothing used, and
+  `area_tol` from `meds_constants`: the end-of-run patch-area check in `meds_region`, its one user,
+  holds it as `AREA_TOL`, so `meds_constants` holds no tolerance.
+- **Code in `src/shared` that nothing used** (#458): `budget_assert`, `budget_check`'s optional
+  `atol_extra` and `budget_t`'s `store0` and `store1`, which were written and never read
+  (`meds_budget_check`); `cp_moist` (`meds_therm_lib`); `days_between` and `time_le` (`meds_time`),
+  which only their unit test called; `ROUNDOFF_RTOL` (`meds_numerics`), which only the test of
+  `conserved` read; an unused zenith angle in `gfun_direct`; and in `soil_unknown_from_theta` a test
+  for Campbell layers that no Campbell layer reaches. `SE_START` repeated `SE_MIN` and is gone.
+  Every output but two is unchanged bit for bit. The ledger residuals `resid_energy_site` and
+  `resid_water_site` move at round-off (at most 2.1×10⁻¹² J m⁻² and 1.3×10⁻¹⁷ kg m⁻², against closures
+  of ~10⁻⁷ J m⁻² and ~10⁻¹³ kg m⁻²): with `store0` and `store1` no longer written, the optimised build
+  adds the residual's terms in another order. Restoring the two writes alone restores the old bits.
+
+### Fixed
+
+- **The default forcing reader took a file's numeric `_FillValue` as data** (#551). A value equal to
+  the variable's `_FillValue` or `missing_value` is now a gap, which stops the step that reads it
+  and names the field and the record, as MEDS never gap-fills (`docs/science/forcing.md` §10); a
+  packed variable is unpacked with its `scale_factor` and `add_offset`. The map reader keeps the
+  same rule, now shared (`nc_packing_of`, `nc_unpacked`). No shipped forcing file has a gap or is
+  packed, so no result moves.
+- **With the fast loop off, soil carbon never decomposed** (#551). The soil step decays the pools by
+  the scalar the fast loop integrates, which stayed 0, so the litter piled up with no heterotrophic
+  respiration and nothing said so. Without the loop the step now takes `[soil_carbon].spinup_xi`,
+  as growth takes `gpp_ref` (`docs/science/soil_carbon.md` §7).
+- **The longwave synthesis kept a stale clearness index over three kinds of interval** (#551):
+  `met_advance` returned early on a held start, at the recycle seam and past the file's end, before
+  it updated the index held through the night. Only `lwdown_source = "synthesize"` reads it, which
+  no shipped config uses.
+- **The production build refused every PFT file with more than one PFT** (#543). It stopped at the
+  configuration check with `hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)`,
+  so examples 03, 05 and 06 could not run on it. The PFTs' values were read correctly; the check read
+  them wrongly. It tested each pressure-volume curve key as an array expression over
+  `hydro(1:n)%leaf_curve%<key>`, and ifx 2026.1's AVX-512 code (`MEDS_CPU_TARGET=cascadelake`, with or
+  without IPO) took that array's elements from the wrong offsets: PFT 2's elastic modulus and PFT 3's
+  pi0 as their apoplastic fractions. `check_hydraulics` now checks the curves one PFT at a time. The
+  dev and debug builds, and every result, are unchanged.
+- **A TOML key set twice took its first value in silence** (#537). TOML holds such a file invalid; the reader
+  now stops and names the key and the file. A key repeated across `[[array]]` tables is still allowed.
+- **The Vcmax optimum of a stand grown at 30 °C is 38.2 °C, not 35.0 °C** (#535), in `leaf_gas_exchange.md`
+  §2 and `ed2_comparison.md`. The 35.0 °C was where a test's temperature scan ended.
+- **The seeded snowpack ignored `[snow].rho_snow`** (#533). `seed_snow` set the initial pack's depth to its
+  water over 250 kg/m³, so at another density the first window's canopy burial and snow cover read the
+  wrong depth: 0.160 m where 40 kg/m² at 350 kg/m³ is 0.114 m. The depth is now the water over `rho_snow`.
+  At the default density the result is unchanged.
+- **An unclosed TOML string read as empty** (#533). `io_config = "my_variables.txt`, with no closing
+  quote, ran on the default variables. The reader now stops on it and names the key.
+- **The slow ledger missed the carbon of culled and treefall-killed plants with soil carbon off**
+  (#523). The cull and the treefall added their dead carbon straight to the soil pools, and only
+  with soil carbon on, so with it off the carbon left undeclared and the ledger warned (−0.143
+  kgC/m² on a census case). Their carbon now goes into the patch litter, as background mortality's
+  does, and is declared where they run; the next soil step takes it up. With soil carbon on, a
+  boundary's dead carbon reaches the pools one step later; the litter outputs now include it.
+- **The canopy air got 1.00089 times the carbon of the slow loop's CO2** (#523). The slow loop
+  converted with 1.2e-8 kgC/µmol, the fast loop with 1.20107e-8; both now use the latter, and annual
+  NEE moves by 0.03–0.09 %.
+- **The cohort fusion after a patch termination scanned the merged cohorts out of height order**
+  (#523). Termination now re-sorts them tallest first, as patch fusion does.
+- **`meds_main` left its output files open when a step failed** (#521). It stopped with `error stop`
+  before `region_finalize`, so the files the run had open were never closed: the sub-daily tier is
+  never synced, and no tier is under `[output].sync_every = "never"`, so the failed month's records
+  could be lost or unreadable. It now finalizes the run first, which after a failure writes nothing
+  more and closes the files (ctest `main_failure_finalizes`).
+- **A run that could not open crashed the next one in its C-API slot** (#521). When a census or
+  restart file stopped `region_open` after it had opened the forcing and allocated the polygons,
+  `meds_run_open` returned -2 without freeing the slot, and the next open, handed the same slot,
+  stopped the Python process ("allocatable array is already allocated"). A run that cannot open now
+  frees what it built.
+- **A state file written after polygon 1 failed owed no restructuring** (#521). The file took the
+  owed restructuring from polygon 1, which stops tracking the calendar when it fails, so a region
+  resumed from it with that cell masked out skipped the month's restructuring for every polygon. The
+  file now takes it from the calendar.
+- **Tests that did not test what they said** (#518).
+  - `restart_exact` was skipped without pandas, which it does not use. It now checks its own dependencies.
+  - `test_column_rk45`'s "sealed" saturated column drained. It is sealed now, and its θ bound is hydrostatic.
+    Its budget test asserts all seven ledgers, not two, and its leaf-potential check, which could not fail,
+    goes.
+  - `test_canopy_radiation`'s guard against ED2's bug B1 checked only that the cohorts' scattering differed.
+    Under diffuse light, the lower cohort's absorption now follows its own PFT and not that of a near-bare
+    cohort above it.
+  - The comments of seven tests and of the test fixture say what they do now.
+- **The ifx Debug test suite took 77 minutes** (#517), against 3 before the frozen-soil Newton.
+  `soil_energy_step_implicit` handed `thomas_solve` the expression `-now%res`, so every Newton iteration
+  copied it to a temporary array, and the Debug build's `-check all` printed a warning for each copy:
+  millions of lines in the `region` and `several_sites` tests. The right-hand side is now a named array.
+  Results are bit-identical, and the Debug suite takes 178 s.
+- **A parallel build with the Python library and the tests could fail** (#492) on a `.mod` file two
+  targets wrote ("Cannot rename module file meds_c_api_run.mod0": 10 of 13 clean gfortran builds at
+  `-j 16`). The shims now compile in one target.
+- **Example 05's census check stopped at import** (#490). `calibrate_growth.py` read `aboveground_frac`
+  from the PFT file's `[pft]` table after it had moved to `[allometry]`, so every mode stopped with a
+  `KeyError`. It now reads `[allometry]`.
+- **The snow's deposition could drain the canopy air below zero** (#486). The pack's sublimation or
+  deposition was fixed at the step's start against the canopy air's start humidity, and the pack and
+  the canopy air exchange vapour within minutes: in warm saturated air over a melting pack it took up to
+  twice the canopy air's vapour in one 900 s step, and the stage clamp created the water the ledgers
+  then reported (Ithaca: 6 whole-column water breaches in 23,808 checks on beta, worst 1.6e-2 kg/m²). It
+  is now set against the canopy air's humidity over the step, from one backward-Euler balance with the
+  atmosphere and the pack: no breach. Ithaca over the two months: the canopy air +0.04 K, H −1.4 %,
+  LE +0.55 %, SWE +1.3 %, and 36 % fewer ESDIRK2 sub-steps, which the frozen deposition had made stiff.
+- **A start below freezing read as half-frozen** (#486). The soil's water was seeded liquid at any
+  `[init].soil_temp`, which below the freezing point the first step diagnosed at the freezing point. It
+  starts as ice there now. No shipped configuration starts below freezing.
+- **`clamp_cas` moved and counted states in range** (#486). It rebuilt every state's enthalpy, so every
+  RK45 stage input and ESDIRK2 stage-3 base moved at round-off and `mean_work_clamp_stage_py` counted
+  each as a clamp: 0.7–0.9 per fast step under ESDIRK2, now 0, and 5.6 → 0.02 under RK45 on example 04.
+  Results move at round-off.
+- **`test_several_sites` checked to its tolerance squared** (#485). It passed `RTOL × value` to
+  `check_close`, which scales the tolerance by the value itself, and a looser 10⁻⁷ covered an
+  optimized ifx build's difference on the mixed-soil sites. Every check is now 10⁻¹² relative, and
+  gfortran, ifx and an ifx Debug build all meet it: the ifx difference is gone.
+- **A restart re-seeded the snowpack** (#479). With `[snow].init_swe > 0`, a restart overwrote the pack
+  its state file had restored with the initial one. The initial pack is now seeded only on a bare-ground
+  or census start.
+- **A restart at night under synthesized longwave drifted** (#476). The forcing reader holds the last
+  daytime clearness index through the night for the longwave synthesis, and the state file did not
+  carry it, so a run restarted at night took a clear sky until sunrise and its fluxes, then its stand,
+  moved away from the continuous run's. The polygon holds it (`kt_last_day`) and the state file stores
+  it: a restart at local midnight from a daily state file continues bit for bit (the new forced case
+  of `test/python/test_restart_exact.py`).
+
 ## [0.3.5] — 2026-10-17
 
 A **region production and open-issue sweep** release. Region runs become production runs: a cell
@@ -5244,7 +7317,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.5...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.4.0...beta
+[0.4.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3

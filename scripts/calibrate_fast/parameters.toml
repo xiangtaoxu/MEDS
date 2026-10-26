@@ -267,7 +267,7 @@ source = "woody-surface film capacity [kg m-2 wood] (the old soil.dewmx, CLM5 0.
 
 [intercept_k]
 file = "main"
-key = "soil.intercept_k"
+key = "fast.intercept_k"
 scope = "site"
 kind = "effective"
 range = [0.3, 0.8]
@@ -301,7 +301,7 @@ process = "drought"
 source = "predawn leaf potential where the stomatal stress begins [MPa]. The model's default is half the PFT's turgor-loss point; -0.857143 is that at the shipped leaf_pi0 (-1.5 MPa) and leaf_elastic_mod (12 MPa). A PFT with other pressure-volume traits sets [priors.stomata_psi_onset].centre"
 
 [root_beta]
-file = "main"
+file = "pft"
 key = "hydraulics.root_beta"
 kind = "trait"
 range = [3.4e-4, 0.37]

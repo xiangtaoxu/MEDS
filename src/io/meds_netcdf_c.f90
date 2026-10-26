@@ -1,16 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_netcdf_c -- a thin ISO_C_BINDING layer over the netCDF *C* library.                  !
-!                                                                                          !
-! netCDF-Fortran is not available for the ifx/nvfortran toolchains on this machine (its     !
-! .mod files are gfortran-only and compiler-specific), but the netCDF C library is. C        !
-! linkage is compiler-agnostic, so we bind the handful of C entry points we need directly.   !
-! Only the subset MEDS uses is declared; the higher-level logic lives in the callers (the     !
-! state file, the forcing and map readers, the output stream).                               !
-!                                                                                          !
-! Pitfalls baked in here: C is 0-based (callers pass 0-based start); nc_def_var lists dimIDs !
-! slowest-varying FIRST (so [time, cohort]); sizes are C size_t (c_size_t); C strings are     !
-! NUL-terminated (use cstr()).                                                               !
+! meds_netcdf_c -- a thin ISO_C_BINDING layer over the netCDF C library, for the state     !
+! file, the forcing and map readers and the output streams. netCDF-Fortran's .mod files    !
+! are compiler-specific, while the C library links from any compiler, so MEDS binds the C  !
+! entry points it uses directly. C counts from 0 (callers pass 0-based starts), lists      !
+! dimensions slowest-varying first ([time, cohort]), and takes sizes as size_t and         !
+! NUL-terminated strings (cstr); the `_f` wrappers take Fortran strings. The readers share !
+! one rule for a variable's gaps and packing (nc_packing_of, nc_unpacked).                 !
 !==========================================================================================!
 module meds_netcdf_c
    use iso_c_binding, only : c_int, c_size_t, c_double, c_float, c_char, c_ptr, c_null_char,           &
@@ -31,6 +27,17 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
    integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode, nc_def/inq_var_chunking
    integer(c_size_t), parameter :: NC_UNLIMITED = 0_c_size_t
+   !----- netCDF's default fill values: what a variable holds where nothing was written. --------!
+   real(c_double),    parameter :: NC_FILL_DOUBLE = 9.9692099683868690e+36_c_double
+   integer(c_int),    parameter :: NC_FILL_INT    = -2147483647_c_int
+
+   !----- A variable's gap and packing attributes, NaN where it has none (nc_packing_of). ----------!
+   type :: nc_packing_t
+      real(c_double) :: fill     !< _FillValue
+      real(c_double) :: missing  !< missing_value
+      real(c_double) :: scale    !< scale_factor
+      real(c_double) :: offset   !< add_offset
+   end type nc_packing_t
 
    interface
       integer(c_int) function nc_create(path, cmode, ncidp) bind(c, name="nc_create")
@@ -242,11 +249,9 @@ contains
    end function cstr
 
    !---------------------------------------------------------------------------------------!
-   ! String-argument wrappers. They bind cstr() to a NAMED local before the bind(c) call, so !
-   ! an array-valued FUNCTION RESULT is never passed straight into a C call -- the nvfortran   !
-   ! array-temp miscompile trap (CLAUDE.md, the first compiler trap: silently wrong at -O2).   !
-   ! Callers use these `_f` forms with plain character(len=*) arguments; the raw bind(c) forms !
-   ! stay for the numeric calls (which already pass named array sections).                    !
+   ! String-argument wrappers, for plain character(len=*) arguments; the raw bind(c) forms !
+   ! stay for the numeric calls. Each binds cstr() to a named local before the C call:     !
+   ! no function result goes straight into a call (CLAUDE.md, compiler traps).             !
    !---------------------------------------------------------------------------------------!
    integer(c_int) function nc_create_f(path, cmode, ncidp) result(st)
       character(len=*), intent(in)  :: path
@@ -283,19 +288,20 @@ contains
       integer(c_size_t), intent(in) :: length
       character(kind=c_char) :: cname(len_trim(name) + 1)
       character(kind=c_char) :: ctp(len_trim(tp) + 1)
-      cname = cstr(name) ; ctp = cstr(tp)
+      cname = cstr(name)
+      ctp = cstr(tp)
       st = nc_put_att_text(ncid, varid, cname, length, ctp)
    end function nc_put_att_text_f
 
-   !----- Single-value numeric attribute (e.g. _FillValue). Binds cstr + the value to NAMED    !
-   !      locals before the bind(c) call (the nvfortran array-temp discipline above).          !
+   !----- A one-value numeric attribute (e.g. _FillValue), through named locals as above. --!
    integer(c_int) function nc_put_att_double_f(ncid, varid, name, xtype, val) result(st)
       integer(c_int),   intent(in) :: ncid, varid, xtype
       character(len=*), intent(in) :: name
       real(c_double),   intent(in) :: val
       character(kind=c_char) :: cname(len_trim(name) + 1)
       real(c_double)         :: opv(1)
-      cname = cstr(name) ; opv(1) = val
+      cname = cstr(name)
+      opv(1) = val
       st = nc_put_att_double(ncid, varid, cname, xtype, 1_c_size_t, opv)
    end function nc_put_att_double_f
 
@@ -305,7 +311,8 @@ contains
       integer(c_int),   intent(in) :: val
       character(kind=c_char) :: cname(len_trim(name) + 1)
       integer(c_int)         :: opv(1)
-      cname = cstr(name) ; opv(1) = val
+      cname = cstr(name)
+      opv(1) = val
       st = nc_put_att_int(ncid, varid, cname, xtype, 1_c_size_t, opv)
    end function nc_put_att_int_f
 
@@ -340,7 +347,7 @@ contains
       st = nc_inq_dimlen(ncid, dimid, length)
    end function nc_inq_dimlen_f
 
-   !----- Read a text attribute into a Fortran string (netCDF text attrs are NOT NUL-       !
+   !----- Read a text attribute into a Fortran string (netCDF text attrs are not NUL-       !
    !      terminated, so inquire the length first, then copy exactly that many chars).      !
    integer(c_int) function nc_get_att_text_f(ncid, varid, name, text) result(st)
       integer(c_int),   intent(in)  :: ncid, varid
@@ -376,33 +383,77 @@ contains
       cname = cstr(name)
       st = nc_inq_attlen(ncid, varid, cname, alen)
       if (st /= NC_NOERR) return
-      if (alen /= 1_c_size_t) then ; st = -1_c_int ; return ; end if
+      if (alen /= 1_c_size_t) then
+         st = -1_c_int
+         return
+      end if
       st = nc_get_att_double(ncid, varid, cname, buf)
       if (st == NC_NOERR) value = buf(1)
    end function nc_get_att_double_f
+
+   !----- A variable's gaps and packing, as the netCDF attribute conventions declare them: a value !
+   !      equal to _FillValue or missing_value is a gap, and scale_factor and add_offset unpack the !
+   !      rest. Read once per variable here; nc_unpacked applies it value by value. -------------!
+   function nc_packing_of(ncid, varid) result(packing)
+      integer(c_int), intent(in) :: ncid, varid
+      type(nc_packing_t)         :: packing
+      packing%fill    = attribute_or_nan('_FillValue')
+      packing%missing = attribute_or_nan('missing_value')
+      packing%scale   = attribute_or_nan('scale_factor')
+      packing%offset  = attribute_or_nan('add_offset')
+   contains
+      real(c_double) function attribute_or_nan(name) result(x)
+         use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
+         character(len=*), intent(in) :: name
+         real(c_double) :: a
+         x = ieee_value(1.0_c_double, ieee_quiet_nan)
+         if (nc_get_att_double_f(ncid, varid, name, a) == NC_NOERR) x = a
+      end function attribute_or_nan
+   end function nc_packing_of
+
+   !----- One stored value as data: NaN for a gap, otherwise unpacked. An attribute the variable  !
+   !      lacks (NaN in the record) does nothing, so a plain variable reads as stored. ------------!
+   elemental real(c_double) function nc_unpacked(packing, raw) result(x)
+      use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
+      type(nc_packing_t), intent(in) :: packing
+      real(c_double),     intent(in) :: raw
+      x = raw
+      if (.not. ieee_is_nan(packing%fill)) then
+         if (raw == packing%fill) x = ieee_value(x, ieee_quiet_nan)
+      end if
+      if (.not. ieee_is_nan(packing%missing)) then
+         if (raw == packing%missing) x = ieee_value(x, ieee_quiet_nan)
+      end if
+      if (.not. ieee_is_nan(packing%scale))  x = x * packing%scale
+      if (.not. ieee_is_nan(packing%offset)) x = x + packing%offset
+   end function nc_unpacked
+
+   !----- The netCDF library's text for a status ('' when it has none). ---------------------!
+   function nc_error_text(status) result(text)
+      integer(c_int), intent(in) :: status
+      character(len=256)         :: text
+      character(kind=c_char), pointer :: cbuf(:)
+      type(c_ptr) :: cp
+      integer     :: i
+      text = ''
+      cp = nc_strerror(status)
+      if (.not. c_associated(cp)) return
+      call c_f_pointer(cp, cbuf, [256])
+      do i = 1, 256
+         if (cbuf(i) == c_null_char) exit
+         text(i:i) = cbuf(i)
+      end do
+   end function nc_error_text
 
    !----- Abort with the netCDF error message if `status` is not NC_NOERR. ----------------!
    subroutine nc_check(status, context)
       integer(c_int),   intent(in) :: status
       character(len=*), intent(in) :: context
-      character(kind=c_char), pointer :: cbuf(:)
-      type(c_ptr) :: cp
-      integer     :: i
+      character(len=256) :: text
       if (status == NC_NOERR) return
-      cp = nc_strerror(status)
       write(*,'(3a,i0)') 'meds_netcdf_c: netCDF error in ', trim(context), ', status=', status
-      if (c_associated(cp)) then
-         call c_f_pointer(cp, cbuf, [256])
-         block
-            character(len=256) :: text
-            text = ''
-            do i = 1, 256
-               if (cbuf(i) == c_null_char) exit
-               text(i:i) = cbuf(i)
-            end do
-            write(*,'(2a)') '   ', trim(text)
-         end block
-      end if
+      text = nc_error_text(status)
+      if (len_trim(text) > 0) write(*,'(2a)') '   ', trim(text)
       error stop 'meds_netcdf_c: netCDF call failed'
    end subroutine nc_check
 

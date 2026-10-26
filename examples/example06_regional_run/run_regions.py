@@ -22,8 +22,9 @@ Usage:
   python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch --exclusive"
   python run_regions.py --regions 1 --years 1 --threads 8      # a quick check, here
 
-Needs numpy, netCDF4, a built meds_main (--meds-main, default ../../build-ifx/meds_main) and the data paths
-(--era5-archive, --soil-maps, --chave-e-map, or ERA5LAND_ARCHIVE, ED_SOIL_MAPS and CHAVE_E_MAP).
+Needs numpy, netCDF4, a built meds_main (--meds-main, or MEDS_MAIN; default ../../build-dev/meds_main, the dev
+preset's build) and the data paths (--era5-archive, --soil-maps, --chave-e-map, or ERA5LAND_ARCHIVE, ED_SOIL_MAPS
+and CHAVE_E_MAP).
 """
 import argparse
 import os
@@ -40,13 +41,13 @@ PV = os.path.join(ROOT, "examples", "example05_forest_regeneration", "palo_verde
 OUT = os.path.join(HERE, "output")
 MASK = os.path.join(OUT, "cell_mask.nc")
 START_YEAR = 1871
-DBH_EDGES = "[0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]"     # [cm] the nplant_size classes
+DBH_EDGES = "[0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 1000.0]"     # [cm] the mean_nplant_size_py classes
 #----- Keys the region's cells provide (the archive: location and forcing; the maps: soil, deep temperature and,
 #      through each polygon's config, Chave's E), which a region config refuses. -----------------------------------
 FROM_CELLS = [("site", "latitude"), ("site", "longitude"), ("site", "elevation"),
               ("forcing", "path"), ("forcing", "grid_index"), ("forcing", "grid_match"),
-              ("init", "soil_theta"), ("energy", "deep_temp"), ("energy", "deep_depth")] + \
-             [("soil_column", k) for k in ("depth", "layer_bottoms", "retention", "theta_sat", "theta_res", "ksat",
+              ("init", "soil_theta"), ("soil", "deep_temp"), ("soil", "deep_depth")] + \
+             [("soil", k) for k in ("depth", "layer_bottoms", "retention", "theta_sat", "theta_res", "ksat",
                                            "curve_par_a", "curve_par_n", "solid_conductivity", "dry_conductivity",
                                            "dry_heat_capacity")]
 
@@ -146,16 +147,14 @@ def make_regions(n_regions, years, threads, pft, archive, maps, chave_e, cost_fi
         for sec, key, val in [
                 ("run", "mode", '"region"'), ("run", "n_threads", str(threads)),
                 ("run", "end_time", f'"{START_YEAR + years}-06-01"'),
-                ("init", "init_mode", "0"), ("init", "census_file", '"none"'), ("init", "pft_config", f'"{pft}"'),
-                ("state", "output_dir", f'"{rdir}"'), ("state", "output_prefix", f'"{name}"'),
-                ("state", "write_state", "true"), ("state", "interval_years", str(min(25, years))),
+                ("init", "init_mode", "0"), ("init", "pft_config", f'"{pft}"'),
+                ("output", "state_file_dir", f'"{rdir}"'), ("output", "state_file_prefix", f'"{name}"'),
+                ("output", "state_write", "true"), ("output", "state_interval", f'"{min(25, years)} years"'),
                 ("output", "dir", f'"{rdir}"'), ("output", "prefix", f'"{name}"'),
                 ("output", "io_config", f'"{os.path.join(HERE, "io_config_region.toml")}"'),
                 ("output", "dbh_class_edges", DBH_EDGES),
-                *[("output", g_, "false") for g_ in ("structure", "carbon", "water", "energy", "biogeochem",
-                                                      "numerics", "forcing")],
                 ("output.annual", "enabled", "false"),
-                ("forcing", "format", '"ED_ERA5land"'), ("forcing", "data_path", f'"{archive}"'),
+                ("forcing", "format", '"ERA5land"'), ("forcing", "data_path", f'"{archive}"'),
                 ("forcing", "co2_file", f'"{os.path.join(ROOT, "data", "co2", "co2_cmip7_global_annual_1000-2022.txt")}"'),
                 ("region", "box_nwse", "[" + ", ".join(f"{x:.2f}" for x in box) + "]"),
                 ("region", "cell_mask", f'"{MASK}"'), ("region", "cell_mask_var", '"mask"'),
@@ -182,7 +181,8 @@ def main(argv=None):
     ap.add_argument("--stack", default="512M", help="OMP_STACKSIZE: each worker thread's stack")
     ap.add_argument("--submit", default="", help='a batch command for each region, e.g. "sbatch --exclusive"; '
                                                  'empty: run them here, one after another')
-    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
+    ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-dev", "meds_main")),
+                    help="the meds_main each region runs (default: $MEDS_MAIN, else build-dev/meds_main)")
     ap.add_argument("--era5-archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     ap.add_argument("--soil-maps", default=os.environ.get("ED_SOIL_MAPS"), help="the ED soil maps (v2)")
     ap.add_argument("--chave-e-map", default=os.environ.get("CHAVE_E_MAP"), help="Chave's E on the forcing grid")

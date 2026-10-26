@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """make_forcing_file.py -- write a MEDS single forcing file, the (time, grid) NetCDF that
-[forcing].format = "ED_default" reads (src/io/input/forcing/meds_met_driver.f90), from either source of ERA5-Land
+[forcing].format = "default" reads (src/io/met/meds_met.f90), from either source of ERA5-Land
 data this folder produces:
 
   --data-path DIR   an ED_ERA5land archive (build_era5land_archive.py), for the days --start..--end.

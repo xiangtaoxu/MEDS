@@ -2,13 +2,14 @@
 # The keys of the two reference configs, meds_config_main.toml and meds_config_pft.toml.
 #
 # Every key MEDS reads is listed in one of them, set or commented out at its default. That list is
-# what a run checks its own config against: a key it does not hold stops the run (meds_config_keys).
+# what a run checks its own config against: a key it does not hold stops the run (meds_config_check).
 # The build turns the two files into a Fortran include (meds_write_config_keys), and the test
 # check_config_keys.cmake holds them equal to the keys the loader reads.
 
 # meds_toml_keys(<file> <out_var>): every key <file> lists, as "section.key". A key counts whether
 # it is set ("key = value") or commented out ("# key = value", at most one space after the #), and
-# a section header whether it is live ("[name]") or commented out alone on its line ("# [name]").
+# a section header whether it is live ("[name]") or commented out alone on its line ("# [name]"). A
+# table of an array, "[[name]]", is the section "name".
 function(meds_toml_keys file out_var)
    file(READ "${file}" text)
    # A CMake list splits on ';' and groups on '[ ]': park all three before splitting into lines.
@@ -19,7 +20,9 @@ function(meds_toml_keys file out_var)
    set(section "")
    set(keys "")
    foreach(line IN LISTS lines)
-      if(line MATCHES "^[ \t]*#?[ \t]*<lb>([A-Za-z0-9_.]+)<rb>[ \t]*$")
+      if(line MATCHES "^[ \t]*#?[ \t]*<lb><lb>([A-Za-z0-9_.]+)<rb><rb>[ \t]*$")
+         set(section "${CMAKE_MATCH_1}")
+      elseif(line MATCHES "^[ \t]*#?[ \t]*<lb>([A-Za-z0-9_.]+)<rb>[ \t]*$")
          set(section "${CMAKE_MATCH_1}")
       elseif(line MATCHES "^[ \t]*#[ ]?([A-Za-z_][A-Za-z0-9_.]*)[ \t]*=")
          list(APPEND keys "${section}.${CMAKE_MATCH_1}")
