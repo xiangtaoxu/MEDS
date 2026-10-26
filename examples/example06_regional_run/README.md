@@ -5,12 +5,9 @@ seasonally dry tropical forests of Central America with four plant functional ty
 density and hydraulic traits: deciduous with soft wood (Ds), deciduous (D), brevi-deciduous (BD) and
 evergreen (E). This example tries the same with MEDS. One parameter set for the four PFTs, set at Palo
 Verde (Costa Rica) in [example 05](../example05_forest_regeneration/README.md), regrows a forest from bare
-ground in 953 cells of their box, run as two MEDS region runs. The last ten years are set against MODIS
+ground in 953 cells of their box, run as eight MEDS region runs. The last ten years are set against MODIS
 leaf area, and the same runs give the region's productivity, biomass, canopy height, tree density, water
 use and regrowth ([Additional results](#additional-results)).
-
-The region runs, the figures and the numbers on this page were made with v0.3.4 and the region
-runtime that followed it; they were not repeated after the 2026-10 sweep.
 
 ![Leaf area and its seasonality, MEDS against MODIS](lai_seasonality_vs_modis.png)
 
@@ -24,7 +21,7 @@ and counts when at least a quarter of the pixels do. A year counts with at least
 with at least three such years; 16 cells have fewer (all in southern Nicaragua, Costa Rica and Panama)
 and are blank in the MODIS row. Each simulated cell is drawn as the 0.3° block (3 × 3 ERA5-Land cells) it stands for; grey is
 land with no simulated cell. The leaf cover follows the rainfall as MODIS's does (r = 0.68 across
-cells); the peak leaf area is too high and too even (median 6.8 against 5.4, r = 0.14).
+cells); the peak leaf area is too high and too even (median 6.9 against 5.4, r = 0.12).
 
 ## The regional run
 
@@ -34,10 +31,10 @@ into 3 × 3-cell blocks from its south-west corner. In each block the cell with 
 the northern and then the eastern. A candidate must be a cell MEDS can run: valid forcing in the archive
 and a value in every map the run reads. **953 cells**, written as a 0/1 mask on the forcing grid.
 
-**The regions.** The cells run as two region runs, each a box of the mask on a machine of its own: 606
-cells (13.15–25.05° N, 100.05–87.95° W) and 347 (7.25–23.05° N, 87.95–79.95° W). The split balances their
-cost, not their counts: a wet cell grows many more cohorts and costs up to fifty times a dry one, so the
-southern region holds fewer, costlier cells.
+**The regions.** The cells run as eight region runs, each a box of the mask on a machine of its own. The
+boxes balance the cells' cost, not their counts: a wet cell grows many more cohorts and costs up to fifty
+times a dry one, so a box holds from 62 cells (southern Costa Rica and Panama) to 197 (Mexico north of
+17° N).
 
 **Each cell** runs example 05's Palo Verde configuration, with its own location's inputs:
 
@@ -65,9 +62,10 @@ environment: `ERA5LAND_ARCHIVE`, `ED_SOIL_MAPS`, `CHAVE_E_MAP`, and `MODIS_LAI_C
 pipeline's code.
 
 1. `python make_cell_mask.py` — the 953 cells: `output/cell_mask.nc` and `output/cells.csv`.
-2. `python run_regions.py --regions 2 --threads 128 --cost cell_hours.csv --submit "sbatch --exclusive"`
-   — writes the PFT file and one config per region (`output/region01/config.toml`, ...) and submits each
-   region as a batch job of its own; without `--submit` they run here, one after another. `--cost`
+2. `python run_regions.py --regions 8 --threads 40 --cost cell_hours.csv --meds-main
+   ../../build-production/meds_main --submit "sbatch --exclusive"` — writes the PFT file and one config
+   per region (`output/region01/config.toml`, ...) and submits each region as a batch job of its own,
+   on the production build; without `--submit` they run here, one after another. `--cost`
    balances the regions by each cell's cost, here `cell_hours.csv`: the hours each cell took to run the
    150 years alone on one core in an earlier run (columns `lat, lon, cost`; a cell it lacks costs the
    median). Without it the regions get equal counts. `--years 1` makes a quick check of every cell's
@@ -91,28 +89,28 @@ and `summarize_regions.py` joins a region's monthly files by month.
 
 ## Speed and resources
 
-Each region ran alone on a machine with an Intel Xeon Gold 6430 (2 sockets × 32 cores × 2 hardware
-threads = 128 threads, up to 3.4 GHz) and 251 GB of memory. Each region used 128 OpenMP threads
-(`OMP_PLACES=threads`, `OMP_PROC_BIND=close`, `OMP_STACKSIZE=512M`); the second hardware thread of each
-core adds about 10–18 % over 64 threads.
+Each region ran alone on a machine with two 20-core Intel Xeon Gold 6230 (2.1 GHz, up to 3.9 GHz) and
+125 GB of memory, on its 40 cores as 40 OpenMP threads (`OMP_PLACES=threads`, `OMP_PROC_BIND=close`,
+`OMP_STACKSIZE=512M`), with the production build.
 
-| | Region 1 | Region 2 |
-|---|---|---|
-| Cells | 606 | 347 |
-| Wall time, 150 years | about 26 h | 26.0 h |
-| Threads busy, whole run (of 128) | 112 (88 %), from its 1921 state file on | 105 (82 %) |
-| Threads busy, model year 2012 (about 2 h before the end) | 123 | 109 |
-| Memory, model year 2012 | 4.2 GB resident | 3.7 GB resident |
-| Peak memory | 4.4 GB | 3.9 GB |
-| Reading the forcing | 15 min (from 1921) | 17 min |
+| Region | Cells | Wall time, 150 years | Threads busy (of 40): whole run / model years 2012–2021 | Memory: model year 2012 / peak | Reading the forcing |
+|---|---|---|---|---|---|
+| region01 | 139 | 10.9 h | 34.7 / 35.5 | 1.16 / 1.19 GB | 15 min |
+| region02 | 197 | 10.8 h | 34.4 / 36.2 | 1.18 / 1.21 GB | 26 min |
+| region03 | 97 | 9.9 h | 33.6 / 34.4 | 0.97 / 0.97 GB | 11 min |
+| region04 | 173 | 9.9 h | 33.4 / 35.6 | 1.20 / 1.20 GB | 34 min |
+| region05 | 72 | 9.7 h | 30.1 / 31.8 | 0.82 / 0.84 GB | 12 min |
+| region06 | 62 | 10.7 h | 30.1 / 30.6 | 0.84 / 0.84 GB | 10 min |
+| region07 | 96 | 9.3 h | 33.1 / 34.9 | 0.93 / 0.94 GB | 13 min |
+| region08 | 117 | 9.7 h | 33.5 / 34.5 | 1.09 / 1.11 GB | 20 min |
 
-Both regions together took about 5,500 hardware-thread hours. A region's threads take its polygons
-costliest first, and every month ends when its slowest polygon does, so a region with few, costly
-polygons keeps fewer threads busy. Memory grows with the stands, about 4 GB per region at the end; the
-virtual size (75 GB) is the threads' reserved stacks. The first pass through the 20-year weather window
-reads each month from the archive (about a minute per model year); after it the operating system's page
-cache serves the re-reads (6–13 s per model year). A region's state file (250–360 MB) takes 10–15 s to
-write. The monthly output is 100–180 MB per region.
+The eight regions together took 3,230 core-hours, of which 2,660 were busy. A region's threads take its
+polygons costliest first, and every month ends when its slowest polygon does, so a box of few, costly
+polygons keeps fewer threads busy (30 of 40 in regions 05 and 06). Memory grows with the stands, to about
+1 GB per region at the end; the virtual size (23 GB) is the threads' reserved stacks. The first pass
+through the 20-year weather window reads each month from the archive (15–50 s per model year); after it
+the operating system's page cache serves the re-reads (2–9 s per model year). A region's state file is
+about 75–100 MB, and its monthly output 20–60 MB.
 
 ## Additional results
 
@@ -121,39 +119,39 @@ write. The monthly output is 100–180 MB per region.
 The last ten simulated years (June 2011 – May 2021): (a) GPP, (b) aboveground biomass (dry mass, all
 stems), (c) canopy height (the tallest cohort) and (d) wood density, the PFTs' weighted by their AGB.
 From the driest tenth of the cells (below 800 mm of rain a year) to the wettest (above 3,100 mm), GPP
-doubles (1.8 to 4.1 kgC m⁻² yr⁻¹) and the canopy grows from about 9 to 46 m, while AGB levels off at
-about 215 Mg ha⁻¹ above 1,500 mm. Brevi-deciduous trees hold most of the biomass in three cells of four,
-and wood density falls with rainfall (0.74 to 0.61 g cm⁻³) as the soft-wooded Ds gains a share (2 % of
-the AGB in the driest tenth, 30 % in the wettest).
+more than doubles (1.9 to 4.5 kgC m⁻² yr⁻¹) and the canopy grows from about 9 to 46 m, while AGB levels
+off at about 205 Mg ha⁻¹ above 1,500 mm. Brevi-deciduous trees hold most of the biomass in three cells of
+five, and wood density falls with rainfall (0.75 to 0.55 g cm⁻³) as the soft-wooded Ds gains a share
+(1 % of the AGB in the driest tenth, half in the wettest).
 
 ![Trees at least 1 cm and at least 10 cm in diameter across the region](regional_tree_density.png)
 
 The last ten years: (a) trees at least 1 cm in diameter per hectare (log scale) and (b) trees at least
-10 cm. Small stems dominate the counts: a cell holds a median 14,400 stems ≥ 1 cm per hectare and 630
-≥ 10 cm, about 23 to 1. The dry cells hold the most small stems (a median 33,700 ha⁻¹ in the driest
-tenth against 11,200 in the wettest): the 94 cells above 50,000 ha⁻¹ are dense, low stands (a median 9
-m tall, 840 mm of rain), most in the north of the box. Trees ≥ 10 cm vary little with rainfall (medians
-640 and 580 ha⁻¹) and are fewest, below 200 ha⁻¹, in 68 dry cells.
+10 cm. Small stems dominate the counts: a cell holds a median 14,500 stems ≥ 1 cm per hectare and 600
+≥ 10 cm, about 24 to 1. The dry cells hold the most small stems (a median 31,400 ha⁻¹ in the driest
+tenth against 10,000 in the wettest): the 61 cells above 50,000 ha⁻¹ are dense, low stands (a median 11
+m tall, 960 mm of rain), most in the north of the box. Trees ≥ 10 cm vary little with rainfall (medians
+690 and 520 ha⁻¹) and are fewest, below 200 ha⁻¹, in 38 dry cells.
 
 ![AGB regrowth trajectories and biomass after 20 years against rainfall](regional_regrowth.png)
 
 (a) Each cell's AGB from the bare-ground start in 1871, coloured by its mean annual rainfall (ERA5-Land,
 2003–2022). (b) AGB after 20 years against rainfall, with the 45 Neotropical chronosequences of Poorter
 et al. (2016, *Nature* 530: 211–214; trees ≥ 5 cm in diameter) as open circles. Wet cells regrow fastest,
-and every cell is still gaining after 150 years. MEDS is within the range of the dry chronosequences but
-reaches about 60 % of the observed biomass above 1,200 mm (median 79 against 138 Mg ha⁻¹); the
-diameter-growth caps, set for Palo Verde's old stand, probably hold the young trees back. The few lines
-that start high are the hottest, driest cells, where a 1.5 m recruit on Chave's curve is up to 3.6 cm in
-diameter.
+and nearly every cell (97 %) is still gaining after 150 years. MEDS is within the range of the dry
+chronosequences but reaches about half the observed biomass from 1,200 mm up (median 73 against 138 Mg
+ha⁻¹); the diameter-growth caps, set for Palo Verde's old stand, probably hold the young trees back. The
+few lines that start high are the hottest, driest cells, where a 1.5 m recruit on Chave's curve is up to
+3.6 cm in diameter.
 
 ![Evapotranspiration and runoff across the region](regional_water.png)
 
 The last ten years: (a) evapotranspiration and (b) runoff, the pond's spill plus the drainage through
-the soil column's bottom, in mm a year. A cell evaporates a median 68 % of its rain (1,040 mm) and loses
-34 % as runoff (550 mm). ET rises with rainfall, from 660 mm in the driest tenth to 1,370 mm in the
-wettest, but takes a falling share of it (94 % to 37 %); runoff follows the rain (r = 0.97), from 80 mm
-to 2,140 mm, and is highest on the Caribbean slope of Costa Rica and Panama. On the 61 cells over an
-aquifer the bottom boundary feeds the column in the dry season, and their ET is higher (median 1,480
-mm). Red marks the 22 of them where more water rose from the water table than drained to it over the
+the soil column's bottom, in mm a year. A cell evaporates a median 74 % of its rain (1,130 mm) and loses
+28 % as runoff (450 mm). ET rises with rainfall, from 690 mm in the driest tenth to 1,470 mm in the
+wettest, but takes a falling share of it (97 % to 39 %); runoff follows the rain (r = 0.96), from 60 mm
+to 2,020 mm, and is highest in southern Costa Rica and western Panama (up to 6,200 mm). On the 61 cells
+over an aquifer the bottom boundary feeds the column in the dry season, and their ET is higher (median
+1,530 mm). Red marks the 23 of them where more water rose from the water table than drained to it over the
 decade (western Cuba, the Tabasco lowlands and the Yucatán's coast): dry sites over shallow groundwater,
 which the aquifer keeps leafy through the dry season.
