@@ -64,7 +64,7 @@ census and is calibrated against the tower's fluxes:
 Every process closes a conservation budget each step, asserted in the test suite. A site's patches, or
 a region's polygons, run on threads, and the output is byte-identical at any thread count.
 
-**Status: v0.3.5, and not yet benchmarked.** The examples fit some parameters to observations (a flux
+**Status: v0.4.0, and not yet benchmarked.** The examples fit some parameters to observations (a flux
 tower, a forest census, leaf area and litter) and set a regional run against satellite leaf area, but no
 EDTS-equivalent regression suite has been run and no systematic evaluation against observations has
 been made. What is verified is internal: the test suite on two compilers, per-step conservation

@@ -13,7 +13,7 @@
 # (docs/dev_plans/archive/MEDS_GPU_EVALUATION.md).                                             #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.3.5 LANGUAGES Fortran
+project(MEDS VERSION 0.4.0 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 #      A configure that names no build type gets the dev kind (docs/building.md, "Build kinds"):

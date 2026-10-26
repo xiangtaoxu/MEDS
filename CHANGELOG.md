@@ -14,6 +14,22 @@ before and after.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-26
+
+A **reviewed code base** release, and the last MEDS release before the model moves to ED-MORE. Every
+folder of `src/` and `test/` is reviewed file by file and restructured where the review called for
+it: the state layer by model hierarchy, one library per domain in `src/share`, a configuration that
+reads only the keys MEDS uses, `src/io` by folder with one name per output variable, the fast loop's
+integrator by stage and its kernels by process, the slow loop by role, and tests that mirror `src/`.
+Three model changes come with it: a run is a region of one polygon or many, and a polygon can hold
+several sites on their own soil and terrain (#449–#454); a cohort's tissue state is its leaf and wood
+energy (#457); and the fast-kernel review's physics corrections (#503–#512) and the slow loop's one
+necromass path (#523) move results. The documentation is checked against the code (#542), every
+example is rerun on the production build, example 06 as eight regions (#552), a final sweep fixes two
+bugs the documentation review found (#551), and the production build accepts multi-PFT files again
+(#543). Every output variable and many configuration keys are renamed, and a state file written
+before this release does not restart: read the upgrade notes below.
+
 The soil column's parameters become configuration, the ground becomes one block of the main config,
 and a new cohort starts in its patch's state instead of at two constants (#447). The state layer is
 reorganized by model hierarchy, with no change to any result (#448). A run is a region of one polygon
@@ -7301,7 +7317,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.5...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.4.0...beta
+[0.4.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
