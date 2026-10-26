@@ -157,7 +157,8 @@ through the litter and the slow ledger declares them; the slow loop converts CO2
 loop's constant; and patch termination merges and re-sorts as patch fusion does (#523). The stand's
 operators have one switch each, and the stand's keys are one `[demography]` block (#525). The slow
 tests are one per module of the new layout (#528). The soil-carbon state holds its pools as the
-matrix's vector (#529).
+matrix's vector (#529). The production build accepts PFT files of more than one PFT again (#543). All six
+examples are rerun on the production build, and example 06 runs as eight regions (#552).
 
 **Upgrading from v0.3.5:**
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
@@ -836,6 +837,14 @@ matrix's vector (#529).
 
 ### Changed
 
+- **The examples are rerun on the production build** (#552), on beta 1a5d8a9d with #543. Example 06
+  runs as eight cost-balanced regions, one per 40-core node (9.3–10.9 h each, 3,230 core-hours), instead
+  of two 128-thread runs. Example 01 moves by at most 2e-5 and example 02 not at all; example 03's refit
+  follows the allometry changes (the census's AGB −0.8 %); examples 04 and 05 move little (BCI's AGB
+  126.9 MgC/ha in 2010, Palo Verde's 78 MgC/ha at 150 years); example 06's results move beyond rounding
+  (ET 74 % of the rain, the soft-wooded Ds half of the wettest tenth's AGB). Two example scripts had gone
+  stale: example 02's `make_era5_par_hours.py` asked for the PAR outputs by their old names (#473), and
+  example 03's `census_laws.py` read the treefall keys from `[disturbance]` (#525).
 - **Three gaps a mutation check found are tested** (#541):
   - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
   - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
