@@ -1,5 +1,12 @@
 # MEDS — Modular Ecosystem Dynamics Simulator
 
+> **MEDS continues as [ED-MORE](https://github.com/EDmodel/ED-MORE).** This repository is archived
+> and read-only: its history, issues and pull requests up to v0.4.0 stay here. Development, issues
+> and releases are in [EDmodel/ED-MORE](https://github.com/EDmodel/ED-MORE), whose first release,
+> [v0.4.1](https://github.com/EDmodel/ED-MORE/releases/tag/v0.4.1), is MEDS v0.4.0 renamed
+> ([DOI 10.5281/zenodo.23674061](https://doi.org/10.5281/zenodo.23674061)). The open MEDS issues
+> were carried over to ED-MORE's issues and Ideas discussions.
+
 *(equally: **Modern Ecosystem Demography Simulator**, a nod to its descent from ED / ED2.)*
 
 MEDS is a ground-up reimplementation in **Fortran 2018** of the Ecosystem Demography model
