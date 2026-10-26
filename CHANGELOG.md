@@ -151,7 +151,8 @@ per module of the new layout (#528). The soil-carbon state holds its pools as th
 readability, with no change to any result (#542). Before the release, a sweep: the default forcing
 reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
 `spinup_xi`, and four code oddities go (#551). The production build accepts a PFT file of
-several PFTs again (#543).
+several PFTs again (#543). All six examples are rerun on the production build, and example 06
+runs as eight regions (#552).
 
 **Upgrading from v0.3.5:**
 - **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
@@ -836,6 +837,14 @@ several PFTs again (#543).
 
 ### Changed
 
+- **The examples are rerun on the production build** (#552), on beta 1a5d8a9d with #543. Example 06
+  runs as eight cost-balanced regions, one per 40-core node (9.3–10.9 h each, 3,230 core-hours), instead
+  of two 128-thread runs. Example 01 moves by at most 2e-5 and example 02 not at all; example 03's refit
+  follows the allometry changes (the census's AGB −0.8 %); examples 04 and 05 move little (BCI's AGB
+  126.9 MgC/ha in 2010, Palo Verde's 78 MgC/ha at 150 years); example 06's results move beyond rounding
+  (ET 74 % of the rain, the soft-wooded Ds half of the wettest tenth's AGB). Two example scripts had gone
+  stale: example 02's `make_era5_par_hours.py` asked for the PAR outputs by their old names (#473), and
+  example 03's `census_laws.py` read the treefall keys from `[disturbance]` (#525).
 - **The documentation is checked against the code** (#542). Every science page, guide and README is
   checked against the code and rewritten for a modeller: the science pages end Parameters, Code map,
   References, and example results, stale counts and history leave the reference pages.

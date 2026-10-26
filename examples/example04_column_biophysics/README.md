@@ -26,8 +26,9 @@ python run_example.py --calibrate --workers 40           # ... and redo the cali
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main` or `MEDS_MAIN`,
 default `../../build-dev/meds_main`). The first full run builds the census file from the census
 tables, which it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The
-data); later runs reuse `data/bci_census2010_meds.csv`. Every step together takes about 12 minutes
-on 8 threads. The calibration's 996 runs took 60 minutes on 200 cores of five nodes, with the queue
+data); later runs reuse `data/bci_census2010_meds.csv`. Every step together takes about 9 minutes
+on 8 threads with the production build (`--meds-main ../../build-production/meds_main`, see
+[`docs/building.md`](../../docs/building.md)). The calibration's 996 runs took 60 minutes on 200 cores of five nodes, with the queue
 workers of [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
 ## The data
@@ -128,9 +129,9 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 |---|---|---|---|---|
 | GPP [µmol m⁻² s⁻¹] | 7.46 | 8.23 | 10.50 | 8.75 |
 | LE [W m⁻²] | 75.5 | 75.5 | 81.0 | 66.9 |
-| H by day [W m⁻²] | 91.3 | 166.6 | 161.0 | 174.9 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 161.0 | 174.8 |
 | NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.79 | −3.00 |
-| net radiation [W m⁻²] | 136.3 | | 139.9 | 139.3 |
+| net radiation [W m⁻²] | 136.3 | | 139.8 | 139.3 |
 
 - **Carbon:** the calibration brings GPP from 28 % above its target to 6 % above.
 - **Energy:** the model's canopy still reflects more than the tower sees (daytime albedo 0.163–0.168
@@ -151,7 +152,7 @@ These are the last days of the 2016 El Niño dry season: four bright dry days, s
 42 mm of rain on the 27th. The figure shows the patch that covers the most ground (8 % of the site,
 LAI 5.4) and its tallest tree.
 - **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2.6 K above it, and the
-  top tree's leaves 3–5.5 K above it at midday. The soil at 2.5 cm swings 1–5.5 K a day.
+  top tree's leaves 2.7–5.5 K above it at midday. The soil at 2.5 cm swings 1–5.5 K a day.
 - **Canopy-air CO₂** falls to about 399 µmol mol⁻¹ by day as the canopy draws it down, and builds up
   again to 404–409 at night, and to 415 in the calm last night.
 - **Leaf water potential** refills to about −0.5 MPa each night of the dry spell (−0.31 after the
