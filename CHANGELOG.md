@@ -151,8 +151,8 @@ per module of the new layout (#528). The soil-carbon state holds its pools as th
 readability, with no change to any result (#542). Before the release, a sweep: the default forcing
 reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
 `spinup_xi`, and four code oddities go (#551). The production build accepts a PFT file of
-several PFTs again (#543). All six examples are rerun on the
-production build, and example 06 runs as eight regions (#552).
+several PFTs again (#543). All six examples are rerun on the production build, and example 06
+runs as eight regions (#552).
 
 **Upgrading from v0.3.5:**
 - **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
