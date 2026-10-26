@@ -1,3 +1,16 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Complete: implemented, merged and released.
+>
+> **What shipped:** soil and plant water solved as one network per patch, with process functions and
+> one generic implicit solver (P1–P4), merged into `beta` as #397 (2026-10-12) and released in v0.3.4,
+> with the Debug-build fix in #398. The plant solver, the soil solver, the uptake rescale, the
+> residual floors and caps, the ARK plant re-solve and RK45's in-stage water are gone.
+>
+> **The live description** is `docs/science/soil_plant_water.md`; the code is
+> `src/fast_dynamics/` (`water_step` in `integrator/meds_fast_integ_backward_euler.f90`, and the process functions). The leftovers (Newton work,
+> a C API entry, an unattributed sensible-heat difference) are in `docs/ROADMAP.md` §4.
+>
+> The status header below predates the implementation.
+
 # Soil and plant water as one network: process functions and one implicit solver
 
 Written 2026-10-11 on branch `feat/spac-water-solver` (from beta 0cbbb31). Parked (owner, 2026-10-11)

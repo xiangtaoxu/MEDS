@@ -108,7 +108,7 @@ contains
       call derive_cohort_terms(static, cfg%pft%hydraulics, poly%site%surface(poly%patch%owner_site(ip))%soil_profile)
 
       !----- Canopy geometry. The open fraction exp(-(LAI + WAI)) weighs bare ground in the ground  !
-      !      conductance (docs/science/canopy_aerodynamics.md eq. (6)), so a patch without cohorts  !
+      !      conductance (docs/science/canopy_aerodynamics.md eq. (7)), so a patch without cohorts  !
       !      couples as bare soil; the pack at the window's start buries the canopy's roughness,    !
       !      eq. (1). The canopy is at least the height whose roughness is the bare soil's, so a    !
       !      patch without cohorts, or with only shorter ones, has the soil's roughness. -----------!

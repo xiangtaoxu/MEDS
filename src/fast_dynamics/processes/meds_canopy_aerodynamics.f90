@@ -29,7 +29,7 @@ module meds_canopy_aerodynamics
    real(wp), parameter :: ZETA_UNSTABLE_MIN  = -100.0_wp    !< [-]
    !----- Each Monin-Obukhov sweep's convective velocity (CLM5): w_c = beta w_*, with w_* the      !
    !      convective velocity scale of a mixed layer MIXED_LAYER_DEPTH deep, from the sweep's own  !
-   !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (3b)). ---------------------------!
+   !      buoyancy flux (docs/science/canopy_aerodynamics.md eq. (4)). ----------------------------!
    real(wp), parameter :: CONVECTIVE_BETA   = 1.0_wp      !< [-]
    real(wp), parameter :: MIXED_LAYER_DEPTH = 1000.0_wp   !< [m]
    !----- Cap on the under-canopy stability parameter stab of CLM4's dense-canopy ground           !
@@ -99,7 +99,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! The canopy-air <-> atmosphere bulk conductances (docs/science/canopy_aerodynamics.md  !
-   ! eq. (5)), for enthalpy and vapour [kg/m2/s] and for CO2 [mol/m2/s].                   !
+   ! eq. (6)), for enthalpy and vapour [kg/m2/s] and for CO2 [mol/m2/s].                   !
    !---------------------------------------------------------------------------------------!
    pure subroutine cas_atm_conductances(rho, can_dmol, ustar, temp_heat, temp_vapour, g_atm_heat, g_atm_vapour, g_atm_co2)
       real(wp), intent(in)  :: rho          !< [kg/m3]  canopy-air density
@@ -114,7 +114,7 @@ contains
    end subroutine cas_atm_conductances
 
    !----- A patch's open fraction W = exp(-(LAI + WAI)) [-], the weight of bare ground in the      !
-   !      ground conductance (docs/science/canopy_aerodynamics.md eq. (6)). -----------------------!
+   !      ground conductance (docs/science/canopy_aerodynamics.md eq. (7)). -----------------------!
    elemental real(wp) function open_canopy_fraction(lai, wai) result(w)
       real(wp), intent(in) :: lai, wai   !< [m2/m2] the patch's total leaf and wood area indices
       w = safe_exp(-(lai + wai))
@@ -273,7 +273,7 @@ contains
    end subroutine aerodynamics_bottom_to_top
 
    !---------------------------------------------------------------------------------------!
-   ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(4)):  !
+   ! CLM5 Monin-Obukhov surface layer (docs/science/canopy_aerodynamics.md eqs. (2)-(5)):  !
    ! sweeps of the four-range denominators from the bulk-Richardson guess until the        !
    ! coupling settles to MO_TOL, at most n_iter_mo of them.                                !
    ! Returns ustar, the scalar profile factor heat_transfer_factor = vonk/D_h (CLM's       !
@@ -385,7 +385,7 @@ contains
       end if
    end function d_heat
 
-   !----- CLM StabilityFunc1 (psi_m of eq. (4), unstable branch: call only with zeta < 0) ---!
+   !----- CLM StabilityFunc1 (psi_m of eq. (5), unstable branch: call only with zeta < 0) ---!
    pure function stabfunc1(zeta) result(psi)
       real(wp), intent(in) :: zeta     !< [-] stability, negative
       real(wp) :: psi, x               !< [-] psi_m (the result), (1 - 16 zeta)^(1/4)
@@ -394,7 +394,7 @@ contains
             - 2.0_wp * atan(x) + pi * 0.5_wp
    end function stabfunc1
 
-   !----- CLM StabilityFunc2 (psi_h of eq. (4), unstable branch: call only with zeta < 0) ---!
+   !----- CLM StabilityFunc2 (psi_h of eq. (5), unstable branch: call only with zeta < 0) ---!
    pure function stabfunc2(zeta) result(psi)
       real(wp), intent(in) :: zeta     !< [-] stability, negative
       real(wp) :: psi, x2              !< [-] psi_h (the result), (1 - 16 zeta)^(1/2)
@@ -403,7 +403,7 @@ contains
    end function stabfunc2
 
    !----- The log-profile wind at `height`, floored at ugbmin: the canopy-top wind                 !
-   !      (docs/science/canopy_aerodynamics.md eq. (7)). It is u*/kappa times the momentum         !
+   !      (docs/science/canopy_aerodynamics.md eq. (8)). It is u*/kappa times the momentum         !
    !      denominator d_mom from the roughness up to height - displace, at the surface layer's     !
    !      Obukhov length, so the profile and u* share CLM5's four ranges. height - displace is     !
    !      held just above the roughness length, so the log stays positive. ------------------------!
@@ -419,7 +419,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Leaf (flat-plate) or wood (cylinder) boundary-layer heat conductance gbh_mos [m/s],   !
    ! the sum of forced (Reynolds) and free (Grashof) convection Nusselt numbers            !
-   ! (docs/science/canopy_aerodynamics.md eqs. (9)-(10)).                                  !
+   ! (docs/science/canopy_aerodynamics.md eqs. (10)-(11)).                                 !
    !---------------------------------------------------------------------------------------!
    pure function boundary_layer_conductance(cfg, wind, elem_temp, can_temp, lchar, is_leaf) result(gbh_mos)
       type(aero_params_t), intent(in) :: cfg     !< aerodynamic parameters
@@ -449,7 +449,7 @@ contains
    end function air_kinematic_viscosity
 
    !----- The bare soil's conductance to the canopy air [m/s] (docs/science/canopy_aerodynamics.md !
-   !      eq. (6)): u* times CLM5's soil coefficient, the thin layer between the soil and its      !
+   !      eq. (7)): u* times CLM5's soil coefficient, the thin layer between the soil and its      !
    !      roughness height only, kappa / (a (z0 u*/nu)^b). The turbulent layer above it is the     !
    !      canopy air's own exchange with the atmosphere, so the two in series are CLM5's bare-soil !
    !      resistance from the soil to zref. -------------------------------------------------------!
@@ -519,7 +519,7 @@ contains
    end subroutine set_aero_env_canopy
 
    !----- The canopy-air <-> atmosphere conductances at a given canopy-air temperature and         !
-   !      humidity (docs/science/canopy_aerodynamics.md eq. (5)): the surface layer solved again   !
+   !      humidity (docs/science/canopy_aerodynamics.md eq. (6)): the surface layer solved again   !
    !      against that state, with the reference level in env and the canopy geometry in geom, so  !
    !      the conductances follow the canopy air's own stability. Vapour and CO2 take the heat     !
    !      factor (z0q = z0h); CO2 uses the dry-air molar density at that humidity. ----------------!

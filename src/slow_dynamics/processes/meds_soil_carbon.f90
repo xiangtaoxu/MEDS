@@ -36,8 +36,8 @@ module meds_soil_carbon
    !      carbon-mass checks (soil_carbon.md §7, §9). ----------------------------------!
    type :: soil_carbon_out_t
       type(soil_carbon_state_t) :: pools     !< the pools and lignin after the step
-      !----- rh_seam_gap: zero by construction on an ordinary day, nonzero as expected on a !
-      !      day the patch structure changes; do not widen a tolerance to absorb it (§7). ---!
+      !----- rh_seam_gap: zero by construction on every step, since the patch structure     !
+      !      changes before the fast window opens; do not widen a tolerance for it (§7). ---!
       real(wp) :: rh_seam_gap  = 0.0_wp   !< [kgC/m2/day] the step's Rh less the fast loop's (set by the caller)
       real(wp) :: lignin_resid = 0.0_wp   !< [kgC/m2/day] max_s |dL_s - (lignin_in_s - (1-surv_s)*L_s)|; tracer check
       !----- lambda, the largest fraction of any pool the step withdraws, says whether     !

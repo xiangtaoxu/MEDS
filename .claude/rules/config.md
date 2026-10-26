@@ -37,10 +37,10 @@ If a value is genuinely required, make it required and let the presence map catc
 ## `[soil]` is the ground; `[fast]` holds the solvers' settings
 
 Every property of the ground is one block, whichever solver reads it: the column, its surface and
-both bottom boundaries, so one Fortran type does not map to one block (`soil_column_config_t`,
-`soil_opts_t` and `energy_opts_t` are each filled from `[soil]`, the last two also from `[fast]`).
-The physical column — depth and layer bottoms, hydraulic texture, retention family, thermal
-properties — is validated at load, because a layer count over the compile-time ceiling, layer
+both bottom boundaries (`soil_params_t` holds them all). The solvers' own settings (tolerances,
+integrator choice) are in `[fast]`. The physical column — depth and layer bottoms, hydraulic texture,
+retention family, thermal properties — is validated at load, because a layer count over the
+compile-time ceiling, layer
 bottoms that do not increase or a saturated water content below the residual produce a silently
 wrong column rather than a crash. The root profile is a plant trait: it lives in the PFT file's
 `[hydraulics]` block.
@@ -63,7 +63,8 @@ can carry it with no back-edge into a kernel library, and so the sealed kernels 
 device-eligible. Never put a config type in a kernel module.
 
 `params/` holds the run's parameters: every value the config files set, and the types of what is
-derived from them (`soil_params_t`). The routines that derive them are in `meds_config`. A kernel's
+derived from them (`soil_params_t`). The routines that derive them are in `meds_config`,
+`meds_soil_derive` (a site's soil profile) and `meds_pft_derive` (the PFT table's arrays). A kernel's
 argument types, which its driver fills from the parameters, are `*_args_t` and live with the kernel.
 
 ## A field has its key's name

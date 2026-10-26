@@ -2,7 +2,7 @@
 
 MEDS reads every PFT value from the PFT file. It holds no rule that derives one trait from another,
 because such rules are fits to particular data sets, not laws. [`pft_traits.py`](pft_traits.py)
-computes the traits that three published fits give, so a PFT file can be written from them:
+computes the traits that four published relations give, so a PFT file can be written from them:
 
 | PFT-file key | From | Fit |
 |---|---|---|
@@ -17,14 +17,13 @@ python pft_traits.py --wood-density 0.40 0.60 0.85 --vcmax25 60 45 40 --leaf-tur
 ```
 
 With `--pft-file`, the inputs are the file's `[pft]` `wood_density`, `vcmax25` and
-`leaf_turnover_rate_toc`; a value given on the command line takes precedence. The output is the TOML
-lines for the PFT file's `[pft]` and `[hydraulics]` blocks, one value per PFT, each printed to the
-digits that read back as the same number. The shipped PFT files carry these fits' values as the model
-computed them when the fits were part of it; Python's `exp` and `log` can round the last digit
-differently, so the tool reproduces them to about 10⁻¹⁵. Example 05's PFT files carry their own
-plasticity slopes, Ma et al. (2025)'s from Barro Colorado's crane, and the Barro Colorado file its own
+`leaf_turnover_rate_toc`; a value given on the command line takes precedence, and every input needs one
+value per PFT. The output is the TOML lines for the PFT file's `[pft]` and `[hydraulics]` blocks, one
+value per PFT, each printed to the digits that read back as the same number.
+
+The shipped PFT files carry these fits' values to about 10⁻¹⁵. Example 05's PFT files carry their own
+plasticity slopes (Ma et al. 2025, from Barro Colorado's crane), and the Barro Colorado file its own
 mortality hazard, fitted to the censuses.
 
-A fit's coefficients are the constants at the top of the script. A site with its own fit, say a
-mortality hazard fitted to its census, changes them there or writes its PFT file's values directly:
-MEDS reads the values, not the fit.
+A fit's coefficients are the constants at the top of the script. A site with its own fit changes them
+there, or writes its PFT file's values directly: MEDS reads the values, not the fit.

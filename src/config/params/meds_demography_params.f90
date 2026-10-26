@@ -14,7 +14,7 @@ module meds_demography_params
 
    type :: demography_params_t
       !----- The switches. Each operator runs only with demography_on; the cull and patch   !
-      !      termination, which keep the blocks bounded, always do. ----------------------!
+      !      termination, which keep the blocks bounded, have no switch of their own. -----!
       logical     :: demography_on        = .true.   !< .false.: the stand's structure is frozen
       logical     :: recruitment_on       = .true.   !< monthly founding from the recruit pools
       logical     :: cohort_fusion_on     = .true.   !< monthly, and yearly after patch fusion

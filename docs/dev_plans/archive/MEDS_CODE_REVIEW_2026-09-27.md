@@ -1,3 +1,11 @@
+> # 🗃️ ARCHIVED — 2026-10-25. Complete: executed before the v0.3.0 release.
+>
+> **What shipped:** the ranked pre-merge set, the documentation drift and the phased fix plan (§9) in
+> #314, released as v0.3.0 (2026-09-28); the archive audit (§10) is the 2026-09 move of plans into
+> `archive/`. The consolidation items deferred to R3 are tracked in `docs/ROADMAP.md` §8.
+>
+> Line numbers and counts below are from `beta` before v0.3.0.
+
 # MEDS code review, 2026-09-27 — `beta` → `main` for v0.3.0
 
 **Status:** review record, read-only. No source changed by this document. Reviewer: Claude (Fable 5.1)

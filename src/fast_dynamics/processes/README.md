@@ -1,11 +1,11 @@
 # `fast_dynamics/processes/` — the sub-daily process modules
 
-**One module per process, named after its science page.** Each holds its physics for one patch and
-the argument records its kernels read; none sees `polygon_t`, so they compile and unit-test
-standalone (`cmake --build … --target meds_fast_kernels`), each in a test named after it
-(`test/fast/test_canopy_radiation.f90` for `meds_canopy_radiation`). The integrator (`../integrator/`) decides
-when each is called and how the stores are advanced; the laws they evaluate that other layers also
-use (the tissue and soil water curves, the thermal properties, the optics) are in
+One module per process, named after its science page. Each holds its physics for one patch and the
+argument records its kernels read. None sees `polygon_t`, so they compile and unit-test standalone
+(`cmake --build … --target meds_fast_kernels`), each in a test named after it
+(`test/fast/test_canopy_radiation.f90` for `meds_canopy_radiation`). The integrator
+(`../integrator/`) decides when each is called and how the stores are advanced. The laws they evaluate
+that other layers also use (the tissue and soil water curves, the thermal properties, the optics) are in
 `src/share/functions/`.
 
 | Module | Process | Science page |
@@ -30,17 +30,15 @@ plasticity, the soil carbon pools and the vital-rate laws — are in `src/slow_d
 ## Python
 
 The `src/c_api/meds_c_api_*.f90` shims compile once, into the object library `meds_c_api`, which the
-single optional `libmeds.so` (`-DMEDS_BUILD_PYLIB=ON`) **and** the mandatory C-API ctest targets
-link, so an ABI or signature change is a build failure in a default build rather than a silent break
-in an optional one.
+optional `libmeds.so` (`-DMEDS_BUILD_PYLIB=ON`) and the C-API ctest targets both link, so an ABI or
+signature change is a build failure in a default build rather than a silent break in an optional one.
 
-Exposed through process-oriented packages in `python/meds/`:
+The fast kernels are exposed through process-oriented packages in `python/meds/`:
 
-- `meds.plant.leaf` — leaf gas exchange. Reproduces Slot & Winter (2017) in
-  [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/).
-- `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is
-  `slow_dynamics/processes/meds_plant_phenology`).
-  The four phenology strategies are in
-  [`examples/example02_canopy_phenology/`](../../../examples/example02_canopy_phenology/).
+- `meds.plant.leaf` — leaf gas exchange. [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/)
+  reproduces Slot & Winter (2017) with it.
 - `meds.canopy` — the leaf solve over many leaves and the two-stream over a frozen stand
   (`meds_c_api_canopy`).
+
+The phenology kernel (`meds.plant.pheno`) is a slow-half module; see
+[`../../slow_dynamics/processes/README.md`](../../slow_dynamics/processes/README.md).

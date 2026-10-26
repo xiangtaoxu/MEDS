@@ -144,30 +144,30 @@ site run chooses its cell and reads its maps the way a region does, with no chan
 polygon's ledgers as one record, and a polygon's start is complete when `init_polygon` returns, with
 no change to any result (#531). The cull's and the treefall's dead carbon reach the soil through the
 litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
-and patch termination merges and re-sorts as patch fusion does (#523). The cull's and the treefall's
-dead carbon reach the soil through the litter and the slow ledger declares them; the slow loop
-converts CO2 with the fast loop's constant; and patch termination merges and re-sorts as patch
-fusion does (#523). The stand's operators have one switch each, and the stand's keys are one
-`[demography]` block (#525). The cull's and the treefall's dead carbon reach the soil through the
-litter and the slow ledger declares them; the slow loop converts CO2 with the fast loop's constant;
 and patch termination merges and re-sorts as patch fusion does (#523). The stand's operators have
 one switch each, and the stand's keys are one `[demography]` block (#525). The slow tests are one
-per module of the new layout (#528). The cull's and the treefall's dead carbon reach the soil
-through the litter and the slow ledger declares them; the slow loop converts CO2 with the fast
-loop's constant; and patch termination merges and re-sorts as patch fusion does (#523). The stand's
-operators have one switch each, and the stand's keys are one `[demography]` block (#525). The slow
-tests are one per module of the new layout (#528). The soil-carbon state holds its pools as the
-matrix's vector (#529). The production build accepts PFT files of more than one PFT again (#543). All six
-examples are rerun on the production build, and example 06 runs as eight regions (#552).
+per module of the new layout (#528). The soil-carbon state holds its pools as the matrix's vector
+(#529). Every documentation page and README is checked against the code and rewritten for
+readability, with no change to any result (#542). Before the release, a sweep: the default forcing
+reader reads a file's gaps and packing, a run without the fast loop decays its soil carbon at
+`spinup_xi`, and four code oddities go (#551). The production build accepts a PFT file of
+several PFTs again (#543). All six examples are rerun on the
+production build, and example 06 runs as eight regions (#552).
 
 **Upgrading from v0.3.5:**
+- **A run without the fast loop decomposes its soil carbon** (#551), at `[soil_carbon].spinup_xi`
+  (default 1.0) for every pool, where it decomposed nothing before. A fast-off spin-up with soil
+  carbon on now ends with less soil carbon: set `spinup_xi` to the site's mean scalar, or turn the
+  soil carbon off.
 - **Every output variable has a new name** (#473), `[mean_]<quantity>[_<breakdown>]_<level>`: the level
   `_co`, `_pa`, `_si` or `_py`; the breakdown `_pft`, `_size` or `_layer`; `mean_` for a mean over the
   record's period, none for its value at the end (`docs/science/diagnostics.md` §3). A variable and its
   `*_fast` twin are one variable, written on F and on D, M and Y; `gpp_rate_site` and `et_rate_site`
   are `mean_gpp_py` and `mean_et_py`; `leaf_temp_cohort_fast` goes (on the F tier the per-cohort
-  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). `docs/output_renames.md` maps every variable, the per-site statics (`site_area` is
-  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) to its old names.
+  leaf temperature is `mean_leaf_temp_co`'s, the one each step's leaf solve used). The map from every old name to its new one, the per-site statics (`site_area` is
+  `area_si`, …) and the restart file's variables (`leaf_carbon_co`, `area_pa`, …) included, is
+  [`docs/output_renames.md`](https://github.com/xiangtaoxu/MEDS/blob/7223449d/docs/output_renames.md),
+  retired from the documentation in #542.
   - An `io_config` names each variable by its new name, and a variable that had a twin once, with the
     tiers both lines gave; a line for one of the two now sets them all. `meds_main --dump-io-config`
     lists every variable.
@@ -845,6 +845,28 @@ examples are rerun on the production build, and example 06 runs as eight regions
   (ET 74 % of the rain, the soft-wooded Ds half of the wettest tenth's AGB). Two example scripts had gone
   stale: example 02's `make_era5_par_hours.py` asked for the PAR outputs by their old names (#473), and
   example 03's `census_laws.py` read the treefall keys from `[disturbance]` (#525).
+- **The documentation is checked against the code** (#542). Every science page, guide and README is
+  checked against the code and rewritten for a modeller: the science pages end Parameters, Code map,
+  References, and example results, stale counts and history leave the reference pages.
+  `docs/ed2_comparison.md` describes the current code (#422), `scripts/prepare_era5/README.md` is
+  new, `docs/ROADMAP.md` lists every open issue, and six finished plans move to
+  `docs/dev_plans/archive/`. Corrected on the pages: `vegetation_energy_dynamics.md` eqs. (1) and (6)
+  linearize the emission about the tissue's start-of-step temperature, as the code does; the
+  boundary-layer conductance ratio in `leaf_gas_exchange.md` is 1.4; `soil_carbon.md` eq. (4) has no
+  nitrogen factor; `order_of_processes.md` follows the code's order; ice saturation is 9, 18 and 26 %
+  below liquid at −10, −20 and −30 °C. Comment lines that cited the wrong equation or key are
+  corrected. No code changes.
+  - `docs/science/column_biophysics.md` is `docs/science/coupled_biophysics.md` ("column" is the soil
+    or snow profile); its sections and equation keep their numbers.
+  - Lettered equations are numbered: `canopy_aerodynamics.md` eqs. (3b), (4)–(10) are (4)–(11), and
+    `canopy_radiation_transfer.md` eqs. (10b), (11)–(15) are (11)–(16); every citation follows.
+  - `docs/output_renames.md` is retired (the naming rule is `docs/science/diagnostics.md` §3), and so is
+    `post_proc/evaluate_ithaca.ipynb`, which needed a run the repository does not hold.
+  - The region runs' file layout moves from `docs/configuration.md` to `diagnostics.md` §3.
+  - CLAUDE.md's compiler traps gain an eighth: ifx's AVX-512 code misreads an array expression over
+    `a(:)%b%c`.
+  - `docs/ROADMAP.md` cites the issues filed with it: #544 and #545 (two defects the review found),
+    #546–#549.
 - **Three gaps a mutation check found are tested** (#541):
   - a re-flushing PFT 2 cohort fills its leaves on its own water curves;
   - in a column of two PFTs, each cohort's water stores follow its own PFT's curves;
@@ -907,9 +929,6 @@ examples are rerun on the production build, and example 06 runs as eight regions
   `seed_canopy_air` argument). `init_polygon` takes the polygon's id and location, and
   `polygon_prepare` no longer takes `keep_soil_carbon`; `soil_carbon_steady_pools`
   (`meds_soil_carbon`) is the spin-up's steady state.
-
-### Changed
-
 - **Physics no test reached is tested** (#532):
   - the snow's burial of the canopy and its blend of roughness and displacement;
   - the canopy-air conductances against the log law;
@@ -1859,6 +1878,8 @@ examples are rerun on the production build, and example 06 runs as eight regions
 
 ### Removed
 
+- **The `METAVG_CENTER` code and `record_mean_cosz`'s instantaneous-record branch** (#551), which
+  nothing reached: `[forcing].avg_convention` takes only `"end"` and `"begin"`.
 - **`fast_dynamics`' `met_fixed` argument** (#536), which nothing in production passed. A run without
   forcing still steps on the reference climate.
 - **Storage maintenance** (#534): `[pft].storage_turnover_rate`, the cohort row `CO_STORAGE_RESP` and the
@@ -1944,7 +1965,21 @@ examples are rerun on the production build, and example 06 runs as eight regions
 
 ### Fixed
 
-- **The production build refused every PFT file with more than one PFT.** It stopped at the
+- **The default forcing reader took a file's numeric `_FillValue` as data** (#551). A value equal to
+  the variable's `_FillValue` or `missing_value` is now a gap, which stops the step that reads it
+  and names the field and the record, as MEDS never gap-fills (`docs/science/forcing.md` §10); a
+  packed variable is unpacked with its `scale_factor` and `add_offset`. The map reader keeps the
+  same rule, now shared (`nc_packing_of`, `nc_unpacked`). No shipped forcing file has a gap or is
+  packed, so no result moves.
+- **With the fast loop off, soil carbon never decomposed** (#551). The soil step decays the pools by
+  the scalar the fast loop integrates, which stayed 0, so the litter piled up with no heterotrophic
+  respiration and nothing said so. Without the loop the step now takes `[soil_carbon].spinup_xi`,
+  as growth takes `gpp_ref` (`docs/science/soil_carbon.md` §7).
+- **The longwave synthesis kept a stale clearness index over three kinds of interval** (#551):
+  `met_advance` returned early on a held start, at the recycle seam and past the file's end, before
+  it updated the index held through the night. Only `lwdown_source = "synthesize"` reads it, which
+  no shipped config uses.
+- **The production build refused every PFT file with more than one PFT** (#543). It stopped at the
   configuration check with `hydraulics.leaf_apoplast_frac and wood_apoplast_frac must lie in [0, 1)`,
   so examples 03, 05 and 06 could not run on it. The PFTs' values were read correctly; the check read
   them wrongly. It tested each pressure-volume curve key as an array expression over

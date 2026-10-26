@@ -34,7 +34,7 @@ FORMAT_BLOCK = """\
 # ============================================================================================
 # MEDS CO2 file, format 1
 # ============================================================================================
-# FORMAT (full definition: docs/science/forcing.md, section "CO2")
+# FORMAT (full definition: docs/science/forcing.md section 12)
 #   Plain text. '#' starts a comment that runs to the end of the line; blank lines are ignored.
 #   Two keyword lines come before the first data row, each exactly once:
 #     timestep  <n> <unit>    n: a whole number >= 1; unit: year | month | day | hour | minute

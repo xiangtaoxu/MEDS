@@ -120,7 +120,7 @@ contains
       out%report%exports%gpp_last = gpp
       out%report%exports%nee_last = frozen%cas%nee_biotic
       !----- The canopy air's capacities, and its exchange with the atmosphere at the start state    !
-      !      (docs/science/canopy_aerodynamics.md eq. (5)): heat on heat_transfer_factor, vapour and  !
+      !      (docs/science/canopy_aerodynamics.md eq. (6)): heat on heat_transfer_factor, vapour and  !
       !      CO2 on vapour_transfer_factor (equal, z0q = z0h). -----------------------------------!
       call cas_capacities(rho, qcas, dynamic%cas%can_depth, can_dmol, frozen%cas%box%air_mass_capacity,         &
                           frozen%cas%box%air_molar_capacity)

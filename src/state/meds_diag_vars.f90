@@ -158,15 +158,24 @@ module meds_diag_vars
    !      fuse. The absorbed-radiation terms are per m2 of GROUND, so two cohorts' contributions    !
    !      to the same patch simply add -- the same convention leaf_surf_water follows. -------------!
    integer(ik), parameter, public :: CO_FUSION_KIND(N_CO_ROWS) = [                                               &
-        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_EXTENSIVE,                                              &   ! 1. Carbon
-        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, &   ! 2. Stomata and leaf exchange
-        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, &   ! 3. Plant water
-        FSK_LEAF_HEAT, FSK_WOOD_HEAT, FSK_GROUND, FSK_GROUND, FSK_GROUND,                                        &   ! 4. Energy and radiation
-        FSK_INTENSIVE, FSK_INTENSIVE,                                                                            &   ! 5. Canopy environment
-        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE,                               &   ! 6. The leaf solve's other inputs
-        FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                                                             &   ! 7. Growth and mortality
-        FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                               &   ! 8. Carbon allocation
-        FSK_EXTENSIVE, FSK_EXTENSIVE                                                                             ]   ! 9. Carbon losses
+        ! 1. Carbon
+        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_EXTENSIVE,                                              &
+        ! 2. Stomata and leaf exchange
+        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, &
+        ! 3. Plant water
+        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, &
+        ! 4. Energy and radiation
+        FSK_LEAF_HEAT, FSK_WOOD_HEAT, FSK_GROUND, FSK_GROUND, FSK_GROUND,                                        &
+        ! 5. Canopy environment
+        FSK_INTENSIVE, FSK_INTENSIVE,                                                                            &
+        ! 6. The leaf solve's other inputs
+        FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE, FSK_INTENSIVE,                               &
+        ! 7. Growth and mortality
+        FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                                                             &
+        ! 8. Carbon allocation
+        FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE, FSK_EXTENSIVE,                               &
+        ! 9. Carbon losses
+        FSK_EXTENSIVE, FSK_EXTENSIVE                                                                             ]
 
    !==========================================================================================!
    !  PER-PATCH diagnostic fields. The fast loop fills the fast rows once per (patch, sub-step)  !
@@ -183,7 +192,7 @@ module meds_diag_vars
    !----- TOP-OF-CANOPY radiative fluxes. Kept as FLUXES, not as a time-averaged albedo: a        !
    !      period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and     !
    !      at night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down)     !
-   !      over the period (docs/science/canopy_radiation_transfer.md eq. (15)), which these       !
+   !      over the period (docs/science/canopy_radiation_transfer.md eq. (16)), which these       !
    !      make computable -- and which is what a satellite product is. ---------------------------!
    integer(ik), parameter, public :: PA_SW_IN_VIS         =  4_ik  !< [W/m2] incident VIS at canopy top
    integer(ik), parameter, public :: PA_SW_IN_NIR         =  5_ik  !< [W/m2] incident NIR at canopy top
@@ -230,7 +239,7 @@ module meds_diag_vars
    !----- 7. Budget residuals -------------------------------------------------------------------!
    integer(ik), parameter, public :: PA_RESID_ENERGY      = 31_ik  !< [W/m2] whole-column energy residual
    integer(ik), parameter, public :: PA_RESID_WATER       = 32_ik  !< [kg/m2/s] whole-column water residual
-   integer(ik), parameter, public :: N_PA_FAST_ROWS         = 32_ik  !< the fast loop's rows are 1..N_PA_FAST_ROWS; the slow driver's follow
+   integer(ik), parameter, public :: N_PA_FAST_ROWS         = 32_ik  !< the fast loop's last row; the slow rows follow
    !----- 8. SLOW rows: litter ------------------------------------------------------------------!
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
    !      above because the reader normalizes by w either way, and the slow driver writes them as   !
